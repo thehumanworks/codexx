@@ -200,6 +200,8 @@ fn openai_file_params_are_only_honored_for_codex_apps() {
     );
 }
 
+/// Builds an `McpInvocation` for a non-Codex-Apps server with no annotations,
+/// representing the scenario that triggered the regression in #15824.
 fn custom_mcp_invocation_without_annotations() -> McpInvocation {
     McpInvocation {
         server: "docs".to_string(),
