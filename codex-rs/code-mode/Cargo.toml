@@ -22,6 +22,10 @@ serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
 tokio-util = { workspace = true, features = ["rt"] }
 tracing = { workspace = true }
+# v8 146.x depends on temporal_rs 0.1.2, which uses ICU unstable
+# calendar APIs. This direct dependency keeps path installs without
+# --locked on the compatible ICU minor.
+icu_calendar = { workspace = true }
 v8 = { workspace = true }
 
 [dev-dependencies]

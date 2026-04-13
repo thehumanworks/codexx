@@ -274,6 +274,10 @@ globset = "0.4"
 hmac = "0.12.1"
 http = "1.3.1"
 iana-time-zone = "0.1.64"
+icu_calendar = { version = "=2.1.1", features = [
+    "compiled_data",
+    "unstable",
+], default-features = false }
 icu_decimal = "2.1"
 icu_locale_core = "2.1"
 icu_provider = { version = "2.1", features = ["sync"] }
@@ -446,10 +450,12 @@ unnecessary_sort_by = "deny"
 unnecessary_to_owned = "deny"
 unwrap_used = "deny"
 
-# cargo-shear cannot see the platform-specific openssl-sys usage, so we
-# silence the false positive here instead of deleting a real dependency.
+# cargo-shear cannot see some dependencies that are intentionally present for
+# platform-specific or transitive-resolution reasons, so silence those false
+# positives here instead of deleting real dependencies.
 [workspace.metadata.cargo-shear]
 ignored = [
+    "icu_calendar",
     "icu_provider",
     "openssl-sys",
     "codex-utils-readiness",
@@ -469,14 +475,14 @@ debug = 0
 strip = true
 
 [profile.release]
-lto = "fat"
+lto = false
 split-debuginfo = "off"
 # Because we bundle some of these executables with the TypeScript CLI, we
 # remove everything to make the binary as small as possible.
 strip = "symbols"
 
-# See https://github.com/openai/codex/issues/1411 for details.
-codegen-units = 1
+# Keep local release builds fast enough for `cargo install --path cli --bin codex`.
+codegen-units = 16
 
 [profile.ci-test]
 debug = 1         # Reduce debug symbol size
