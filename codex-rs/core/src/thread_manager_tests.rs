@@ -22,6 +22,8 @@ use core_test_support::PathBufExt;
 use core_test_support::PathExt;
 use core_test_support::responses::mount_models_once;
 use pretty_assertions::assert_eq;
+use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 use tempfile::tempdir;
 use wiremock::MockServer;
@@ -57,8 +59,8 @@ fn developer_interrupted_marker() -> ResponseItem {
         .expect("developer interrupted marker should be enabled")
 }
 
-#[test]
-fn truncates_before_requested_user_message() {
+#[tokio::test]
+async fn truncates_before_requested_user_message() {
     let items = [
         user_msg("u1"),
         assistant_msg("a1"),
@@ -89,6 +91,7 @@ fn truncates_before_requested_user_message() {
         .map(RolloutItem::ResponseItem)
         .collect();
     let truncated = truncate_before_nth_user_message(
+        Path::new("/tmp"),
         InitialHistory::Forked(initial),
         /*n*/ 1,
         &SnapshotTurnState {
@@ -96,7 +99,8 @@ fn truncates_before_requested_user_message() {
             active_turn_id: None,
             active_turn_start_index: None,
         },
-    );
+    )
+    .await;
     let got_items = truncated.get_rollout_items();
     let expected_items = vec![
         RolloutItem::ResponseItem(items[0].clone()),
@@ -114,6 +118,7 @@ fn truncates_before_requested_user_message() {
         .map(RolloutItem::ResponseItem)
         .collect();
     let truncated2 = truncate_before_nth_user_message(
+        Path::new("/tmp"),
         InitialHistory::Forked(initial2.clone()),
         /*n*/ 2,
         &SnapshotTurnState {
@@ -121,15 +126,16 @@ fn truncates_before_requested_user_message() {
             active_turn_id: None,
             active_turn_start_index: None,
         },
-    );
+    )
+    .await;
     assert_eq!(
         serde_json::to_value(truncated2.get_rollout_items()).unwrap(),
         serde_json::to_value(initial2).unwrap()
     );
 }
 
-#[test]
-fn out_of_range_truncation_drops_only_unfinished_suffix_mid_turn() {
+#[tokio::test]
+async fn out_of_range_truncation_drops_only_unfinished_suffix_mid_turn() {
     let items = vec![
         RolloutItem::ResponseItem(user_msg("u1")),
         RolloutItem::ResponseItem(assistant_msg("a1")),
@@ -138,14 +144,16 @@ fn out_of_range_truncation_drops_only_unfinished_suffix_mid_turn() {
     ];
 
     let truncated = truncate_before_nth_user_message(
+        Path::new("/tmp"),
         InitialHistory::Forked(items.clone()),
-        usize::MAX,
+        /*n*/ -1,
         &SnapshotTurnState {
             ends_mid_turn: true,
             active_turn_id: None,
             active_turn_start_index: None,
         },
-    );
+    )
+    .await;
 
     assert_eq!(
         serde_json::to_value(truncated.get_rollout_items()).unwrap(),
@@ -173,8 +181,8 @@ fn fork_thread_accepts_legacy_usize_snapshot_argument() {
     let _: fn(&ThreadManager, Config, std::path::PathBuf) = assert_legacy_snapshot_callsite;
 }
 
-#[test]
-fn out_of_range_truncation_drops_pre_user_active_turn_prefix() {
+#[tokio::test]
+async fn out_of_range_truncation_drops_pre_user_active_turn_prefix() {
     let items = vec![
         RolloutItem::ResponseItem(user_msg("u1")),
         RolloutItem::ResponseItem(assistant_msg("a1")),
@@ -199,10 +207,12 @@ fn out_of_range_truncation_drops_pre_user_active_turn_prefix() {
     );
 
     let truncated = truncate_before_nth_user_message(
+        Path::new("/tmp"),
         InitialHistory::Forked(items.clone()),
-        usize::MAX,
+        /*n*/ -1,
         &snapshot_state,
-    );
+    )
+    .await;
 
     assert_eq!(
         serde_json::to_value(truncated.get_rollout_items()).unwrap(),
@@ -226,6 +236,7 @@ async fn ignores_session_prefix_messages_when_truncating() {
         .collect();
 
     let truncated = truncate_before_nth_user_message(
+        Path::new("/tmp"),
         InitialHistory::Forked(rollout_items),
         /*n*/ 1,
         &SnapshotTurnState {
@@ -233,7 +244,8 @@ async fn ignores_session_prefix_messages_when_truncating() {
             active_turn_id: None,
             active_turn_start_index: None,
         },
-    );
+    )
+    .await;
     let got_items = truncated.get_rollout_items();
 
     let expected: Vec<RolloutItem> = vec![
@@ -392,6 +404,8 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
+        config.model_catalog.clone(),
+        config.custom_models.clone(),
         CollaborationModesConfig::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -499,6 +513,8 @@ async fn new_uses_active_provider_for_model_refresh() {
         &config,
         auth_manager,
         SessionSource::Exec,
+        /*model_catalog*/ None,
+        HashMap::new(),
         CollaborationModesConfig::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -710,6 +726,8 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
+        config.model_catalog.clone(),
+        config.custom_models.clone(),
         CollaborationModesConfig::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -814,6 +832,8 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
+        config.model_catalog.clone(),
+        config.custom_models.clone(),
         CollaborationModesConfig::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -907,6 +927,8 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
+        config.model_catalog.clone(),
+        config.custom_models.clone(),
         CollaborationModesConfig::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
@@ -1046,6 +1068,8 @@ async fn resumed_thread_activates_paused_goal_and_continues_on_request() -> anyh
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
+        config.model_catalog.clone(),
+        config.custom_models.clone(),
         CollaborationModesConfig::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,

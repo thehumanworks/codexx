@@ -294,6 +294,38 @@ impl App {
             AppEvent::CommitTick => {
                 self.chat_widget.on_commit_tick();
             }
+            AppEvent::StartSubagentAnimation => {
+                if self
+                    .subagent_anim_running
+                    .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    let tx = self.app_event_tx.clone();
+                    let running = self.subagent_anim_running.clone();
+                    thread::spawn(move || {
+                        while running.load(Ordering::Relaxed) {
+                            thread::sleep(subagents::SUBAGENT_ANIMATION_TICK);
+                            tx.send(AppEvent::SubagentTick);
+                        }
+                    });
+                }
+            }
+            AppEvent::StopSubagentAnimation => {
+                self.subagent_anim_running.store(false, Ordering::Release);
+            }
+            AppEvent::SubagentTick => {
+                let root_active = self.subagents_root_active();
+                self.update_subagent_animation(root_active);
+                if root_active && self.subagents.has_animating_agents() {
+                    self.chat_widget.on_subagent_tick();
+                }
+            }
+            AppEvent::UpdateSubagentPanel(panel) => {
+                self.chat_widget.on_subagent_panel_updated(panel);
+            }
+            AppEvent::ClearSubagentPanel => {
+                self.chat_widget.clear_subagent_panel();
+            }
             AppEvent::Exit(mode) => {
                 return Ok(self.handle_exit_mode(app_server, mode).await);
             }

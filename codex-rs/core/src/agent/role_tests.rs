@@ -74,6 +74,113 @@ async fn apply_role_returns_error_for_unknown_role() {
 }
 
 #[tokio::test]
+async fn default_fork_context_for_role_defaults_unspecified_custom_roles_to_true() {
+    let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: Some("Custom role".to_string()),
+            model: None,
+            config_file: None,
+            watchdog_interval_s: None,
+            nickname_candidates: None,
+            fork_context: None,
+        },
+    );
+
+    assert!(default_fork_context_for_role(&config, Some("custom")));
+}
+
+#[tokio::test]
+async fn default_fork_context_for_role_defaults_discovered_role_files_to_true() {
+    let codex_home = TempDir::new().expect("create temp dir");
+    let repo_root = TempDir::new().expect("create temp dir");
+    let nested_cwd = repo_root.path().join("packages").join("app");
+    fs::create_dir_all(repo_root.path().join(".git")).expect("create git dir");
+    fs::create_dir_all(&nested_cwd).expect("create nested cwd");
+
+    let workspace_key = repo_root.path().to_string_lossy().replace('\\', "\\\\");
+    tokio::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        format!(
+            r#"[projects."{workspace_key}"]
+trust_level = "trusted"
+"#
+        ),
+    )
+    .await
+    .expect("write config");
+
+    let agents_dir = repo_root.path().join(".codex").join("agents");
+    tokio::fs::create_dir_all(&agents_dir)
+        .await
+        .expect("create agents dir");
+    tokio::fs::write(
+        agents_dir.join("custom.toml"),
+        r#"
+name = "custom"
+description = "Custom role"
+developer_instructions = "Stay focused"
+"#,
+    )
+    .await
+    .expect("write role file");
+
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(nested_cwd),
+            ..Default::default()
+        })
+        .build()
+        .await
+        .expect("load config");
+
+    assert!(default_fork_context_for_role(&config, Some("custom")));
+}
+
+#[tokio::test]
+async fn default_fork_context_for_role_uses_explicit_custom_role_override() {
+    let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
+    config.agent_roles.insert(
+        "custom".to_string(),
+        AgentRoleConfig {
+            description: Some("Custom role".to_string()),
+            model: None,
+            config_file: None,
+            watchdog_interval_s: None,
+            nickname_candidates: None,
+            fork_context: Some(false),
+        },
+    );
+
+    assert!(!default_fork_context_for_role(&config, Some("custom")));
+}
+
+#[tokio::test]
+async fn default_fork_context_for_role_uses_explicit_custom_role_override_from_config_toml() {
+    let home = TempDir::new().expect("create temp dir");
+    tokio::fs::write(
+        home.path().join(CONFIG_TOML_FILE),
+        r#"[agents.custom]
+description = "Custom role"
+fork_context = false
+"#,
+    )
+    .await
+    .expect("write config");
+
+    let config = ConfigBuilder::default()
+        .codex_home(home.path().to_path_buf())
+        .fallback_cwd(Some(home.path().to_path_buf()))
+        .build()
+        .await
+        .expect("load test config");
+
+    assert!(!default_fork_context_for_role(&config, Some("custom")));
+}
+
+#[tokio::test]
 #[ignore = "No role requiring it for now"]
 async fn apply_explorer_role_sets_model_and_adds_session_flags_layer() {
     let (_home, mut config) = test_config_with_cli_overrides(Vec::new()).await;
@@ -111,8 +218,11 @@ async fn apply_role_returns_unavailable_for_missing_user_role_file() {
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(PathBuf::from("/path/does/not/exist.toml")),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -131,8 +241,11 @@ async fn apply_role_returns_unavailable_for_invalid_user_role_toml() {
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -162,8 +275,11 @@ model = "role-model"
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -193,8 +309,11 @@ async fn apply_role_preserves_unspecified_keys() {
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -252,8 +371,11 @@ model_provider = "test-provider"
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -306,8 +428,11 @@ model_verbosity = "high"
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -372,8 +497,11 @@ model_provider = "role-provider"
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -430,8 +558,11 @@ model_provider = "base-provider"
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -494,8 +625,11 @@ model_reasoning_effort = "high"
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -538,8 +672,11 @@ writable_roots = ["./sandbox-root"]
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -600,8 +737,11 @@ async fn apply_role_takes_precedence_over_existing_session_flags_for_same_key() 
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -643,8 +783,11 @@ enabled = false
         "custom".to_string(),
         AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
 
@@ -673,6 +816,17 @@ enabled = false
     assert_eq!(outcome.is_skill_enabled(skill), false);
 }
 
+#[tokio::test]
+async fn watchdog_interval_for_role_returns_built_in_watchdog_interval() {
+    let (_home, config) = test_config_with_cli_overrides(Vec::new()).await;
+
+    assert_eq!(
+        watchdog_interval_for_role(&config, Some("watchdog")),
+        Some(crate::config::DEFAULT_WATCHDOG_INTERVAL_S)
+    );
+    assert_eq!(watchdog_interval_for_role(&config, Some("default")), None);
+}
+
 #[test]
 fn spawn_tool_spec_build_deduplicates_user_defined_built_in_roles() {
     let user_defined_roles = BTreeMap::from([
@@ -680,8 +834,11 @@ fn spawn_tool_spec_build_deduplicates_user_defined_built_in_roles() {
             "explorer".to_string(),
             AgentRoleConfig {
                 description: Some("user override".to_string()),
+                model: None,
                 config_file: None,
+                watchdog_interval_s: None,
                 nickname_candidates: None,
+                fork_context: None,
             },
         ),
         ("researcher".to_string(), AgentRoleConfig::default()),
@@ -701,8 +858,11 @@ fn spawn_tool_spec_lists_user_defined_roles_before_built_ins() {
         "aaa".to_string(),
         AgentRoleConfig {
             description: Some("first".to_string()),
+            model: None,
             config_file: None,
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     )]);
 
@@ -728,8 +888,11 @@ fn spawn_tool_spec_marks_role_locked_model_and_reasoning_effort() {
         "researcher".to_string(),
         AgentRoleConfig {
             description: Some("Research carefully.".to_string()),
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     )]);
 
@@ -753,8 +916,11 @@ fn spawn_tool_spec_marks_role_locked_reasoning_effort_only() {
         "reviewer".to_string(),
         AgentRoleConfig {
             description: Some("Review carefully.".to_string()),
+            model: None,
             config_file: Some(role_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     )]);
 

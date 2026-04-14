@@ -13,6 +13,7 @@ pub(super) async fn make_test_app() -> App {
     let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
     let model = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
     let session_telemetry = test_session_telemetry(&config, model.as_str());
+    let animations_enabled = config.animations;
 
     App {
         model_catalog: chat_widget.model_catalog(),
@@ -35,6 +36,7 @@ pub(super) async fn make_test_app() -> App {
         enhanced_keys_supported: false,
         keymap: crate::keymap::RuntimeKeymap::defaults(),
         commit_anim_running: Arc::new(AtomicBool::new(false)),
+        subagent_anim_running: Arc::new(AtomicBool::new(false)),
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         backtrack: BacktrackState::default(),
@@ -49,6 +51,7 @@ pub(super) async fn make_test_app() -> App {
         windows_sandbox: WindowsSandboxState::default(),
         thread_event_channels: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
+        subagents: super::subagents::SubagentRegistry::new(animations_enabled),
         agent_navigation: AgentNavigationState::default(),
         side_threads: HashMap::new(),
         active_thread_id: None,

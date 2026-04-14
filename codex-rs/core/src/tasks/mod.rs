@@ -561,6 +561,7 @@ impl Session {
         turn_context
             .turn_metadata_state
             .cancel_git_enrichment_task();
+        self.snapshot_agent_send_input_on_turn_complete();
 
         let mut pending_input = Vec::<ResponseInputItem>::new();
         let mut should_clear_active_turn = false;

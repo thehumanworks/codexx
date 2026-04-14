@@ -143,6 +143,7 @@ use opentelemetry_sdk::metrics::data::AggregatedMetrics;
 use opentelemetry_sdk::metrics::data::Metric;
 use opentelemetry_sdk::metrics::data::MetricData;
 use opentelemetry_sdk::metrics::data::ResourceMetrics;
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -3107,8 +3108,11 @@ enabled = false
         "custom".to_string(),
         crate::config::AgentRoleConfig {
             description: None,
+            model: None,
             config_file: Some(role_path.to_path_buf()),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
     crate::agent::role::apply_role_to_config(&mut child_config, Some("custom"))
@@ -3568,6 +3572,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
         services,
+        turn_used_agent_send_input: std::sync::atomic::AtomicBool::new(false),
+        last_completed_turn_used_agent_send_input: std::sync::atomic::AtomicBool::new(false),
         next_internal_sub_id: AtomicU64::new(0),
     };
 
@@ -4994,6 +5000,8 @@ where
         goal_runtime: crate::goals::GoalRuntimeState::new(),
         guardian_review_session: crate::guardian::GuardianReviewSessionManager::default(),
         services,
+        turn_used_agent_send_input: std::sync::atomic::AtomicBool::new(false),
+        last_completed_turn_used_agent_send_input: std::sync::atomic::AtomicBool::new(false),
         next_internal_sub_id: AtomicU64::new(0),
     });
 
@@ -8236,4 +8244,28 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
     }
 
     Ok(())
+}
+
+#[tokio::test]
+async fn root_agent_prompt_only_includes_watchdog_fragment_when_enabled() {
+    let codex_home = tempfile::tempdir().expect("create temp dir");
+
+    let without_watchdog =
+        load_root_agent_prompt(codex_home.path(), /*include_watchdog*/ false).await;
+    assert!(!without_watchdog.contains("## Watchdogs"));
+
+    let with_watchdog = load_root_agent_prompt(codex_home.path(), /*include_watchdog*/ true).await;
+    assert!(with_watchdog.contains("## Watchdogs"));
+}
+
+#[tokio::test]
+async fn subagent_prompt_only_includes_watchdog_fragment_when_enabled() {
+    let codex_home = tempfile::tempdir().expect("create temp dir");
+
+    let without_watchdog =
+        load_subagent_prompt(codex_home.path(), /*include_watchdog*/ false).await;
+    assert!(!without_watchdog.contains("## Watchdog-only Guidance"));
+
+    let with_watchdog = load_subagent_prompt(codex_home.path(), /*include_watchdog*/ true).await;
+    assert!(with_watchdog.contains("## Watchdog-only Guidance"));
 }

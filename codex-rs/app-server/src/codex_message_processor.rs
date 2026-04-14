@@ -166,6 +166,8 @@ use codex_app_server_protocol::ThreadIncrementElicitationParams;
 use codex_app_server_protocol::ThreadIncrementElicitationResponse;
 use codex_app_server_protocol::ThreadInjectItemsParams;
 use codex_app_server_protocol::ThreadInjectItemsResponse;
+use codex_app_server_protocol::ThreadInputActivityParams;
+use codex_app_server_protocol::ThreadInputActivityResponse;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListParams;
@@ -260,6 +262,7 @@ use codex_core::find_archived_thread_path_by_id_str;
 use codex_core::find_thread_name_by_id;
 use codex_core::find_thread_names_by_ids;
 use codex_core::find_thread_path_by_id_str;
+use codex_core::materialize_rollout_items_for_replay;
 use codex_core::path_utils;
 use codex_core::plugins::PluginInstallError as CorePluginInstallError;
 use codex_core::plugins::PluginInstallRequest;
@@ -386,6 +389,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_pty::DEFAULT_OUTPUT_BYTES_CAP;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::io::Error as IoError;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1051,6 +1055,10 @@ impl CodexMessageProcessor {
                     params,
                 )
                 .await;
+            }
+            ClientRequest::ThreadInputActivity { request_id, params } => {
+                self.thread_input_activity(to_connection_request_id(request_id), params)
+                    .await;
             }
             ClientRequest::ThreadRollback { request_id, params } => {
                 self.thread_rollback(to_connection_request_id(request_id), params)
@@ -3638,6 +3646,40 @@ impl CodexMessageProcessor {
         self.outgoing.send_result(request_id, result).await;
     }
 
+    async fn thread_input_activity(
+        &self,
+        request_id: ConnectionRequestId,
+        params: ThreadInputActivityParams,
+    ) {
+        let ThreadInputActivityParams { thread_id } = params;
+
+        let (_, thread) = match self.load_thread(&thread_id).await {
+            Ok(v) => v,
+            Err(error) => {
+                self.outgoing.send_error(request_id, error).await;
+                return;
+            }
+        };
+
+        match self
+            .submit_core_op(&request_id, thread.as_ref(), Op::NoteOwnerActivity)
+            .await
+        {
+            Ok(_) => {
+                self.outgoing
+                    .send_response(request_id, ThreadInputActivityResponse {})
+                    .await;
+            }
+            Err(err) => {
+                self.send_internal_error(
+                    request_id,
+                    format!("failed to record thread input activity: {err}"),
+                )
+                .await;
+            }
+        }
+    }
+
     async fn thread_shell_command(
         &self,
         request_id: ConnectionRequestId,
@@ -4654,7 +4696,28 @@ impl CodexMessageProcessor {
                 include_archived: true,
                 include_history,
             };
-            self.thread_store.read_thread(params).await
+            match self.thread_store.read_thread(params).await {
+                Ok(thread) if thread.archived_at.is_some() => {
+                    let thread_id = thread.thread_id;
+                    match self
+                        .thread_store
+                        .unarchive_thread(StoreArchiveThreadParams { thread_id })
+                        .await
+                    {
+                        Ok(_) => {
+                            self.thread_store
+                                .read_thread(StoreReadThreadParams {
+                                    thread_id,
+                                    include_archived: false,
+                                    include_history,
+                                })
+                                .await
+                        }
+                        Err(err) => Err(err),
+                    }
+                }
+                result => result,
+            }
         };
 
         result.map_err(thread_store_resume_read_error)
@@ -9287,13 +9350,17 @@ pub(crate) async fn read_summary_from_rollout(
         .unwrap_or_else(|| fallback_provider.to_string());
     let git_info = git.as_ref().map(map_git_info);
     let updated_at = updated_at.or_else(|| timestamp.clone());
+    let preview = read_rollout_items_from_rollout(path)
+        .await
+        .map(|items| preview_from_rollout_items(&items))
+        .unwrap_or_default();
 
     Ok(ConversationSummary {
         conversation_id: session_meta.id,
         timestamp,
         updated_at,
         path: path.to_path_buf(),
-        preview: String::new(),
+        preview,
         model_provider,
         cwd: session_meta.cwd,
         cli_version: session_meta.cli_version,
@@ -9310,6 +9377,10 @@ pub(crate) async fn read_rollout_items_from_rollout(
         InitialHistory::Forked(items) => items,
         InitialHistory::Resumed(resumed) => resumed.history,
     };
+
+    if let Some(codex_home) = codex_home_from_rollout_path(path) {
+        return Ok(materialize_rollout_items_for_replay(codex_home, &items).await);
+    }
 
     Ok(items)
 }
@@ -9393,6 +9464,17 @@ fn preview_from_rollout_items(items: &[RolloutItem]) -> String {
             None => preview,
         })
         .unwrap_or_default()
+}
+
+fn codex_home_from_rollout_path(path: &Path) -> Option<&Path> {
+    path.ancestors().find_map(|ancestor| {
+        let name = ancestor.file_name().and_then(OsStr::to_str)?;
+        if name == codex_core::SESSIONS_SUBDIR || name == codex_core::ARCHIVED_SESSIONS_SUBDIR {
+            ancestor.parent()
+        } else {
+            None
+        }
+    })
 }
 
 fn with_thread_spawn_agent_metadata(
@@ -10223,13 +10305,19 @@ mod tests {
             model: "gpt-5".to_string(),
             model_provider_id: "openai".to_string(),
             service_tier: Some(codex_protocol::config_types::ServiceTier::Flex),
+            plan_mode_reasoning_effort: None,
+            model_verbosity: None,
+            model_context_window: None,
+            model_auto_compact_token_limit: None,
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
             cwd,
             ephemeral: false,
+            agent_use_function_call_inbox: false,
             reasoning_effort: None,
             personality: None,
+            active_profile: None,
             session_source: SessionSource::Cli,
         };
 

@@ -165,6 +165,7 @@ pub use rollout::append_thread_name;
 pub use rollout::find_archived_thread_path_by_id_str;
 #[deprecated(note = "use find_thread_path_by_id_str")]
 pub use rollout::find_conversation_path_by_id_str;
+pub use rollout::find_or_unarchive_thread_path_by_id_str;
 pub use rollout::find_thread_meta_by_name_str;
 pub use rollout::find_thread_name_by_id;
 pub use rollout::find_thread_names_by_ids;
@@ -172,7 +173,9 @@ pub use rollout::find_thread_path_by_id_str;
 pub use rollout::parse_cursor;
 pub use rollout::read_head_for_summary;
 pub use rollout::read_session_meta_line;
+pub use rollout::resolve_fork_reference_rollout_path;
 pub use rollout::rollout_date_parts;
+pub use thread_rollout_truncation::materialize_rollout_items_for_replay;
 mod function_tool;
 mod state;
 mod tasks;

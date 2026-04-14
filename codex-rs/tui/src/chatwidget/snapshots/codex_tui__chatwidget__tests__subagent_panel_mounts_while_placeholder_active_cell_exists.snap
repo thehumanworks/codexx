@@ -1,0 +1,18 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+expression: contents
+---
+╭───────────────────────────────────────╮
+│ >_ OpenAI Codex (<GIT-SHA-12>)        │
+│                                       │
+│ model:     loading   /model to change │
+│ directory: /tmp/project               │
+╰───────────────────────────────────────╯
+
+• Subagents (no subagents running)
+• [#1] [watchdog] watchdog-agent idle (59s) — watchdog idle
+
+
+› show current subagent state
+
+  gpt-5.3-codex default · 100% left · /tmp/project

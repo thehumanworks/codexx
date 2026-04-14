@@ -544,6 +544,11 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadBackgroundTerminalsCleanResponse,
     },
+    ThreadInputActivity => "thread/inputActivity" {
+        params: v2::ThreadInputActivityParams,
+        serialization: thread_id(params.thread_id),
+        response: v2::ThreadInputActivityResponse,
+    },
     ThreadRollback => "thread/rollback" {
         params: v2::ThreadRollbackParams,
         serialization: thread_id(params.thread_id),

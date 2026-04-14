@@ -25,7 +25,6 @@ use codex_tools::build_tool_registry_plan;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
-
 pub(crate) fn tool_user_shell_type(user_shell: &Shell) -> ToolUserShellType {
     match user_shell.shell_type {
         ShellType::Zsh => ToolUserShellType::Zsh,
@@ -96,10 +95,13 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::UnifiedExecHandler;
     use crate::tools::handlers::ViewImageHandler;
     use crate::tools::handlers::multi_agents::CloseAgentHandler;
+    use crate::tools::handlers::multi_agents::CompactParentContextHandler;
+    use crate::tools::handlers::multi_agents::ListAgentsHandler;
     use crate::tools::handlers::multi_agents::ResumeAgentHandler;
     use crate::tools::handlers::multi_agents::SendInputHandler;
     use crate::tools::handlers::multi_agents::SpawnAgentHandler;
     use crate::tools::handlers::multi_agents::WaitAgentHandler;
+    use crate::tools::handlers::multi_agents::WatchdogSelfCloseHandler;
     use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
     use crate::tools::handlers::multi_agents_v2::FollowupTaskHandler as FollowupTaskHandlerV2;
     use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHandlerV2;
@@ -208,6 +210,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             ToolHandlerKind::CloseAgentV2 => {
                 builder.register_handler(handler.name, Arc::new(CloseAgentHandlerV2));
             }
+            ToolHandlerKind::CompactParentContext => {
+                builder.register_handler(handler.name, Arc::new(CompactParentContextHandler));
+            }
             ToolHandlerKind::CodeModeExecute => {
                 builder.register_handler(handler.name, code_mode_handler.clone());
             }
@@ -222,6 +227,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::Goal => {
                 builder.register_handler(handler.name, goal_handler.clone());
+            }
+            ToolHandlerKind::ListAgentsV1 => {
+                builder.register_handler(handler.name, Arc::new(ListAgentsHandler));
             }
             ToolHandlerKind::ListAgentsV2 => {
                 builder.register_handler(handler.name, Arc::new(ListAgentsHandlerV2));
@@ -295,6 +303,9 @@ pub(crate) fn build_specs_with_discoverable_tools(
             }
             ToolHandlerKind::WaitAgentV2 => {
                 builder.register_handler(handler.name, Arc::new(WaitAgentHandlerV2));
+            }
+            ToolHandlerKind::WatchdogSelfClose => {
+                builder.register_handler(handler.name, Arc::new(WatchdogSelfCloseHandler));
             }
         }
     }

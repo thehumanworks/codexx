@@ -10,6 +10,7 @@ use crate::JsonSchema;
 use crate::ResponsesApiNamespaceTool;
 use crate::ResponsesApiTool;
 use crate::create_tools_json_for_responses_api;
+use crate::create_watchdog_self_close_tool;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchFilters as ConfigWebSearchFilters;
 use codex_protocol::config_types::WebSearchUserLocation as ConfigWebSearchUserLocation;
@@ -57,6 +58,15 @@ fn tool_spec_name_covers_all_variants() {
         }
         .name(),
         "tool_search"
+    );
+    assert_eq!(
+        ToolSpec::Namespace(ResponsesApiNamespace {
+            name: "agents".to_string(),
+            description: "Agent tools".to_string(),
+            tools: Vec::new(),
+        })
+        .name(),
+        "agents"
     );
     assert_eq!(ToolSpec::LocalShell {}.name(), "local_shell");
     assert_eq!(
@@ -113,6 +123,32 @@ fn configured_tool_spec_name_delegates_to_tool_spec() {
         .name(),
         "lookup_order"
     );
+}
+
+#[test]
+fn watchdog_self_close_tool_spec_is_deferred_and_parameterless() {
+    let ToolSpec::Function(ResponsesApiTool {
+        name,
+        defer_loading,
+        parameters,
+        output_schema,
+        ..
+    }) = create_watchdog_self_close_tool()
+    else {
+        panic!("watchdog_self_close should be a function tool");
+    };
+
+    assert_eq!(name, "watchdog_self_close");
+    assert_eq!(defer_loading, Some(true));
+    assert_eq!(
+        parameters,
+        JsonSchema::object(
+            BTreeMap::new(),
+            /*required*/ None,
+            Some(AdditionalProperties::Boolean(false)),
+        )
+    );
+    assert!(output_schema.is_some());
 }
 
 #[test]

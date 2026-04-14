@@ -60,6 +60,7 @@ impl App {
         self.active_thread_id = Some(thread_id);
         self.active_thread_rx = receiver;
         self.refresh_pending_thread_approvals().await;
+        self.sync_subagent_panel_state();
     }
 
     pub(super) async fn store_active_thread_receiver(&mut self) {
@@ -96,6 +97,7 @@ impl App {
         }
         self.active_thread_rx = None;
         self.refresh_pending_thread_approvals().await;
+        self.sync_subagent_panel_state();
     }
 
     pub(super) async fn note_thread_outbound_op(&mut self, thread_id: ThreadId, op: &AppCommand) {
@@ -1472,6 +1474,9 @@ impl App {
         if let ThreadBufferedEvent::Notification(notification) = &event {
             self.hydrate_collab_agent_metadata_for_notification(app_server, notification)
                 .await;
+            if let Some(active_thread_id) = self.active_thread_id {
+                self.process_subagent_notification_side_effects(active_thread_id, notification);
+            }
         }
 
         self.handle_thread_event_now(event);

@@ -14,11 +14,13 @@ pub enum ToolHandlerKind {
     ApplyPatch,
     CloseAgentV1,
     CloseAgentV2,
+    CompactParentContext,
     CodeModeExecute,
     CodeModeWait,
     DynamicTool,
     FollowupTaskV2,
     Goal,
+    ListAgentsV1,
     ListAgentsV2,
     ListDir,
     Mcp,
@@ -40,6 +42,7 @@ pub enum ToolHandlerKind {
     ViewImage,
     WaitAgentV1,
     WaitAgentV2,
+    WatchdogSelfClose,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

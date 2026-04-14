@@ -480,6 +480,30 @@
             },
             "method": {
               "enum": [
+                "thread/inputActivity"
+              ],
+              "title": "Thread/inputActivityRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/ThreadInputActivityParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/inputActivityRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
                 "thread/rollback"
               ],
               "title": "Thread/rollbackRequestMethod",
@@ -14927,6 +14951,24 @@
       "ThreadInjectItemsResponse": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "title": "ThreadInjectItemsResponse",
+        "type": "object"
+      },
+      "ThreadInputActivityParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "properties": {
+          "threadId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "threadId"
+        ],
+        "title": "ThreadInputActivityParams",
+        "type": "object"
+      },
+      "ThreadInputActivityResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "title": "ThreadInputActivityResponse",
         "type": "object"
       },
       "ThreadItem": {

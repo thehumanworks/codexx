@@ -73,8 +73,9 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("fork_turns"));
+    assert!(properties.contains_key("fork_context"));
+    assert!(properties.contains_key("model_fallback_list"));
     assert!(!properties.contains_key("items"));
-    assert!(!properties.contains_key("fork_context"));
     assert_eq!(
         properties.get("agent_type"),
         Some(&JsonSchema::string(Some("role help".to_string())))
@@ -83,12 +84,46 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
         properties
             .get("model")
             .and_then(|schema| schema.description.as_deref()),
-        Some(SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION)
+        Some(spawn_agent_model_override_description_v2().as_str())
     );
     assert_eq!(
         parameters.required.as_ref(),
         Some(&vec!["task_name".to_string(), "message".to_string()])
     );
+    let Some(model_fallback_list) = properties.get("model_fallback_list") else {
+        panic!("spawn_agent v2 should define model_fallback_list as an array");
+    };
+    assert_eq!(
+        model_fallback_list.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Array))
+    );
+    let model_fallback_items = model_fallback_list
+        .items
+        .as_ref()
+        .expect("model_fallback_list should define item schema");
+    assert_eq!(
+        model_fallback_items.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Object))
+    );
+    let model_fallback_item_properties = model_fallback_items
+        .properties
+        .as_ref()
+        .expect("spawn_agent v2 model_fallback_list items should be objects");
+    let model_fallback_item_required = model_fallback_items
+        .required
+        .as_ref()
+        .expect("model_fallback_list items should require model");
+    if model_fallback_items.additional_properties != Some(false.into()) {
+        panic!("spawn_agent v2 model_fallback_list items should be objects");
+    }
+    assert_eq!(
+        model_fallback_item_properties.get("model"),
+        Some(&JsonSchema::string(Some(
+            "Model to try. Must be a model slug from the current model picker list.".to_string(),
+        )))
+    );
+    assert!(model_fallback_item_properties.contains_key("reasoning_effort"));
+    assert_eq!(model_fallback_item_required, &vec!["model".to_string()]);
     assert_eq!(
         output_schema.expect("spawn_agent output schema")["required"],
         json!(["task_name", "nickname"])
@@ -96,7 +131,7 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
 }
 
 #[test]
-fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
+fn spawn_agent_tool_v1_includes_model_fallback_list() {
     let tool = create_spawn_agent_tool_v1(SpawnAgentToolOptions {
         available_models: &[],
         agent_type_description: "role help".to_string(),
@@ -117,14 +152,62 @@ fn spawn_agent_tool_v1_keeps_legacy_fork_context_field() {
         .properties
         .as_ref()
         .expect("spawn_agent should use object params");
-
+    let Some(model_fallback_list) = properties.get("model_fallback_list") else {
+        panic!("spawn_agent v1 should define model_fallback_list as an array");
+    };
+    assert_eq!(
+        model_fallback_list.schema_type,
+        Some(JsonSchemaType::Single(JsonSchemaPrimitiveType::Array))
+    );
+    assert!(properties.contains_key("model_fallback_list"));
     assert!(properties.contains_key("fork_context"));
     assert!(!properties.contains_key("fork_turns"));
     assert_eq!(
         properties
             .get("model")
             .and_then(|schema| schema.description.as_deref()),
-        Some(SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION)
+        Some(spawn_agent_model_override_description_v1().as_str())
+    );
+    assert_eq!(
+        properties.get("reasoning_effort"),
+        Some(&JsonSchema::string(Some(
+            "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort only when fork_context is false; forked children always inherit the parent reasoning effort."
+                .to_string(),
+        )))
+    );
+}
+
+#[test]
+fn spawn_agent_tool_v2_documents_that_forked_children_ignore_model_overrides() {
+    let tool = create_spawn_agent_tool_v2(SpawnAgentToolOptions {
+        available_models: &[],
+        agent_type_description: "role help".to_string(),
+        hide_agent_type_model_reasoning: false,
+        include_usage_hint: true,
+        usage_hint_text: None,
+        max_concurrent_threads_per_session: None,
+    });
+
+    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = tool else {
+        panic!("spawn_agent should be a function tool");
+    };
+    let properties = parameters
+        .properties
+        .as_ref()
+        .expect("spawn_agent should use object params");
+
+    assert_eq!(
+        properties.get("model"),
+        Some(&JsonSchema::string(Some(
+            spawn_agent_model_override_description_v2(),
+        )))
+    );
+    assert_eq!(
+        properties.get("reasoning_effort"),
+        Some(&JsonSchema::string(Some(
+            "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort only when fork_turns is `none`; forked children always inherit the parent reasoning effort."
+                .to_string(),
+        )))
     );
 }
 

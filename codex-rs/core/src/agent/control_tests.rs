@@ -15,9 +15,13 @@ use codex_protocol::AgentPath;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::MessagePhase;
+use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::AGENT_INBOX_KIND;
+use codex_protocol::protocol::AgentInboxPayload;
 use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ForkReferenceItem;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
@@ -444,6 +448,390 @@ async fn send_input_submits_user_message() {
         .into_iter()
         .find(|entry| *entry == expected);
     assert_eq!(captured, Some(expected));
+}
+
+#[tokio::test]
+async fn send_input_resets_watchdog_owner_idle_state() {
+    let harness = AgentControlHarness::new().await;
+    let (owner_thread_id, _thread) = harness.start_thread().await;
+    let target_thread_id = ThreadId::new();
+
+    harness
+        .control
+        .register_watchdog(WatchdogRegistration {
+            owner_thread_id,
+            target_thread_id,
+            child_depth: 0,
+            interval_s: 30,
+            prompt: String::new(),
+            config: harness.config.clone(),
+        })
+        .await
+        .expect("watchdog registration should succeed");
+
+    assert_eq!(
+        harness
+            .control
+            .watchdog_owner_idle_since_is_none_for_tests(target_thread_id)
+            .await,
+        Some(false)
+    );
+
+    harness
+        .control
+        .send_input(owner_thread_id, text_input("ping"))
+        .await
+        .expect("send_input should succeed");
+
+    assert_eq!(
+        harness
+            .control
+            .watchdog_owner_idle_since_is_none_for_tests(target_thread_id)
+            .await,
+        Some(true)
+    );
+}
+
+#[tokio::test]
+async fn note_owner_input_resets_watchdog_owner_idle_state() {
+    let harness = AgentControlHarness::new().await;
+    let (owner_thread_id, _thread) = harness.start_thread().await;
+    let target_thread_id = ThreadId::new();
+
+    harness
+        .control
+        .register_watchdog(WatchdogRegistration {
+            owner_thread_id,
+            target_thread_id,
+            child_depth: 0,
+            interval_s: 30,
+            prompt: String::new(),
+            config: harness.config.clone(),
+        })
+        .await
+        .expect("watchdog registration should succeed");
+
+    assert_eq!(
+        harness
+            .control
+            .watchdog_owner_idle_since_is_none_for_tests(target_thread_id)
+            .await,
+        Some(false)
+    );
+
+    harness.control.note_owner_input(owner_thread_id).await;
+
+    assert_eq!(
+        harness
+            .control
+            .watchdog_owner_idle_since_is_none_for_tests(target_thread_id)
+            .await,
+        Some(true)
+    );
+}
+
+#[test]
+fn build_agent_inbox_items_emits_function_call_and_output() {
+    let sender_thread_id = ThreadId::new();
+    let items = build_agent_inbox_items(
+        sender_thread_id,
+        "watchdog update".to_string(),
+        /*prepend_turn_start_user_message*/ false,
+    )
+    .expect("tool role should build inbox items");
+
+    assert_eq!(items.len(), 2);
+
+    let call_id = match &items[0] {
+        ResponseInputItem::FunctionCall {
+            name,
+            arguments,
+            call_id,
+        } => {
+            assert_eq!(name, AGENT_INBOX_KIND);
+            assert_eq!(arguments, "{}");
+            call_id.clone()
+        }
+        other => panic!("expected function call item, got {other:?}"),
+    };
+
+    match &items[1] {
+        ResponseInputItem::FunctionCallOutput {
+            call_id: output_call_id,
+            output,
+        } => {
+            assert_eq!(output_call_id, &call_id);
+            let output_text = output
+                .body
+                .to_text()
+                .expect("payload should convert to text");
+            let payload: AgentInboxPayload =
+                serde_json::from_str(&output_text).expect("payload should be valid json");
+            assert!(payload.injected);
+            assert_eq!(payload.kind, AGENT_INBOX_KIND);
+            assert_eq!(payload.sender_thread_id, sender_thread_id);
+            assert_eq!(payload.message, "watchdog update");
+        }
+        other => panic!("expected function call output item, got {other:?}"),
+    }
+}
+
+#[test]
+fn build_agent_inbox_items_prepends_empty_user_message_when_requested() {
+    let sender_thread_id = ThreadId::new();
+    let items = build_agent_inbox_items(
+        sender_thread_id,
+        "watchdog update".to_string(),
+        /*prepend_turn_start_user_message*/ true,
+    )
+    .expect("tool role should build inbox items");
+
+    assert_eq!(items.len(), 3);
+    assert_eq!(
+        items[0],
+        ResponseInputItem::Message {
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: String::new(),
+            }],
+            phase: None,
+        }
+    );
+    assert_matches!(&items[1], ResponseInputItem::FunctionCall { .. });
+    assert_matches!(&items[2], ResponseInputItem::FunctionCallOutput { .. });
+}
+
+#[tokio::test]
+async fn send_agent_message_to_root_thread_defaults_to_user_input() {
+    let harness = AgentControlHarness::new().await;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+
+    let submission_id = harness
+        .control
+        .send_agent_message(
+            receiver_thread_id,
+            sender_thread_id,
+            "watchdog update".to_string(),
+        )
+        .await
+        .expect("send_agent_message should succeed");
+    assert!(!submission_id.is_empty());
+
+    let expected = (
+        receiver_thread_id,
+        Op::UserInput {
+            items: vec![UserInput::Text {
+                text: "watchdog update".to_string(),
+                text_elements: Vec::new(),
+            }],
+            environments: None,
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        },
+    );
+    let captured = harness
+        .manager
+        .captured_ops()
+        .into_iter()
+        .find(|entry| *entry == expected);
+
+    assert_eq!(captured, Some(expected));
+}
+
+#[tokio::test]
+async fn send_agent_message_to_root_thread_injects_response_items_when_enabled() {
+    let mut harness = AgentControlHarness::new().await;
+    harness.config.agent_use_function_call_inbox = true;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+
+    let submission_id = harness
+        .control
+        .send_agent_message(
+            receiver_thread_id,
+            sender_thread_id,
+            "watchdog update".to_string(),
+        )
+        .await
+        .expect("send_agent_message should succeed");
+    assert!(!submission_id.is_empty());
+
+    let captured = harness
+        .manager
+        .captured_ops()
+        .into_iter()
+        .find(|(thread_id, op)| {
+            *thread_id == receiver_thread_id && matches!(op, Op::InjectResponseItems { .. })
+        })
+        .expect("expected injected agent inbox op");
+
+    let Op::InjectResponseItems { items } = captured.1 else {
+        unreachable!("matched above");
+    };
+    assert_eq!(items.len(), 3);
+    match &items[0] {
+        ResponseInputItem::Message { role, content, .. } => {
+            assert_eq!(role, "user");
+            assert_eq!(
+                content,
+                &vec![ContentItem::InputText {
+                    text: String::new(),
+                }]
+            );
+        }
+        other => panic!("expected prepended user message, got {other:?}"),
+    }
+    match &items[1] {
+        ResponseInputItem::FunctionCall {
+            name, arguments, ..
+        } => {
+            assert_eq!(name, AGENT_INBOX_KIND);
+            assert_eq!(arguments, "{}");
+        }
+        other => panic!("expected function call item, got {other:?}"),
+    }
+    match &items[2] {
+        ResponseInputItem::FunctionCallOutput { output, .. } => {
+            let output_text = output
+                .body
+                .to_text()
+                .expect("payload should convert to text");
+            let payload: AgentInboxPayload =
+                serde_json::from_str(&output_text).expect("payload should be valid json");
+            assert_eq!(payload.sender_thread_id, sender_thread_id);
+            assert_eq!(payload.message, "watchdog update");
+        }
+        other => panic!("expected function call output item, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn send_watchdog_wakeup_strips_helper_prompt_scaffold_from_fallback_message() {
+    let harness = AgentControlHarness::new().await;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+    let leaked_prompt = "# You are a Subagent\n\n\
+        Read AGENTS.watchdog.md before responding.\n\n\
+        Target agent id: 019cc0e8-38b6-7493-8e31-73a64c5843b6\n\n\
+        watchdog charter: keep the root AutoPlan aligned";
+
+    let submission_id = harness
+        .control
+        .send_watchdog_wakeup(
+            receiver_thread_id,
+            sender_thread_id,
+            leaked_prompt.to_string(),
+        )
+        .await
+        .expect("send_watchdog_wakeup should succeed");
+    assert!(submission_id.is_empty());
+    assert_no_injected_agent_inbox_payload(&harness, receiver_thread_id);
+}
+
+#[tokio::test]
+async fn send_watchdog_wakeup_preserves_benign_marker_mentions_in_regular_fallback_reports() {
+    let harness = AgentControlHarness::new().await;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+    let message = "Watchdog report: the watchdog charter was refreshed and no action is needed.";
+
+    let submission_id = harness
+        .control
+        .send_watchdog_wakeup(receiver_thread_id, sender_thread_id, message.to_string())
+        .await
+        .expect("send_watchdog_wakeup should succeed");
+    assert!(!submission_id.is_empty());
+
+    let payload = injected_agent_inbox_payload(&harness, receiver_thread_id);
+    assert_eq!(
+        payload,
+        AgentInboxPayload::new(sender_thread_id, message.to_string())
+    );
+}
+
+#[tokio::test]
+async fn send_watchdog_wakeup_preserves_report_body_after_stripping_helper_scaffold() {
+    let harness = AgentControlHarness::new().await;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+    let message = "# You are a Subagent\n\n\
+        Read AGENTS.watchdog.md before responding.\n\n\
+        Target agent id: 019cc0e8-38b6-7493-8e31-73a64c5843b6\n\n\
+        watchdog charter: keep the root AutoPlan aligned\n\n\
+        Watchdog report: branch checks are green.";
+
+    let submission_id = harness
+        .control
+        .send_watchdog_wakeup(receiver_thread_id, sender_thread_id, message.to_string())
+        .await
+        .expect("send_watchdog_wakeup should succeed");
+    assert!(!submission_id.is_empty());
+
+    let payload = injected_agent_inbox_payload(&harness, receiver_thread_id);
+    assert_eq!(
+        payload,
+        AgentInboxPayload::new(
+            sender_thread_id,
+            "Watchdog report: branch checks are green.".to_string()
+        )
+    );
+}
+
+#[tokio::test]
+async fn send_watchdog_wakeup_strips_ordinary_prompt_instructions_before_report_marker() {
+    let harness = AgentControlHarness::new().await;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+    let message = "# You are a Subagent\n\n\
+        More importantly, you are a **watchdog check-in agent**.\n\
+        Keep the root agent unblocked, on-task, and executing real work.\n\n\
+        Target agent id: 019cc0e8-38b6-7493-8e31-73a64c5843b6\n\n\
+        AUTOPLAN_WATCHDOG_REPORT\n\
+        required_action: rerun CI\n\
+        reason: current checks are stale";
+
+    let submission_id = harness
+        .control
+        .send_watchdog_wakeup(receiver_thread_id, sender_thread_id, message.to_string())
+        .await
+        .expect("send_watchdog_wakeup should succeed");
+    assert!(!submission_id.is_empty());
+
+    let payload = injected_agent_inbox_payload(&harness, receiver_thread_id);
+    assert_eq!(payload.sender_thread_id, sender_thread_id);
+    assert_eq!(
+        payload.message,
+        "AUTOPLAN_WATCHDOG_REPORT\n\
+        required_action: rerun CI\n\
+        reason: current checks are stale"
+    );
+    assert!(!payload.message.contains("# You are a Subagent"));
+    assert!(
+        !payload
+            .message
+            .contains("More importantly, you are a **watchdog check-in agent**.")
+    );
+    assert!(!payload.message.contains("Target agent id:"));
+}
+
+#[tokio::test]
+async fn send_watchdog_wakeup_emits_nothing_when_scaffold_has_no_report_marker() {
+    let harness = AgentControlHarness::new().await;
+    let (receiver_thread_id, _thread) = harness.start_thread().await;
+    let sender_thread_id = ThreadId::new();
+    let message = "# You are a Subagent\n\n\
+        More importantly, you are a **watchdog check-in agent**.\n\
+        Keep the root agent unblocked, on-task, and executing real work.\n\n\
+        Target agent id: 019cc0e8-38b6-7493-8e31-73a64c5843b6";
+
+    let submission_id = harness
+        .control
+        .send_watchdog_wakeup(receiver_thread_id, sender_thread_id, message.to_string())
+        .await
+        .expect("send_watchdog_wakeup should succeed");
+    assert!(submission_id.is_empty());
+    assert_no_injected_agent_inbox_payload(&harness, receiver_thread_id);
 }
 
 #[tokio::test]
@@ -927,6 +1315,127 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
         history_contains_text(history.raw_items(), "current parent task"),
         "forked child history should keep the parent user message from the requested last-N turn window"
     );
+
+    let _ = harness
+        .control
+        .shutdown_live_agent(child_thread_id)
+        .await
+        .expect("child shutdown should submit");
+    let _ = parent_thread
+        .submit(Op::Shutdown {})
+        .await
+        .expect("parent shutdown should submit");
+}
+
+#[tokio::test]
+async fn spawn_agent_fork_snapshots_parent_boundary_for_persisted_fork_reference() {
+    let harness = AgentControlHarness::new().await;
+    let (parent_thread_id, parent_thread) = harness.start_thread().await;
+    parent_thread
+        .inject_user_message_without_turn("parent seed context".to_string())
+        .await;
+    let turn_context = parent_thread.codex.session.new_default_turn().await;
+    let parent_spawn_call_id = "spawn-call-dedup".to_string();
+    let parent_spawn_call = ResponseItem::FunctionCall {
+        id: None,
+        name: "spawn_agent".to_string(),
+        namespace: None,
+        arguments: "{}".to_string(),
+        call_id: parent_spawn_call_id.clone(),
+    };
+    parent_thread
+        .codex
+        .session
+        .record_conversation_items(turn_context.as_ref(), &[parent_spawn_call])
+        .await;
+    parent_thread
+        .codex
+        .session
+        .ensure_rollout_materialized()
+        .await;
+    parent_thread.codex.session.flush_rollout().await;
+    let parent_rollout_path = parent_thread
+        .rollout_path()
+        .expect("parent rollout path should be available");
+
+    let child_thread_id = harness
+        .control
+        .spawn_agent_with_metadata(
+            harness.config.clone(),
+            text_input("child task"),
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_path: None,
+                agent_nickname: None,
+                agent_role: None,
+            })),
+            SpawnAgentOptions {
+                fork_parent_spawn_call_id: Some(parent_spawn_call_id),
+                fork_mode: Some(SpawnAgentForkMode::FullHistory),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("forked spawn should succeed")
+        .thread_id;
+
+    parent_thread
+        .inject_user_message_without_turn("parent late turn".to_string())
+        .await;
+    parent_thread
+        .codex
+        .session
+        .ensure_rollout_materialized()
+        .await;
+    parent_thread.codex.session.flush_rollout().await;
+
+    let child_thread = harness
+        .manager
+        .get_thread(child_thread_id)
+        .await
+        .expect("child thread should be registered");
+    let child_rollout_path = child_thread
+        .rollout_path()
+        .expect("child rollout path should be available");
+    let InitialHistory::Resumed(resumed) =
+        RolloutRecorder::get_rollout_history(child_rollout_path.as_path())
+            .await
+            .expect("child rollout should load")
+    else {
+        panic!("child rollout should include session metadata");
+    };
+
+    assert!(resumed.history.iter().any(|item| {
+        matches!(
+            item,
+            RolloutItem::ForkReference(ForkReferenceItem {
+                rollout_path,
+                nth_user_message: 1,
+            }) if rollout_path == &parent_rollout_path
+        )
+    }));
+    let materialized_child_rollout =
+        crate::rollout::truncation::materialize_rollout_items_for_replay(
+            harness.config.codex_home.as_path(),
+            &resumed.history,
+        )
+        .await;
+    let materialized_child_response_items: Vec<ResponseItem> = materialized_child_rollout
+        .iter()
+        .filter_map(|item| match item {
+            RolloutItem::ResponseItem(response_item) => Some(response_item.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(history_contains_text(
+        &materialized_child_response_items,
+        "parent seed context",
+    ));
+    assert!(!history_contains_text(
+        &materialized_child_response_items,
+        "parent late turn",
+    ));
 
     let _ = harness
         .control
@@ -1499,8 +2008,11 @@ async fn spawn_thread_subagent_uses_role_specific_nickname_candidates() {
         "researcher".to_string(),
         AgentRoleConfig {
             description: Some("Research role".to_string()),
+            model: None,
             config_file: None,
+            watchdog_interval_s: None,
             nickname_candidates: Some(vec!["Atlas".to_string()]),
+            fork_context: None,
         },
     );
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
@@ -2534,4 +3046,51 @@ async fn resume_agent_from_rollout_skips_descendants_when_parent_resume_fails() 
         .shutdown_agent_tree(parent_thread_id)
         .await
         .expect("tree shutdown after partial subtree resume should succeed");
+}
+
+fn injected_agent_inbox_payload(
+    harness: &AgentControlHarness,
+    receiver_thread_id: ThreadId,
+) -> AgentInboxPayload {
+    let captured = harness
+        .manager
+        .captured_ops()
+        .into_iter()
+        .find(|(thread_id, op)| {
+            *thread_id == receiver_thread_id && matches!(op, Op::InjectResponseItems { .. })
+        })
+        .expect("expected injected agent inbox op");
+
+    let Op::InjectResponseItems { items } = captured.1 else {
+        unreachable!("matched above");
+    };
+
+    let output = items
+        .iter()
+        .find_map(|item| match item {
+            ResponseInputItem::FunctionCallOutput { output, .. } => Some(output),
+            _ => None,
+        })
+        .expect("expected function call output item");
+    let output_text = output
+        .body
+        .to_text()
+        .expect("payload should convert to text");
+
+    serde_json::from_str(&output_text).expect("payload should be valid json")
+}
+fn assert_no_injected_agent_inbox_payload(
+    harness: &AgentControlHarness,
+    receiver_thread_id: ThreadId,
+) {
+    assert!(
+        harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .all(|(thread_id, op)| {
+                thread_id != receiver_thread_id || !matches!(op, Op::InjectResponseItems { .. })
+            }),
+        "expected no injected watchdog inbox op"
+    );
 }

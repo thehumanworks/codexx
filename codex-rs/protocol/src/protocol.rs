@@ -103,6 +103,27 @@ pub const COLLABORATION_MODE_CLOSE_TAG: &str = "</collaboration_mode>";
 pub const REALTIME_CONVERSATION_OPEN_TAG: &str = "<realtime_conversation>";
 pub const REALTIME_CONVERSATION_CLOSE_TAG: &str = "</realtime_conversation>";
 pub const USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
+pub const AGENT_INBOX_KIND: &str = "agent_inbox";
+pub const AGENT_INBOX_MESSAGE_PREFIX: &str = "[agent_inbox:";
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, JsonSchema)]
+pub struct AgentInboxPayload {
+    pub injected: bool,
+    pub kind: String,
+    pub sender_thread_id: ThreadId,
+    pub message: String,
+}
+
+impl AgentInboxPayload {
+    pub fn new(sender_thread_id: ThreadId, message: String) -> Self {
+        Self {
+            injected: true,
+            kind: AGENT_INBOX_KIND.to_string(),
+            sender_thread_id,
+            message,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema)]
 pub struct TurnEnvironmentSelection {
@@ -406,6 +427,9 @@ pub enum Op {
     /// This server sends [`EventMsg::TurnAborted`] in response.
     Interrupt,
 
+    /// Mark owner-side input activity without starting or steering a turn.
+    NoteOwnerActivity,
+
     /// Terminate all running background terminal processes for this thread.
     /// Use this when callers intentionally want to stop long-lived background shells.
     CleanBackgroundTerminals,
@@ -515,6 +539,9 @@ pub enum Op {
         #[serde(skip_serializing_if = "Option::is_none")]
         personality: Option<Personality>,
     },
+
+    /// Inject non-user response items into an existing turn, or start a turn if needed.
+    InjectResponseItems { items: Vec<ResponseInputItem> },
 
     /// Similar to [`Op::UserInput`], but contains additional context required
     /// for a turn of a [`crate::codex_thread::CodexThread`].
@@ -876,6 +903,7 @@ impl Op {
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Interrupt => "interrupt",
+            Self::NoteOwnerActivity => "note_owner_activity",
             Self::CleanBackgroundTerminals => "clean_background_terminals",
             Self::RealtimeConversationStart(_) => "realtime_conversation_start",
             Self::RealtimeConversationAudio(_) => "realtime_conversation_audio",
@@ -893,6 +921,7 @@ impl Op {
             Self::UserInputAnswer { .. } => "user_input_answer",
             Self::RequestPermissionsResponse { .. } => "request_permissions_response",
             Self::DynamicToolResponse { .. } => "dynamic_tool_response",
+            Self::InjectResponseItems { .. } => "inject_response_items",
             Self::AddToHistory { .. } => "add_to_history",
             Self::GetHistoryEntryRequest { .. } => "get_history_entry_request",
             Self::ListMcpTools => "list_mcp_tools",
@@ -2454,12 +2483,20 @@ impl InitialHistory {
             InitialHistory::Resumed(resumed) => {
                 resumed.history.iter().find_map(|item| match item {
                     RolloutItem::SessionMeta(meta_line) => meta_line.meta.forked_from_id,
-                    _ => None,
+                    RolloutItem::ForkReference(_)
+                    | RolloutItem::ResponseItem(_)
+                    | RolloutItem::Compacted(_)
+                    | RolloutItem::TurnContext(_)
+                    | RolloutItem::EventMsg(_) => None,
                 })
             }
             InitialHistory::Forked(items) => items.iter().find_map(|item| match item {
                 RolloutItem::SessionMeta(meta_line) => Some(meta_line.meta.id),
-                _ => None,
+                RolloutItem::ForkReference(_)
+                | RolloutItem::ResponseItem(_)
+                | RolloutItem::Compacted(_)
+                | RolloutItem::TurnContext(_)
+                | RolloutItem::EventMsg(_) => None,
             }),
         }
     }
@@ -2489,7 +2526,11 @@ impl InitialHistory {
                     .iter()
                     .filter_map(|ri| match ri {
                         RolloutItem::EventMsg(ev) => Some(ev.clone()),
-                        _ => None,
+                        RolloutItem::SessionMeta(_)
+                        | RolloutItem::ForkReference(_)
+                        | RolloutItem::ResponseItem(_)
+                        | RolloutItem::Compacted(_)
+                        | RolloutItem::TurnContext(_) => None,
                     })
                     .collect(),
             ),
@@ -2498,7 +2539,11 @@ impl InitialHistory {
                     .iter()
                     .filter_map(|ri| match ri {
                         RolloutItem::EventMsg(ev) => Some(ev.clone()),
-                        _ => None,
+                        RolloutItem::SessionMeta(_)
+                        | RolloutItem::ForkReference(_)
+                        | RolloutItem::ResponseItem(_)
+                        | RolloutItem::Compacted(_)
+                        | RolloutItem::TurnContext(_) => None,
                     })
                     .collect(),
             ),
@@ -2512,12 +2557,20 @@ impl InitialHistory {
             InitialHistory::Resumed(resumed) => {
                 resumed.history.iter().find_map(|item| match item {
                     RolloutItem::SessionMeta(meta_line) => meta_line.meta.base_instructions.clone(),
-                    _ => None,
+                    RolloutItem::ForkReference(_)
+                    | RolloutItem::ResponseItem(_)
+                    | RolloutItem::Compacted(_)
+                    | RolloutItem::TurnContext(_)
+                    | RolloutItem::EventMsg(_) => None,
                 })
             }
             InitialHistory::Forked(items) => items.iter().find_map(|item| match item {
                 RolloutItem::SessionMeta(meta_line) => meta_line.meta.base_instructions.clone(),
-                _ => None,
+                RolloutItem::ForkReference(_)
+                | RolloutItem::ResponseItem(_)
+                | RolloutItem::Compacted(_)
+                | RolloutItem::TurnContext(_)
+                | RolloutItem::EventMsg(_) => None,
             }),
         }
     }
@@ -2528,12 +2581,20 @@ impl InitialHistory {
             InitialHistory::Resumed(resumed) => {
                 resumed.history.iter().find_map(|item| match item {
                     RolloutItem::SessionMeta(meta_line) => meta_line.meta.dynamic_tools.clone(),
-                    _ => None,
+                    RolloutItem::ForkReference(_)
+                    | RolloutItem::ResponseItem(_)
+                    | RolloutItem::Compacted(_)
+                    | RolloutItem::TurnContext(_)
+                    | RolloutItem::EventMsg(_) => None,
                 })
             }
             InitialHistory::Forked(items) => items.iter().find_map(|item| match item {
                 RolloutItem::SessionMeta(meta_line) => meta_line.meta.dynamic_tools.clone(),
-                _ => None,
+                RolloutItem::ForkReference(_)
+                | RolloutItem::ResponseItem(_)
+                | RolloutItem::Compacted(_)
+                | RolloutItem::TurnContext(_)
+                | RolloutItem::EventMsg(_) => None,
             }),
         }
     }
@@ -2542,7 +2603,11 @@ impl InitialHistory {
 fn session_cwd_from_items(items: &[RolloutItem]) -> Option<PathBuf> {
     items.iter().find_map(|item| match item {
         RolloutItem::SessionMeta(meta_line) => Some(meta_line.meta.cwd.clone()),
-        _ => None,
+        RolloutItem::ForkReference(_)
+        | RolloutItem::ResponseItem(_)
+        | RolloutItem::Compacted(_)
+        | RolloutItem::TurnContext(_)
+        | RolloutItem::EventMsg(_) => None,
     })
 }
 
@@ -2781,10 +2846,45 @@ pub struct SessionMetaLine {
     pub git: Option<GitInfo>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+pub struct ForkReferenceItem {
+    pub rollout_path: PathBuf,
+    #[serde(
+        deserialize_with = "deserialize_fork_reference_nth_user_message",
+        default
+    )]
+    pub nth_user_message: i64,
+}
+
+fn deserialize_fork_reference_nth_user_message<'de, D>(deserializer: D) -> Result<i64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    let Value::Number(number) = value else {
+        return Err(serde::de::Error::custom(
+            "expected integer fork reference boundary",
+        ));
+    };
+
+    if let Some(nth_user_message) = number.as_i64() {
+        return Ok(nth_user_message);
+    }
+
+    if number.as_u64().is_some() {
+        return Ok(i64::MAX);
+    }
+
+    Err(serde::de::Error::custom(
+        "expected integer fork reference boundary",
+    ))
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, JsonSchema, TS)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
 pub enum RolloutItem {
     SessionMeta(SessionMetaLine),
+    ForkReference(ForkReferenceItem),
     ResponseItem(ResponseItem),
     Compacted(CompactedItem),
     TurnContext(TurnContextItem),
@@ -4096,6 +4196,23 @@ mod tests {
         assert_eq!(
             SessionSource::Unknown.restriction_product(),
             Some(Product::Codex)
+        );
+    }
+
+    #[test]
+    fn fork_reference_item_deserializes_legacy_usize_max_boundary() {
+        let item: ForkReferenceItem = serde_json::from_value(json!({
+            "rollout_path": "/tmp/rollout.jsonl",
+            "nth_user_message": u64::MAX,
+        }))
+        .expect("legacy fork reference item should deserialize");
+
+        assert_eq!(
+            item,
+            ForkReferenceItem {
+                rollout_path: PathBuf::from("/tmp/rollout.jsonl"),
+                nth_user_message: i64::MAX,
+            }
         );
     }
 

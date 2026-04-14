@@ -8,6 +8,7 @@ use crate::app_backtrack::BacktrackState;
 use crate::app_backtrack::user_count;
 use crate::app_command::AppCommand;
 
+use super::subagents::SubagentInfo;
 use crate::chatwidget::ChatWidgetInit;
 use crate::chatwidget::create_initial_user_message;
 use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
@@ -29,6 +30,9 @@ use codex_app_server_protocol::AdditionalFileSystemPermissions;
 use codex_app_server_protocol::AdditionalNetworkPermissions;
 use codex_app_server_protocol::AdditionalPermissionProfile;
 use codex_app_server_protocol::AgentMessageDeltaNotification;
+use codex_app_server_protocol::CollabAgentState;
+use codex_app_server_protocol::CollabAgentStatus;
+use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CommandExecutionRequestApprovalParams;
 use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::FileChangeRequestApprovalParams;
@@ -1222,6 +1226,159 @@ async fn token_usage_update_refreshes_status_line_with_runtime_context_window() 
     assert_eq!(
         app.chat_widget.status_line_text(),
         Some("950K window".into())
+    );
+}
+
+#[tokio::test]
+async fn queued_subagent_panel_update_mounts_on_fresh_chat_widget_after_thread_switch() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let root_thread_id = ThreadId::new();
+    let subagent_thread_id = ThreadId::new();
+
+    app.primary_thread_id = Some(root_thread_id);
+    app.active_thread_id = Some(root_thread_id);
+    app.subagents.set_root_thread(root_thread_id);
+
+    let mut info = SubagentInfo::new(
+        /*ordinal*/ 1,
+        "watchdog-agent".to_string(),
+        "watchdog idle".to_string(),
+        /*is_watchdog*/ true,
+    );
+    info.status = codex_protocol::protocol::AgentStatus::PendingInit;
+    info.latest_preview = "watchdog idle".to_string();
+    info.latest_update_at = Instant::now();
+    app.subagents.order.push(subagent_thread_id);
+    app.subagents.agents.insert(subagent_thread_id, info);
+
+    app.sync_subagent_panel_state();
+
+    let queued_panel = match app_event_rx.try_recv() {
+        Ok(AppEvent::UpdateSubagentPanel(panel)) => panel,
+        other => panic!("expected queued subagent panel update, got {other:?}"),
+    };
+
+    let (fresh_chat_widget, _fresh_app_event_tx, _fresh_rx, _fresh_op_rx) =
+        make_chatwidget_manual_with_sender().await;
+    app.chat_widget = fresh_chat_widget;
+    app.chat_widget.set_composer_text(
+        "back on the root thread".to_string(),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    app.chat_widget.on_subagent_panel_updated(queued_panel);
+
+    let width = 80;
+    let height = app.chat_widget.desired_height(width);
+    let mut terminal =
+        ratatui::Terminal::new(crate::test_backend::VT100Backend::new(width, height))
+            .expect("create terminal");
+    terminal.set_viewport_area(ratatui::prelude::Rect::new(0, 0, width, height));
+    terminal
+        .draw(|f| app.chat_widget.render(f.area(), f.buffer_mut()))
+        .expect("render fresh widget with queued subagent panel");
+    let screen = terminal.backend().vt100().screen().contents();
+
+    assert!(
+        screen.contains("Subagents"),
+        "queued subagent panel update should mount on the fresh widget"
+    );
+    assert!(screen.contains("watchdog-agent"));
+}
+
+#[tokio::test]
+async fn wait_completion_clears_subagent_status_panel() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let root_thread_id = ThreadId::new();
+    let subagent_thread_id = ThreadId::new();
+
+    app.primary_thread_id = Some(root_thread_id);
+    app.active_thread_id = Some(root_thread_id);
+
+    while app_event_rx.try_recv().is_ok() {}
+
+    app.process_subagent_notification_side_effects(
+        root_thread_id,
+        &ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+            thread_id: root_thread_id.to_string(),
+            turn_id: "turn-1".to_string(),
+            item: ThreadItem::CollabAgentToolCall {
+                id: "spawn-1".to_string(),
+                tool: CollabAgentTool::SpawnAgent,
+                status: codex_app_server_protocol::CollabAgentToolCallStatus::Completed,
+                sender_thread_id: root_thread_id.to_string(),
+                receiver_thread_ids: vec![subagent_thread_id.to_string()],
+                prompt: Some("Inspect the workspace".to_string()),
+                model: None,
+                reasoning_effort: None,
+                agents_states: HashMap::from([(
+                    subagent_thread_id.to_string(),
+                    CollabAgentState {
+                        status: CollabAgentStatus::Running,
+                        message: None,
+                    },
+                )]),
+            },
+        }),
+    );
+
+    assert_matches!(
+        app.subagents
+            .agents
+            .get(&subagent_thread_id)
+            .map(|info| &info.status),
+        Some(codex_protocol::protocol::AgentStatus::Running)
+    );
+    assert!(
+        app.subagents.panel_cell().is_some(),
+        "running subagent should render in the status panel"
+    );
+    while app_event_rx.try_recv().is_ok() {}
+
+    app.process_subagent_notification_side_effects(
+        root_thread_id,
+        &ServerNotification::ItemCompleted(codex_app_server_protocol::ItemCompletedNotification {
+            thread_id: root_thread_id.to_string(),
+            turn_id: "turn-1".to_string(),
+            item: ThreadItem::CollabAgentToolCall {
+                id: "wait-1".to_string(),
+                tool: CollabAgentTool::Wait,
+                status: codex_app_server_protocol::CollabAgentToolCallStatus::Completed,
+                sender_thread_id: root_thread_id.to_string(),
+                receiver_thread_ids: vec![subagent_thread_id.to_string()],
+                prompt: None,
+                model: None,
+                reasoning_effort: None,
+                agents_states: HashMap::from([(
+                    subagent_thread_id.to_string(),
+                    CollabAgentState {
+                        status: CollabAgentStatus::Completed,
+                        message: Some("done".to_string()),
+                    },
+                )]),
+            },
+        }),
+    );
+
+    assert_matches!(
+        app.subagents
+            .agents
+            .get(&subagent_thread_id)
+            .map(|info| &info.status),
+        Some(codex_protocol::protocol::AgentStatus::Completed(Some(message))) if message == "done"
+    );
+    assert!(
+        app.subagents.panel_cell().is_none(),
+        "completed subagent should be removed from the running status panel"
+    );
+    let mut saw_clear_panel = false;
+    while let Ok(event) = app_event_rx.try_recv() {
+        saw_clear_panel |= matches!(event, AppEvent::ClearSubagentPanel);
+    }
+    assert!(
+        saw_clear_panel,
+        "completed subagent should clear the rendered status panel"
     );
 }
 
@@ -3686,6 +3843,7 @@ async fn make_test_app() -> App {
     let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
     let model = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
     let session_telemetry = test_session_telemetry(&config, model.as_str());
+    let animations_enabled = config.animations;
 
     App {
         model_catalog: chat_widget.model_catalog(),
@@ -3708,6 +3866,7 @@ async fn make_test_app() -> App {
         enhanced_keys_supported: false,
         keymap: crate::keymap::RuntimeKeymap::defaults(),
         commit_anim_running: Arc::new(AtomicBool::new(false)),
+        subagent_anim_running: Arc::new(AtomicBool::new(false)),
         status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
         backtrack: BacktrackState::default(),
@@ -3722,6 +3881,7 @@ async fn make_test_app() -> App {
         windows_sandbox: WindowsSandboxState::default(),
         thread_event_channels: HashMap::new(),
         thread_event_listener_tasks: HashMap::new(),
+        subagents: super::subagents::SubagentRegistry::new(animations_enabled),
         agent_navigation: AgentNavigationState::default(),
         side_threads: HashMap::new(),
         active_thread_id: None,
@@ -3745,6 +3905,7 @@ async fn make_test_app_with_channels() -> (
     let file_search = FileSearchManager::new(config.cwd.to_path_buf(), app_event_tx.clone());
     let model = crate::legacy_core::test_support::get_model_offline(config.model.as_deref());
     let session_telemetry = test_session_telemetry(&config, model.as_str());
+    let animations_enabled = config.animations;
 
     (
         App {
@@ -3768,6 +3929,7 @@ async fn make_test_app_with_channels() -> (
             enhanced_keys_supported: false,
             keymap: crate::keymap::RuntimeKeymap::defaults(),
             commit_anim_running: Arc::new(AtomicBool::new(false)),
+            subagent_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             terminal_title_invalid_items_warned: Arc::new(AtomicBool::new(false)),
             backtrack: BacktrackState::default(),
@@ -3782,6 +3944,7 @@ async fn make_test_app_with_channels() -> (
             windows_sandbox: WindowsSandboxState::default(),
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
+            subagents: super::subagents::SubagentRegistry::new(animations_enabled),
             agent_navigation: AgentNavigationState::default(),
             side_threads: HashMap::new(),
             active_thread_id: None,

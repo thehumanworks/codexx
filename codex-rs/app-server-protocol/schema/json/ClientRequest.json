@@ -3427,6 +3427,17 @@
       ],
       "type": "object"
     },
+    "ThreadInputActivityParams": {
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "type": "object"
+    },
     "ThreadListCwdFilter": {
       "anyOf": [
         {
@@ -4686,6 +4697,30 @@
         "params"
       ],
       "title": "Thread/approveGuardianDeniedActionRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "thread/inputActivity"
+          ],
+          "title": "Thread/inputActivityRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/ThreadInputActivityParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Thread/inputActivityRequest",
       "type": "object"
     },
     {

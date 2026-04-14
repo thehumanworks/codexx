@@ -408,7 +408,9 @@ impl App {
 
     pub(super) fn reset_thread_event_state(&mut self) {
         self.abort_all_thread_event_listeners();
+        self.subagent_anim_running.store(false, Ordering::Release);
         self.thread_event_channels.clear();
+        self.subagents = super::subagents::SubagentRegistry::new(self.config.animations);
         self.agent_navigation.clear();
         self.side_threads.clear();
         self.active_thread_id = None;
@@ -418,6 +420,7 @@ impl App {
         self.primary_session_configured = None;
         self.pending_primary_events.clear();
         self.pending_app_server_requests.clear();
+        self.chat_widget.clear_subagent_panel();
         self.chat_widget.set_pending_thread_approvals(Vec::new());
         self.sync_active_agent_label();
     }

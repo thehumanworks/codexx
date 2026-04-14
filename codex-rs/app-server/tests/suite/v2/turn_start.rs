@@ -1469,24 +1469,16 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
     // Second turn same, but we'll set approval_policy=never to avoid elicitation.
     let responses = vec![
         create_shell_command_sse_response(
-            vec![
-                "python3".to_string(),
-                "-c".to_string(),
-                "print(42)".to_string(),
-            ],
+            fast_shell_command(),
             /*workdir*/ None,
-            Some(5000),
+            Some(1000),
             "call1",
         )?,
         create_final_assistant_message_sse_response("done 1")?,
         create_shell_command_sse_response(
-            vec![
-                "python3".to_string(),
-                "-c".to_string(),
-                "print(42)".to_string(),
-            ],
+            fast_shell_command(),
             /*workdir*/ None,
-            Some(5000),
+            Some(1000),
             "call2",
         )?,
         create_final_assistant_message_sse_response("done 2")?,
@@ -1611,6 +1603,23 @@ async fn turn_start_exec_approval_toggle_v2() -> Result<()> {
     .await??;
 
     Ok(())
+}
+
+fn fast_shell_command() -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            "cmd".to_string(),
+            "/d".to_string(),
+            "/c".to_string(),
+            "echo 42".to_string(),
+        ]
+    } else {
+        vec![
+            "python3".to_string(),
+            "-c".to_string(),
+            "print(42)".to_string(),
+        ]
+    }
 }
 
 #[tokio::test]
@@ -2528,12 +2537,18 @@ async fn turn_start_streams_apply_patch_change_updates_v2() -> Result<()> {
 }
 
 #[tokio::test]
-async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()> {
+async fn turn_start_emits_spawn_agent_item_with_effective_inherited_model_metadata_v2() -> Result<()>
+{
     skip_if_no_network!(Ok(()));
 
     const CHILD_PROMPT: &str = "child: do work";
     const PARENT_PROMPT: &str = "spawn a child and continue";
     const SPAWN_CALL_ID: &str = "spawn-call-1";
+    const INHERITED_MODEL: &str = "gpt-5.3-codex";
+    // thread/start only sets the model here; the session keeps the resolved collaboration-mode
+    // effort for that thread, so fork-context children should inherit `Medium`, not the requested
+    // child model's effort.
+    const INHERITED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
     const REQUESTED_MODEL: &str = "gpt-5.2";
     const REQUESTED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Low;
 
@@ -2589,7 +2604,7 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
 
     let thread_req = mcp
         .send_thread_start_request(ThreadStartParams {
-            model: Some("gpt-5.3-codex".to_string()),
+            model: Some(INHERITED_MODEL.to_string()),
             ..Default::default()
         })
         .await?;
@@ -2686,8 +2701,8 @@ async fn turn_start_emits_spawn_agent_item_with_model_metadata_v2() -> Result<()
     assert_eq!(sender_thread_id, thread.id);
     assert_eq!(receiver_thread_ids, vec![receiver_thread_id.clone()]);
     assert_eq!(prompt, Some(CHILD_PROMPT.to_string()));
-    assert_eq!(model, Some(REQUESTED_MODEL.to_string()));
-    assert_eq!(reasoning_effort, Some(REQUESTED_REASONING_EFFORT));
+    assert_eq!(model, Some(INHERITED_MODEL.to_string()));
+    assert_eq!(reasoning_effort, Some(INHERITED_REASONING_EFFORT));
     let agent_state = agents_states
         .get(&receiver_thread_id)
         .expect("spawn completion should include child agent state");
@@ -2728,6 +2743,11 @@ async fn turn_start_emits_spawn_agent_item_with_effective_role_model_metadata_v2
     const CHILD_PROMPT: &str = "child: do work";
     const PARENT_PROMPT: &str = "spawn a child and continue";
     const SPAWN_CALL_ID: &str = "spawn-call-1";
+    const INHERITED_MODEL: &str = "gpt-5.3-codex";
+    // thread/start only sets the model here; the session keeps the resolved collaboration-mode
+    // effort for that thread, so fork-context children should inherit `Medium`, not the requested
+    // child model's effort.
+    const INHERITED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
     const REQUESTED_MODEL: &str = "gpt-5.2";
     const REQUESTED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Low;
     const ROLE_MODEL: &str = "gpt-5.4";
@@ -2870,8 +2890,8 @@ config_file = "./custom-role.toml"
     assert_eq!(sender_thread_id, thread.id);
     assert_eq!(receiver_thread_ids, vec![receiver_thread_id.clone()]);
     assert_eq!(prompt, Some(CHILD_PROMPT.to_string()));
-    assert_eq!(model, Some(ROLE_MODEL.to_string()));
-    assert_eq!(reasoning_effort, Some(ROLE_REASONING_EFFORT));
+    assert_eq!(model, Some(INHERITED_MODEL.to_string()));
+    assert_eq!(reasoning_effort, Some(INHERITED_REASONING_EFFORT));
     let agent_state = agents_states
         .get(&receiver_thread_id)
         .expect("spawn completion should include child agent state");

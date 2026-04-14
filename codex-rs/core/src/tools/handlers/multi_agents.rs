@@ -23,7 +23,6 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
 use codex_protocol::protocol::CollabAgentInteractionEndEvent;
 use codex_protocol::protocol::CollabAgentRef;
-use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
 use codex_protocol::protocol::CollabAgentSpawnEndEvent;
 use codex_protocol::protocol::CollabCloseBeginEvent;
 use codex_protocol::protocol::CollabCloseEndEvent;
@@ -42,32 +41,23 @@ pub(crate) fn parse_agent_id_target(target: &str) -> Result<ThreadId, FunctionCa
     })
 }
 
-pub(crate) fn parse_agent_id_targets(
-    targets: Vec<String>,
-) -> Result<Vec<ThreadId>, FunctionCallError> {
-    if targets.is_empty() {
-        return Err(FunctionCallError::RespondToModel(
-            "agent ids must be non-empty".to_string(),
-        ));
-    }
-
-    targets
-        .into_iter()
-        .map(|target| parse_agent_id_target(&target))
-        .collect()
-}
-
 pub(crate) use close_agent::Handler as CloseAgentHandler;
+pub(crate) use compact_parent_context::Handler as CompactParentContextHandler;
+pub(crate) use list_agents::Handler as ListAgentsHandler;
 pub(crate) use resume_agent::Handler as ResumeAgentHandler;
 pub(crate) use send_input::Handler as SendInputHandler;
 pub(crate) use spawn::Handler as SpawnAgentHandler;
 pub(crate) use wait::Handler as WaitAgentHandler;
+pub(crate) use watchdog_self_close::Handler as WatchdogSelfCloseHandler;
 
 pub(crate) mod close_agent;
+mod compact_parent_context;
+mod list_agents;
 mod resume_agent;
 mod send_input;
 mod spawn;
 pub(crate) mod wait;
+mod watchdog_self_close;
 
 #[cfg(test)]
 #[path = "multi_agents_tests.rs"]

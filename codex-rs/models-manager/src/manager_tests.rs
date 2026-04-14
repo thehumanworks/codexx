@@ -1,5 +1,6 @@
 use super::*;
 use crate::ModelsManagerConfig;
+use crate::config::CustomModelConfig;
 use chrono::Utc;
 use codex_app_server_protocol::AuthMode;
 use codex_login::AuthCredentialsStoreMode;
@@ -12,6 +13,7 @@ use codex_login::TokenData;
 use codex_protocol::openai_models::ModelsResponse;
 use pretty_assertions::assert_eq;
 use serde_json::json;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::Arc;
@@ -191,14 +193,23 @@ fn openai_manager_for_tests_with_auth(
         codex_home,
         endpoint_client,
         auth_manager,
+        HashMap::new(),
         CollaborationModesConfig::default(),
     )
 }
 
 fn static_manager_for_tests(model_catalog: ModelsResponse) -> StaticModelsManager {
+    static_manager_with_custom_models_for_tests(model_catalog, HashMap::new())
+}
+
+fn static_manager_with_custom_models_for_tests(
+    model_catalog: ModelsResponse,
+    custom_models: HashMap<String, CustomModelConfig>,
+) -> StaticModelsManager {
     StaticModelsManager::new(
         /*auth_manager*/ None,
         model_catalog,
+        custom_models,
         CollaborationModesConfig::default(),
     )
 }
@@ -735,6 +746,7 @@ async fn static_manager_reads_latest_auth_mode() {
         ModelsResponse {
             models: vec![chatgpt_only_model, api_model],
         },
+        HashMap::new(),
         CollaborationModesConfig::default(),
     );
 
@@ -756,6 +768,167 @@ async fn static_manager_reads_latest_auth_mode() {
             .map(|model| model.model.as_str())
             .collect::<Vec<_>>(),
         vec!["api-model"]
+    );
+}
+
+#[tokio::test]
+async fn get_model_info_uses_custom_alias_metadata_and_request_model() {
+    let mut config = ModelsManagerConfig::default();
+    let alias = "gpt-5.4 1m".to_string();
+    let custom_model = CustomModelConfig {
+        model: "gpt-5.4".to_string(),
+        model_context_window: Some(1_000_000),
+        model_auto_compact_token_limit: Some(800_000),
+    };
+    config
+        .custom_models
+        .insert(alias.clone(), custom_model.clone());
+    let manager = static_manager_with_custom_models_for_tests(
+        ModelsResponse {
+            models: vec![remote_model("gpt-5.4", "GPT 5.4", /*priority*/ 0)],
+        },
+        HashMap::from([(alias.clone(), custom_model)]),
+    );
+
+    let model_info = manager.get_model_info(&alias, &config).await;
+
+    assert_eq!(model_info.slug, alias);
+    assert_eq!(model_info.request_model.as_deref(), Some("gpt-5.4"));
+    assert_eq!(model_info.context_window, Some(1_000_000));
+    assert_eq!(model_info.auto_compact_token_limit, Some(800_000));
+}
+
+#[tokio::test]
+async fn get_model_info_prefers_custom_alias_context_over_global_config() {
+    let mut config = ModelsManagerConfig {
+        model_context_window: Some(250_000),
+        model_auto_compact_token_limit: Some(200_000),
+        ..Default::default()
+    };
+    let alias = "gpt-5.4 1m".to_string();
+    let custom_model = CustomModelConfig {
+        model: "gpt-5.4".to_string(),
+        model_context_window: Some(1_000_000),
+        model_auto_compact_token_limit: Some(800_000),
+    };
+    config
+        .custom_models
+        .insert(alias.clone(), custom_model.clone());
+    let manager = static_manager_with_custom_models_for_tests(
+        ModelsResponse {
+            models: vec![remote_model("gpt-5.4", "GPT 5.4", /*priority*/ 0)],
+        },
+        HashMap::from([(alias.clone(), custom_model)]),
+    );
+
+    let model_info = manager.get_model_info(&alias, &config).await;
+
+    assert_eq!(model_info.context_window, Some(1_000_000));
+    assert_eq!(model_info.auto_compact_token_limit, Some(800_000));
+}
+
+#[tokio::test]
+async fn get_model_info_prefers_active_config_alias_over_startup_snapshot() {
+    let alias = "gpt-5.4 1m".to_string();
+    let mut config = ModelsManagerConfig::default();
+    config.custom_models.insert(
+        alias.clone(),
+        CustomModelConfig {
+            model: "gpt-5.4-updated".to_string(),
+            model_context_window: Some(1_000_000),
+            model_auto_compact_token_limit: Some(900_000),
+        },
+    );
+    let manager = static_manager_with_custom_models_for_tests(
+        ModelsResponse {
+            models: vec![
+                remote_model("gpt-5.4", "GPT 5.4", /*priority*/ 0),
+                remote_model("gpt-5.4-updated", "GPT 5.4 Updated", /*priority*/ 1),
+            ],
+        },
+        HashMap::from([(
+            alias.clone(),
+            CustomModelConfig {
+                model: "gpt-5.4".to_string(),
+                model_context_window: Some(500_000),
+                model_auto_compact_token_limit: Some(400_000),
+            },
+        )]),
+    );
+
+    let model_info = manager.get_model_info(&alias, &config).await;
+
+    assert_eq!(model_info.slug, alias);
+    assert_eq!(model_info.request_model.as_deref(), Some("gpt-5.4-updated"));
+    assert_eq!(model_info.context_window, Some(1_000_000));
+    assert_eq!(model_info.auto_compact_token_limit, Some(900_000));
+}
+
+#[test]
+fn build_available_models_includes_custom_aliases() {
+    let manager = static_manager_with_custom_models_for_tests(
+        ModelsResponse {
+            models: vec![remote_model("gpt-5.4", "GPT 5.4", /*priority*/ 0)],
+        },
+        HashMap::from([(
+            "gpt-5.4 1m".to_string(),
+            CustomModelConfig {
+                model: "gpt-5.4".to_string(),
+                model_context_window: Some(1_000_000),
+                model_auto_compact_token_limit: Some(800_000),
+            },
+        )]),
+    );
+
+    let available = manager.build_available_models(vec![remote_model(
+        "gpt-5.4", "GPT 5.4", /*priority*/ 0,
+    )]);
+    let alias = available
+        .iter()
+        .find(|preset| preset.model == "gpt-5.4 1m")
+        .expect("custom alias should be listed");
+
+    assert!(alias.show_in_picker);
+    assert_eq!(alias.display_name, "gpt-5.4 1m");
+}
+
+#[test]
+fn build_available_models_lists_custom_aliases_before_remote_models() {
+    let manager = static_manager_with_custom_models_for_tests(
+        ModelsResponse {
+            models: vec![
+                remote_model("gpt-5.4", "GPT 5.4", /*priority*/ 0),
+                remote_model("gpt-5.3", "GPT 5.3", /*priority*/ 1),
+            ],
+        },
+        HashMap::from([(
+            "gpt-5.4 1m".to_string(),
+            CustomModelConfig {
+                model: "gpt-5.4".to_string(),
+                model_context_window: Some(1_000_000),
+                model_auto_compact_token_limit: Some(800_000),
+            },
+        )]),
+    );
+
+    let available = manager.build_available_models(vec![
+        remote_model("gpt-5.4", "GPT 5.4", /*priority*/ 0),
+        remote_model("gpt-5.3", "GPT 5.3", /*priority*/ 1),
+    ]);
+
+    assert_eq!(
+        available
+            .iter()
+            .map(|preset| preset.model.as_str())
+            .collect::<Vec<_>>(),
+        vec!["gpt-5.4 1m", "gpt-5.4", "gpt-5.3"]
+    );
+    assert_eq!(
+        available
+            .iter()
+            .find(|preset| preset.is_default)
+            .map(|preset| preset.model.as_str()),
+        Some("gpt-5.4")
     );
 }
 

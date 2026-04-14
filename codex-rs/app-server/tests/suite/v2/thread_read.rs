@@ -10,6 +10,8 @@ use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SessionSource;
 use codex_app_server_protocol::SortDirection;
+use codex_app_server_protocol::ThreadArchiveParams;
+use codex_app_server_protocol::ThreadArchiveResponse;
 use codex_app_server_protocol::ThreadForkParams;
 use codex_app_server_protocol::ThreadForkResponse;
 use codex_app_server_protocol::ThreadItem;
@@ -27,6 +29,8 @@ use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus;
 use codex_app_server_protocol::ThreadTurnsListParams;
 use codex_app_server_protocol::ThreadTurnsListResponse;
+use codex_app_server_protocol::ThreadUnarchiveParams;
+use codex_app_server_protocol::ThreadUnarchiveResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
@@ -414,6 +418,150 @@ async fn thread_read_returns_forked_from_id_for_forked_threads() -> Result<()> {
 }
 
 #[tokio::test]
+async fn thread_read_include_turns_keeps_fork_history_after_parent_archive_and_unarchive()
+-> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread: parent, .. } =
+        to_response::<ThreadStartResponse>(start_resp)?;
+
+    let turn_start_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: parent.id.clone(),
+            input: vec![UserInput::Text {
+                text: "parent message".to_string(),
+                text_elements: Vec::new(),
+            }],
+            ..Default::default()
+        })
+        .await?;
+    let turn_start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_start_id)),
+    )
+    .await??;
+    let _: TurnStartResponse = to_response::<TurnStartResponse>(turn_start_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+
+    let fork_id = mcp
+        .send_thread_fork_request(ThreadForkParams {
+            thread_id: parent.id.clone(),
+            ..Default::default()
+        })
+        .await?;
+    let fork_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(fork_id)),
+    )
+    .await??;
+    let ThreadForkResponse { thread: child, .. } = to_response::<ThreadForkResponse>(fork_resp)?;
+
+    let read_child_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: child.id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_child_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_child_id)),
+    )
+    .await??;
+    let ThreadReadResponse {
+        thread: child_before_archive,
+    } = to_response::<ThreadReadResponse>(read_child_resp)?;
+    assert_eq!(child_before_archive.turns.len(), 1);
+
+    let archive_id = mcp
+        .send_thread_archive_request(ThreadArchiveParams {
+            thread_id: parent.id.clone(),
+        })
+        .await?;
+    let archive_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(archive_id)),
+    )
+    .await??;
+    let _: ThreadArchiveResponse = to_response::<ThreadArchiveResponse>(archive_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/archived"),
+    )
+    .await??;
+
+    let read_child_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: child.id.clone(),
+            include_turns: true,
+        })
+        .await?;
+    let read_child_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_child_id)),
+    )
+    .await??;
+    let ThreadReadResponse {
+        thread: child_after_archive,
+    } = to_response::<ThreadReadResponse>(read_child_resp)?;
+    assert_eq!(child_after_archive.turns, child_before_archive.turns);
+
+    let unarchive_id = mcp
+        .send_thread_unarchive_request(ThreadUnarchiveParams {
+            thread_id: parent.id,
+        })
+        .await?;
+    let unarchive_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(unarchive_id)),
+    )
+    .await??;
+    let _: ThreadUnarchiveResponse = to_response::<ThreadUnarchiveResponse>(unarchive_resp)?;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/unarchived"),
+    )
+    .await??;
+
+    let read_child_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: child.id,
+            include_turns: true,
+        })
+        .await?;
+    let read_child_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_child_id)),
+    )
+    .await??;
+    let ThreadReadResponse {
+        thread: child_after_unarchive,
+    } = to_response::<ThreadReadResponse>(read_child_resp)?;
+    assert_eq!(child_after_unarchive.turns, child_before_archive.turns);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn thread_read_loaded_thread_returns_precomputed_path_before_materialization() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -666,6 +814,62 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
         "unexpected error: {}",
         read_err.error.message
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_read_loaded_ephemeral_thread_ignores_unrelated_rollout_mentions() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("mock-model".to_string()),
+            ephemeral: Some(true),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+
+    let unrelated_preview = thread.id.clone();
+    let _unrelated_rollout_id = create_fake_rollout_with_text_elements(
+        codex_home.path(),
+        "2025-01-05T13-00-00",
+        "2025-01-05T13:00:00Z",
+        &unrelated_preview,
+        vec![],
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+
+    let read_id = mcp
+        .send_thread_read_request(ThreadReadParams {
+            thread_id: thread.id.clone(),
+            include_turns: false,
+        })
+        .await?;
+    let read_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(read_id)),
+    )
+    .await??;
+    let ThreadReadResponse { thread: read } = to_response::<ThreadReadResponse>(read_resp)?;
+
+    assert_eq!(read.id, thread.id);
+    assert!(read.ephemeral);
+    assert_eq!(read.path, None);
+    assert!(read.preview.is_empty());
+    assert_eq!(read.status, ThreadStatus::Idle);
 
     Ok(())
 }

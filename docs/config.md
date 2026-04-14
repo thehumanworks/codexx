@@ -66,6 +66,34 @@ Codex can run a notification hook when the agent finishes a turn. See the config
 
 When Codex knows which client started the turn, the legacy notify JSON payload also includes a top-level `client` field. The TUI reports `codex-tui`, and the app server reports the `clientInfo.name` value from `initialize`.
 
+## Agent Inbox Delivery
+
+By default, inbound messages from other agents are delivered to non-subagent threads as normal
+user input. If you want those handoffs to appear as explicit non-user transcript activity, you can
+opt into a synthetic function-call/function-call-output envelope:
+
+```toml
+[features]
+agent_function_call_inbox = true
+```
+
+When enabled, Codex injects inbound agent messages into non-subagent threads as an `agent_inbox`
+function-call/function-call-output pair. This is primarily a model-behavior workaround for cases
+where you want a subagent handoff to start a valid turn while still being clearly marked as
+non-user activity in the transcript.
+
+Messages sent to subagents continue to arrive as normal user input.
+
+## Watchdog Interval
+
+Watchdog agents use the top-level `watchdog_interval_s` setting to decide how long the owner thread
+must be idle before a check-in helper is spawned when the `agent_watchdog` feature is enabled.
+Owner-side typing/input activity resets the idle timer.
+
+```toml
+watchdog_interval_s = 10
+```
+
 ## JSON Schema
 
 The generated JSON Schema for `config.toml` lives at `codex-rs/core/config.schema.json`.
@@ -117,5 +145,21 @@ config value for "follow the global default in Plan mode".
 developer message Codex inserts when realtime becomes active. It only affects
 the realtime start message in prompt history and does not change websocket
 backend prompt settings or the realtime end/inactive message.
+
+## Custom model aliases
+
+You can add aliases to the model picker via `custom_models` in `~/.codex/config.toml`.
+Each entry maps a user-facing alias to a provider-facing model slug and can override context settings:
+
+```toml
+[[custom_models]]
+name = "gpt-5.4 1m"
+model = "gpt-5.4"
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+```
+
+When selected, Codex sends `model = "gpt-5.4"` to the backend while using your
+alias-specific context overrides for that session.
 
 Ctrl+C/Ctrl+D quitting uses a ~1 second double-press hint (`ctrl + c again to quit`).

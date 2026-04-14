@@ -4,7 +4,9 @@ use std::fmt::Debug;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -147,6 +149,7 @@ use rmcp::model::ReadResourceRequestParams;
 use rmcp::model::ReadResourceResult;
 use rmcp::model::RequestId;
 use serde_json::Value;
+use tokio::fs;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
 use tokio::sync::oneshot;
@@ -283,6 +286,84 @@ use crate::skills_watcher::SkillsWatcherEvent;
 use crate::state::ActiveTurn;
 use crate::state::MailboxDeliveryPhase;
 use crate::state::PendingRequestPermissions;
+
+const ROOT_AGENT_PROMPT_FALLBACK: &str = include_str!("../../root_agent_prompt.md");
+const ROOT_AGENT_WATCHDOG_PROMPT_FALLBACK: &str =
+    include_str!("../../root_agent_watchdog_prompt.md");
+const SUBAGENT_PROMPT_FALLBACK: &str = include_str!("../../subagent_prompt.md");
+const SUBAGENT_WATCHDOG_PROMPT_FALLBACK: &str = include_str!("../../subagent_watchdog_prompt.md");
+const WATCHDOG_PROMPT_FALLBACK: &str = include_str!("../../watchdog_agent_prompt.md");
+
+async fn load_agent_prompt_fallback(
+    codex_home: &Path,
+    fallback: &str,
+    override_filename: &str,
+) -> String {
+    let override_path = codex_home.join(override_filename);
+    if let Ok(contents) = fs::read_to_string(&override_path).await
+        && !contents.trim().is_empty()
+    {
+        return contents;
+    }
+
+    fallback.to_string()
+}
+
+async fn maybe_load_agent_prompt_fragment(
+    codex_home: &Path,
+    fallback: &str,
+    override_filename: &str,
+    enabled: bool,
+) -> Option<String> {
+    if !enabled {
+        return None;
+    }
+    let fragment = load_agent_prompt_fallback(codex_home, fallback, override_filename).await;
+    if fragment.trim().is_empty() {
+        None
+    } else {
+        Some(fragment)
+    }
+}
+
+async fn load_root_agent_prompt(codex_home: &Path, include_watchdog: bool) -> String {
+    let mut prompt =
+        load_agent_prompt_fallback(codex_home, ROOT_AGENT_PROMPT_FALLBACK, "AGENTS.root.md").await;
+    if let Some(fragment) = maybe_load_agent_prompt_fragment(
+        codex_home,
+        ROOT_AGENT_WATCHDOG_PROMPT_FALLBACK,
+        "AGENTS.root.watchdog.md",
+        include_watchdog,
+    )
+    .await
+    {
+        prompt.push_str("\n\n");
+        prompt.push_str(fragment.trim());
+    }
+    prompt
+}
+
+pub(crate) async fn load_subagent_prompt(codex_home: &Path, include_watchdog: bool) -> String {
+    let mut prompt =
+        load_agent_prompt_fallback(codex_home, SUBAGENT_PROMPT_FALLBACK, "AGENTS.subagent.md")
+            .await;
+    if let Some(fragment) = maybe_load_agent_prompt_fragment(
+        codex_home,
+        SUBAGENT_WATCHDOG_PROMPT_FALLBACK,
+        "AGENTS.subagent.watchdog.md",
+        include_watchdog,
+    )
+    .await
+    {
+        prompt.push_str("\n\n");
+        prompt.push_str(fragment.trim());
+    }
+    prompt
+}
+
+pub(crate) async fn load_watchdog_prompt(codex_home: &Path) -> String {
+    load_agent_prompt_fallback(codex_home, WATCHDOG_PROMPT_FALLBACK, "AGENTS.watchdog.md").await
+}
 use crate::state::SessionServices;
 use crate::state::SessionState;
 #[cfg(test)]
@@ -531,7 +612,6 @@ impl Codex {
         let model = models_manager
             .get_default_model(&config.model, refresh_strategy)
             .await;
-
         // Resolve base instructions for the session. Priority order:
         // 1. config.base_instructions override
         // 2. conversation history => session_meta.base_instructions
@@ -1031,6 +1111,23 @@ impl Session {
         self.services.live_thread.as_ref()
     }
 
+    pub(crate) async fn has_active_turn(&self) -> bool {
+        self.active_turn.lock().await.is_some()
+    }
+
+    pub(crate) fn snapshot_agent_send_input_on_turn_complete(&self) {
+        let used_agent_send_input = self
+            .turn_used_agent_send_input
+            .swap(false, Ordering::AcqRel);
+        self.last_completed_turn_used_agent_send_input
+            .store(used_agent_send_input, Ordering::Release);
+    }
+
+    pub(crate) fn last_completed_turn_used_agent_send_input(&self) -> bool {
+        self.last_completed_turn_used_agent_send_input
+            .load(Ordering::Acquire)
+    }
+
     /// Flush rollout writes and return the final durability-barrier result.
     pub(crate) async fn flush_rollout(&self) -> std::io::Result<()> {
         if let Some(live_thread) = self.live_thread() {
@@ -1140,6 +1237,11 @@ impl Session {
         state.clear_connector_selection();
     }
 
+    async fn set_connector_selection(&self, connector_ids: HashSet<String>) {
+        self.clear_connector_selection().await;
+        self.merge_connector_selection(connector_ids).await;
+    }
+
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
         let turn_context = self.new_default_turn().await;
         let is_subagent = {
@@ -1163,8 +1265,19 @@ impl Session {
             }
             InitialHistory::Resumed(resumed_history) => {
                 let rollout_items = resumed_history.history;
+                let hydrated_rollout_items = if rollout_items
+                    .iter()
+                    .any(|item| matches!(item, RolloutItem::ForkReference(_)))
+                {
+                    self.materialize_rollout_items_for_replay(&rollout_items)
+                        .await
+                } else {
+                    rollout_items.clone()
+                };
+                let restored_connector_selection =
+                    Self::extract_connector_selection_from_rollout(&hydrated_rollout_items);
                 let previous_turn_settings = self
-                    .apply_rollout_reconstruction(&turn_context, &rollout_items)
+                    .apply_rollout_reconstruction(&turn_context, &hydrated_rollout_items)
                     .await;
 
                 // If resuming, warn when the last recorded model differs from the current one.
@@ -1189,9 +1302,12 @@ impl Session {
 
                 // Seed usage info from the recorded rollout so UIs can show token counts
                 // immediately on resume/fork.
-                if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
+                if let Some(info) = Self::last_token_info_from_rollout(&hydrated_rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
+                }
+                if let Some(selected_connectors) = restored_connector_selection {
+                    self.set_connector_selection(selected_connectors).await;
                 }
 
                 // Defer seeding the session's initial context until the first turn starts so
@@ -1201,18 +1317,50 @@ impl Session {
                 }
             }
             InitialHistory::Forked(rollout_items) => {
-                self.apply_rollout_reconstruction(&turn_context, &rollout_items)
+                let persisted_rollout_items = rollout_items
+                    .iter()
+                    .position(|item| matches!(item, RolloutItem::ForkReference(_)))
+                    .map(|index| rollout_items[index..].to_vec());
+                let mut hydrated_rollout_items = if rollout_items
+                    .iter()
+                    .any(|item| matches!(item, RolloutItem::ForkReference(_)))
+                {
+                    self.materialize_rollout_items_for_replay(&rollout_items)
+                        .await
+                } else {
+                    rollout_items.clone()
+                };
+                // Forked children need a fresh context diff baseline even when their compact
+                // fork reference is materialized back into full parent history on startup. Keep
+                // the compact reference for persistence below, but remove it from this hydrated
+                // in-memory copy so later reconstruction does not re-expand the parent baseline.
+                hydrated_rollout_items.retain(|item| {
+                    !matches!(
+                        item,
+                        RolloutItem::ForkReference(_) | RolloutItem::TurnContext(_)
+                    )
+                });
+                let restored_connector_selection =
+                    Self::extract_connector_selection_from_rollout(&hydrated_rollout_items);
+
+                self.apply_rollout_reconstruction(&turn_context, &hydrated_rollout_items)
                     .await;
 
                 // Seed usage info from the recorded rollout so UIs can show token counts
                 // immediately on resume/fork.
-                if let Some(info) = Self::last_token_info_from_rollout(&rollout_items) {
+                if let Some(info) = Self::last_token_info_from_rollout(&hydrated_rollout_items) {
                     let mut state = self.state.lock().await;
                     state.set_token_info(Some(info));
                 }
+                if let Some(selected_connectors) = restored_connector_selection {
+                    self.set_connector_selection(selected_connectors).await;
+                }
 
-                // If persisting, persist all rollout items as-is (the store filters).
-                if !rollout_items.is_empty() {
+                // Persist only the compact fork reference suffix so child rollouts do not
+                // duplicate the full parent history they inherited in memory.
+                if let Some(persisted_rollout_items) = persisted_rollout_items {
+                    self.persist_rollout_items(&persisted_rollout_items).await;
+                } else if !rollout_items.is_empty() {
                     self.persist_rollout_items(&rollout_items).await;
                 }
 
@@ -1251,6 +1399,41 @@ impl Session {
             RolloutItem::EventMsg(EventMsg::TokenCount(ev)) => ev.info.clone(),
             _ => None,
         })
+    }
+
+    fn extract_connector_selection_from_rollout(
+        rollout_items: &[RolloutItem],
+    ) -> Option<HashSet<String>> {
+        let mut active_selected_connectors: Option<HashSet<String>> = None;
+
+        for item in rollout_items {
+            let RolloutItem::ResponseItem(response_item) = item else {
+                continue;
+            };
+            let ResponseItem::FunctionCallOutput { output, .. } = response_item else {
+                continue;
+            };
+            let Some(content) = output.body.to_text() else {
+                continue;
+            };
+            let Ok(payload) = serde_json::from_str::<Value>(&content) else {
+                continue;
+            };
+            let Some(selected_connectors) = payload
+                .get("active_selected_tools")
+                .and_then(Value::as_array)
+            else {
+                continue;
+            };
+            let connector_ids = selected_connectors
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<HashSet<_>>();
+            active_selected_connectors = Some(connector_ids);
+        }
+
+        active_selected_connectors
     }
 
     async fn previous_turn_settings(&self) -> Option<PreviousTurnSettings> {
@@ -2393,7 +2576,8 @@ impl Session {
         turn_context: &Arc<TurnContext>,
         server_model: String,
     ) -> bool {
-        let requested_model = turn_context.model_info.slug.clone();
+        let requested_model = turn_context.model_info.request_model_slug().to_string();
+        let selected_model = turn_context.model_info.slug.clone();
         let server_model_normalized = server_model.to_ascii_lowercase();
         let requested_model_normalized = requested_model.to_ascii_lowercase();
         if server_model_normalized == requested_model_normalized {
@@ -2401,7 +2585,9 @@ impl Session {
             return false;
         }
 
-        warn!("server reported model {server_model} while requested model was {requested_model}");
+        warn!(
+            "server reported model {server_model} while requested model was {requested_model} (selected alias: {selected_model})"
+        );
 
         let warning_message = format!(
             "Your account was flagged for potentially high-risk cyber activity and this request was routed to gpt-5.2 as a fallback. To regain access to gpt-5.3-codex, apply for trusted access: {CYBER_VERIFY_URL} or learn more: {CYBER_SAFETY_URL}"
@@ -2410,7 +2596,7 @@ impl Session {
         self.send_event(
             turn_context,
             EventMsg::ModelReroute(ModelRerouteEvent {
-                from_model: requested_model.clone(),
+                from_model: selected_model,
                 to_model: server_model.clone(),
                 reason: ModelRerouteReason::HighRiskCyberActivity,
             }),

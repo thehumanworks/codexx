@@ -289,8 +289,8 @@ fn test_build_specs_multi_agent_v2_uses_task_names_and_hides_resume() {
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("fork_turns"));
+    assert!(properties.contains_key("fork_context"));
     assert!(!properties.contains_key("items"));
-    assert!(!properties.contains_key("fork_context"));
     assert_eq!(
         required,
         Some(&vec!["task_name".to_string(), "message".to_string()])
@@ -1647,6 +1647,44 @@ fn search_tool_keeps_plain_deferred_dynamic_tools_when_namespace_tools_are_disab
         name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
         kind: ToolHandlerKind::ToolSearch,
     }));
+}
+
+#[test]
+fn watchdog_namespace_does_not_defer_tools_without_search_tool() {
+    let model_info = search_capable_model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::AgentWatchdog);
+    features.enable(Feature::ToolSearch);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    assert_lacks_tool_name(&tools, TOOL_SEARCH_TOOL_NAME);
+    let ToolSpec::Namespace(watchdog) = &find_tool(&tools, "watchdog").spec else {
+        panic!("expected watchdog namespace");
+    };
+    let actual = watchdog
+        .tools
+        .iter()
+        .map(|tool| match tool {
+            ResponsesApiNamespaceTool::Function(function) => function.defer_loading,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(actual, vec![None, None]);
 }
 
 #[test]

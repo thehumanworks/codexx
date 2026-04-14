@@ -993,6 +993,8 @@ async fn chatgpt_auth_sends_correct_request() {
         .with_auth(create_dummy_codex_auth())
         .with_config(move |config| {
             config.model_provider = model_provider;
+            // This test only covers ChatGPT auth headers; tool discovery has separate coverage.
+            config.features.disable(Feature::ToolSuggest).unwrap();
         });
     let test = builder
         .build(&server)
@@ -1106,6 +1108,8 @@ async fn prefers_apikey_when_config_prefers_apikey_even_with_chatgpt_tokens() {
         &config,
         auth_manager,
         SessionSource::Exec,
+        config.model_catalog.clone(),
+        config.custom_models.clone(),
         CollaborationModesConfig {
             default_mode_request_user_input: config
                 .features
@@ -2198,12 +2202,18 @@ async fn includes_developer_instructions_message_in_request() {
         .iter()
         .filter(|item| item.get("role").and_then(|role| role.as_str()) == Some("developer"))
         .collect();
+    let developer_contents: Vec<&str> = developer_messages
+        .iter()
+        .filter_map(|item| item.get("content").and_then(serde_json::Value::as_array))
+        .flat_map(|content| content.iter())
+        .filter(|span| span.get("type").and_then(serde_json::Value::as_str) == Some("input_text"))
+        .filter_map(|span| span.get("text").and_then(serde_json::Value::as_str))
+        .collect();
     assert!(
-        developer_messages
+        developer_contents
             .iter()
-            .any(|item| message_input_texts(item).contains(&"be useful")),
-        "expected developer instructions in a developer message, got {:?}",
-        request_body["input"]
+            .any(|content| content.contains("be useful")),
+        "expected developer instructions in a developer message, got {developer_contents:?}",
     );
 
     assert_message_role(&request_body["input"][1], "user");

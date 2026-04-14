@@ -16,6 +16,12 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Fork from an existing session id (or thread name) before sending the prompt.
+    ///
+    /// This creates a new session with copied history, similar to `codex fork`.
+    #[arg(long = "fork", value_name = "SESSION_ID")]
+    pub fork_session_id: Option<String>,
+
     #[clap(flatten)]
     pub shared: ExecSharedCliOptions,
 
@@ -156,7 +162,18 @@ fn mark_exec_global_args(cmd: clap::Command) -> clap::Command {
             arg.global(true)
         })
 }
+impl Cli {
+    pub fn validate(self) -> Result<Self, clap::Error> {
+        if self.fork_session_id.is_some() && self.command.is_some() {
+            return Err(clap::Error::raw(
+                clap::error::ErrorKind::ArgumentConflict,
+                "--fork cannot be used with subcommands",
+            ));
+        }
 
+        Ok(self)
+    }
+}
 #[derive(Debug, clap::Subcommand)]
 pub enum Command {
     /// Resume a previous session by id or pick the most recent with --last.

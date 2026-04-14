@@ -1,10 +1,15 @@
 use super::*;
 use crate::ThreadManager;
+use crate::agent::WatchdogRegistration;
 use crate::config::AgentRoleConfig;
 use crate::config::DEFAULT_AGENT_MAX_DEPTH;
 use crate::function_tool::FunctionCallError;
 use crate::session::tests::make_session_and_context;
+use crate::session::tests::make_session_and_context_with_rx;
 use crate::session_prefix::format_subagent_notification_message;
+use crate::state::TaskKind;
+use crate::tasks::SessionTask;
+use crate::tasks::SessionTaskContext;
 use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolOutput;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
@@ -13,6 +18,7 @@ use crate::tools::handlers::multi_agents_v2::ListAgentsHandler as ListAgentsHand
 use crate::tools::handlers::multi_agents_v2::SendMessageHandler as SendMessageHandlerV2;
 use crate::tools::handlers::multi_agents_v2::SpawnAgentHandler as SpawnAgentHandlerV2;
 use crate::tools::handlers::multi_agents_v2::WaitAgentHandler as WaitAgentHandlerV2;
+use crate::tools::handlers::multi_agents_v2::WatchdogSelfCloseHandlerV2;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -21,7 +27,9 @@ use codex_model_provider::create_model_provider;
 use codex_model_provider_info::built_in_model_providers;
 use codex_protocol::AgentPath;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::ShellEnvironmentPolicy;
+use codex_protocol::config_types::Verbosity;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
@@ -32,6 +40,8 @@ use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::CollabAgentSpawnEndEvent;
+use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileSystemAccessMode;
 use codex_protocol::protocol::FileSystemPath;
@@ -54,6 +64,7 @@ use pretty_assertions::assert_eq;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -121,8 +132,11 @@ model_reasoning_effort = "minimal"
         role_name.clone(),
         AgentRoleConfig {
             description: Some("Role with model overrides".to_string()),
+            model: None,
             config_file: Some(role_config_path),
+            watchdog_interval_s: None,
             nickname_candidates: None,
+            fork_context: None,
         },
     );
     turn.config = Arc::new(config);
@@ -130,6 +144,144 @@ model_reasoning_effort = "minimal"
     role_name
 }
 
+async fn attach_watchdog_helper_for_tests(
+    manager: &ThreadManager,
+    agent_control: &crate::agent::AgentControl,
+    config: &crate::config::Config,
+) -> ThreadId {
+    let owner = manager
+        .start_thread(config.clone(), thread_store_from_config(config))
+        .await
+        .expect("owner thread should start");
+    let target = agent_control
+        .spawn_agent(
+            config.clone(),
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "watchdog target".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                environments: None,
+                final_output_json_schema: None,
+                responsesapi_client_metadata: None,
+            },
+            /*session_source*/ None,
+        )
+        .await
+        .expect("watchdog target thread should start");
+    let helper = manager
+        .start_thread(config.clone(), thread_store_from_config(config))
+        .await
+        .expect("helper thread should start");
+    agent_control
+        .register_watchdog(WatchdogRegistration {
+            owner_thread_id: owner.thread_id,
+            target_thread_id: target,
+            child_depth: 1,
+            interval_s: 30,
+            prompt: "check in".to_string(),
+            config: config.clone(),
+        })
+        .await
+        .expect("watchdog registration should succeed");
+    agent_control
+        .set_watchdog_active_helper_for_tests(target, helper.thread_id)
+        .await;
+    assert_eq!(
+        agent_control
+            .watchdog_owner_for_active_helper(helper.thread_id)
+            .await,
+        Some(owner.thread_id),
+        "watchdog helper should be registered for owner"
+    );
+    helper.thread_id
+}
+
+async fn install_role_with_model_provider_and_profile_override(turn: &mut TurnContext) -> String {
+    let role_name = "fork-context-role".to_string();
+    tokio::fs::create_dir_all(&turn.config.codex_home)
+        .await
+        .expect("codex home should be created");
+    let role_config_path = turn
+        .config
+        .codex_home
+        .as_path()
+        .join("fork-context-role.toml");
+    tokio::fs::write(
+        &role_config_path,
+        r#"developer_instructions = "Forked children should keep the parent model config."
+model_provider = "openai"
+model_context_window = 12345
+model_auto_compact_token_limit = 1234
+model_verbosity = "low"
+plan_mode_reasoning_effort = "minimal"
+profile = "role-profile"
+service_tier = "fast"
+
+[profiles.role-profile]
+model_provider = "openai"
+"#,
+    )
+    .await
+    .expect("role config should be written");
+
+    let mut config = (*turn.config).clone();
+    config.service_tier = Some(ServiceTier::Flex);
+    config.plan_mode_reasoning_effort = Some(ReasoningEffort::High);
+    config.model_verbosity = Some(Verbosity::High);
+    config.model_context_window = Some(200_000);
+    config.model_auto_compact_token_limit = Some(180_000);
+    config.agent_roles.insert(
+        role_name.clone(),
+        AgentRoleConfig {
+            description: Some("Role with model-provider and profile overrides".to_string()),
+            model: None,
+            config_file: Some(role_config_path),
+            watchdog_interval_s: None,
+            nickname_candidates: None,
+            fork_context: None,
+        },
+    );
+    turn.config = Arc::new(config);
+
+    role_name
+}
+
+#[derive(Clone, Copy)]
+struct NeverEndingTask;
+
+impl SessionTask for NeverEndingTask {
+    fn kind(&self) -> TaskKind {
+        TaskKind::Regular
+    }
+
+    fn span_name(&self) -> &'static str {
+        "session_task.multi_agent_never_ending"
+    }
+
+    async fn run(
+        self: Arc<Self>,
+        session: Arc<SessionTaskContext>,
+        ctx: Arc<TurnContext>,
+        _input: Vec<UserInput>,
+        cancellation_token: CancellationToken,
+    ) -> Option<String> {
+        session
+            .clone_session()
+            .send_event(
+                ctx.as_ref(),
+                EventMsg::TurnStarted(codex_protocol::protocol::TurnStartedEvent {
+                    turn_id: ctx.sub_id.clone(),
+                    started_at: Some(0),
+                    model_context_window: ctx.model_context_window(),
+                    collaboration_mode_kind: ctx.collaboration_mode.mode,
+                }),
+            )
+            .await;
+        cancellation_token.cancelled().await;
+        None
+    }
+}
 fn expect_text_output<T>(output: T) -> (String, Option<bool>)
 where
     T: ToolOutput,
@@ -156,6 +308,20 @@ where
     }
 }
 
+async fn wait_for_collab_spawn_end_event(
+    rx: &async_channel::Receiver<Event>,
+) -> CollabAgentSpawnEndEvent {
+    loop {
+        let event = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("collab spawn-end event timed out")
+            .expect("collab spawn-end event missing");
+        if let EventMsg::CollabAgentSpawnEnd(event) = event.msg {
+            return event;
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ListAgentsResult {
     agents: Vec<ListedAgentResult>,
@@ -166,6 +332,11 @@ struct ListedAgentResult {
     agent_name: String,
     agent_status: serde_json::Value,
     last_task_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+struct WatchdogSelfCloseResult {
+    previous_status: AgentStatus,
 }
 
 #[tokio::test]
@@ -241,7 +412,15 @@ async fn spawn_agent_uses_explorer_role_and_preserves_approval_policy() {
 
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
+    let root = manager
+        .start_thread(
+            (*turn.config).clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("root thread should start");
     session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
     let mut config = (*turn.config).clone();
     let provider_info =
         built_in_model_providers(/* openai_base_url */ /*openai_base_url*/ None)["ollama"].clone();
@@ -264,7 +443,8 @@ async fn spawn_agent_uses_explorer_role_and_preserves_approval_policy() {
         "spawn_agent",
         function_payload(json!({
             "message": "inspect this repo",
-            "agent_type": "explorer"
+            "agent_type": "explorer",
+            "fork_context": false
         })),
     );
     let output = SpawnAgentHandler
@@ -358,7 +538,7 @@ async fn spawn_agent_fork_context_rejects_child_model_overrides() {
 
     assert_eq!(
         err,
-            FunctionCallError::RespondToModel(
+        FunctionCallError::RespondToModel(
             "Full-history forked agents inherit the parent agent type, model, and reasoning effort; omit agent_type, model, and reasoning_effort, or spawn without a full-history fork.".to_string(),
         )
     );
@@ -448,16 +628,16 @@ async fn multi_agent_v2_spawn_defaults_to_full_fork_and_rejects_child_model_over
 
     assert_eq!(
         err,
-            FunctionCallError::RespondToModel(
+        FunctionCallError::RespondToModel(
             "Full-history forked agents inherit the parent agent type, model, and reasoning effort; omit agent_type, model, and reasoning_effort, or spawn without a full-history fork.".to_string(),
         )
     );
 }
 
 #[tokio::test]
-async fn multi_agent_v2_spawn_partial_fork_turns_allows_agent_type_override() {
+async fn multi_agent_v2_spawn_partial_fork_turns_allows_role_overrides() {
     let (mut session, mut turn) = make_session_and_context().await;
-    let role_name = install_role_with_model_override(&mut turn).await;
+    let role_name = install_role_with_model_provider_and_profile_override(&mut turn).await;
     let manager = thread_manager();
     let root = manager
         .start_thread(
@@ -485,13 +665,13 @@ async fn multi_agent_v2_spawn_partial_fork_turns_allows_agent_type_override() {
             "spawn_agent",
             function_payload(json!({
                 "message": "inspect this repo",
-                "task_name": "partial_fork",
                 "agent_type": role_name,
-                "fork_turns": "1"
+                "fork_turns": "1",
+                "task_name": "partial_fork"
             })),
         ))
         .await
-        .expect("partial fork should allow agent_type overrides");
+        .expect("partial fork should preserve role overrides");
     let (content, _) = expect_text_output(output);
     let result: serde_json::Value =
         serde_json::from_str(&content).expect("spawn_agent result should be json");
@@ -509,16 +689,32 @@ async fn multi_agent_v2_spawn_partial_fork_turns_allows_agent_type_override() {
         .config_snapshot()
         .await;
 
-    assert_eq!(snapshot.model, "gpt-5-role-override");
-    assert_eq!(snapshot.model_provider_id, "ollama");
-    assert_eq!(snapshot.reasoning_effort, Some(ReasoningEffort::Minimal));
+    assert_eq!(snapshot.active_profile.as_deref(), Some("role-profile"));
+    assert_eq!(snapshot.model_context_window, Some(12_345));
+    assert_eq!(snapshot.model_auto_compact_token_limit, Some(1_234));
+    assert_eq!(snapshot.model_verbosity, Some(Verbosity::Low));
 }
 
 #[tokio::test]
-async fn spawn_agent_returns_agent_id_without_task_name() {
-    let (mut session, turn) = make_session_and_context().await;
+async fn spawn_agent_watchdog_role_returns_handle_with_role_defaults() {
+    let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
-    session.services.agent_control = manager.agent_control();
+    let root = manager
+        .start_thread(
+            (*turn.config).clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("root thread should start");
+    let agent_control = manager.agent_control();
+    session.services.agent_control = agent_control.clone();
+    session.conversation_id = root.thread_id;
+    let mut config = (*turn.config).clone();
+    config
+        .features
+        .enable(Feature::AgentWatchdog)
+        .expect("test config should allow feature update");
+    turn.config = Arc::new(config);
 
     let output = SpawnAgentHandler
         .handle(invocation(
@@ -526,7 +722,52 @@ async fn spawn_agent_returns_agent_id_without_task_name() {
             Arc::new(turn),
             "spawn_agent",
             function_payload(json!({
-                "message": "inspect this repo"
+                "message": "check in periodically",
+                "agent_type": "watchdog"
+            })),
+        ))
+        .await
+        .expect("spawn_agent should succeed");
+    let (content, success) = expect_text_output(output);
+    let result: serde_json::Value =
+        serde_json::from_str(&content).expect("spawn_agent result should be json");
+    let agent_id = parse_agent_id(
+        result["agent_id"]
+            .as_str()
+            .expect("spawn_agent result should include agent_id"),
+    );
+
+    assert_eq!(success, Some(true));
+    assert_eq!(
+        agent_control.get_status(agent_id).await,
+        AgentStatus::PendingInit
+    );
+    let watchdog_targets = agent_control.watchdog_targets(&[agent_id]).await;
+    assert_eq!(watchdog_targets, HashSet::from([agent_id]));
+}
+
+#[tokio::test]
+async fn spawn_agent_returns_agent_id_without_task_name() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let root = manager
+        .start_thread(
+            (*turn.config).clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("root thread should start");
+    session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
+
+    let output = SpawnAgentHandler
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "spawn_agent",
+            function_payload(json!({
+                "message": "inspect this repo",
+                "fork_context": false
             })),
         ))
         .await
@@ -536,7 +777,7 @@ async fn spawn_agent_returns_agent_id_without_task_name() {
         serde_json::from_str(&content).expect("spawn_agent result should be json");
 
     assert!(result["agent_id"].is_string());
-    assert!(result.get("task_name").is_none());
+    assert_eq!(result["task_name"], serde_json::Value::Null);
     assert!(result.get("nickname").is_some());
     assert_eq!(success, Some(true));
 }
@@ -619,20 +860,176 @@ async fn multi_agent_v2_spawn_rejects_legacy_items_field() {
 
 #[tokio::test]
 async fn spawn_agent_errors_when_manager_dropped() {
-    let (session, turn) = make_session_and_context().await;
+    let (session, turn, rx) = make_session_and_context_with_rx().await;
     let invocation = invocation(
-        Arc::new(session),
-        Arc::new(turn),
+        session.clone(),
+        turn.clone(),
         "spawn_agent",
-        function_payload(json!({"message": "hello"})),
+        function_payload(json!({"message": "hello", "fork_context": false})),
     );
     let Err(err) = SpawnAgentHandler.handle(invocation).await else {
         panic!("spawn should fail without a manager");
     };
+    let spawn_end_event = wait_for_collab_spawn_end_event(&rx).await;
+    assert_eq!(spawn_end_event.call_id, "call-1");
+    assert_eq!(spawn_end_event.sender_thread_id, session.conversation_id);
+    assert_eq!(spawn_end_event.new_thread_id, None);
+    assert_eq!(spawn_end_event.new_agent_nickname, None);
+    assert_eq!(spawn_end_event.new_agent_role, None);
+    assert_eq!(spawn_end_event.prompt, "hello");
+    assert_eq!(spawn_end_event.model, "");
+    assert_eq!(spawn_end_event.reasoning_effort, ReasoningEffort::default());
+    assert!(matches!(
+        spawn_end_event.status,
+        AgentStatus::Errored(ref message) if message.contains("thread manager dropped")
+    ));
     assert_eq!(
         err,
         FunctionCallError::RespondToModel("collab manager unavailable".to_string())
     );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_spawn_agent_errors_when_manager_dropped() {
+    let (session, mut turn, rx) = make_session_and_context_with_rx().await;
+    let turn_context = Arc::get_mut(&mut turn).expect("single turn context ref");
+    let mut config = (*turn_context.config).clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    turn_context.config = Arc::new(config);
+
+    let invocation = invocation(
+        session.clone(),
+        turn.clone(),
+        "spawn_agent",
+        function_payload(json!({
+            "message": "inspect this repo",
+            "task_name": "worker"
+        })),
+    );
+    let Err(err) = SpawnAgentHandlerV2.handle(invocation).await else {
+        panic!("spawn should fail without a manager");
+    };
+    let spawn_end_event = wait_for_collab_spawn_end_event(&rx).await;
+    assert_eq!(spawn_end_event.call_id, "call-1");
+    assert_eq!(spawn_end_event.sender_thread_id, session.conversation_id);
+    assert_eq!(spawn_end_event.new_thread_id, None);
+    assert_eq!(spawn_end_event.new_agent_nickname, None);
+    assert_eq!(spawn_end_event.new_agent_role, None);
+    assert_eq!(spawn_end_event.prompt, "inspect this repo");
+    assert_eq!(spawn_end_event.model, "");
+    assert_eq!(spawn_end_event.reasoning_effort, ReasoningEffort::default());
+    assert!(matches!(
+        spawn_end_event.status,
+        AgentStatus::Errored(ref message) if message.contains("thread manager dropped")
+    ));
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel("collab manager unavailable".to_string())
+    );
+}
+
+#[tokio::test]
+async fn spawn_retry_preempted_event_omits_thread_identity() {
+    let (session, turn, rx) = make_session_and_context_with_rx().await;
+
+    send_collab_agent_spawn_retry_preempted_event(
+        session.as_ref(),
+        turn.as_ref(),
+        "call-1".to_string(),
+        "inspect this repo".to_string(),
+        "gpt-5.4-mini".to_string(),
+        ReasoningEffort::Medium,
+        AgentStatus::PendingInit,
+    )
+    .await;
+
+    let spawn_end_event = wait_for_collab_spawn_end_event(&rx).await;
+    assert_eq!(spawn_end_event.call_id, "call-1");
+    assert_eq!(spawn_end_event.sender_thread_id, session.conversation_id);
+    assert_eq!(spawn_end_event.new_thread_id, None);
+    assert_eq!(spawn_end_event.new_agent_nickname, None);
+    assert_eq!(spawn_end_event.new_agent_role, None);
+    assert_eq!(spawn_end_event.prompt, "inspect this repo");
+    assert_eq!(spawn_end_event.model, "gpt-5.4-mini");
+    assert_eq!(spawn_end_event.reasoning_effort, ReasoningEffort::Medium);
+    assert_eq!(spawn_end_event.status, AgentStatus::PendingInit);
+}
+
+#[tokio::test]
+async fn spawn_async_quota_probe_accepts_running_child() {
+    let decision = probe_spawn_attempt_for_async_quota_exhaustion(
+        AgentStatus::Running,
+        ThreadId::default(),
+        &crate::agent::control::AgentControl::default(),
+    )
+    .await;
+
+    assert!(matches!(
+        decision,
+        SpawnAttemptRetryDecision::Accept(AgentStatus::Running)
+    ));
+}
+
+#[tokio::test]
+async fn close_quota_exhausted_spawn_attempt_accepts_child_that_started_running() {
+    let (_session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let thread = manager
+        .start_thread(
+            (*turn.config).clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("child thread should start");
+    let active_turn = thread.thread.codex.session.new_default_turn().await;
+    thread
+        .thread
+        .codex
+        .session
+        .spawn_task(
+            Arc::clone(&active_turn),
+            vec![UserInput::Text {
+                text: "working".to_string(),
+                text_elements: Vec::new(),
+            }],
+            NeverEndingTask,
+        )
+        .await;
+    timeout(Duration::from_secs(1), async {
+        loop {
+            if manager.agent_control().get_status(thread.thread_id).await == AgentStatus::Running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("child should reach running");
+
+    let decision = close_quota_exhausted_spawn_attempt(
+        &manager.agent_control(),
+        thread.thread_id,
+        AgentStatus::PendingInit,
+    )
+    .await;
+
+    assert!(matches!(
+        decision,
+        SpawnAttemptRetryDecision::Accept(AgentStatus::Running)
+    ));
+    assert_eq!(
+        manager.agent_control().get_status(thread.thread_id).await,
+        AgentStatus::Running
+    );
+
+    let _ = thread
+        .thread
+        .submit(Op::Shutdown {})
+        .await
+        .expect("shutdown should submit");
 }
 
 #[tokio::test]
@@ -1785,7 +2182,15 @@ async fn spawn_agent_reapplies_runtime_sandbox_after_role_config() {
 
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
+    let root = manager
+        .start_thread(
+            (*turn.config).clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("root thread should start");
     session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
     let expected_sandbox = turn.config.legacy_sandbox_policy();
     let mut expected_file_system_sandbox_policy =
         FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&expected_sandbox, &turn.cwd);
@@ -1819,7 +2224,8 @@ async fn spawn_agent_reapplies_runtime_sandbox_after_role_config() {
         "spawn_agent",
         function_payload(json!({
             "message": "await this command",
-            "agent_type": "explorer"
+            "agent_type": "explorer",
+            "fork_context": false
         })),
     );
     let output = SpawnAgentHandler
@@ -1881,7 +2287,7 @@ async fn spawn_agent_rejects_when_depth_limit_exceeded() {
         Arc::new(session),
         Arc::new(turn),
         "spawn_agent",
-        function_payload(json!({"message": "hello"})),
+        function_payload(json!({"message": "hello", "fork_context": false})),
     );
     let Err(err) = SpawnAgentHandler.handle(invocation).await else {
         panic!("spawn should fail when depth limit exceeded");
@@ -1904,13 +2310,21 @@ async fn spawn_agent_allows_depth_up_to_configured_max_depth() {
 
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
+    let root = manager
+        .start_thread(
+            (*turn.config).clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("root thread should start");
     session.services.agent_control = manager.agent_control();
+    session.conversation_id = root.thread_id;
 
     let mut config = (*turn.config).clone();
     config.agent_max_depth = DEFAULT_AGENT_MAX_DEPTH + 1;
     turn.config = Arc::new(config);
     turn.session_source = SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
-        parent_thread_id: session.conversation_id,
+        parent_thread_id: root.thread_id,
         depth: DEFAULT_AGENT_MAX_DEPTH,
         agent_path: None,
         agent_nickname: None,
@@ -1921,7 +2335,7 @@ async fn spawn_agent_allows_depth_up_to_configured_max_depth() {
         Arc::new(session),
         Arc::new(turn),
         "spawn_agent",
-        function_payload(json!({"message": "hello"})),
+        function_payload(json!({"message": "hello", "fork_context": false})),
     );
     let output = SpawnAgentHandler
         .handle(invocation)
@@ -2051,7 +2465,10 @@ async fn send_input_rejects_invalid_id() {
     let FunctionCallError::RespondToModel(msg) = err else {
         panic!("expected respond-to-model error");
     };
-    assert!(msg.starts_with("invalid agent id not-a-uuid:"));
+    assert_eq!(
+        msg,
+        "agent_name must use only lowercase letters, digits, and underscores"
+    );
 }
 
 #[tokio::test]
@@ -2399,7 +2816,7 @@ async fn wait_agent_rejects_invalid_target() {
     let FunctionCallError::RespondToModel(msg) = err else {
         panic!("expected respond-to-model error");
     };
-    assert!(msg.starts_with("invalid agent id invalid:"));
+    assert!(msg.contains("invalid"));
 }
 
 #[tokio::test]
@@ -2416,7 +2833,7 @@ async fn wait_agent_rejects_empty_targets() {
     };
     assert_eq!(
         err,
-        FunctionCallError::RespondToModel("agent ids must be non-empty".to_string())
+        FunctionCallError::RespondToModel("agent targets must be non-empty".to_string())
     );
 }
 
@@ -3239,6 +3656,119 @@ async fn close_agent_submits_shutdown_and_returns_previous_status() {
 }
 
 #[tokio::test]
+async fn watchdog_self_close_rejects_non_watchdog_thread() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let agent_control = manager.agent_control();
+    let thread = manager
+        .start_thread(
+            turn.config.as_ref().clone(),
+            thread_store_from_config(turn.config.as_ref()),
+        )
+        .await
+        .expect("thread should start");
+    session.services.agent_control = agent_control.clone();
+    session.conversation_id = thread.thread_id;
+
+    let err = WatchdogSelfCloseHandler
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "watchdog_self_close",
+            function_payload(json!({})),
+        ))
+        .await
+        .expect_err("non-watchdog threads should be rejected");
+
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "watchdog_self_close is only available in watchdog check-in threads.".to_string(),
+        )
+    );
+}
+
+#[tokio::test]
+async fn watchdog_self_close_closes_watchdog_helper_and_returns_previous_status() {
+    let (mut session, turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let agent_control = manager.agent_control();
+    session.services.agent_control = agent_control.clone();
+    let helper_thread_id =
+        attach_watchdog_helper_for_tests(&manager, &agent_control, turn.config.as_ref()).await;
+    session.conversation_id = helper_thread_id;
+    let status_before = agent_control.get_status(helper_thread_id).await;
+
+    let output = WatchdogSelfCloseHandler
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "watchdog_self_close",
+            function_payload(json!({})),
+        ))
+        .await
+        .expect("watchdog helper should be allowed to self-close");
+    let (content, success) = expect_text_output(output);
+    let result: WatchdogSelfCloseResult =
+        serde_json::from_str(&content).expect("watchdog self-close result should be json");
+
+    assert_eq!(
+        result,
+        WatchdogSelfCloseResult {
+            previous_status: status_before,
+        }
+    );
+    assert_eq!(success, Some(true));
+    assert_eq!(
+        agent_control.get_status(helper_thread_id).await,
+        AgentStatus::NotFound
+    );
+}
+
+#[tokio::test]
+async fn multi_agent_v2_watchdog_self_close_closes_watchdog_helper_and_returns_previous_status() {
+    let (mut session, mut turn) = make_session_and_context().await;
+    let manager = thread_manager();
+    let agent_control = manager.agent_control();
+    session.services.agent_control = agent_control.clone();
+    let mut config = turn.config.as_ref().clone();
+    config
+        .features
+        .enable(Feature::MultiAgentV2)
+        .expect("test config should allow feature update");
+    let helper_thread_id =
+        attach_watchdog_helper_for_tests(&manager, &agent_control, &config).await;
+    session.conversation_id = helper_thread_id;
+    turn.config = Arc::new(config);
+    let status_before = agent_control.get_status(helper_thread_id).await;
+
+    let output = WatchdogSelfCloseHandlerV2
+        .handle(invocation(
+            Arc::new(session),
+            Arc::new(turn),
+            "watchdog_self_close",
+            function_payload(json!({})),
+        ))
+        .await
+        .expect("watchdog helper should be allowed to self-close");
+    let (content, success) = expect_text_output(output);
+    let result: WatchdogSelfCloseResult =
+        serde_json::from_str(&content).expect("watchdog self-close result should be json");
+
+    assert_eq!(
+        result,
+        WatchdogSelfCloseResult {
+            previous_status: status_before,
+        }
+    );
+    assert_eq!(success, Some(true));
+    assert_eq!(
+        agent_control.get_status(helper_thread_id).await,
+        AgentStatus::NotFound
+    );
+}
+
+#[tokio::test]
 async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtrees_closed() {
     let (_session, turn) = make_session_and_context().await;
     let manager = thread_manager();
@@ -3497,6 +4027,7 @@ async fn build_agent_spawn_config_uses_turn_context_values() {
 
     let config = build_agent_spawn_config(&base_instructions, &turn).expect("spawn config");
     let mut expected = (*turn.config).clone();
+    expected.features = config.features.clone();
     expected.base_instructions = Some(base_instructions.text);
     expected.model = Some(turn.model_info.slug.clone());
     expected.model_provider = turn.provider.info().clone();

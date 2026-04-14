@@ -122,7 +122,7 @@ async fn tool_suggest_is_available_without_search_tool_after_discovery_attempts(
     let tools = tool_names(&body);
     assert!(
         !tools.iter().any(|name| name == TOOL_SEARCH_TOOL_NAME),
-        "tools list should not include {TOOL_SEARCH_TOOL_NAME}: {tools:?}"
+        "tools list should omit {TOOL_SEARCH_TOOL_NAME} when the model does not support search tools: {tools:?}"
     );
     assert!(
         tools.iter().any(|name| name == TOOL_SUGGEST_TOOL_NAME),

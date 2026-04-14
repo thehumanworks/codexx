@@ -2,6 +2,7 @@ use crate::SkillsManager;
 use crate::agent::AgentControl;
 use crate::codex_thread::CodexThread;
 use crate::config::Config;
+use crate::config::CustomModelConfig;
 use crate::config::ThreadStoreConfig;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::selected_primary_environment;
@@ -38,8 +39,10 @@ use codex_protocol::error::Result as CodexResult;
 #[cfg(test)]
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::ModelPreset;
+use codex_protocol::openai_models::ModelsResponse;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::ForkReferenceItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
@@ -63,6 +66,7 @@ use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -255,12 +259,15 @@ pub(crate) struct ThreadManagerState {
 pub fn build_models_manager(
     config: &Config,
     auth_manager: Arc<AuthManager>,
+    model_catalog: Option<ModelsResponse>,
+    custom_models: HashMap<String, CustomModelConfig>,
     collaboration_modes_config: CollaborationModesConfig,
 ) -> SharedModelsManager {
     let provider = create_model_provider(config.model_provider.clone(), Some(auth_manager));
     provider.models_manager(
         config.codex_home.to_path_buf(),
-        config.model_catalog.clone(),
+        model_catalog,
+        custom_models,
         collaboration_modes_config,
     )
 }
@@ -281,6 +288,8 @@ impl ThreadManager {
         config: &Config,
         auth_manager: Arc<AuthManager>,
         session_source: SessionSource,
+        model_catalog: Option<ModelsResponse>,
+        custom_models: HashMap<String, CustomModelConfig>,
         collaboration_modes_config: CollaborationModesConfig,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: Option<AnalyticsEventsClient>,
@@ -306,6 +315,8 @@ impl ThreadManager {
                 models_manager: build_models_manager(
                     config,
                     auth_manager.clone(),
+                    model_catalog,
+                    custom_models,
                     collaboration_modes_config,
                 ),
                 environment_manager,
@@ -381,6 +392,7 @@ impl ThreadManager {
                     .models_manager(
                         codex_home,
                         /*config_model_catalog*/ None,
+                        HashMap::new(),
                         CollaborationModesConfig::default(),
                     ),
                 environment_manager,
@@ -777,12 +789,16 @@ impl ThreadManager {
         S: Into<ForkSnapshot>,
     {
         let snapshot = snapshot.into();
-        let history = RolloutRecorder::get_rollout_history(&path).await?;
-        self.fork_thread_from_history(
+        // True forks must discard the source rollout's conversation id so the child gets a
+        // distinct thread id and preserves `forked_from_id` in its SessionMeta. Using the
+        // resume loader here silently turns a fork into an in-place resume.
+        let history = RolloutRecorder::get_fork_history(&path).await?;
+        self.fork_thread_with_initial_history(
             snapshot,
             config,
             thread_store,
             history,
+            Some(path),
             persist_extended_history,
             parent_trace,
         )
@@ -802,11 +818,16 @@ impl ThreadManager {
     where
         S: Into<ForkSnapshot>,
     {
+        let source_rollout_path = match &history {
+            InitialHistory::Resumed(resumed) => resumed.rollout_path.clone(),
+            InitialHistory::New | InitialHistory::Cleared | InitialHistory::Forked(_) => None,
+        };
         self.fork_thread_with_initial_history(
             snapshot.into(),
             config,
             thread_store,
             history,
+            source_rollout_path,
             persist_extended_history,
             parent_trace,
         )
@@ -819,11 +840,19 @@ impl ThreadManager {
         config: Config,
         thread_store: Arc<dyn ThreadStore>,
         history: InitialHistory,
+        source_rollout_path: Option<PathBuf>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
         let interrupted_marker = InterruptedTurnHistoryMarker::from_config(&config);
-        let history = fork_history_from_snapshot(snapshot, history, interrupted_marker);
+        let history = fork_history_from_snapshot(
+            snapshot,
+            config.codex_home.as_path(),
+            history,
+            source_rollout_path,
+            interrupted_marker,
+        )
+        .await;
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
@@ -1218,14 +1247,23 @@ impl ThreadManagerState {
 /// when the source thread is currently mid-turn they fall back to cutting
 /// before the active turn's opening boundary so the fork omits the unfinished
 /// suffix entirely.
-fn truncate_before_nth_user_message(
+async fn truncate_before_nth_user_message(
+    codex_home: &Path,
     history: InitialHistory,
-    n: usize,
+    n: i64,
     snapshot_state: &SnapshotTurnState,
 ) -> InitialHistory {
-    let items: Vec<RolloutItem> = history.get_rollout_items();
+    let mut items: Vec<RolloutItem> = history.get_rollout_items();
+    if items
+        .iter()
+        .any(|item| matches!(item, RolloutItem::ForkReference(_)))
+    {
+        items = truncation::materialize_rollout_items_for_replay(codex_home, &items).await;
+    }
     let user_positions = truncation::user_message_positions_in_rollout(&items);
-    let rolled = if snapshot_state.ends_mid_turn && n >= user_positions.len() {
+    let rolled = if snapshot_state.ends_mid_turn
+        && usize::try_from(n).map_or(true, |n| n >= user_positions.len())
+    {
         if let Some(cut_idx) = snapshot_state
             .active_turn_start_index
             .or_else(|| user_positions.last().copied())
@@ -1305,15 +1343,23 @@ fn snapshot_turn_state(history: &InitialHistory) -> SnapshotTurnState {
     }
 }
 
-fn fork_history_from_snapshot(
+async fn fork_history_from_snapshot(
     snapshot: ForkSnapshot,
+    codex_home: &Path,
     history: InitialHistory,
+    source_rollout_path: Option<PathBuf>,
     interrupted_marker: InterruptedTurnHistoryMarker,
 ) -> InitialHistory {
     let snapshot_state = snapshot_turn_state(&history);
-    match snapshot {
+    let mut history = match snapshot {
         ForkSnapshot::TruncateBeforeNthUserMessage(nth_user_message) => {
-            truncate_before_nth_user_message(history, nth_user_message, &snapshot_state)
+            truncate_before_nth_user_message(
+                codex_home,
+                history,
+                i64::try_from(nth_user_message).unwrap_or(i64::MAX),
+                &snapshot_state,
+            )
+            .await
         }
         ForkSnapshot::Interrupted => {
             let history = match history {
@@ -1332,7 +1378,35 @@ fn fork_history_from_snapshot(
                 history
             }
         }
+    };
+    if let (
+        ForkSnapshot::TruncateBeforeNthUserMessage(nth_user_message),
+        Some(rollout_path),
+        InitialHistory::Forked(items),
+    ) = (snapshot, source_rollout_path, &mut history)
+    {
+        let source_session_meta = items.iter().find_map(|item| match item {
+            RolloutItem::SessionMeta(meta_line) => Some(meta_line.clone()),
+            RolloutItem::ForkReference(_)
+            | RolloutItem::ResponseItem(_)
+            | RolloutItem::Compacted(_)
+            | RolloutItem::TurnContext(_)
+            | RolloutItem::EventMsg(_) => None,
+        });
+        // Keep the source SessionMeta in memory so startup can derive `forked_from_id`
+        // while still persisting only the compact ForkReference suffix on disk.
+        *items = source_session_meta
+            .into_iter()
+            .map(RolloutItem::SessionMeta)
+            .chain(std::iter::once(RolloutItem::ForkReference(
+                ForkReferenceItem {
+                    rollout_path,
+                    nth_user_message: i64::try_from(nth_user_message).unwrap_or(i64::MAX),
+                },
+            )))
+            .collect();
     }
+    history
 }
 
 /// Append the same persisted interrupt boundary used by the live interrupt path
@@ -1379,3 +1453,150 @@ fn append_interrupted_boundary(
 #[cfg(test)]
 #[path = "thread_manager_tests.rs"]
 mod tests;
+// Keep this inline fork-reference test module disabled on the refreshed main API;
+// branch coverage now comes from the package/integration tests that match current types.
+#[cfg(any())]
+mod fork_reference_tests {
+    use super::*;
+    use crate::session::tests::make_session_and_context;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::ReasoningItemReasoningSummary;
+    use codex_protocol::models::ResponseItem;
+    use pretty_assertions::assert_eq;
+
+    fn user_msg(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "user".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+    fn assistant_msg(text: &str) -> ResponseItem {
+        ResponseItem::Message {
+            id: None,
+            role: "assistant".to_string(),
+            content: vec![ContentItem::OutputText {
+                text: text.to_string(),
+            }],
+            end_turn: None,
+            phase: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn drops_from_last_user_only() {
+        let items = [
+            user_msg("u1"),
+            assistant_msg("a1"),
+            assistant_msg("a2"),
+            user_msg("u2"),
+            assistant_msg("a3"),
+            ResponseItem::Reasoning {
+                id: "r1".to_string(),
+                summary: vec![ReasoningItemReasoningSummary::SummaryText {
+                    text: "s".to_string(),
+                }],
+                content: None,
+                encrypted_content: None,
+            },
+            ResponseItem::FunctionCall {
+                id: None,
+                call_id: "c1".to_string(),
+                name: "tool".to_string(),
+                namespace: None,
+                arguments: "{}".to_string(),
+            },
+            assistant_msg("a4"),
+        ];
+
+        let initial: Vec<RolloutItem> = items
+            .iter()
+            .cloned()
+            .map(RolloutItem::ResponseItem)
+            .collect();
+        let truncated = truncate_before_nth_user_message(
+            Path::new("/tmp"),
+            InitialHistory::Forked(initial),
+            1,
+            &SnapshotTurnState {
+                ends_mid_turn: false,
+                active_turn_id: None,
+                active_turn_start_index: None,
+            },
+        )
+        .await;
+        let got_items = truncated.get_rollout_items();
+        let expected_items = vec![
+            RolloutItem::ResponseItem(items[0].clone()),
+            RolloutItem::ResponseItem(items[1].clone()),
+            RolloutItem::ResponseItem(items[2].clone()),
+        ];
+        assert_eq!(
+            serde_json::to_value(&got_items).unwrap(),
+            serde_json::to_value(&expected_items).unwrap()
+        );
+
+        let initial2: Vec<RolloutItem> = items
+            .iter()
+            .cloned()
+            .map(RolloutItem::ResponseItem)
+            .collect();
+        let truncated2 = truncate_before_nth_user_message(
+            Path::new("/tmp"),
+            InitialHistory::Forked(initial2),
+            2,
+            &SnapshotTurnState {
+                ends_mid_turn: false,
+                active_turn_id: None,
+                active_turn_start_index: None,
+            },
+        )
+        .await;
+        assert!(matches!(truncated2, InitialHistory::New));
+    }
+
+    #[tokio::test]
+    async fn ignores_session_prefix_messages_when_truncating() {
+        let (session, turn_context) = make_session_and_context().await;
+        let mut items = session.build_initial_context(&turn_context).await;
+        items.push(user_msg("feature request"));
+        items.push(assistant_msg("ack"));
+        items.push(user_msg("second question"));
+        items.push(assistant_msg("answer"));
+
+        let rollout_items: Vec<RolloutItem> = items
+            .iter()
+            .cloned()
+            .map(RolloutItem::ResponseItem)
+            .collect();
+
+        let truncated = truncate_before_nth_user_message(
+            Path::new("/tmp"),
+            InitialHistory::Forked(rollout_items),
+            1,
+            &SnapshotTurnState {
+                ends_mid_turn: false,
+                active_turn_id: None,
+                active_turn_start_index: None,
+            },
+        )
+        .await;
+        let got_items = truncated.get_rollout_items();
+
+        let expected: Vec<RolloutItem> = vec![
+            RolloutItem::ResponseItem(items[0].clone()),
+            RolloutItem::ResponseItem(items[1].clone()),
+            RolloutItem::ResponseItem(items[2].clone()),
+            RolloutItem::ResponseItem(items[3].clone()),
+        ];
+
+        assert_eq!(
+            serde_json::to_value(&got_items).unwrap(),
+            serde_json::to_value(&expected).unwrap()
+        );
+    }
+}

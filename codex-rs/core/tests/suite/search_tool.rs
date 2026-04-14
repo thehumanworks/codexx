@@ -291,7 +291,7 @@ async fn tool_search_disabled_exposes_apps_tools_directly() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn search_tool_is_hidden_for_api_key_auth() -> Result<()> {
+async fn search_tool_omits_tool_search_without_searchable_apps_for_api_key_auth() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -322,8 +322,10 @@ async fn search_tool_is_hidden_for_api_key_auth() -> Result<()> {
     let tools = tool_names(&body);
     assert!(
         !tools.iter().any(|name| name == TOOL_SEARCH_TOOL_NAME),
-        "tools list should not include {TOOL_SEARCH_TOOL_NAME} for API key auth: {tools:?}"
+        "tools list should omit {TOOL_SEARCH_TOOL_NAME} when API-key auth leaves no searchable app tools: {tools:?}"
     );
+    assert!(tools.iter().any(|name| name == "spawn_agent"));
+    assert!(tools.iter().any(|name| name == "wait_agent"));
 
     Ok(())
 }

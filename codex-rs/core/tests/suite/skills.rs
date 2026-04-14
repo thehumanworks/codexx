@@ -240,6 +240,8 @@ async fn list_skills_skips_cwd_roots_when_environment_disabled() -> Result<()> {
         &config,
         codex_core::test_support::auth_manager_from_auth(CodexAuth::from_api_key("dummy")),
         SessionSource::Exec,
+        /*model_catalog*/ None,
+        std::collections::HashMap::new(),
         CollaborationModesConfig::default(),
         Arc::new(EnvironmentManager::disabled_for_tests(
             ExecServerRuntimePaths::new(

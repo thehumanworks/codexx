@@ -53,6 +53,8 @@ use codex_app_server_protocol::ThreadGoalSetResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
 use codex_app_server_protocol::ThreadInjectItemsParams;
 use codex_app_server_protocol::ThreadInjectItemsResponse;
+use codex_app_server_protocol::ThreadInputActivityParams;
+use codex_app_server_protocol::ThreadInputActivityResponse;
 use codex_app_server_protocol::ThreadListParams;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadLoadedListParams;
@@ -610,6 +612,21 @@ impl AppServerSession {
 
     pub(crate) async fn startup_interrupt(&mut self, thread_id: ThreadId) -> Result<()> {
         self.turn_interrupt(thread_id, String::new()).await
+    }
+
+    pub(crate) async fn thread_input_activity(&mut self, thread_id: ThreadId) -> Result<()> {
+        let request_id = self.next_request_id();
+        let _: ThreadInputActivityResponse = self
+            .client
+            .request_typed(ClientRequest::ThreadInputActivity {
+                request_id,
+                params: ThreadInputActivityParams {
+                    thread_id: thread_id.to_string(),
+                },
+            })
+            .await
+            .wrap_err("thread/inputActivity failed in TUI")?;
+        Ok(())
     }
 
     pub(crate) async fn turn_steer(

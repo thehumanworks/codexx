@@ -2,6 +2,7 @@ use crate::CommandToolOptions;
 use crate::REQUEST_USER_INPUT_TOOL_NAME;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiNamespaceTool;
+use crate::ResponsesApiTool;
 use crate::ShellToolOptions;
 use crate::SpawnAgentToolOptions;
 use crate::TOOL_SEARCH_DEFAULT_LIMIT;
@@ -26,12 +27,14 @@ use crate::create_apply_patch_json_tool;
 use crate::create_close_agent_tool_v1;
 use crate::create_close_agent_tool_v2;
 use crate::create_code_mode_tool;
+use crate::create_compact_parent_context_tool;
 use crate::create_create_goal_tool;
 use crate::create_exec_command_tool;
 use crate::create_followup_task_tool;
 use crate::create_get_goal_tool;
 use crate::create_image_generation_tool;
 use crate::create_list_agents_tool;
+use crate::create_list_agents_tool_v1;
 use crate::create_list_dir_tool;
 use crate::create_list_mcp_resource_templates_tool;
 use crate::create_list_mcp_resources_tool;
@@ -57,6 +60,7 @@ use crate::create_view_image_tool;
 use crate::create_wait_agent_tool_v1;
 use crate::create_wait_agent_tool_v2;
 use crate::create_wait_tool;
+use crate::create_watchdog_self_close_tool;
 use crate::create_web_search_tool;
 use crate::create_write_stdin_tool;
 use crate::default_namespace_description;
@@ -270,10 +274,10 @@ pub fn build_tool_registry_plan(
     } else {
         None
     };
+    let includes_tool_search = config.search_tool
+        && (deferred_mcp_tools_for_search.is_some() || !deferred_dynamic_tools.is_empty());
 
-    if config.search_tool
-        && (deferred_mcp_tools_for_search.is_some() || !deferred_dynamic_tools.is_empty())
-    {
+    if includes_tool_search {
         let mut search_source_infos = deferred_mcp_tools_for_search
             .map(|deferred_mcp_tools| {
                 collect_tool_search_source_infos(deferred_mcp_tools.iter().map(|tool| {
@@ -294,7 +298,11 @@ pub fn build_tool_registry_plan(
         }
 
         plan.push_spec(
-            create_tool_search_tool(&search_source_infos, TOOL_SEARCH_DEFAULT_LIMIT),
+            create_tool_search_tool(
+                &search_source_infos,
+                TOOL_SEARCH_DEFAULT_LIMIT,
+                config.agent_watchdog,
+            ),
             /*supports_parallel_tool_calls*/ true,
             config.code_mode_enabled,
         );
@@ -482,6 +490,31 @@ pub fn build_tool_registry_plan(
                 /*supports_parallel_tool_calls*/ false,
                 config.code_mode_enabled,
             );
+            if config.agent_watchdog {
+                plan.push_spec(
+                    create_list_agents_tool_v1(config.agent_watchdog),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+                plan.push_spec(
+                    create_watchdog_tools_namespace(if includes_tool_search {
+                        WatchdogToolLoading::Deferred
+                    } else {
+                        WatchdogToolLoading::Inline
+                    }),
+                    /*supports_parallel_tool_calls*/ false,
+                    config.code_mode_enabled,
+                );
+                plan.register_handler("list_agents", ToolHandlerKind::ListAgentsV1);
+                plan.register_handler(
+                    "watchdog:compact_parent_context",
+                    ToolHandlerKind::CompactParentContext,
+                );
+                plan.register_handler(
+                    "watchdog:watchdog_self_close",
+                    ToolHandlerKind::WatchdogSelfClose,
+                );
+            }
             plan.register_handler("spawn_agent", ToolHandlerKind::SpawnAgentV1);
             plan.register_handler("send_input", ToolHandlerKind::SendInputV1);
             plan.register_handler("wait_agent", ToolHandlerKind::WaitAgentV1);
@@ -624,6 +657,48 @@ fn code_mode_namespace_name<'a>(
         .as_ref()
         .and_then(|namespace| namespace_descriptions.get(namespace))
         .map(|namespace_description| namespace_description.name.as_str())
+}
+
+/// Controls whether watchdog namespace tools may rely on the Responses tool-search loader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WatchdogToolLoading {
+    /// The request includes `tool_search`, so watchdog tools may be loaded lazily.
+    Deferred,
+    /// The request omits `tool_search`, so watchdog tools must be sent inline.
+    Inline,
+}
+
+fn create_watchdog_tools_namespace(loading: WatchdogToolLoading) -> ToolSpec {
+    const WATCHDOG_TOOLS_NAMESPACE_DESCRIPTION: &str =
+        "Watchdog-only tools for parent-thread recovery and watchdog check-in lifecycle control.";
+
+    let tools = vec![
+        create_compact_parent_context_tool(),
+        create_watchdog_self_close_tool(),
+    ]
+    .into_iter()
+    .map(|spec| match spec {
+        ToolSpec::Function(tool) => ResponsesApiNamespaceTool::Function(match loading {
+            WatchdogToolLoading::Deferred => tool,
+            WatchdogToolLoading::Inline => ResponsesApiTool {
+                defer_loading: None,
+                ..tool
+            },
+        }),
+        ToolSpec::Namespace(_)
+        | ToolSpec::ToolSearch { .. }
+        | ToolSpec::LocalShell {}
+        | ToolSpec::ImageGeneration { .. }
+        | ToolSpec::WebSearch { .. }
+        | ToolSpec::Freeform(_) => unreachable!("watchdog tools must be function tools"),
+    })
+    .collect();
+
+    ToolSpec::Namespace(ResponsesApiNamespace {
+        name: "watchdog".to_string(),
+        description: WATCHDOG_TOOLS_NAMESPACE_DESCRIPTION.to_string(),
+        tools,
+    })
 }
 
 #[cfg(test)]

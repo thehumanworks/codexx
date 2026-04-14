@@ -152,6 +152,46 @@ pub fn create_send_message_tool() -> ToolSpec {
     })
 }
 
+pub fn create_list_agents_tool_v1(agent_watchdog: bool) -> ToolSpec {
+    let description = if agent_watchdog {
+        "List agents spawned by an agent, optionally recursively. This is a status view; polling it will not make a watchdog fire."
+    } else {
+        "List agents spawned by an agent, optionally recursively."
+    };
+    let properties = BTreeMap::from([
+        (
+            "id".to_string(),
+            JsonSchema::string(Some(
+                "Identifier of the parent agent whose spawned agents to list. Defaults to the current agent."
+                    .to_string(),
+            )),
+        ),
+        (
+            "recursive".to_string(),
+            JsonSchema::boolean(Some(
+                "When true (default), include all descendants recursively. When false, include only direct children."
+                    .to_string(),
+            )),
+        ),
+        (
+            "all".to_string(),
+            JsonSchema::boolean(Some(
+                "When true, include completed/failed/canceled agents in addition to live agents."
+                    .to_string(),
+            )),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "list_agents".to_string(),
+        description: description.to_string(),
+        strict: false,
+        defer_loading: None,
+        parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
+        output_schema: None,
+    })
+}
+
 pub fn create_followup_task_tool() -> ToolSpec {
     let properties = BTreeMap::from([
         (
@@ -273,6 +313,47 @@ pub fn create_close_agent_tool_v2() -> ToolSpec {
         defer_loading: None,
         parameters: JsonSchema::object(properties, Some(vec!["target".to_string()]), Some(false.into())),
         output_schema: Some(close_agent_output_schema()),
+    })
+}
+
+pub fn create_watchdog_self_close_tool() -> ToolSpec {
+    ToolSpec::Function(ResponsesApiTool {
+        name: "watchdog_self_close".to_string(),
+        description:
+            "Watchdog-only: close this watchdog check-in thread and terminate immediately."
+                .to_string(),
+        strict: false,
+        defer_loading: Some(true),
+        parameters: JsonSchema::object(BTreeMap::new(), /*required*/ None, Some(false.into())),
+        output_schema: Some(close_agent_output_schema()),
+    })
+}
+
+pub fn create_compact_parent_context_tool() -> ToolSpec {
+    let properties = BTreeMap::from([
+        (
+            "reason".to_string(),
+            JsonSchema::string(Some(
+                "Optional short reason describing why the parent appears stuck.".to_string(),
+            )),
+        ),
+        (
+            "evidence".to_string(),
+            JsonSchema::string(Some(
+                "Optional concrete evidence of non-progress, such as repeated identical replies with no tool or file actions."
+                    .to_string(),
+            )),
+        ),
+    ]);
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "compact_parent_context".to_string(),
+        description: "Watchdog-only: request compaction for the watchdog helper's parent thread when it is idle and appears stuck."
+            .to_string(),
+        strict: false,
+        defer_loading: Some(true),
+        parameters: JsonSchema::object(properties, /*required*/ None, Some(false.into())),
+        output_schema: None,
     })
 }
 
@@ -501,6 +582,36 @@ fn create_collab_input_items_schema() -> JsonSchema {
         ))
 }
 
+fn spawn_agent_model_fallback_list_schema() -> JsonSchema {
+    let model_fallback_item_properties = BTreeMap::from([
+        (
+            "model".to_string(),
+            JsonSchema::string(Some(
+                "Model to try. Must be a model slug from the current model picker list.".to_string(),
+            )),
+        ),
+        (
+            "reasoning_effort".to_string(),
+            JsonSchema::string(Some(
+                "Optional reasoning effort override for this candidate. Replaces the inherited reasoning effort."
+                    .to_string(),
+            )),
+        ),
+    ]);
+
+    JsonSchema::array(
+        JsonSchema::object(
+            model_fallback_item_properties,
+            Some(vec!["model".to_string()]),
+            Some(false.into()),
+        ),
+        Some(
+            "Ordered model candidates for fallback retries. Each entry may include an optional reasoning effort."
+                .to_string(),
+        ),
+    )
+}
+
 fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<String, JsonSchema> {
     BTreeMap::from([
         (
@@ -525,15 +636,19 @@ fn spawn_agent_common_properties_v1(agent_type_description: &str) -> BTreeMap<St
         (
             "model".to_string(),
             JsonSchema::string(Some(
-                SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION.to_string(),
+                spawn_agent_model_override_description_v1(),
             )),
         ),
         (
             "reasoning_effort".to_string(),
             JsonSchema::string(Some(
-                "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort."
+                "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort only when fork_context is false; forked children always inherit the parent reasoning effort."
                     .to_string(),
             )),
+        ),
+        (
+            "model_fallback_list".to_string(),
+            spawn_agent_model_fallback_list_schema(),
         ),
     ])
 }
@@ -556,19 +671,42 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
             )),
         ),
         (
+            "fork_context".to_string(),
+            JsonSchema::boolean(Some(
+                "Legacy boolean fork toggle kept for role-default fallback. Use fork_turns for explicit partial-history forks."
+                    .to_string(),
+            )),
+        ),
+        (
             "model".to_string(),
             JsonSchema::string(Some(
-                SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION.to_string(),
+                spawn_agent_model_override_description_v2(),
             )),
         ),
         (
             "reasoning_effort".to_string(),
             JsonSchema::string(Some(
-                "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort."
+                "Optional reasoning effort override for the new agent. Replaces the inherited reasoning effort only when fork_turns is `none`; forked children always inherit the parent reasoning effort."
                     .to_string(),
             )),
         ),
+        (
+            "model_fallback_list".to_string(),
+            spawn_agent_model_fallback_list_schema(),
+        ),
     ])
+}
+
+fn spawn_agent_model_override_description_v1() -> String {
+    format!(
+        "{SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION} Replaces the inherited model only when fork_context is false; forked children always inherit the parent model."
+    )
+}
+
+fn spawn_agent_model_override_description_v2() -> String {
+    format!(
+        "{SPAWN_AGENT_MODEL_OVERRIDE_DESCRIPTION} Replaces the inherited model only when fork_turns is `none`; forked children always inherit the parent model."
+    )
 }
 
 fn hide_spawn_agent_metadata_options(properties: &mut BTreeMap<String, JsonSchema>) {

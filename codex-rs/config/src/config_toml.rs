@@ -201,6 +201,10 @@ pub struct ConfigToml {
     #[serde(default, deserialize_with = "deserialize_model_providers")]
     pub model_providers: HashMap<String, ModelProviderInfo>,
 
+    /// User-defined model aliases that can override model context settings.
+    #[serde(default)]
+    pub custom_models: Vec<CustomModelToml>,
+
     /// Maximum number of bytes to include from an AGENTS.md project doc file.
     pub project_doc_max_bytes: Option<usize>,
 
@@ -336,6 +340,9 @@ pub struct ConfigToml {
 
     /// Agent-related settings (thread limits, etc.).
     pub agents: Option<AgentsToml>,
+
+    /// Watchdog polling interval in seconds.
+    pub watchdog_interval_s: Option<i64>,
 
     /// Memories subsystem settings.
     pub memories: Option<MemoriesToml>,
@@ -534,6 +541,19 @@ pub struct RealtimeAudioToml {
     pub speaker: Option<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct CustomModelToml {
+    /// User-facing alias shown in the model picker.
+    pub name: String,
+    /// Provider-facing model slug used on API requests.
+    pub model: String,
+    /// Optional context window override applied when this alias is selected.
+    pub model_context_window: Option<i64>,
+    /// Optional auto-compaction token limit override applied when this alias is selected.
+    pub model_auto_compact_token_limit: Option<i64>,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ToolsToml {
@@ -590,6 +610,10 @@ pub struct AgentsToml {
     /// Whether to record a model-visible message when an agent turn is interrupted.
     /// Defaults to true.
     pub interrupt_message: Option<bool>,
+    /// Deliver inbound agent messages to non-subagent threads as a synthetic
+    /// function_call/function_call_output pair instead of plain user input.
+    #[serde(default)]
+    pub use_function_call_inbox: bool,
 
     /// User-defined role declarations keyed by role name.
     ///
@@ -611,12 +635,22 @@ pub struct AgentRoleToml {
     /// Required unless supplied by the referenced agent role file.
     pub description: Option<String>,
 
+    /// Optional model override applied by this role.
+    pub model: Option<String>,
+
     /// Path to a role-specific config layer.
     /// Relative paths are resolved relative to the `config.toml` that defines them.
     pub config_file: Option<AbsolutePathBuf>,
 
+    /// Optional watchdog interval in seconds for roles that should behave as watchdogs.
+    #[schemars(range(min = 1))]
+    pub watchdog_interval_s: Option<i64>,
+
     /// Candidate nicknames for agents spawned with this role.
     pub nickname_candidates: Option<Vec<String>>,
+
+    /// Default fork-context behavior for this role.
+    pub fork_context: Option<bool>,
 }
 
 impl From<ToolsToml> for Tools {

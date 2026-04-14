@@ -15,7 +15,6 @@ use codex_protocol::models::ResponseInputItem;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::CollabAgentInteractionBeginEvent;
 use codex_protocol::protocol::CollabAgentInteractionEndEvent;
-use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
 use codex_protocol::protocol::CollabAgentSpawnEndEvent;
 use codex_protocol::protocol::CollabCloseBeginEvent;
 use codex_protocol::protocol::CollabCloseEndEvent;
@@ -32,6 +31,8 @@ pub(crate) use list_agents::Handler as ListAgentsHandler;
 pub(crate) use send_message::Handler as SendMessageHandler;
 pub(crate) use spawn::Handler as SpawnAgentHandler;
 pub(crate) use wait::Handler as WaitAgentHandler;
+#[cfg(test)]
+pub(crate) use watchdog_self_close::Handler as WatchdogSelfCloseHandlerV2;
 
 mod close_agent;
 mod followup_task;
@@ -40,3 +41,4 @@ mod message_tool;
 mod send_message;
 mod spawn;
 pub(crate) mod wait;
+mod watchdog_self_close;

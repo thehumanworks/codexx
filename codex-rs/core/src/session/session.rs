@@ -29,6 +29,8 @@ pub(crate) struct Session {
     pub(crate) guardian_review_session: GuardianReviewSessionManager,
     pub(crate) services: SessionServices,
     pub(super) next_internal_sub_id: AtomicU64,
+    pub(super) turn_used_agent_send_input: AtomicBool,
+    pub(super) last_completed_turn_used_agent_send_input: AtomicBool,
 }
 
 #[derive(Clone)]
@@ -124,13 +126,23 @@ impl SessionConfiguration {
             model: self.collaboration_mode.model().to_string(),
             model_provider_id: self.original_config_do_not_use.model_provider_id.clone(),
             service_tier: self.service_tier,
+            plan_mode_reasoning_effort: self.original_config_do_not_use.plan_mode_reasoning_effort,
+            model_verbosity: self.original_config_do_not_use.model_verbosity,
+            model_context_window: self.original_config_do_not_use.model_context_window,
+            model_auto_compact_token_limit: self
+                .original_config_do_not_use
+                .model_auto_compact_token_limit,
             approval_policy: self.approval_policy.value(),
             approvals_reviewer: self.approvals_reviewer,
             permission_profile: self.permission_profile(),
             cwd: self.cwd.clone(),
             ephemeral: self.original_config_do_not_use.ephemeral,
+            agent_use_function_call_inbox: self
+                .original_config_do_not_use
+                .agent_use_function_call_inbox,
             reasoning_effort: self.collaboration_mode.reasoning_effort(),
             personality: self.personality,
+            active_profile: self.original_config_do_not_use.active_profile.clone(),
             session_source: self.session_source.clone(),
         }
     }
@@ -867,6 +879,8 @@ impl Session {
                 guardian_review_session: GuardianReviewSessionManager::default(),
                 services,
                 next_internal_sub_id: AtomicU64::new(0),
+                turn_used_agent_send_input: AtomicBool::new(false),
+                last_completed_turn_used_agent_send_input: AtomicBool::new(false),
             });
             if let Some(network_policy_decider_session) = network_policy_decider_session {
                 let mut guard = network_policy_decider_session.write().await;

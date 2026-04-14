@@ -30,6 +30,7 @@ use crate::permission_compat::legacy_compatible_permission_profile;
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) enum AppCommand {
     Interrupt,
+    NoteOwnerActivity,
     CleanBackgroundTerminals,
     RealtimeConversationStart(ConversationStartParams),
     RealtimeConversationAudio(ConversationAudioParams),
@@ -115,6 +116,7 @@ pub(crate) enum AppCommand {
 #[allow(dead_code)]
 pub(crate) enum AppCommandView<'a> {
     Interrupt,
+    NoteOwnerActivity,
     CleanBackgroundTerminals,
     RealtimeConversationStart(&'a ConversationStartParams),
     RealtimeConversationAudio(&'a ConversationAudioParams),
@@ -199,6 +201,10 @@ pub(crate) enum AppCommandView<'a> {
 impl AppCommand {
     pub(crate) fn interrupt() -> Self {
         Self::Interrupt
+    }
+
+    pub(crate) fn note_owner_activity() -> Self {
+        Self::NoteOwnerActivity
     }
 
     pub(crate) fn clean_background_terminals() -> Self {
@@ -351,6 +357,7 @@ impl AppCommand {
     pub(crate) fn into_core(self) -> Op {
         match self {
             Self::Interrupt => Op::Interrupt,
+            Self::NoteOwnerActivity => Op::NoteOwnerActivity,
             Self::CleanBackgroundTerminals => Op::CleanBackgroundTerminals,
             Self::RealtimeConversationStart(params) => Op::RealtimeConversationStart(params),
             Self::RealtimeConversationAudio(params) => Op::RealtimeConversationAudio(params),
@@ -471,6 +478,7 @@ impl AppCommand {
     pub(crate) fn view(&self) -> AppCommandView<'_> {
         match self {
             Self::Interrupt => AppCommandView::Interrupt,
+            Self::NoteOwnerActivity => AppCommandView::NoteOwnerActivity,
             Self::CleanBackgroundTerminals => AppCommandView::CleanBackgroundTerminals,
             Self::RealtimeConversationStart(params) => {
                 AppCommandView::RealtimeConversationStart(params)
@@ -590,6 +598,7 @@ impl From<Op> for AppCommand {
     fn from(value: Op) -> Self {
         match value {
             Op::Interrupt => Self::Interrupt,
+            Op::NoteOwnerActivity => Self::NoteOwnerActivity,
             Op::CleanBackgroundTerminals => Self::CleanBackgroundTerminals,
             Op::RealtimeConversationStart(params) => Self::RealtimeConversationStart(params),
             Op::RealtimeConversationAudio(params) => Self::RealtimeConversationAudio(params),

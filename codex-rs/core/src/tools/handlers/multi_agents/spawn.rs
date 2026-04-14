@@ -1,4 +1,6 @@
 use super::*;
+use crate::agent::RemovedWatchdog;
+use crate::agent::WatchdogRegistration;
 use crate::agent::control::SpawnAgentForkMode;
 use crate::agent::control::SpawnAgentOptions;
 use crate::agent::control::render_input_preview;
@@ -6,7 +8,15 @@ use crate::agent::exceeds_thread_spawn_depth_limit;
 use crate::agent::next_thread_spawn_depth;
 use crate::agent::role::DEFAULT_ROLE_NAME;
 use crate::agent::role::apply_role_to_config;
+use crate::agent::role::default_fork_context_for_role;
+use crate::agent::role::watchdog_interval_for_role;
+use crate::config::Config;
 use crate::session::turn_context::TurnEnvironment;
+use codex_features::Feature;
+use codex_protocol::error::Result as CodexResult;
+use codex_protocol::protocol::Op;
+use codex_protocol::protocol::SessionSource;
+use std::collections::HashSet;
 
 pub(crate) struct Handler;
 
@@ -41,81 +51,224 @@ impl ToolHandler for Handler {
         let session_source = turn.session_source.clone();
         let child_depth = next_thread_spawn_depth(&session_source);
         let max_depth = turn.config.agent_max_depth;
+        let watchdog_interval_s = watchdog_interval_for_role(&turn.config, role_name);
+        let is_watchdog = watchdog_interval_s.is_some();
+
+        if is_watchdog && !turn.config.features.enabled(Feature::AgentWatchdog) {
+            return Err(FunctionCallError::RespondToModel(
+                "watchdogs are disabled".to_string(),
+            ));
+        }
+        if is_watchdog && matches!(session_source, SessionSource::SubAgent(_)) {
+            return Err(FunctionCallError::RespondToModel(
+                "watchdogs can only be spawned by root agents".to_string(),
+            ));
+        }
         if exceeds_thread_spawn_depth_limit(child_depth, max_depth) {
             return Err(FunctionCallError::RespondToModel(
                 "Agent depth limit reached. Solve the task yourself.".to_string(),
             ));
         }
-        session
-            .send_event(
-                &turn,
-                CollabAgentSpawnBeginEvent {
-                    call_id: call_id.clone(),
-                    sender_thread_id: session.conversation_id,
-                    prompt: prompt.clone(),
-                    model: args.model.clone().unwrap_or_default(),
-                    reasoning_effort: args.reasoning_effort.unwrap_or_default(),
-                }
-                .into(),
-            )
-            .await;
-        let mut config =
-            build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
-        if args.fork_context {
+        let fork_context = args
+            .fork_context
+            .unwrap_or_else(|| default_fork_context_for_role(&turn.config, role_name));
+        if fork_context {
             reject_full_fork_spawn_overrides(
                 role_name,
                 args.model.as_deref(),
                 args.reasoning_effort,
             )?;
-        } else {
-            apply_requested_spawn_agent_model_overrides(
+        }
+        let config =
+            build_agent_spawn_config(&session.get_base_instructions().await, turn.as_ref())?;
+        let mut candidates_to_try = collect_spawn_agent_model_candidates(
+            args.model_fallback_list.as_ref(),
+            args.model.as_deref(),
+            args.reasoning_effort,
+        );
+        if candidates_to_try.is_empty() {
+            candidates_to_try.push(SpawnAgentModelCandidate {
+                model: None,
+                reasoning_effort: None,
+            });
+        }
+
+        let mut spawn_result = None;
+        for (idx, candidate) in candidates_to_try.iter().enumerate() {
+            let attempt_call_id = spawn_attempt_event_call_id(&call_id, idx);
+            let candidate_model = candidate.model.clone().unwrap_or_default();
+            let candidate_reasoning_effort = candidate.reasoning_effort.unwrap_or_default();
+            send_collab_agent_spawn_begin_event(
                 &session,
-                turn.as_ref(),
-                &mut config,
-                args.model.as_deref(),
-                args.reasoning_effort,
+                &turn,
+                attempt_call_id.clone(),
+                prompt.clone(),
+                candidate_model.clone(),
+                candidate_reasoning_effort,
             )
-            .await?;
-            apply_role_to_config(&mut config, role_name)
+            .await;
+            let mut candidate_config = config.clone();
+            if !fork_context {
+                apply_requested_spawn_agent_model_overrides(
+                    &session,
+                    turn.as_ref(),
+                    &mut candidate_config,
+                    candidate.model.as_deref(),
+                    candidate.reasoning_effort,
+                )
+                .await?;
+            }
+            apply_role_to_config(&mut candidate_config, role_name)
                 .await
                 .map_err(FunctionCallError::RespondToModel)?;
-        }
-        apply_spawn_agent_runtime_overrides(&mut config, turn.as_ref())?;
-        apply_spawn_agent_overrides(&mut config, child_depth);
-
-        let result = Box::pin(
-            session.services.agent_control.spawn_agent_with_metadata(
-                config,
-                input_items,
-                Some(thread_spawn_source(
+            if fork_context {
+                restore_forked_spawn_agent_model_config(&mut candidate_config, turn.as_ref());
+            }
+            apply_spawn_agent_runtime_overrides(&mut candidate_config, turn.as_ref())?;
+            apply_spawn_agent_overrides(&mut candidate_config, child_depth);
+            let spawn_source = thread_spawn_source(
+                session.conversation_id,
+                &turn.session_source,
+                child_depth,
+                role_name,
+                /*task_name*/ None,
+            )?;
+            let attempt_result = if let Some(watchdog_interval_s) = watchdog_interval_s {
+                spawn_watchdog(
+                    &session.services.agent_control,
+                    candidate_config,
+                    prompt.clone(),
                     session.conversation_id,
-                    &turn.session_source,
                     child_depth,
-                    role_name,
-                    /*task_name*/ None,
-                )?),
-                SpawnAgentOptions {
-                    fork_parent_spawn_call_id: args.fork_context.then(|| call_id.clone()),
-                    fork_mode: args.fork_context.then_some(SpawnAgentForkMode::FullHistory),
-                    environments: Some(
-                        turn.environments
-                            .iter()
-                            .map(TurnEnvironment::selection)
-                            .collect(),
+                    watchdog_interval_s,
+                    spawn_source,
+                )
+                .await
+                .map(|thread_id| {
+                    let metadata = session.services.agent_control.get_agent_metadata(thread_id);
+                    let (agent_path, agent_nickname, agent_role) = metadata
+                        .map(|metadata| {
+                            (
+                                metadata.agent_path.map(String::from),
+                                metadata.agent_nickname,
+                                metadata.agent_role,
+                            )
+                        })
+                        .unwrap_or((None, None, None));
+                    SpawnAttemptResult {
+                        thread_id,
+                        status: AgentStatus::PendingInit,
+                        agent_path,
+                        agent_nickname,
+                        agent_role,
+                    }
+                })
+            } else {
+                Box::pin(
+                    session.services.agent_control.spawn_agent_with_metadata(
+                        candidate_config,
+                        input_items.clone(),
+                        Some(spawn_source),
+                        SpawnAgentOptions {
+                            fork_parent_spawn_call_id: if fork_context {
+                                Some(call_id.clone())
+                            } else {
+                                None
+                            },
+                            fork_mode: if fork_context {
+                                Some(SpawnAgentForkMode::FullHistory)
+                            } else {
+                                None
+                            },
+                            environments: Some(
+                                turn.environments
+                                    .iter()
+                                    .map(TurnEnvironment::selection)
+                                    .collect(),
+                            ),
+                        },
                     ),
-                },
-            ),
-        )
-        .await
-        .map_err(collab_spawn_error);
-        let (new_thread_id, new_agent_metadata, status) = match &result {
-            Ok(spawned_agent) => (
-                Some(spawned_agent.thread_id),
-                Some(spawned_agent.metadata.clone()),
-                spawned_agent.status.clone(),
-            ),
-            Err(_) => (None, None, AgentStatus::NotFound),
+                )
+                .await
+                .map(|spawned_agent| {
+                    let metadata = spawned_agent.metadata;
+                    SpawnAttemptResult {
+                        thread_id: spawned_agent.thread_id,
+                        status: spawned_agent.status,
+                        agent_path: metadata.agent_path.map(String::from),
+                        agent_nickname: metadata.agent_nickname,
+                        agent_role: metadata.agent_role,
+                    }
+                })
+            };
+            match attempt_result {
+                Ok(spawned_agent) => {
+                    let status = if idx + 1 < candidates_to_try.len() {
+                        match probe_spawn_attempt_for_async_quota_exhaustion(
+                            spawned_agent.status.clone(),
+                            spawned_agent.thread_id,
+                            &session.services.agent_control,
+                        )
+                        .await
+                        {
+                            SpawnAttemptRetryDecision::Accept(status) => status,
+                            SpawnAttemptRetryDecision::Retry(retry_status) => {
+                                match close_quota_exhausted_spawn_attempt(
+                                    &session.services.agent_control,
+                                    spawned_agent.thread_id,
+                                    retry_status,
+                                )
+                                .await
+                                {
+                                    SpawnAttemptRetryDecision::Accept(status) => status,
+                                    SpawnAttemptRetryDecision::Retry(status) => {
+                                        send_collab_agent_spawn_retry_preempted_event(
+                                            &session,
+                                            &turn,
+                                            attempt_call_id,
+                                            prompt.clone(),
+                                            candidate_model,
+                                            candidate_reasoning_effort,
+                                            status,
+                                        )
+                                        .await;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        spawned_agent.status.clone()
+                    };
+                    spawn_result = Some((spawned_agent, status, attempt_call_id));
+                    break;
+                }
+                Err(err) => {
+                    send_collab_agent_spawn_error_event(
+                        &session,
+                        &turn,
+                        attempt_call_id,
+                        prompt.clone(),
+                        candidate_model,
+                        candidate_reasoning_effort,
+                        &err,
+                    )
+                    .await;
+                    if spawn_should_retry_on_quota_exhaustion(&err)
+                        && idx + 1 < candidates_to_try.len()
+                    {
+                        continue;
+                    }
+                    return Err(collab_spawn_error(err));
+                }
+            }
+        }
+        let Some((spawned_agent, status, spawn_event_call_id)) = spawn_result else {
+            return Err(FunctionCallError::RespondToModel(
+                "No spawn attempts were executed".to_string(),
+            ));
         };
+        let new_thread_id = Some(spawned_agent.thread_id);
         let agent_snapshot = match new_thread_id {
             Some(thread_id) => {
                 session
@@ -126,20 +279,18 @@ impl ToolHandler for Handler {
             }
             None => None,
         };
-        let (_new_agent_path, new_agent_nickname, new_agent_role) =
-            match (&agent_snapshot, new_agent_metadata) {
-                (Some(snapshot), _) => (
-                    snapshot.session_source.get_agent_path().map(String::from),
-                    snapshot.session_source.get_nickname(),
-                    snapshot.session_source.get_agent_role(),
-                ),
-                (None, Some(metadata)) => (
-                    metadata.agent_path.map(String::from),
-                    metadata.agent_nickname,
-                    metadata.agent_role,
-                ),
-                (None, None) => (None, None, None),
-            };
+        let (_new_agent_path, new_agent_nickname, new_agent_role) = match &agent_snapshot {
+            Some(snapshot) => (
+                snapshot.session_source.get_agent_path().map(String::from),
+                snapshot.session_source.get_nickname(),
+                snapshot.session_source.get_agent_role(),
+            ),
+            None => (
+                spawned_agent.agent_path,
+                spawned_agent.agent_nickname,
+                spawned_agent.agent_role,
+            ),
+        };
         let effective_model = agent_snapshot
             .as_ref()
             .map(|snapshot| snapshot.model.clone())
@@ -153,7 +304,7 @@ impl ToolHandler for Handler {
             .send_event(
                 &turn,
                 CollabAgentSpawnEndEvent {
-                    call_id,
+                    call_id: spawn_event_call_id,
                     sender_thread_id: session.conversation_id,
                     new_thread_id,
                     new_agent_nickname,
@@ -166,7 +317,7 @@ impl ToolHandler for Handler {
                 .into(),
             )
             .await;
-        let new_thread_id = result?.thread_id;
+        let new_thread_id = spawned_agent.thread_id;
         let role_tag = role_name.unwrap_or(DEFAULT_ROLE_NAME);
         turn.session_telemetry.counter(
             "codex.multi_agent.spawn",
@@ -175,26 +326,38 @@ impl ToolHandler for Handler {
         );
 
         Ok(SpawnAgentResult {
-            agent_id: new_thread_id.to_string(),
+            agent_id: Some(new_thread_id.to_string()),
+            task_name: None,
             nickname,
         })
     }
+}
+
+struct SpawnAttemptResult {
+    thread_id: ThreadId,
+    status: AgentStatus,
+    agent_path: Option<String>,
+    agent_nickname: Option<String>,
+    agent_role: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct SpawnAgentArgs {
     message: Option<String>,
     items: Option<Vec<UserInput>>,
+    #[serde(rename = "task_name")]
+    _task_name: Option<String>,
     agent_type: Option<String>,
     model: Option<String>,
+    model_fallback_list: Option<Vec<SpawnAgentModelFallbackCandidate>>,
     reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default)]
-    fork_context: bool,
+    fork_context: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct SpawnAgentResult {
-    agent_id: String,
+    agent_id: Option<String>,
+    task_name: Option<String>,
     nickname: Option<String>,
 }
 
@@ -213,5 +376,72 @@ impl ToolOutput for SpawnAgentResult {
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
         tool_output_code_mode_result(self, "spawn_agent")
+    }
+}
+
+async fn spawn_watchdog(
+    agent_control: &crate::agent::AgentControl,
+    config: Config,
+    prompt: String,
+    owner_thread_id: ThreadId,
+    child_depth: i32,
+    interval_s: i64,
+    spawn_source: SessionSource,
+) -> CodexResult<ThreadId> {
+    let target_thread_id = agent_control
+        .spawn_agent_with_metadata(
+            config.clone(),
+            Op::UserInput {
+                items: vec![codex_protocol::user_input::UserInput::Text {
+                    text: prompt.clone(),
+                    text_elements: Vec::new(),
+                }],
+                environments: None,
+                final_output_json_schema: None,
+                responsesapi_client_metadata: None,
+            },
+            Some(spawn_source),
+            SpawnAgentOptions::default(),
+        )
+        .await?
+        .thread_id;
+    let superseded_before_register = agent_control
+        .unregister_watchdogs_for_owner(owner_thread_id)
+        .await;
+    shutdown_removed_watchdogs(agent_control, superseded_before_register).await;
+    let registration = WatchdogRegistration {
+        owner_thread_id,
+        target_thread_id,
+        child_depth,
+        interval_s,
+        prompt: prompt.clone(),
+        config,
+    };
+    let superseded_after_register = match agent_control.register_watchdog(registration).await {
+        Ok(removed) => removed,
+        Err(err) => {
+            let _ = agent_control.close_agent(target_thread_id).await;
+            return Err(err);
+        }
+    };
+    shutdown_removed_watchdogs(agent_control, superseded_after_register).await;
+    Ok(target_thread_id)
+}
+
+async fn shutdown_removed_watchdogs(
+    agent_control: &crate::agent::AgentControl,
+    removed_watchdogs: Vec<RemovedWatchdog>,
+) {
+    let mut thread_ids = HashSet::new();
+    for removed in removed_watchdogs {
+        thread_ids.insert(removed.target_thread_id);
+        if let Some(helper_id) = removed.active_helper_id {
+            thread_ids.insert(helper_id);
+        }
+    }
+    let mut thread_ids = thread_ids.into_iter().collect::<Vec<_>>();
+    thread_ids.sort_by_key(ToString::to_string);
+    for thread_id in thread_ids {
+        let _ = agent_control.close_agent(thread_id).await;
     }
 }

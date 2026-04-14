@@ -199,6 +199,7 @@ mod resize_reflow;
 mod session_lifecycle;
 mod side;
 mod startup_prompts;
+mod subagents;
 mod thread_events;
 mod thread_goal_actions;
 mod thread_routing;
@@ -537,6 +538,8 @@ pub(crate) struct App {
 
     /// Controls the animation thread that sends CommitTick events.
     pub(crate) commit_anim_running: Arc<AtomicBool>,
+    /// Controls the animation thread that updates the live subagent panel.
+    pub(crate) subagent_anim_running: Arc<AtomicBool>,
     // Shared across ChatWidget instances so invalid status-line config warnings only emit once.
     status_line_invalid_items_warned: Arc<AtomicBool>,
     // Shared across ChatWidget instances so invalid terminal-title config warnings only emit once.
@@ -571,6 +574,7 @@ pub(crate) struct App {
 
     thread_event_channels: HashMap<ThreadId, ThreadEventChannel>,
     thread_event_listener_tasks: HashMap<ThreadId, JoinHandle<()>>,
+    subagents: subagents::SubagentRegistry,
     agent_navigation: AgentNavigationState,
     side_threads: HashMap<ThreadId, SideThreadState>,
     active_thread_id: Option<ThreadId>,
@@ -779,6 +783,7 @@ impl App {
 
         let status_line_invalid_items_warned = Arc::new(AtomicBool::new(false));
         let terminal_title_invalid_items_warned = Arc::new(AtomicBool::new(false));
+        let animations_enabled = config.animations;
 
         let enhanced_keys_supported = tui.enhanced_keys_supported();
         let wait_for_initial_session_configured =
@@ -928,6 +933,7 @@ See the Codex keymap documentation for supported actions and examples."
             transcript_reflow: TranscriptReflowState::default(),
             initial_history_replay_buffer: None,
             commit_anim_running: Arc::new(AtomicBool::new(false)),
+            subagent_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),
             backtrack: BacktrackState::default(),
@@ -942,6 +948,7 @@ See the Codex keymap documentation for supported actions and examples."
             windows_sandbox: WindowsSandboxState::default(),
             thread_event_channels: HashMap::new(),
             thread_event_listener_tasks: HashMap::new(),
+            subagents: subagents::SubagentRegistry::new(animations_enabled),
             agent_navigation: AgentNavigationState::default(),
             side_threads: HashMap::new(),
             active_thread_id: None,

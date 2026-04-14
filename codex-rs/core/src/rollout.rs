@@ -15,6 +15,7 @@ pub use codex_rollout::append_thread_name;
 pub use codex_rollout::find_archived_thread_path_by_id_str;
 #[deprecated(note = "use find_thread_path_by_id_str")]
 pub use codex_rollout::find_conversation_path_by_id_str;
+pub use codex_rollout::find_or_unarchive_thread_path_by_id_str;
 pub use codex_rollout::find_thread_meta_by_name_str;
 pub use codex_rollout::find_thread_name_by_id;
 pub use codex_rollout::find_thread_names_by_ids;
@@ -22,6 +23,7 @@ pub use codex_rollout::find_thread_path_by_id_str;
 pub use codex_rollout::parse_cursor;
 pub use codex_rollout::read_head_for_summary;
 pub use codex_rollout::read_session_meta_line;
+pub use codex_rollout::resolve_fork_reference_rollout_path;
 pub use codex_rollout::rollout_date_parts;
 
 impl codex_rollout::RolloutConfigView for Config {

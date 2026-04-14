@@ -1,3 +1,6 @@
+use super::watchdog::RemovedWatchdog;
+use super::watchdog::WatchdogManager;
+use super::watchdog::WatchdogRegistration;
 use crate::agent::AgentStatus;
 use crate::agent::registry::AgentMetadata;
 use crate::agent::registry::AgentRegistry;
@@ -9,12 +12,15 @@ use crate::find_archived_thread_path_by_id_str;
 use crate::find_thread_path_by_id_str;
 use crate::rollout::RolloutRecorder;
 use crate::session::emit_subagent_session_started;
+use crate::session::load_subagent_prompt;
 use crate::session_prefix::format_subagent_context_line;
 use crate::session_prefix::format_subagent_notification_message;
 use crate::shell_snapshot::ShellSnapshot;
 use crate::thread_manager::ResumeThreadFromRolloutOptions;
 use crate::thread_manager::ThreadManagerState;
 use crate::thread_manager::thread_store_from_config;
+use crate::thread_rollout_truncation::fork_reference_user_message_boundary;
+use crate::thread_rollout_truncation::materialize_rollout_items_for_replay;
 use crate::thread_rollout_truncation::truncate_rollout_to_last_n_fork_turns;
 use codex_features::Feature;
 use codex_protocol::AgentPath;
@@ -22,8 +28,14 @@ use codex_protocol::ThreadId;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ContentItem;
+use codex_protocol::models::FunctionCallOutputBody;
+use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::MessagePhase;
+use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::AGENT_INBOX_KIND;
+use codex_protocol::protocol::AgentInboxPayload;
+use codex_protocol::protocol::ForkReferenceItem;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
 use codex_protocol::protocol::Op;
@@ -36,11 +48,14 @@ use codex_rollout::state_db;
 use codex_state::DirectionalThreadSpawnEdgeStatus;
 use serde::Serialize;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Weak;
+use tokio::sync::Mutex;
 use tokio::sync::watch;
 use tracing::warn;
+use uuid::Uuid;
 
 const AGENT_NAMES: &str = include_str!("agent_names.txt");
 const ROOT_LAST_TASK_MESSAGE: &str = "Main thread";
@@ -122,7 +137,10 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
         // A forked child gets its own runtime config, including spawned-agent
         // instructions, so it must establish a fresh context diff baseline.
         RolloutItem::TurnContext(_) => false,
-        RolloutItem::Compacted(_) | RolloutItem::EventMsg(_) | RolloutItem::SessionMeta(_) => true,
+        RolloutItem::Compacted(_)
+        | RolloutItem::EventMsg(_)
+        | RolloutItem::ForkReference(_)
+        | RolloutItem::SessionMeta(_) => true,
     }
 }
 
@@ -132,21 +150,68 @@ fn keep_forked_rollout_item(item: &RolloutItem) -> bool {
 /// An `AgentControl` instance is intended to be created at most once per root thread/session
 /// tree. That same `AgentControl` is then shared with every sub-agent spawned from that root,
 /// which keeps the registry scoped to that root thread rather than the entire `ThreadManager`.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub(crate) struct AgentControl {
     /// Weak handle back to the global thread registry/state.
     /// This is `Weak` to avoid reference cycles and shadow persistence of the form
     /// `ThreadManagerState -> CodexThread -> Session -> SessionServices -> ThreadManagerState`.
     manager: Weak<ThreadManagerState>,
     state: Arc<AgentRegistry>,
+    watchdogs: Arc<WatchdogManager>,
+    watchdog_compactions_in_progress: Arc<Mutex<HashSet<ThreadId>>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AgentListing {
+    pub(crate) thread_id: ThreadId,
+    pub(crate) parent_thread_id: Option<ThreadId>,
+    pub(crate) status: AgentStatus,
+    pub(crate) depth: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WatchdogParentCompactionResult {
+    NotWatchdogHelper,
+    ParentBusy {
+        parent_thread_id: ThreadId,
+    },
+    AlreadyInProgress {
+        parent_thread_id: ThreadId,
+    },
+    Submitted {
+        parent_thread_id: ThreadId,
+        submission_id: String,
+    },
+}
+
+impl Default for AgentControl {
+    fn default() -> Self {
+        let manager = Weak::new();
+        let state = Arc::new(AgentRegistry::default());
+        let watchdogs = WatchdogManager::new(manager.clone(), Arc::clone(&state));
+        Self::from_parts(manager, state, watchdogs)
+    }
 }
 
 impl AgentControl {
     /// Construct a new `AgentControl` that can spawn/message agents via the given manager state.
     pub(crate) fn new(manager: Weak<ThreadManagerState>) -> Self {
+        let state = Arc::new(AgentRegistry::default());
+        let watchdogs = WatchdogManager::new(manager.clone(), Arc::clone(&state));
+        watchdogs.start();
+        Self::from_parts(manager, state, watchdogs)
+    }
+
+    pub(crate) fn from_parts(
+        manager: Weak<ThreadManagerState>,
+        state: Arc<AgentRegistry>,
+        watchdogs: Arc<WatchdogManager>,
+    ) -> Self {
         Self {
             manager,
-            ..Default::default()
+            state,
+            watchdogs,
+            watchdog_compactions_in_progress: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -188,7 +253,9 @@ impl AgentControl {
         options: SpawnAgentOptions,
     ) -> CodexResult<LiveAgent> {
         let state = self.upgrade()?;
-        let mut reservation = self.state.reserve_spawn_slot(config.agent_max_threads)?;
+        let mut reservation = self
+            .reserve_spawn_slot_with_reconcile(&state, config.agent_max_threads)
+            .await?;
         let inherited_shell_snapshot = self
             .inherited_shell_snapshot_for_source(&state, session_source.as_ref())
             .await;
@@ -394,9 +461,28 @@ impl AgentControl {
         let mut forked_rollout_items = RolloutRecorder::get_rollout_history(&rollout_path)
             .await?
             .get_rollout_items();
-        if let SpawnAgentForkMode::LastNTurns(last_n_turns) = fork_mode {
-            forked_rollout_items =
-                truncate_rollout_to_last_n_fork_turns(&forked_rollout_items, *last_n_turns);
+        if forked_rollout_items
+            .iter()
+            .any(|item| matches!(item, RolloutItem::ForkReference(_)))
+        {
+            forked_rollout_items = materialize_rollout_items_for_replay(
+                config.codex_home.as_path(),
+                &forked_rollout_items,
+            )
+            .await;
+        }
+        match fork_mode {
+            SpawnAgentForkMode::FullHistory => {
+                let fork_boundary = fork_reference_user_message_boundary(&forked_rollout_items);
+                forked_rollout_items.push(RolloutItem::ForkReference(ForkReferenceItem {
+                    rollout_path: rollout_path.clone(),
+                    nth_user_message: fork_boundary,
+                }));
+            }
+            SpawnAgentForkMode::LastNTurns(last_n_turns) => {
+                forked_rollout_items =
+                    truncate_rollout_to_last_n_fork_turns(&forked_rollout_items, *last_n_turns);
+            }
         }
         // MultiAgentV2 root/subagent usage hints are injected as standalone developer
         // messages at thread start. When forking history, drop hints from the parent
@@ -645,10 +731,15 @@ impl AgentControl {
             )
             .await;
         if result.is_ok() {
+            self.note_owner_input(agent_id).await;
             self.state
                 .update_last_task_message(agent_id, last_task_message);
         }
         result
+    }
+
+    pub(crate) async fn note_owner_input(&self, agent_id: ThreadId) {
+        self.watchdogs.note_owner_input(agent_id).await;
     }
 
     /// Append a prebuilt message to an existing agent thread outside the normal user-input path.
@@ -690,6 +781,95 @@ impl AgentControl {
         result
     }
 
+    pub(crate) async fn send_prompt(
+        &self,
+        agent_id: ThreadId,
+        prompt: String,
+    ) -> CodexResult<String> {
+        self.send_input(
+            agent_id,
+            vec![UserInput::Text {
+                text: prompt,
+                text_elements: Vec::new(),
+            }]
+            .into(),
+        )
+        .await
+    }
+
+    pub(crate) async fn send_agent_message(
+        &self,
+        agent_id: ThreadId,
+        sender_thread_id: ThreadId,
+        message: String,
+    ) -> CodexResult<String> {
+        let state = self.upgrade()?;
+        let thread = state.get_thread(agent_id).await?;
+        let snapshot = thread.config_snapshot().await;
+        if matches!(snapshot.session_source, SessionSource::SubAgent(_))
+            || !snapshot.agent_use_function_call_inbox
+        {
+            return self.send_prompt(agent_id, message).await;
+        }
+
+        let result =
+            inject_agent_message(&state, &thread, agent_id, sender_thread_id, message).await;
+        if matches!(result, Err(CodexErr::InternalAgentDied)) {
+            let _ = state.remove_thread(&agent_id).await;
+            self.state.release_spawned_thread(agent_id);
+        }
+        result
+    }
+
+    /// Deliver watchdog wake-up input to an owner thread.
+    ///
+    /// This intentionally bypasses `agent_use_function_call_inbox` for non-subagent owners.
+    /// A watchdog helper wakes the owner through this path only when the helper produced a real
+    /// fallback report. Empty/no-report helper completions are ignored so the next scheduled
+    /// watchdog check-in can try again without leaking helper prompt scaffolding into root.
+    pub(crate) async fn send_watchdog_wakeup(
+        &self,
+        agent_id: ThreadId,
+        sender_thread_id: ThreadId,
+        message: String,
+    ) -> CodexResult<String> {
+        let Some(message) = sanitize_watchdog_wakeup_message(message) else {
+            return Ok(String::new());
+        };
+        let state = self.upgrade()?;
+        let thread = state.get_thread(agent_id).await?;
+        let snapshot = thread.config_snapshot().await;
+        let result = if matches!(snapshot.session_source, SessionSource::SubAgent(_)) {
+            self.send_prompt(agent_id, message).await
+        } else {
+            inject_agent_message(&state, &thread, agent_id, sender_thread_id, message).await
+        };
+        if matches!(result, Err(CodexErr::InternalAgentDied)) {
+            let _ = state.remove_thread(&agent_id).await;
+            self.state.release_spawned_thread(agent_id);
+        }
+        result
+    }
+
+    pub(crate) async fn send_agent_message_or_input(
+        &self,
+        agent_id: ThreadId,
+        sender_thread_id: ThreadId,
+        message: Option<String>,
+        items: Option<Vec<UserInput>>,
+    ) -> CodexResult<String> {
+        match (message, items) {
+            (Some(message), None) => {
+                self.send_agent_message(agent_id, sender_thread_id, message)
+                    .await
+            }
+            (None, Some(items)) => self.send_input(agent_id, items.into()).await,
+            _ => Err(CodexErr::UnsupportedOperation(
+                "invalid agent input".to_string(),
+            )),
+        }
+    }
+
     /// Interrupt the current task for an existing agent thread.
     pub(crate) async fn interrupt_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
@@ -713,6 +893,13 @@ impl AgentControl {
     /// persisted spawn-edge state.
     pub(crate) async fn shutdown_live_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
         let state = self.upgrade()?;
+        if let Some(removed_watchdog) = self.watchdogs.unregister(agent_id).await
+            && let Some(helper_id) = removed_watchdog.active_helper_id
+        {
+            let _ = state.send_op(helper_id, Op::Shutdown {}).await;
+            let _ = state.remove_thread(&helper_id).await;
+            self.state.release_spawned_thread(helper_id);
+        }
         let result = if let Ok(thread) = state.get_thread(agent_id).await {
             thread.codex.session.ensure_rollout_materialized().await;
             thread.codex.session.flush_rollout().await?;
@@ -727,6 +914,10 @@ impl AgentControl {
         let _ = state.remove_thread(&agent_id).await;
         self.state.release_spawned_thread(agent_id);
         result
+    }
+
+    pub(crate) async fn shutdown_agent(&self, agent_id: ThreadId) -> CodexResult<String> {
+        self.shutdown_live_agent(agent_id).await
     }
 
     /// Mark `agent_id` as explicitly closed in persisted spawn-edge state, then shut down the
@@ -749,6 +940,11 @@ impl AgentControl {
         let descendant_ids = self.live_thread_spawn_descendants(agent_id).await?;
         let result = self.shutdown_live_agent(agent_id).await;
         for descendant_id in descendant_ids {
+            if let Some(removed_watchdog) = self.watchdogs.unregister(descendant_id).await
+                && let Some(helper_id) = removed_watchdog.active_helper_id
+            {
+                let _ = self.shutdown_live_agent(helper_id).await;
+            }
             match self.shutdown_live_agent(descendant_id).await {
                 Ok(_) | Err(CodexErr::ThreadNotFound(_)) | Err(CodexErr::InternalAgentDied) => {}
                 Err(err) => return Err(err),
@@ -858,7 +1054,7 @@ impl AgentControl {
             .join("\n")
     }
 
-    pub(crate) async fn list_agents(
+    pub(crate) async fn list_agents_by_path(
         &self,
         current_session_source: &SessionSource,
         path_prefix: Option<&str>,
@@ -970,6 +1166,31 @@ impl AgentControl {
                 return;
             }
 
+            if let Some(owner_thread_id) = control
+                .watchdogs
+                .owner_for_active_helper(child_thread_id)
+                .await
+            {
+                let helper_sent_input = match control.upgrade() {
+                    Ok(state) => state
+                        .get_thread(child_thread_id)
+                        .await
+                        .ok()
+                        .map(|thread| thread.last_completed_turn_used_agent_send_input())
+                        .unwrap_or(false),
+                    Err(_) => false,
+                };
+                if !helper_sent_input {
+                    let fallback_message = watchdog_fallback_message_from_status(&status);
+                    if let Some(message) = fallback_message {
+                        let _ = control
+                            .send_watchdog_wakeup(owner_thread_id, child_thread_id, message)
+                            .await;
+                    }
+                }
+                return;
+            }
+
             let Ok(state) = control.upgrade() else {
                 return;
             };
@@ -1010,6 +1231,203 @@ impl AgentControl {
                 .inject_user_message_without_turn(message)
                 .await;
         });
+    }
+
+    pub(crate) async fn watchdog_targets(&self, agent_ids: &[ThreadId]) -> HashSet<ThreadId> {
+        self.watchdogs.registered_targets(agent_ids).await
+    }
+
+    pub(crate) async fn register_watchdog(
+        &self,
+        registration: WatchdogRegistration,
+    ) -> CodexResult<Vec<RemovedWatchdog>> {
+        self.watchdogs.register(registration).await
+    }
+
+    pub(crate) async fn unregister_watchdogs_for_owner(
+        &self,
+        owner_thread_id: ThreadId,
+    ) -> Vec<RemovedWatchdog> {
+        self.watchdogs.take_for_owner(owner_thread_id).await
+    }
+
+    pub(crate) async fn compact_parent_for_watchdog_helper(
+        &self,
+        helper_thread_id: ThreadId,
+    ) -> CodexResult<WatchdogParentCompactionResult> {
+        let Some(parent_thread_id) = self
+            .watchdogs
+            .owner_for_active_helper(helper_thread_id)
+            .await
+        else {
+            return Ok(WatchdogParentCompactionResult::NotWatchdogHelper);
+        };
+        let state = self.upgrade()?;
+        let parent_thread = state.get_thread(parent_thread_id).await?;
+        let parent_has_active_turn = parent_thread.has_active_turn().await;
+
+        {
+            let mut compacting = self.watchdog_compactions_in_progress.lock().await;
+            if compacting.contains(&parent_thread_id) {
+                return Ok(WatchdogParentCompactionResult::AlreadyInProgress { parent_thread_id });
+            }
+            if parent_has_active_turn {
+                return Ok(WatchdogParentCompactionResult::ParentBusy { parent_thread_id });
+            }
+            compacting.insert(parent_thread_id);
+        }
+
+        match state.send_op(parent_thread_id, Op::Compact).await {
+            Ok(submission_id) => Ok(WatchdogParentCompactionResult::Submitted {
+                parent_thread_id,
+                submission_id,
+            }),
+            Err(err) => {
+                let mut compacting = self.watchdog_compactions_in_progress.lock().await;
+                compacting.remove(&parent_thread_id);
+                Err(err)
+            }
+        }
+    }
+
+    pub(crate) async fn finish_watchdog_parent_compaction(&self, parent_thread_id: ThreadId) {
+        let mut compacting = self.watchdog_compactions_in_progress.lock().await;
+        compacting.remove(&parent_thread_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn run_watchdogs_once_for_tests(&self) {
+        self.watchdogs.run_once().await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn force_watchdog_due_for_tests(&self, target_thread_id: ThreadId) {
+        self.watchdogs.force_due_for_tests(target_thread_id).await;
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn watchdog_owner_idle_since_is_none_for_tests(
+        &self,
+        target_thread_id: ThreadId,
+    ) -> Option<bool> {
+        self.watchdogs
+            .owner_idle_since_is_none_for_tests(target_thread_id)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn set_watchdog_active_helper_for_tests(
+        &self,
+        target_thread_id: ThreadId,
+        helper_thread_id: ThreadId,
+    ) {
+        self.watchdogs
+            .set_active_helper_for_tests(target_thread_id, helper_thread_id)
+            .await;
+    }
+
+    pub(crate) async fn watchdog_owner_for_active_helper(
+        &self,
+        helper_thread_id: ThreadId,
+    ) -> Option<ThreadId> {
+        self.watchdogs
+            .owner_for_active_helper(helper_thread_id)
+            .await
+    }
+
+    pub(crate) async fn list_agents(
+        &self,
+        owner_thread_id: ThreadId,
+        recursive: bool,
+        all: bool,
+    ) -> CodexResult<Vec<AgentListing>> {
+        let state = self.upgrade()?;
+        let thread_ids = state.list_thread_ids().await;
+
+        let mut parent_by_thread = HashMap::with_capacity(thread_ids.len());
+        let mut status_by_thread = HashMap::with_capacity(thread_ids.len());
+        let mut depth_by_thread = HashMap::with_capacity(thread_ids.len());
+
+        for thread_id in &thread_ids {
+            let Ok(thread) = state.get_thread(*thread_id).await else {
+                continue;
+            };
+            let snapshot = thread.config_snapshot().await;
+            let (parent_thread_id, depth) = match snapshot.session_source {
+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth,
+                    ..
+                }) => (
+                    Some(parent_thread_id),
+                    usize::try_from(depth).unwrap_or_default(),
+                ),
+                _ => (None, 0),
+            };
+            parent_by_thread.insert(*thread_id, parent_thread_id);
+            status_by_thread.insert(*thread_id, thread.agent_status().await);
+            depth_by_thread.insert(*thread_id, depth);
+        }
+
+        let mut children_by_parent: HashMap<ThreadId, Vec<ThreadId>> = HashMap::new();
+        for (thread_id, parent_thread_id) in &parent_by_thread {
+            if let Some(parent_thread_id) = parent_thread_id {
+                children_by_parent
+                    .entry(*parent_thread_id)
+                    .or_default()
+                    .push(*thread_id);
+            }
+        }
+        for children in children_by_parent.values_mut() {
+            children.sort_by_key(ToString::to_string);
+        }
+
+        let mut listings = Vec::new();
+        if all {
+            let mut all_thread_ids = thread_ids.into_iter().collect::<HashSet<_>>();
+            all_thread_ids.extend(self.state.tracked_thread_ids());
+            let mut all_thread_ids = all_thread_ids.into_iter().collect::<Vec<_>>();
+            all_thread_ids.sort_by_key(ToString::to_string);
+            for thread_id in all_thread_ids {
+                listings.push(AgentListing {
+                    thread_id,
+                    parent_thread_id: parent_by_thread.get(&thread_id).copied().flatten(),
+                    status: status_by_thread
+                        .get(&thread_id)
+                        .cloned()
+                        .unwrap_or(AgentStatus::NotFound),
+                    depth: depth_by_thread.get(&thread_id).copied().unwrap_or_default(),
+                });
+            }
+            return Ok(listings);
+        }
+
+        let mut queue = VecDeque::new();
+        if let Some(children) = children_by_parent.get(&owner_thread_id) {
+            for child in children {
+                queue.push_back((*child, 1));
+            }
+        }
+
+        while let Some((thread_id, depth)) = queue.pop_front() {
+            listings.push(AgentListing {
+                thread_id,
+                parent_thread_id: parent_by_thread.get(&thread_id).copied().flatten(),
+                status: status_by_thread
+                    .get(&thread_id)
+                    .cloned()
+                    .unwrap_or(AgentStatus::NotFound),
+                depth,
+            });
+
+            if recursive && let Some(children) = children_by_parent.get(&thread_id) {
+                for child in children {
+                    queue.push_back((*child, depth + 1));
+                }
+            }
+        }
+
+        Ok(listings)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1072,6 +1490,32 @@ impl AgentControl {
 
         let parent_thread = state.get_thread(*parent_thread_id).await.ok()?;
         parent_thread.codex.session.user_shell().shell_snapshot()
+    }
+
+    async fn reserve_spawn_slot_with_reconcile(
+        &self,
+        state: &ThreadManagerState,
+        max_threads: Option<usize>,
+    ) -> CodexResult<crate::agent::registry::SpawnReservation> {
+        self.reconcile_stale_guard_slots(state).await;
+        match self.state.reserve_spawn_slot(max_threads) {
+            Ok(reservation) => Ok(reservation),
+            Err(CodexErr::AgentLimitReached { .. }) => {
+                self.reconcile_stale_guard_slots(state).await;
+                self.state.reserve_spawn_slot(max_threads)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    async fn reconcile_stale_guard_slots(&self, state: &ThreadManagerState) {
+        let live_thread_ids: HashSet<ThreadId> =
+            state.list_thread_ids().await.into_iter().collect();
+        for tracked_thread_id in self.state.tracked_thread_ids() {
+            if !live_thread_ids.contains(&tracked_thread_id) {
+                self.state.release_spawned_thread(tracked_thread_id);
+            }
+        }
     }
 
     async fn inherited_exec_policy_for_source(
@@ -1202,6 +1646,59 @@ impl AgentControl {
     }
 }
 
+async fn build_post_fork_developer_message(
+    config: &crate::config::Config,
+    session_source: &SessionSource,
+    extra_message: Option<&str>,
+) -> Option<String> {
+    if !matches!(session_source, SessionSource::SubAgent(_))
+        || !config.features.enabled(Feature::Collab)
+        || !config.features.enabled(Feature::AgentPromptInjection)
+    {
+        return None;
+    }
+
+    let mut sections = vec![
+        load_subagent_prompt(
+            &config.codex_home,
+            config.features.enabled(Feature::AgentWatchdog),
+        )
+        .await,
+    ];
+    if let Some(existing) = config.developer_instructions.as_deref()
+        && !existing.trim().is_empty()
+    {
+        sections.push(existing.to_string());
+    }
+    if let Some(extra_message) = extra_message
+        && !extra_message.trim().is_empty()
+    {
+        sections.push(extra_message.to_string());
+    }
+    Some(sections.join("\n\n"))
+}
+
+fn append_post_fork_developer_message(
+    forked_rollout_items: &mut Vec<RolloutItem>,
+    developer_message: Option<String>,
+) {
+    let Some(developer_message) = developer_message else {
+        return;
+    };
+    if developer_message.trim().is_empty() {
+        return;
+    }
+
+    forked_rollout_items.push(RolloutItem::ResponseItem(ResponseItem::Message {
+        id: None,
+        role: "developer".to_string(),
+        content: vec![ContentItem::InputText {
+            text: developer_message,
+        }],
+        phase: None,
+    }));
+}
+
 fn thread_spawn_parent_thread_id(session_source: &SessionSource) -> Option<ThreadId> {
     match session_source {
         SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
@@ -1250,6 +1747,1408 @@ fn thread_spawn_depth(session_source: &SessionSource) -> Option<i32> {
         _ => None,
     }
 }
+
+fn build_agent_inbox_items(
+    sender_thread_id: ThreadId,
+    message: String,
+    prepend_turn_start_user_message: bool,
+) -> CodexResult<Vec<ResponseInputItem>> {
+    let mut items = Vec::new();
+    if prepend_turn_start_user_message {
+        items.push(ResponseInputItem::Message {
+            role: "user".to_string(),
+            content: vec![ContentItem::InputText {
+                text: String::new(),
+            }],
+            phase: None,
+        });
+    }
+
+    let call_id = format!("agent_inbox_{}", Uuid::new_v4());
+    let output = serde_json::to_string(&AgentInboxPayload::new(sender_thread_id, message))
+        .map_err(|err| {
+            CodexErr::UnsupportedOperation(format!(
+                "failed to serialize agent inbox payload: {err}"
+            ))
+        })?;
+
+    items.extend([
+        ResponseInputItem::FunctionCall {
+            name: AGENT_INBOX_KIND.to_string(),
+            arguments: "{}".to_string(),
+            call_id: call_id.clone(),
+        },
+        ResponseInputItem::FunctionCallOutput {
+            call_id,
+            output: FunctionCallOutputPayload {
+                body: FunctionCallOutputBody::Text(output),
+                ..Default::default()
+            },
+        },
+    ]);
+
+    Ok(items)
+}
+
+fn watchdog_fallback_message_from_status(status: &AgentStatus) -> Option<String> {
+    let message = match status {
+        AgentStatus::Completed(Some(message)) => message,
+        AgentStatus::Completed(None)
+        | AgentStatus::Errored(_)
+        | AgentStatus::Interrupted
+        | AgentStatus::Shutdown
+        | AgentStatus::NotFound
+        | AgentStatus::PendingInit
+        | AgentStatus::Running => return None,
+    };
+
+    sanitize_watchdog_wakeup_message(message.clone())
+}
+
+fn sanitize_watchdog_wakeup_message(message: String) -> Option<String> {
+    let Some(stripped_message) = strip_leading_watchdog_prompt_scaffold(&message) else {
+        let message = message.trim();
+        return (!message.is_empty()).then(|| message.to_string());
+    };
+
+    let stripped_message = stripped_message.trim();
+    (!stripped_message.is_empty()).then(|| stripped_message.to_string())
+}
+
+fn strip_leading_watchdog_prompt_scaffold(message: &str) -> Option<&str> {
+    let mut lines = message.split_inclusive('\n').scan(0, |offset, line| {
+        let line_start = *offset;
+        *offset += line.len();
+        Some((line_start, line))
+    });
+    let Some((_, first_line)) = lines.find(|(_, line)| !line.trim().is_empty()) else {
+        return None;
+    };
+    if first_line.trim() != "# You are a Subagent" {
+        return None;
+    }
+
+    for (line_start, line) in lines {
+        let trimmed_line = line.trim();
+        if trimmed_line.starts_with("AUTOPLAN_WATCHDOG_REPORT")
+            || trimmed_line.starts_with("Watchdog:")
+            || trimmed_line.starts_with("Watchdog report:")
+        {
+            return Some(message[line_start..].trim().trim_start_matches('\n'));
+        }
+    }
+
+    Some("")
+}
+
+async fn inject_agent_message(
+    state: &ThreadManagerState,
+    thread: &Arc<crate::CodexThread>,
+    agent_id: ThreadId,
+    sender_thread_id: ThreadId,
+    message: String,
+) -> CodexResult<String> {
+    let prepend_turn_start_user_message = !thread.codex.session.active_turn.lock().await.is_some();
+    state
+        .send_op(
+            agent_id,
+            Op::InjectResponseItems {
+                items: build_agent_inbox_items(
+                    sender_thread_id,
+                    message,
+                    prepend_turn_start_user_message,
+                )?,
+            },
+        )
+        .await
+}
+
 #[cfg(test)]
 #[path = "control_tests.rs"]
 mod tests;
+// Keep inbox coverage in `control_tests.rs`. The large inline test module below is a stale
+// replay artifact from older pre-refactor rebases and no longer matches current core test APIs.
+#[cfg(any())]
+mod inbox_tests {
+    use super::*;
+    use crate::CodexAuth;
+    use crate::CodexThread;
+    use crate::ThreadManager;
+    use crate::agent::agent_status_from_event;
+    use crate::config::AgentRoleConfig;
+    use crate::config::Config;
+    use crate::config::ConfigBuilder;
+    use crate::config_loader::LoaderOverrides;
+    use crate::contextual_user_message::SUBAGENT_NOTIFICATION_OPEN_TAG;
+    use crate::features::Feature;
+    use assert_matches::assert_matches;
+    use codex_protocol::config_types::ModeKind;
+    use codex_protocol::models::ContentItem;
+    use codex_protocol::models::ResponseInputItem;
+    use codex_protocol::models::ResponseItem;
+    use codex_protocol::protocol::ErrorEvent;
+    use codex_protocol::protocol::EventMsg;
+    use codex_protocol::protocol::SessionSource;
+    use codex_protocol::protocol::SubAgentSource;
+    use codex_protocol::protocol::TurnAbortReason;
+    use codex_protocol::protocol::TurnAbortedEvent;
+    use codex_protocol::protocol::TurnCompleteEvent;
+    use codex_protocol::protocol::TurnStartedEvent;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+    use tokio::time::Duration;
+    use tokio::time::sleep;
+    use tokio::time::timeout;
+    use toml::Value as TomlValue;
+
+    async fn test_config_with_cli_overrides(
+        cli_overrides: Vec<(String, TomlValue)>,
+    ) -> (TempDir, Config) {
+        let home = TempDir::new().expect("create temp dir");
+        let config = ConfigBuilder::default()
+            .codex_home(home.path().to_path_buf())
+            .cli_overrides(cli_overrides)
+            .loader_overrides(LoaderOverrides {
+                #[cfg(target_os = "macos")]
+                managed_preferences_base64: Some(String::new()),
+                macos_managed_config_requirements_base64: Some(String::new()),
+                ..LoaderOverrides::default()
+            })
+            .build()
+            .await
+            .expect("load default test config");
+        (home, config)
+    }
+
+    async fn test_config() -> (TempDir, Config) {
+        test_config_with_cli_overrides(Vec::new()).await
+    }
+
+    fn text_input(text: &str) -> Vec<UserInput> {
+        vec![UserInput::Text {
+            text: text.to_string(),
+            text_elements: Vec::new(),
+        }]
+    }
+
+    struct AgentControlHarness {
+        _home: TempDir,
+        config: Config,
+        manager: ThreadManager,
+        control: AgentControl,
+    }
+
+    impl AgentControlHarness {
+        async fn new() -> Self {
+            let (home, config) = test_config().await;
+            let manager = ThreadManager::with_models_provider_and_home_for_tests(
+                CodexAuth::from_api_key("dummy"),
+                config.model_provider.clone(),
+                config.codex_home.clone(),
+            );
+            let control = manager.agent_control();
+            Self {
+                _home: home,
+                config,
+                manager,
+                control,
+            }
+        }
+
+        async fn start_thread(&self) -> (ThreadId, Arc<CodexThread>) {
+            let new_thread = self
+                .manager
+                .start_thread(self.config.clone())
+                .await
+                .expect("start thread");
+            (new_thread.thread_id, new_thread.thread)
+        }
+    }
+
+    #[test]
+    fn build_agent_inbox_items_emits_function_call_and_output() {
+        let sender_thread_id = ThreadId::new();
+        let items = build_agent_inbox_items(sender_thread_id, "watchdog update".to_string(), false)
+            .expect("tool role should build inbox items");
+
+        assert_eq!(items.len(), 2);
+
+        let call_id = match &items[0] {
+            ResponseInputItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            } => {
+                assert_eq!(name, AGENT_INBOX_KIND);
+                assert_eq!(arguments, "{}");
+                call_id.clone()
+            }
+            other => panic!("expected function call item, got {other:?}"),
+        };
+
+        match &items[1] {
+            ResponseInputItem::FunctionCallOutput {
+                call_id: output_call_id,
+                output,
+            } => {
+                assert_eq!(output_call_id, &call_id);
+                let output_text = output
+                    .body
+                    .to_text()
+                    .expect("payload should convert to text");
+                let payload: AgentInboxPayload =
+                    serde_json::from_str(&output_text).expect("payload should be valid json");
+                assert!(payload.injected);
+                assert_eq!(payload.kind, AGENT_INBOX_KIND);
+                assert_eq!(payload.sender_thread_id, sender_thread_id);
+                assert_eq!(payload.message, "watchdog update");
+            }
+            other => panic!("expected function call output item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn build_agent_inbox_items_prepends_empty_user_message_when_requested() {
+        let sender_thread_id = ThreadId::new();
+        let items = build_agent_inbox_items(sender_thread_id, "watchdog update".to_string(), true)
+            .expect("tool role should build inbox items");
+
+        assert_eq!(items.len(), 3);
+        assert_eq!(
+            items[0],
+            ResponseInputItem::Message {
+                role: "user".to_string(),
+                content: vec![ContentItem::InputText {
+                    text: String::new(),
+                }],
+            }
+        );
+        assert_matches!(&items[1], ResponseInputItem::FunctionCall { .. });
+        assert_matches!(&items[2], ResponseInputItem::FunctionCallOutput { .. });
+    }
+
+    #[tokio::test]
+    async fn send_agent_message_to_root_thread_defaults_to_user_input() {
+        let harness = AgentControlHarness::new().await;
+        let (receiver_thread_id, _thread) = harness.start_thread().await;
+        let sender_thread_id = ThreadId::new();
+
+        let submission_id = harness
+            .control
+            .send_agent_message(
+                receiver_thread_id,
+                sender_thread_id,
+                "watchdog update".to_string(),
+            )
+            .await
+            .expect("send_agent_message should succeed");
+        assert!(!submission_id.is_empty());
+
+        let expected = (
+            receiver_thread_id,
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "watchdog update".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            },
+        );
+        let captured = harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .find(|entry| *entry == expected);
+
+        assert_eq!(captured, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn send_agent_message_to_root_thread_injects_response_items_when_enabled() {
+        let mut harness = AgentControlHarness::new().await;
+        harness.config.agent_use_function_call_inbox = true;
+        let (receiver_thread_id, _thread) = harness.start_thread().await;
+        let sender_thread_id = ThreadId::new();
+
+        let submission_id = harness
+            .control
+            .send_agent_message(
+                receiver_thread_id,
+                sender_thread_id,
+                "watchdog update".to_string(),
+            )
+            .await
+            .expect("send_agent_message should succeed");
+        assert!(!submission_id.is_empty());
+
+        let captured = harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .find(|(thread_id, op)| {
+                *thread_id == receiver_thread_id && matches!(op, Op::InjectResponseItems { .. })
+            })
+            .expect("expected injected agent inbox op");
+
+        let Op::InjectResponseItems { items } = captured.1 else {
+            unreachable!("matched above");
+        };
+        assert_eq!(items.len(), 3);
+        match &items[0] {
+            ResponseInputItem::Message { role, content } => {
+                assert_eq!(role, "user");
+                assert_eq!(
+                    content,
+                    &vec![ContentItem::InputText {
+                        text: String::new(),
+                    }]
+                );
+            }
+            other => panic!("expected prepended user message, got {other:?}"),
+        }
+        match &items[1] {
+            ResponseInputItem::FunctionCall {
+                name, arguments, ..
+            } => {
+                assert_eq!(name, AGENT_INBOX_KIND);
+                assert_eq!(arguments, "{}");
+            }
+            other => panic!("expected function call item, got {other:?}"),
+        }
+        match &items[2] {
+            ResponseInputItem::FunctionCallOutput { output, .. } => {
+                let output_text = output
+                    .body
+                    .to_text()
+                    .expect("payload should convert to text");
+                let payload: AgentInboxPayload =
+                    serde_json::from_str(&output_text).expect("payload should be valid json");
+                assert_eq!(payload.sender_thread_id, sender_thread_id);
+                assert_eq!(payload.message, "watchdog update");
+            }
+            other => panic!("expected function call output item, got {other:?}"),
+        }
+    }
+
+    fn has_subagent_notification(history_items: &[ResponseItem]) -> bool {
+        history_items.iter().any(|item| {
+            let ResponseItem::Message { role, content, .. } = item else {
+                return false;
+            };
+            if role != "user" {
+                return false;
+            }
+            content.iter().any(|content_item| match content_item {
+                ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                    text.contains(SUBAGENT_NOTIFICATION_OPEN_TAG)
+                }
+                ContentItem::InputImage { .. } => false,
+            })
+        })
+    }
+
+    /// Returns true when any message item contains `needle` in a text span.
+    fn history_contains_text(history_items: &[ResponseItem], needle: &str) -> bool {
+        history_items.iter().any(|item| {
+            let ResponseItem::Message { content, .. } = item else {
+                return false;
+            };
+            content.iter().any(|content_item| match content_item {
+                ContentItem::InputText { text } | ContentItem::OutputText { text } => {
+                    text.contains(needle)
+                }
+                ContentItem::InputImage { .. } => false,
+            })
+        })
+    }
+
+    async fn wait_for_subagent_notification(parent_thread: &Arc<CodexThread>) -> bool {
+        let wait = async {
+            loop {
+                let history_items = parent_thread
+                    .codex
+                    .session
+                    .clone_history()
+                    .await
+                    .raw_items()
+                    .to_vec();
+                if has_subagent_notification(&history_items) {
+                    return true;
+                }
+                sleep(Duration::from_millis(25)).await;
+            }
+        };
+        timeout(Duration::from_secs(5), wait).await.is_ok()
+    }
+
+    #[tokio::test]
+    async fn send_input_errors_when_manager_dropped() {
+        let control = AgentControl::default();
+        let err = control
+            .send_input(
+                ThreadId::new(),
+                vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .await
+            .expect_err("send_input should fail without a manager");
+        assert_eq!(
+            err.to_string(),
+            "unsupported operation: thread manager dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_status_returns_not_found_without_manager() {
+        let control = AgentControl::default();
+        let got = control.get_status(ThreadId::new()).await;
+        assert_eq!(got, AgentStatus::NotFound);
+    }
+
+    #[tokio::test]
+    async fn on_event_updates_status_from_task_started() {
+        let status = agent_status_from_event(&EventMsg::TurnStarted(TurnStartedEvent {
+            turn_id: "turn-1".to_string(),
+            model_context_window: None,
+            collaboration_mode_kind: ModeKind::Default,
+        }));
+        assert_eq!(status, Some(AgentStatus::Running));
+    }
+
+    #[tokio::test]
+    async fn on_event_updates_status_from_task_complete() {
+        let status = agent_status_from_event(&EventMsg::TurnComplete(TurnCompleteEvent {
+            turn_id: "turn-1".to_string(),
+            last_agent_message: Some("done".to_string()),
+        }));
+        let expected = AgentStatus::Completed(Some("done".to_string()));
+        assert_eq!(status, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn on_event_updates_status_from_error() {
+        let status = agent_status_from_event(&EventMsg::Error(ErrorEvent {
+            message: "boom".to_string(),
+            codex_error_info: None,
+        }));
+
+        let expected = AgentStatus::Errored("boom".to_string());
+        assert_eq!(status, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn on_event_updates_status_from_turn_aborted() {
+        let status = agent_status_from_event(&EventMsg::TurnAborted(TurnAbortedEvent {
+            turn_id: Some("turn-1".to_string()),
+            reason: TurnAbortReason::Interrupted,
+        }));
+
+        let expected = AgentStatus::Errored("Interrupted".to_string());
+        assert_eq!(status, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn on_event_updates_status_from_shutdown_complete() {
+        let status = agent_status_from_event(&EventMsg::ShutdownComplete);
+        assert_eq!(status, Some(AgentStatus::Shutdown));
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_errors_when_manager_dropped() {
+        let control = AgentControl::default();
+        let (_home, config) = test_config().await;
+        let err = control
+            .spawn_agent(config, text_input("hello"), None)
+            .await
+            .expect_err("spawn_agent should fail without a manager");
+        assert_eq!(
+            err.to_string(),
+            "unsupported operation: thread manager dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_agent_errors_when_manager_dropped() {
+        let control = AgentControl::default();
+        let (_home, config) = test_config().await;
+        let err = control
+            .resume_agent_from_rollout(config, ThreadId::new(), SessionSource::Exec)
+            .await
+            .expect_err("resume_agent should fail without a manager");
+        assert_eq!(
+            err.to_string(),
+            "unsupported operation: thread manager dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_input_errors_when_thread_missing() {
+        let harness = AgentControlHarness::new().await;
+        let thread_id = ThreadId::new();
+        let err = harness
+            .control
+            .send_input(
+                thread_id,
+                vec![UserInput::Text {
+                    text: "hello".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .await
+            .expect_err("send_input should fail for missing thread");
+        assert_matches!(err, CodexErr::ThreadNotFound(id) if id == thread_id);
+    }
+
+    #[tokio::test]
+    async fn get_status_returns_not_found_for_missing_thread() {
+        let harness = AgentControlHarness::new().await;
+        let status = harness.control.get_status(ThreadId::new()).await;
+        assert_eq!(status, AgentStatus::NotFound);
+    }
+
+    #[tokio::test]
+    async fn get_status_returns_pending_init_for_new_thread() {
+        let harness = AgentControlHarness::new().await;
+        let (thread_id, _) = harness.start_thread().await;
+        let status = harness.control.get_status(thread_id).await;
+        assert_eq!(status, AgentStatus::PendingInit);
+    }
+
+    #[tokio::test]
+    async fn subscribe_status_errors_for_missing_thread() {
+        let harness = AgentControlHarness::new().await;
+        let thread_id = ThreadId::new();
+        let err = harness
+            .control
+            .subscribe_status(thread_id)
+            .await
+            .expect_err("subscribe_status should fail for missing thread");
+        assert_matches!(err, CodexErr::ThreadNotFound(id) if id == thread_id);
+    }
+
+    #[tokio::test]
+    async fn subscribe_status_updates_on_shutdown() {
+        let harness = AgentControlHarness::new().await;
+        let (thread_id, thread) = harness.start_thread().await;
+        let mut status_rx = harness
+            .control
+            .subscribe_status(thread_id)
+            .await
+            .expect("subscribe_status should succeed");
+        assert_eq!(status_rx.borrow().clone(), AgentStatus::PendingInit);
+
+        let _ = thread
+            .submit(Op::Shutdown {})
+            .await
+            .expect("shutdown should submit");
+
+        let _ = status_rx.changed().await;
+        assert_eq!(status_rx.borrow().clone(), AgentStatus::Shutdown);
+    }
+
+    #[tokio::test]
+    async fn send_input_submits_user_message() {
+        let harness = AgentControlHarness::new().await;
+        let (thread_id, _thread) = harness.start_thread().await;
+
+        let submission_id = harness
+            .control
+            .send_input(
+                thread_id,
+                vec![UserInput::Text {
+                    text: "hello from tests".to_string(),
+                    text_elements: Vec::new(),
+                }],
+            )
+            .await
+            .expect("send_input should succeed");
+        assert!(!submission_id.is_empty());
+        let expected = (
+            thread_id,
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "hello from tests".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            },
+        );
+        let captured = harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .find(|entry| *entry == expected);
+        assert_eq!(captured, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_creates_thread_and_sends_prompt() {
+        let harness = AgentControlHarness::new().await;
+        let thread_id = harness
+            .control
+            .spawn_agent(harness.config.clone(), text_input("spawned"), None)
+            .await
+            .expect("spawn_agent should succeed");
+        let _thread = harness
+            .manager
+            .get_thread(thread_id)
+            .await
+            .expect("thread should be registered");
+        let expected = (
+            thread_id,
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "spawned".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            },
+        );
+        let captured = harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .find(|entry| *entry == expected);
+        assert_eq!(captured, Some(expected));
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_can_fork_parent_thread_history() {
+        let harness = AgentControlHarness::new().await;
+        let (parent_thread_id, parent_thread) = harness.start_thread().await;
+        parent_thread
+            .inject_user_message_without_turn("parent seed context".to_string())
+            .await;
+        let turn_context = parent_thread.codex.session.new_default_turn().await;
+        let parent_spawn_call_id = "spawn-call-history".to_string();
+        let parent_spawn_call = ResponseItem::FunctionCall {
+            id: None,
+            name: "spawn_agent".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: parent_spawn_call_id.clone(),
+        };
+        parent_thread
+            .codex
+            .session
+            .record_conversation_items(turn_context.as_ref(), &[parent_spawn_call])
+            .await;
+        parent_thread
+            .codex
+            .session
+            .ensure_rollout_materialized()
+            .await;
+        parent_thread.codex.session.flush_rollout().await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent_with_options(
+                harness.config.clone(),
+                text_input("child task"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: None,
+                })),
+                SpawnAgentOptions {
+                    fork_parent_spawn_call_id: Some(parent_spawn_call_id),
+                },
+            )
+            .await
+            .expect("forked spawn should succeed");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should be registered");
+        assert_ne!(child_thread_id, parent_thread_id);
+        let history = child_thread.codex.session.clone_history().await;
+        assert!(history_contains_text(
+            history.raw_items(),
+            "parent seed context"
+        ));
+
+        let expected = (
+            child_thread_id,
+            Op::UserInput {
+                items: vec![UserInput::Text {
+                    text: "child task".to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+            },
+        );
+        let captured = harness
+            .manager
+            .captured_ops()
+            .into_iter()
+            .find(|entry| *entry == expected);
+        assert_eq!(captured, Some(expected));
+
+        let _ = harness
+            .control
+            .shutdown_agent(child_thread_id)
+            .await
+            .expect("child shutdown should submit");
+        let _ = parent_thread
+            .submit(Op::Shutdown {})
+            .await
+            .expect("parent shutdown should submit");
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_fork_injects_output_for_parent_spawn_call() {
+        let harness = AgentControlHarness::new().await;
+        let (parent_thread_id, parent_thread) = harness.start_thread().await;
+        let turn_context = parent_thread.codex.session.new_default_turn().await;
+        let parent_spawn_call_id = "spawn-call-1".to_string();
+        let parent_spawn_call = ResponseItem::FunctionCall {
+            id: None,
+            name: "spawn_agent".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: parent_spawn_call_id.clone(),
+        };
+        parent_thread
+            .codex
+            .session
+            .record_conversation_items(turn_context.as_ref(), &[parent_spawn_call])
+            .await;
+        parent_thread
+            .codex
+            .session
+            .ensure_rollout_materialized()
+            .await;
+        parent_thread.codex.session.flush_rollout().await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent_with_options(
+                harness.config.clone(),
+                text_input("child task"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: None,
+                })),
+                SpawnAgentOptions {
+                    fork_parent_spawn_call_id: Some(parent_spawn_call_id.clone()),
+                },
+            )
+            .await
+            .expect("forked spawn should succeed");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should be registered");
+        let history = child_thread.codex.session.clone_history().await;
+        let injected_output = history.raw_items().iter().find_map(|item| match item {
+            ResponseItem::FunctionCallOutput { call_id, output }
+                if call_id == &parent_spawn_call_id =>
+            {
+                Some(output)
+            }
+            _ => None,
+        });
+        let injected_output =
+            injected_output.expect("forked child should contain synthetic tool output");
+        assert_eq!(
+            injected_output.text_content(),
+            Some(FORKED_SPAWN_AGENT_OUTPUT_MESSAGE)
+        );
+        assert_eq!(injected_output.success, Some(true));
+
+        let _ = harness
+            .control
+            .shutdown_agent(child_thread_id)
+            .await
+            .expect("child shutdown should submit");
+        let _ = parent_thread
+            .submit(Op::Shutdown {})
+            .await
+            .expect("parent shutdown should submit");
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_fork_flushes_parent_rollout_before_loading_history() {
+        let harness = AgentControlHarness::new().await;
+        let (parent_thread_id, parent_thread) = harness.start_thread().await;
+        let turn_context = parent_thread.codex.session.new_default_turn().await;
+        let parent_spawn_call_id = "spawn-call-unflushed".to_string();
+        let parent_spawn_call = ResponseItem::FunctionCall {
+            id: None,
+            name: "spawn_agent".to_string(),
+            namespace: None,
+            arguments: "{}".to_string(),
+            call_id: parent_spawn_call_id.clone(),
+        };
+        parent_thread
+            .codex
+            .session
+            .record_conversation_items(turn_context.as_ref(), &[parent_spawn_call])
+            .await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent_with_options(
+                harness.config.clone(),
+                text_input("child task"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: None,
+                })),
+                SpawnAgentOptions {
+                    fork_parent_spawn_call_id: Some(parent_spawn_call_id.clone()),
+                },
+            )
+            .await
+            .expect("forked spawn should flush parent rollout before loading history");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should be registered");
+        let history = child_thread.codex.session.clone_history().await;
+
+        let mut parent_call_index = None;
+        let mut injected_output_index = None;
+        for (idx, item) in history.raw_items().iter().enumerate() {
+            match item {
+                ResponseItem::FunctionCall { call_id, .. } if call_id == &parent_spawn_call_id => {
+                    parent_call_index = Some(idx);
+                }
+                ResponseItem::FunctionCallOutput { call_id, .. }
+                    if call_id == &parent_spawn_call_id =>
+                {
+                    injected_output_index = Some(idx);
+                }
+                _ => {}
+            }
+        }
+
+        let parent_call_index =
+            parent_call_index.expect("forked child should include the parent spawn_agent call");
+        let injected_output_index = injected_output_index
+            .expect("forked child should include synthetic output for the parent spawn_agent call");
+        assert!(parent_call_index < injected_output_index);
+
+        let _ = harness
+            .control
+            .shutdown_agent(child_thread_id)
+            .await
+            .expect("child shutdown should submit");
+        let _ = parent_thread
+            .submit(Op::Shutdown {})
+            .await
+            .expect("parent shutdown should submit");
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_respects_max_threads_limit() {
+        let max_threads = 1usize;
+        let (_home, config) = test_config_with_cli_overrides(vec![(
+            "agents.max_threads".to_string(),
+            TomlValue::Integer(max_threads as i64),
+        )])
+        .await;
+        let manager = ThreadManager::with_models_provider_and_home_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.clone(),
+        );
+        let control = manager.agent_control();
+
+        let _ = manager
+            .start_thread(config.clone())
+            .await
+            .expect("start thread");
+
+        let first_agent_id = control
+            .spawn_agent(config.clone(), text_input("hello"), None)
+            .await
+            .expect("spawn_agent should succeed");
+
+        let err = control
+            .spawn_agent(config, text_input("hello again"), None)
+            .await
+            .expect_err("spawn_agent should respect max threads");
+        let CodexErr::AgentLimitReached {
+            max_threads: seen_max_threads,
+        } = err
+        else {
+            panic!("expected CodexErr::AgentLimitReached");
+        };
+        assert_eq!(seen_max_threads, max_threads);
+
+        let _ = control
+            .shutdown_agent(first_agent_id)
+            .await
+            .expect("shutdown agent");
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_releases_slot_after_shutdown() {
+        let max_threads = 1usize;
+        let (_home, config) = test_config_with_cli_overrides(vec![(
+            "agents.max_threads".to_string(),
+            TomlValue::Integer(max_threads as i64),
+        )])
+        .await;
+        let manager = ThreadManager::with_models_provider_and_home_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.clone(),
+        );
+        let control = manager.agent_control();
+
+        let first_agent_id = control
+            .spawn_agent(config.clone(), text_input("hello"), None)
+            .await
+            .expect("spawn_agent should succeed");
+        let _ = control
+            .shutdown_agent(first_agent_id)
+            .await
+            .expect("shutdown agent");
+
+        let second_agent_id = control
+            .spawn_agent(config.clone(), text_input("hello again"), None)
+            .await
+            .expect("spawn_agent should succeed after shutdown");
+        let _ = control
+            .shutdown_agent(second_agent_id)
+            .await
+            .expect("shutdown agent");
+    }
+
+    #[tokio::test]
+    async fn spawn_agent_limit_shared_across_clones() {
+        let max_threads = 1usize;
+        let (_home, config) = test_config_with_cli_overrides(vec![(
+            "agents.max_threads".to_string(),
+            TomlValue::Integer(max_threads as i64),
+        )])
+        .await;
+        let manager = ThreadManager::with_models_provider_and_home_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.clone(),
+        );
+        let control = manager.agent_control();
+        let cloned = control.clone();
+
+        let first_agent_id = cloned
+            .spawn_agent(config.clone(), text_input("hello"), None)
+            .await
+            .expect("spawn_agent should succeed");
+
+        let err = control
+            .spawn_agent(config, text_input("hello again"), None)
+            .await
+            .expect_err("spawn_agent should respect shared guard");
+        let CodexErr::AgentLimitReached { max_threads } = err else {
+            panic!("expected CodexErr::AgentLimitReached");
+        };
+        assert_eq!(max_threads, 1);
+
+        let _ = control
+            .shutdown_agent(first_agent_id)
+            .await
+            .expect("shutdown agent");
+    }
+
+    #[tokio::test]
+    async fn resume_agent_respects_max_threads_limit() {
+        let max_threads = 1usize;
+        let (_home, config) = test_config_with_cli_overrides(vec![(
+            "agents.max_threads".to_string(),
+            TomlValue::Integer(max_threads as i64),
+        )])
+        .await;
+        let manager = ThreadManager::with_models_provider_and_home_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.clone(),
+        );
+        let control = manager.agent_control();
+
+        let resumable_id = control
+            .spawn_agent(config.clone(), text_input("hello"), None)
+            .await
+            .expect("spawn_agent should succeed");
+        let _ = control
+            .shutdown_agent(resumable_id)
+            .await
+            .expect("shutdown resumable thread");
+
+        let active_id = control
+            .spawn_agent(config.clone(), text_input("occupy"), None)
+            .await
+            .expect("spawn_agent should succeed for active slot");
+
+        let err = control
+            .resume_agent_from_rollout(config, resumable_id, SessionSource::Exec)
+            .await
+            .expect_err("resume should respect max threads");
+        let CodexErr::AgentLimitReached {
+            max_threads: seen_max_threads,
+        } = err
+        else {
+            panic!("expected CodexErr::AgentLimitReached");
+        };
+        assert_eq!(seen_max_threads, max_threads);
+
+        let _ = control
+            .shutdown_agent(active_id)
+            .await
+            .expect("shutdown active thread");
+    }
+
+    #[tokio::test]
+    async fn resume_agent_releases_slot_after_resume_failure() {
+        let max_threads = 1usize;
+        let (_home, config) = test_config_with_cli_overrides(vec![(
+            "agents.max_threads".to_string(),
+            TomlValue::Integer(max_threads as i64),
+        )])
+        .await;
+        let manager = ThreadManager::with_models_provider_and_home_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.clone(),
+        );
+        let control = manager.agent_control();
+
+        let _ = control
+            .resume_agent_from_rollout(config.clone(), ThreadId::new(), SessionSource::Exec)
+            .await
+            .expect_err("resume should fail for missing rollout path");
+
+        let resumed_id = control
+            .spawn_agent(config, text_input("hello"), None)
+            .await
+            .expect("spawn should succeed after failed resume");
+        let _ = control
+            .shutdown_agent(resumed_id)
+            .await
+            .expect("shutdown resumed thread");
+    }
+
+    #[tokio::test]
+    async fn spawn_child_completion_notifies_parent_history() {
+        let harness = AgentControlHarness::new().await;
+        let (parent_thread_id, parent_thread) = harness.start_thread().await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent(
+                harness.config.clone(),
+                text_input("hello child"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: Some("explorer".to_string()),
+                })),
+            )
+            .await
+            .expect("child spawn should succeed");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should exist");
+        let mut status_rx = harness
+            .control
+            .subscribe_status(child_thread_id)
+            .await
+            .expect("status subscription should succeed");
+        if matches!(status_rx.borrow().clone(), AgentStatus::PendingInit) {
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    status_rx
+                        .changed()
+                        .await
+                        .expect("child status should advance past pending init");
+                    if !matches!(status_rx.borrow().clone(), AgentStatus::PendingInit) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("child should initialize before shutdown");
+        }
+        let _ = child_thread
+            .submit(Op::Shutdown {})
+            .await
+            .expect("child shutdown should submit");
+
+        assert_eq!(wait_for_subagent_notification(&parent_thread).await, true);
+    }
+
+    #[tokio::test]
+    async fn completion_watcher_notifies_parent_when_child_is_missing() {
+        let harness = AgentControlHarness::new().await;
+        let (parent_thread_id, parent_thread) = harness.start_thread().await;
+        let child_thread_id = ThreadId::new();
+
+        harness.control.maybe_start_completion_watcher(
+            child_thread_id,
+            Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                parent_thread_id,
+                depth: 1,
+                agent_nickname: None,
+                agent_role: Some("explorer".to_string()),
+            })),
+        );
+
+        assert_eq!(wait_for_subagent_notification(&parent_thread).await, true);
+
+        let history_items = parent_thread
+            .codex
+            .session
+            .clone_history()
+            .await
+            .raw_items()
+            .to_vec();
+        assert_eq!(
+            history_contains_text(
+                &history_items,
+                &format!("\"agent_id\":\"{child_thread_id}\"")
+            ),
+            true
+        );
+        assert_eq!(
+            history_contains_text(&history_items, "\"status\":\"not_found\""),
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_thread_subagent_gets_random_nickname_in_session_source() {
+        let harness = AgentControlHarness::new().await;
+        let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent(
+                harness.config.clone(),
+                text_input("hello child"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: Some("explorer".to_string()),
+                })),
+            )
+            .await
+            .expect("child spawn should succeed");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should be registered");
+        let snapshot = child_thread.config_snapshot().await;
+
+        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: seen_parent_thread_id,
+            depth,
+            agent_nickname,
+            agent_role,
+        }) = snapshot.session_source
+        else {
+            panic!("expected thread-spawn sub-agent source");
+        };
+        assert_eq!(seen_parent_thread_id, parent_thread_id);
+        assert_eq!(depth, 1);
+        assert!(agent_nickname.is_some());
+        assert_eq!(agent_role, Some("explorer".to_string()));
+    }
+
+    #[tokio::test]
+    async fn spawn_thread_subagent_uses_role_specific_nickname_candidates() {
+        let mut harness = AgentControlHarness::new().await;
+        harness.config.agent_roles.insert(
+            "researcher".to_string(),
+            AgentRoleConfig {
+                description: Some("Research role".to_string()),
+                config_file: None,
+                nickname_candidates: Some(vec!["Atlas".to_string()]),
+            },
+        );
+        let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent(
+                harness.config.clone(),
+                text_input("hello child"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: Some("researcher".to_string()),
+                })),
+            )
+            .await
+            .expect("child spawn should succeed");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should be registered");
+        let snapshot = child_thread.config_snapshot().await;
+
+        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn { agent_nickname, .. }) =
+            snapshot.session_source
+        else {
+            panic!("expected thread-spawn sub-agent source");
+        };
+        assert_eq!(agent_nickname, Some("Atlas".to_string()));
+    }
+
+    #[tokio::test]
+    async fn resume_thread_subagent_restores_stored_nickname_and_role() {
+        let (home, mut config) = test_config().await;
+        config
+            .features
+            .enable(Feature::Sqlite)
+            .expect("test config should allow sqlite");
+        let manager = ThreadManager::with_models_provider_and_home_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.clone(),
+        );
+        let control = manager.agent_control();
+        let harness = AgentControlHarness {
+            _home: home,
+            config,
+            manager,
+            control,
+        };
+        let (parent_thread_id, _parent_thread) = harness.start_thread().await;
+
+        let child_thread_id = harness
+            .control
+            .spawn_agent(
+                harness.config.clone(),
+                text_input("hello child"),
+                Some(SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: Some("explorer".to_string()),
+                })),
+            )
+            .await
+            .expect("child spawn should succeed");
+
+        let child_thread = harness
+            .manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should exist");
+        let mut status_rx = harness
+            .control
+            .subscribe_status(child_thread_id)
+            .await
+            .expect("status subscription should succeed");
+        if matches!(status_rx.borrow().clone(), AgentStatus::PendingInit) {
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    status_rx
+                        .changed()
+                        .await
+                        .expect("child status should advance past pending init");
+                    if !matches!(status_rx.borrow().clone(), AgentStatus::PendingInit) {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("child should initialize before shutdown");
+        }
+        let original_snapshot = child_thread.config_snapshot().await;
+        let original_nickname = original_snapshot
+            .session_source
+            .get_nickname()
+            .expect("spawned sub-agent should have a nickname");
+        let state_db = child_thread
+            .state_db()
+            .expect("sqlite state db should be available for nickname resume test");
+        timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(Some(metadata)) = state_db.get_thread(child_thread_id).await
+                    && metadata.agent_nickname.is_some()
+                    && metadata.agent_role.as_deref() == Some("explorer")
+                {
+                    break;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("child thread metadata should be persisted to sqlite before shutdown");
+
+        let _ = harness
+            .control
+            .shutdown_agent(child_thread_id)
+            .await
+            .expect("child shutdown should submit");
+
+        let resumed_thread_id = harness
+            .control
+            .resume_agent_from_rollout(
+                harness.config.clone(),
+                child_thread_id,
+                SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+                    parent_thread_id,
+                    depth: 1,
+                    agent_nickname: None,
+                    agent_role: None,
+                }),
+            )
+            .await
+            .expect("resume should succeed");
+        assert_eq!(resumed_thread_id, child_thread_id);
+
+        let resumed_snapshot = harness
+            .manager
+            .get_thread(resumed_thread_id)
+            .await
+            .expect("resumed child thread should exist")
+            .config_snapshot()
+            .await;
+        let SessionSource::SubAgent(SubAgentSource::ThreadSpawn {
+            parent_thread_id: resumed_parent_thread_id,
+            depth: resumed_depth,
+            agent_nickname: resumed_nickname,
+            agent_role: resumed_role,
+        }) = resumed_snapshot.session_source
+        else {
+            panic!("expected thread-spawn sub-agent source");
+        };
+        assert_eq!(resumed_parent_thread_id, parent_thread_id);
+        assert_eq!(resumed_depth, 1);
+        assert_eq!(resumed_nickname, Some(original_nickname));
+        assert_eq!(resumed_role, Some("explorer".to_string()));
+
+        let _ = harness
+            .control
+            .shutdown_agent(resumed_thread_id)
+            .await
+            .expect("resumed child shutdown should submit");
+    }
+}

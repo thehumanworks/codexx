@@ -613,6 +613,11 @@ pub enum ResponseInputItem {
         #[ts(optional)]
         phase: Option<MessagePhase>,
     },
+    FunctionCall {
+        name: String,
+        arguments: String,
+        call_id: String,
+    },
     FunctionCallOutput {
         call_id: String,
         #[ts(as = "FunctionCallOutputBody")]
@@ -1046,6 +1051,17 @@ impl From<ResponseInputItem> for ResponseItem {
                 content,
                 id: None,
                 phase,
+            },
+            ResponseInputItem::FunctionCall {
+                name,
+                arguments,
+                call_id,
+            } => Self::FunctionCall {
+                id: None,
+                name,
+                namespace: None,
+                arguments,
+                call_id,
             },
             ResponseInputItem::FunctionCallOutput { call_id, output } => {
                 Self::FunctionCallOutput { call_id, output }

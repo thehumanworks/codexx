@@ -11,6 +11,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::ServiceTier;
+use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -45,13 +46,19 @@ pub struct ThreadConfigSnapshot {
     pub model: String,
     pub model_provider_id: String,
     pub service_tier: Option<ServiceTier>,
+    pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
+    pub model_verbosity: Option<Verbosity>,
+    pub model_context_window: Option<i64>,
+    pub model_auto_compact_token_limit: Option<i64>,
     pub approval_policy: AskForApproval,
     pub approvals_reviewer: ApprovalsReviewer,
     pub permission_profile: PermissionProfile,
     pub cwd: AbsolutePathBuf,
     pub ephemeral: bool,
+    pub agent_use_function_call_inbox: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
+    pub active_profile: Option<String>,
     pub session_source: SessionSource,
 }
 
@@ -285,6 +292,16 @@ impl CodexThread {
     /// `thread/tokenUsage/updated` payload incomplete.
     pub async fn token_usage_info(&self) -> Option<TokenUsageInfo> {
         self.codex.session.token_usage_info().await
+    }
+
+    pub(crate) async fn has_active_turn(&self) -> bool {
+        self.codex.session.has_active_turn().await
+    }
+
+    pub(crate) fn last_completed_turn_used_agent_send_input(&self) -> bool {
+        self.codex
+            .session
+            .last_completed_turn_used_agent_send_input()
     }
 
     /// Records a user-role session-prefix message without creating a new user turn boundary.

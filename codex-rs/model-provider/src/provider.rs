@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -7,6 +8,7 @@ use codex_api::SharedAuthProvider;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider_info::ModelProviderInfo;
+use codex_models_manager::CustomModelConfig;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_models_manager::manager::OpenAiModelsManager;
 use codex_models_manager::manager::SharedModelsManager;
@@ -118,6 +120,7 @@ pub trait ModelProvider: fmt::Debug + Send + Sync {
         &self,
         codex_home: PathBuf,
         config_model_catalog: Option<ModelsResponse>,
+        custom_models: HashMap<String, CustomModelConfig>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> SharedModelsManager;
 }
@@ -213,12 +216,14 @@ impl ModelProvider for ConfiguredModelProvider {
         &self,
         codex_home: PathBuf,
         config_model_catalog: Option<ModelsResponse>,
+        custom_models: HashMap<String, CustomModelConfig>,
         collaboration_modes_config: CollaborationModesConfig,
     ) -> SharedModelsManager {
         match config_model_catalog {
             Some(model_catalog) => Arc::new(StaticModelsManager::new(
                 self.auth_manager.clone(),
                 model_catalog,
+                custom_models,
                 collaboration_modes_config,
             )),
             None => {
@@ -230,6 +235,7 @@ impl ModelProvider for ConfiguredModelProvider {
                     codex_home,
                     endpoint,
                     self.auth_manager.clone(),
+                    custom_models,
                     collaboration_modes_config,
                 ))
             }
@@ -448,6 +454,7 @@ mod tests {
         let manager = provider.models_manager(
             test_codex_home(),
             /*config_model_catalog*/ None,
+            HashMap::new(),
             Default::default(),
         );
 
@@ -491,6 +498,7 @@ mod tests {
             Some(ModelsResponse {
                 models: vec![custom_model],
             }),
+            HashMap::new(),
             Default::default(),
         );
 
@@ -531,6 +539,7 @@ mod tests {
         let manager = provider.models_manager(
             test_codex_home(),
             /*config_model_catalog*/ None,
+            HashMap::new(),
             Default::default(),
         );
         let catalog = manager.raw_model_catalog(RefreshStrategy::Online).await;

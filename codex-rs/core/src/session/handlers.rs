@@ -977,6 +977,13 @@ pub(super) async fn submission_loop(
                     interrupt(&sess).await;
                     false
                 }
+                Op::NoteOwnerActivity => {
+                    sess.services
+                        .agent_control
+                        .note_owner_input(sess.conversation_id)
+                        .await;
+                    false
+                }
                 Op::CleanBackgroundTerminals => {
                     clean_background_terminals(&sess).await;
                     false

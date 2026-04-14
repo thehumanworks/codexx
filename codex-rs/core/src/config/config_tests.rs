@@ -12,6 +12,7 @@ use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::CustomModelToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -72,6 +73,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::NetworkAccess;
 use codex_protocol::protocol::RealtimeVoice;
 use codex_protocol::protocol::SandboxPolicy;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use tempfile::tempdir;
 
@@ -388,6 +390,50 @@ web_search = false
             web_search: None,
             view_image: None,
         })
+    );
+}
+
+#[tokio::test]
+async fn config_toml_deserializes_custom_models() {
+    let custom_models = r#"
+[[custom_models]]
+name = "gpt-5.4 1m"
+model = "gpt-5.4"
+model_context_window = 1000000
+model_auto_compact_token_limit = 900000
+"#;
+    let custom_models_cfg = toml::from_str::<ConfigToml>(custom_models)
+        .expect("TOML deserialization should succeed for custom models");
+
+    assert_eq!(
+        custom_models_cfg.custom_models,
+        vec![CustomModelToml {
+            name: "gpt-5.4 1m".to_string(),
+            model: "gpt-5.4".to_string(),
+            model_context_window: Some(1_000_000),
+            model_auto_compact_token_limit: Some(900_000),
+        }]
+    );
+
+    let config = Config::load_from_base_config_with_overrides(
+        custom_models_cfg,
+        ConfigOverrides::default(),
+        AbsolutePathBuf::from_absolute_path_checked(tempdir().expect("tempdir").path())
+            .expect("tempdir should be absolute"),
+    )
+    .await
+    .expect("load config from custom models settings");
+
+    assert_eq!(
+        config.custom_models,
+        HashMap::from([(
+            "gpt-5.4 1m".to_string(),
+            CustomModelConfig {
+                model: "gpt-5.4".to_string(),
+                model_context_window: Some(1_000_000),
+                model_auto_compact_token_limit: Some(900_000),
+            },
+        )])
     );
 }
 
@@ -2892,6 +2938,30 @@ async fn feature_table_overrides_legacy_flags() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn feature_table_enables_agent_function_call_inbox() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut entries = BTreeMap::new();
+    entries.insert("agent_function_call_inbox".to_string(), true);
+    let cfg = ConfigToml {
+        features: Some(codex_features::FeaturesToml::from(entries)),
+        ..Default::default()
+    };
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        AbsolutePathBuf::from_absolute_path_checked(codex_home.path())
+            .expect("tempdir should be absolute"),
+    )
+    .await?;
+
+    assert!(config.features.enabled(Feature::AgentFunctionCallInbox));
+    assert!(config.agent_use_function_call_inbox);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn legacy_toggles_map_to_features() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
@@ -4606,12 +4676,16 @@ async fn load_config_rejects_missing_agent_role_config_file() -> std::io::Result
             max_depth: None,
             job_max_runtime_seconds: None,
             interrupt_message: None,
+            use_function_call_inbox: false,
             roles: BTreeMap::from([(
                 "researcher".to_string(),
                 AgentRoleToml {
                     description: Some("Research role".to_string()),
+                    model: None,
                     config_file: Some(missing_path.abs()),
+                    watchdog_interval_s: None,
                     nickname_candidates: None,
+                    fork_context: None,
                 },
             )]),
         }),
@@ -5553,15 +5627,19 @@ async fn load_config_normalizes_agent_role_nickname_candidates() -> std::io::Res
             max_depth: None,
             job_max_runtime_seconds: None,
             interrupt_message: None,
+            use_function_call_inbox: false,
             roles: BTreeMap::from([(
                 "researcher".to_string(),
                 AgentRoleToml {
                     description: Some("Research role".to_string()),
+                    model: None,
                     config_file: None,
+                    watchdog_interval_s: None,
                     nickname_candidates: Some(vec![
                         "  Hypatia  ".to_string(),
                         "Noether".to_string(),
                     ]),
+                    fork_context: None,
                 },
             )]),
         }),
@@ -5596,12 +5674,16 @@ async fn load_config_rejects_empty_agent_role_nickname_candidates() -> std::io::
             max_depth: None,
             job_max_runtime_seconds: None,
             interrupt_message: None,
+            use_function_call_inbox: false,
             roles: BTreeMap::from([(
                 "researcher".to_string(),
                 AgentRoleToml {
                     description: Some("Research role".to_string()),
+                    model: None,
                     config_file: None,
+                    watchdog_interval_s: None,
                     nickname_candidates: Some(Vec::new()),
+                    fork_context: None,
                 },
             )]),
         }),
@@ -5633,12 +5715,16 @@ async fn load_config_rejects_duplicate_agent_role_nickname_candidates() -> std::
             max_depth: None,
             job_max_runtime_seconds: None,
             interrupt_message: None,
+            use_function_call_inbox: false,
             roles: BTreeMap::from([(
                 "researcher".to_string(),
                 AgentRoleToml {
                     description: Some("Research role".to_string()),
+                    model: None,
                     config_file: None,
+                    watchdog_interval_s: None,
                     nickname_candidates: Some(vec!["Hypatia".to_string(), " Hypatia ".to_string()]),
+                    fork_context: None,
                 },
             )]),
         }),
@@ -5670,12 +5756,16 @@ async fn load_config_rejects_unsafe_agent_role_nickname_candidates() -> std::io:
             max_depth: None,
             job_max_runtime_seconds: None,
             interrupt_message: None,
+            use_function_call_inbox: false,
             roles: BTreeMap::from([(
                 "researcher".to_string(),
                 AgentRoleToml {
                     description: Some("Research role".to_string()),
+                    model: None,
                     config_file: None,
+                    watchdog_interval_s: None,
                     nickname_candidates: Some(vec!["Agent <One>".to_string()]),
+                    fork_context: None,
                 },
             )]),
         }),
@@ -5888,6 +5978,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             review_model: None,
             model_context_window: None,
             model_auto_compact_token_limit: None,
+            custom_models: HashMap::new(),
             service_tier: None,
             model_provider_id: "openai".to_string(),
             model_provider: fixture.openai_provider.clone(),
@@ -5923,6 +6014,8 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             memories: MemoriesConfig::default(),
             agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
             agent_interrupt_message_enabled: true,
+            agent_use_function_call_inbox: false,
+            watchdog_interval_s: DEFAULT_WATCHDOG_INTERVAL_S,
             codex_home: fixture.codex_home(),
             sqlite_home: fixture.codex_home().to_path_buf(),
             log_dir: fixture.codex_home().join("log").to_path_buf(),
@@ -6082,6 +6175,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        custom_models: HashMap::new(),
         service_tier: None,
         model_provider_id: "openai-custom".to_string(),
         model_provider: fixture.openai_custom_provider.clone(),
@@ -6117,6 +6211,8 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
+        agent_use_function_call_inbox: false,
+        watchdog_interval_s: DEFAULT_WATCHDOG_INTERVAL_S,
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
@@ -6230,6 +6326,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        custom_models: HashMap::new(),
         service_tier: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),
@@ -6265,6 +6362,8 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
+        agent_use_function_call_inbox: false,
+        watchdog_interval_s: DEFAULT_WATCHDOG_INTERVAL_S,
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),
@@ -6363,6 +6462,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         review_model: None,
         model_context_window: None,
         model_auto_compact_token_limit: None,
+        custom_models: HashMap::new(),
         service_tier: None,
         model_provider_id: "openai".to_string(),
         model_provider: fixture.openai_provider.clone(),
@@ -6398,6 +6498,8 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         memories: MemoriesConfig::default(),
         agent_job_max_runtime_seconds: DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS,
         agent_interrupt_message_enabled: true,
+        agent_use_function_call_inbox: false,
+        watchdog_interval_s: DEFAULT_WATCHDOG_INTERVAL_S,
         codex_home: fixture.codex_home(),
         sqlite_home: fixture.codex_home().to_path_buf(),
         log_dir: fixture.codex_home().join("log").to_path_buf(),

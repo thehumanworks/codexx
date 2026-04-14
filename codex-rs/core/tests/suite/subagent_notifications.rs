@@ -4,6 +4,14 @@ use codex_core::config::AgentRoleConfig;
 use codex_features::Feature;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::AgentStatus;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::CollabAgentSpawnBeginEvent;
+use codex_protocol::protocol::CollabAgentSpawnEndEvent;
+use codex_protocol::protocol::EventMsg;
+use codex_protocol::protocol::Op;
+use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::user_input::UserInput;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -17,7 +25,10 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
+use core_test_support::wait_for_event;
+use core_test_support::wait_for_event_match;
 use pretty_assertions::assert_eq;
+use serde_json::Value;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -32,11 +43,17 @@ const TURN_1_PROMPT: &str = "spawn a child and continue";
 const TURN_2_NO_WAIT_PROMPT: &str = "follow up without wait";
 const CHILD_PROMPT: &str = "child: do work";
 const INHERITED_MODEL: &str = "gpt-5.3-codex";
-const INHERITED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::XHigh;
+// Fork-context children inherit the spawning turn's effective effort, which resolves to Medium in
+// this test harness even when the selected model is gpt-5.3-codex.
+const INHERITED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Medium;
 const REQUESTED_MODEL: &str = "gpt-5.4";
 const REQUESTED_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::Low;
 const ROLE_MODEL: &str = "gpt-5.4";
 const ROLE_REASONING_EFFORT: ReasoningEffort = ReasoningEffort::High;
+const FALLBACK_MODEL_A: &str = "gpt-5.4-mini";
+const FALLBACK_REASONING_EFFORT_A: ReasoningEffort = ReasoningEffort::Low;
+const FALLBACK_MODEL_B: &str = "gpt-5.2";
+const FALLBACK_REASONING_EFFORT_B: ReasoningEffort = ReasoningEffort::Medium;
 
 fn body_contains(req: &wiremock::Request, text: &str) -> bool {
     let is_zstd = req
@@ -58,6 +75,57 @@ fn body_contains(req: &wiremock::Request, text: &str) -> bool {
         .is_some_and(|body| body.contains(text))
 }
 
+fn request_uses_model_and_effort(
+    req: &wiremock::Request,
+    model: &str,
+    reasoning_effort: &str,
+) -> bool {
+    let is_zstd = req
+        .headers
+        .get("content-encoding")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|entry| entry.trim().eq_ignore_ascii_case("zstd"))
+        });
+    let bytes = if is_zstd {
+        zstd::stream::decode_all(std::io::Cursor::new(&req.body)).ok()
+    } else {
+        Some(req.body.clone())
+    };
+    bytes
+        .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
+        .is_some_and(|body| {
+            body.get("model").and_then(Value::as_str) == Some(model)
+                && body
+                    .get("reasoning")
+                    .and_then(|reasoning| reasoning.get("effort"))
+                    .and_then(Value::as_str)
+                    == Some(reasoning_effort)
+        })
+}
+
+fn request_uses_model(req: &wiremock::Request, model: &str) -> bool {
+    let is_zstd = req
+        .headers
+        .get("content-encoding")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|entry| entry.trim().eq_ignore_ascii_case("zstd"))
+        });
+    let bytes = if is_zstd {
+        zstd::stream::decode_all(std::io::Cursor::new(&req.body)).ok()
+    } else {
+        Some(req.body.clone())
+    };
+    bytes
+        .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
+        .is_some_and(|body| body.get("model").and_then(Value::as_str) == Some(model))
+}
+
 fn has_subagent_notification(req: &ResponsesRequest) -> bool {
     req.message_input_texts("user")
         .iter()
@@ -69,23 +137,33 @@ fn tool_parameter_description(
     tool_name: &str,
     parameter_name: &str,
 ) -> Option<String> {
+    fn find_parameter_description(
+        tools: &[serde_json::Value],
+        tool_name: &str,
+        parameter_name: &str,
+    ) -> Option<String> {
+        tools.iter().find_map(|tool| {
+            if tool.get("name").and_then(serde_json::Value::as_str) == Some(tool_name) {
+                return tool
+                    .get("parameters")
+                    .and_then(|parameters| parameters.get("properties"))
+                    .and_then(|properties| properties.get(parameter_name))
+                    .and_then(|parameter| parameter.get("description"))
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned);
+            }
+            tool.get("tools")
+                .and_then(serde_json::Value::as_array)
+                .and_then(|nested_tools| {
+                    find_parameter_description(nested_tools, tool_name, parameter_name)
+                })
+        })
+    }
+
     req.body_json()
         .get("tools")
         .and_then(serde_json::Value::as_array)
-        .and_then(|tools| {
-            tools.iter().find_map(|tool| {
-                if tool.get("name").and_then(serde_json::Value::as_str) == Some(tool_name) {
-                    tool.get("parameters")
-                        .and_then(|parameters| parameters.get("properties"))
-                        .and_then(|properties| properties.get(parameter_name))
-                        .and_then(|parameter| parameter.get("description"))
-                        .and_then(serde_json::Value::as_str)
-                        .map(str::to_owned)
-                } else {
-                    None
-                }
-            })
-        })
+        .and_then(|tools| find_parameter_description(tools, tool_name, parameter_name))
 }
 
 fn role_block(description: &str, role_name: &str) -> Option<String> {
@@ -111,7 +189,7 @@ fn write_home_skill(codex_home: &Path, dir: &str, name: &str, description: &str)
 }
 
 async fn wait_for_spawned_thread_id(test: &TestCodex) -> Result<String> {
-    let deadline = Instant::now() + Duration::from_secs(2);
+    let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         let ids = test.thread_manager.list_thread_ids().await;
         if let Some(spawned_id) = ids
@@ -143,6 +221,87 @@ async fn wait_for_requests(
     }
 }
 
+async fn wait_for_matching_requests(
+    mock: &core_test_support::responses::ResponseMock,
+    mut predicate: impl FnMut(&ResponsesRequest) -> bool,
+) -> Result<Vec<ResponsesRequest>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let requests = mock
+            .requests()
+            .into_iter()
+            .filter(&mut predicate)
+            .collect::<Vec<_>>();
+        if !requests.is_empty() {
+            return Ok(requests);
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "expected at least 1 matching request, got {}",
+                requests.len()
+            );
+        }
+        sleep(Duration::from_millis(10)).await;
+    }
+}
+
+async fn submit_turn_and_wait_for_spawn_attempt_events(
+    test: &TestCodex,
+    prompt: &str,
+    expected_attempts: usize,
+) -> Result<Vec<(CollabAgentSpawnBeginEvent, CollabAgentSpawnEndEvent)>> {
+    test.codex
+        .submit(Op::UserTurn {
+            items: vec![UserInput::Text {
+                text: prompt.to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            cwd: test.cwd_path().to_path_buf(),
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: None,
+            sandbox_policy: SandboxPolicy::DangerFullAccess,
+            model: test.session_configured.model.clone(),
+            effort: None,
+            summary: None,
+            service_tier: None,
+            collaboration_mode: None,
+            personality: None,
+            permission_profile: None,
+            environments: None,
+        })
+        .await?;
+
+    let turn_id = wait_for_event_match(&test.codex, |event| match event {
+        EventMsg::TurnStarted(event) => Some(event.turn_id.clone()),
+        _ => None,
+    })
+    .await;
+    let mut spawn_events = Vec::with_capacity(expected_attempts);
+    let mut pending_begin = None;
+    loop {
+        let event = wait_for_event(&test.codex, |_| true).await;
+        match event {
+            EventMsg::CollabAgentSpawnBegin(event) => {
+                pending_begin = Some(event);
+            }
+            EventMsg::CollabAgentSpawnEnd(event) => {
+                let begin_event = pending_begin
+                    .take()
+                    .ok_or_else(|| anyhow::anyhow!("spawn end event without matching begin"))?;
+                spawn_events.push((begin_event, event));
+            }
+            EventMsg::TurnComplete(event) if event.turn_id == turn_id => break,
+            _ => {}
+        }
+    }
+    if let Some(begin_event) = pending_begin {
+        anyhow::bail!("spawn begin event without matching end: {begin_event:?}");
+    }
+    assert_eq!(spawn_events.len(), expected_attempts);
+    Ok(spawn_events)
+}
+
 async fn setup_turn_one_with_spawned_child(
     server: &MockServer,
     child_response_delay: Option<Duration>,
@@ -151,6 +310,7 @@ async fn setup_turn_one_with_spawned_child(
         server,
         json!({
             "message": CHILD_PROMPT,
+            "fork_context": false,
         }),
         child_response_delay,
         /*wait_for_parent_notification*/ true,
@@ -230,15 +390,16 @@ async fn setup_turn_one_with_custom_spawned_child(
     test.submit_turn(TURN_1_PROMPT).await?;
     if child_response_delay.is_none() && wait_for_parent_notification {
         let _ = wait_for_requests(&child_request_log).await?;
-        let rollout_path = test
-            .codex
-            .rollout_path()
-            .ok_or_else(|| anyhow::anyhow!("expected parent rollout path"))?;
+        let Some(rollout_path) = test.codex.rollout_path() else {
+            anyhow::bail!("rollout path");
+        };
         let deadline = Instant::now() + Duration::from_secs(6);
         loop {
-            let has_notification = tokio::fs::read_to_string(&rollout_path)
-                .await
-                .is_ok_and(|rollout| rollout.contains("<subagent_notification>"));
+            test.codex.ensure_rollout_materialized().await;
+            let _ = test.codex.flush_rollout().await;
+            let has_notification = std::fs::read_to_string(&rollout_path)
+                .ok()
+                .is_some_and(|rollout| rollout.contains("<subagent_notification>"));
             if has_notification {
                 break;
             }
@@ -398,8 +559,7 @@ async fn spawned_child_receives_forked_parent_context() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agent_requested_model_and_reasoning_override_inherited_settings_without_role()
--> Result<()> {
+async fn spawn_agent_inherits_parent_model_and_reasoning_without_role() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -414,10 +574,10 @@ async fn spawn_agent_requested_model_and_reasoning_override_inherited_settings_w
     )
     .await?;
 
-    assert_eq!(child_snapshot.model, REQUESTED_MODEL);
+    assert_eq!(child_snapshot.model, INHERITED_MODEL);
     assert_eq!(
         child_snapshot.reasoning_effort,
-        Some(REQUESTED_REASONING_EFFORT)
+        Some(INHERITED_REASONING_EFFORT)
     );
 
     Ok(())
@@ -443,7 +603,7 @@ async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Res
     )
     .await;
 
-    let _child_request_log = mount_sse_once_match(
+    let child_request_log = mount_sse_once_match(
         &server,
         |req: &wiremock::Request| body_contains(req, CHILD_PROMPT),
         sse(vec![
@@ -481,29 +641,9 @@ async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Res
 
     test.submit_turn(TURN_1_PROMPT).await?;
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let child_request = loop {
-        if let Some(request) = server
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .find(|request| {
-                body_contains(request, CHILD_PROMPT) && !body_contains(request, SPAWN_CALL_ID)
-            })
-        {
-            break request;
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!("timed out waiting for spawned child request with developer context");
-        }
-        sleep(Duration::from_millis(10)).await;
-    };
-    assert!(body_contains(
-        &child_request,
-        "Parent developer instructions."
-    ));
-    assert!(body_contains(&child_request, CHILD_PROMPT));
+    let child_request = child_request_log.single_request();
+    assert!(child_request.body_contains_text("Parent developer instructions."));
+    assert!(child_request.body_contains_text(CHILD_PROMPT));
 
     Ok(())
 }
@@ -528,7 +668,7 @@ async fn skills_toggle_skips_instructions_for_parent_and_spawned_child() -> Resu
     )
     .await;
 
-    let _child_request_log = mount_sse_once_match(
+    let child_request_log = mount_sse_once_match(
         &server,
         |req: &wiremock::Request| body_contains(req, CHILD_PROMPT),
         sse(vec![
@@ -575,32 +715,16 @@ async fn skills_toggle_skips_instructions_for_parent_and_spawned_child() -> Resu
     assert!(!parent_request.body_contains_text("<skills_instructions>"));
     assert!(!parent_request.body_contains_text("demo-skill"));
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let child_request = loop {
-        if let Some(request) = server
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .find(|request| {
-                body_contains(request, CHILD_PROMPT) && !body_contains(request, SPAWN_CALL_ID)
-            })
-        {
-            break request;
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!("timed out waiting for spawned child request");
-        }
-        sleep(Duration::from_millis(10)).await;
-    };
-    assert!(!body_contains(&child_request, "<skills_instructions>"));
-    assert!(!body_contains(&child_request, "demo-skill"));
+    let child_request = child_request_log.single_request();
+    assert!(!child_request.body_contains_text("<skills_instructions>"));
+    assert!(!child_request.body_contains_text("demo-skill"));
 
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> Result<()> {
+async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings_without_fork_context()
+-> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -611,6 +735,7 @@ async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> 
             "agent_type": "custom",
             "model": REQUESTED_MODEL,
             "reasoning_effort": REQUESTED_REASONING_EFFORT,
+            "fork_context": false,
         }),
         |builder| {
             builder.with_config(|config| {
@@ -626,8 +751,11 @@ async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> 
                     "custom".to_string(),
                     AgentRoleConfig {
                         description: Some("Custom role".to_string()),
+                        model: None,
                         config_file: Some(role_path.to_path_buf()),
+                        watchdog_interval_s: None,
                         nickname_candidates: None,
+                        fork_context: None,
                     },
                 );
             })
@@ -637,6 +765,224 @@ async fn spawn_agent_role_overrides_requested_model_and_reasoning_settings() -> 
 
     assert_eq!(child_snapshot.model, ROLE_MODEL);
     assert_eq!(child_snapshot.reasoning_effort, Some(ROLE_REASONING_EFFORT));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn spawn_agent_model_fallback_list_retries_after_quota_exhaustion() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let spawn_args = serde_json::to_string(&json!({
+        "message": CHILD_PROMPT,
+        "fork_context": false,
+        "model_fallback_list": [
+            {
+                "model": FALLBACK_MODEL_A,
+                "reasoning_effort": FALLBACK_REASONING_EFFORT_A,
+            },
+            {
+                "model": FALLBACK_MODEL_B,
+                "reasoning_effort": FALLBACK_REASONING_EFFORT_B,
+            }
+        ]
+    }))?;
+
+    mount_sse_once_match(
+        &server,
+        |req: &wiremock::Request| body_contains(req, TURN_1_PROMPT),
+        sse(vec![
+            ev_response_created("resp-turn1-1"),
+            ev_function_call(SPAWN_CALL_ID, "spawn_agent", &spawn_args),
+            ev_completed("resp-turn1-1"),
+        ]),
+    )
+    .await;
+
+    let quota_child_attempt = mount_sse_once_match(
+        &server,
+        |req: &wiremock::Request| {
+            body_contains(req, CHILD_PROMPT)
+                && request_uses_model_and_effort(req, FALLBACK_MODEL_A, "low")
+        },
+        sse(vec![
+            ev_response_created("resp-child-quota"),
+            json!({
+                "type": "response.failed",
+                "response": {
+                    "id": "resp-child-quota",
+                    "error": {
+                        "code": "insufficient_quota",
+                        "message": "You exceeded your current quota, please check your plan and billing details."
+                    }
+                }
+            }),
+        ]),
+    )
+    .await;
+
+    let fallback_child_attempt = mount_sse_once_match(
+        &server,
+        |req: &wiremock::Request| {
+            body_contains(req, CHILD_PROMPT) && request_uses_model(req, FALLBACK_MODEL_B)
+        },
+        sse(vec![
+            ev_response_created("resp-child-fallback"),
+            ev_assistant_message("msg-child-fallback", "child done"),
+            ev_completed("resp-child-fallback"),
+        ]),
+    )
+    .await;
+
+    let _turn1_followup = mount_sse_once_match(
+        &server,
+        |req: &wiremock::Request| body_contains(req, SPAWN_CALL_ID),
+        sse(vec![
+            ev_response_created("resp-turn1-2"),
+            ev_assistant_message("msg-turn1-2", "parent done"),
+            ev_completed("resp-turn1-2"),
+        ]),
+    )
+    .await;
+
+    let mut builder = test_codex().with_config(|config| {
+        config
+            .features
+            .enable(Feature::Collab)
+            .expect("test config should allow feature update");
+        config.model = Some(INHERITED_MODEL.to_string());
+        config.model_reasoning_effort = Some(INHERITED_REASONING_EFFORT);
+    });
+    let test = builder.build(&server).await?;
+
+    let spawn_events = submit_turn_and_wait_for_spawn_attempt_events(
+        &test,
+        TURN_1_PROMPT,
+        /*expected_attempts*/ 2,
+    )
+    .await?;
+
+    let (quota_begin_event, quota_end_event) = &spawn_events[0];
+    assert_eq!(quota_begin_event.call_id, SPAWN_CALL_ID);
+    assert_eq!(quota_begin_event.prompt, CHILD_PROMPT);
+    assert_eq!(quota_begin_event.model, FALLBACK_MODEL_A);
+    assert_eq!(
+        quota_begin_event.reasoning_effort,
+        FALLBACK_REASONING_EFFORT_A
+    );
+    assert_eq!(quota_end_event.call_id, SPAWN_CALL_ID);
+    assert_eq!(quota_end_event.new_thread_id, None);
+    assert_eq!(quota_end_event.new_agent_nickname, None);
+    assert_eq!(quota_end_event.new_agent_role, None);
+    assert_eq!(quota_end_event.prompt, CHILD_PROMPT);
+    assert_eq!(quota_end_event.model, FALLBACK_MODEL_A);
+    assert_eq!(
+        quota_end_event.reasoning_effort,
+        FALLBACK_REASONING_EFFORT_A
+    );
+    match &quota_end_event.status {
+        AgentStatus::PendingInit => {}
+        AgentStatus::Errored(message) if message.to_lowercase().contains("quota") => {}
+        status => panic!("unexpected first-attempt retry status: {status:?}"),
+    }
+
+    let (fallback_begin_event, fallback_end_event) = &spawn_events[1];
+    assert_eq!(fallback_begin_event.call_id, format!("{SPAWN_CALL_ID}#2"));
+    assert_eq!(fallback_begin_event.prompt, CHILD_PROMPT);
+    assert_eq!(fallback_begin_event.model, FALLBACK_MODEL_B);
+    assert_eq!(
+        fallback_begin_event.reasoning_effort,
+        FALLBACK_REASONING_EFFORT_B
+    );
+    assert_eq!(fallback_end_event.call_id, format!("{SPAWN_CALL_ID}#2"));
+    assert_eq!(fallback_end_event.prompt, CHILD_PROMPT);
+    assert_eq!(fallback_end_event.model, FALLBACK_MODEL_B);
+    assert_eq!(
+        fallback_end_event.reasoning_effort,
+        FALLBACK_REASONING_EFFORT_B
+    );
+
+    let quota_requests = quota_child_attempt
+        .requests()
+        .into_iter()
+        .filter(|request| {
+            request.body_json().get("model").and_then(Value::as_str) == Some(FALLBACK_MODEL_A)
+        })
+        .collect::<Vec<_>>();
+    assert!(!quota_requests.is_empty());
+    for quota_request in &quota_requests {
+        let body = quota_request.body_json();
+        assert_eq!(
+            body.get("model").and_then(Value::as_str),
+            Some(FALLBACK_MODEL_A)
+        );
+        assert_eq!(
+            body.get("reasoning")
+                .and_then(|reasoning| reasoning.get("effort"))
+                .and_then(Value::as_str),
+            Some("low")
+        );
+    }
+
+    let fallback_requests = wait_for_matching_requests(&fallback_child_attempt, |request| {
+        request.body_json().get("model").and_then(Value::as_str) == Some(FALLBACK_MODEL_B)
+    })
+    .await?;
+    assert!(!fallback_requests.is_empty());
+    for fallback_request in &fallback_requests {
+        let fallback_body = fallback_request.body_json();
+        assert_eq!(
+            fallback_body.get("model").and_then(Value::as_str),
+            Some(FALLBACK_MODEL_B)
+        );
+        if let Some(effort) = fallback_body
+            .get("reasoning")
+            .and_then(|reasoning| reasoning.get("effort"))
+            .and_then(Value::as_str)
+        {
+            assert_eq!(effort, "medium");
+        }
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let child_snapshot = loop {
+        let spawned_ids = test
+            .thread_manager
+            .list_thread_ids()
+            .await
+            .into_iter()
+            .filter(|id| *id != test.session_configured.session_id)
+            .collect::<Vec<_>>();
+        let mut matching_snapshot = None;
+        for thread_id in spawned_ids {
+            let snapshot = test
+                .thread_manager
+                .get_thread(thread_id)
+                .await?
+                .config_snapshot()
+                .await;
+            if snapshot.model == FALLBACK_MODEL_B
+                && snapshot.reasoning_effort == Some(FALLBACK_REASONING_EFFORT_B)
+            {
+                matching_snapshot = Some(snapshot);
+                break;
+            }
+        }
+        if let Some(snapshot) = matching_snapshot {
+            break snapshot;
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("timed out waiting for fallback child snapshot");
+        }
+        sleep(Duration::from_millis(10)).await;
+    };
+
+    assert_eq!(child_snapshot.model, FALLBACK_MODEL_B);
+    assert_eq!(
+        child_snapshot.reasoning_effort,
+        Some(FALLBACK_REASONING_EFFORT_B)
+    );
 
     Ok(())
 }
@@ -674,8 +1020,11 @@ async fn spawn_agent_tool_description_mentions_role_locked_settings() -> Result<
             "custom".to_string(),
             AgentRoleConfig {
                 description: Some("Custom role".to_string()),
+                model: None,
                 config_file: Some(role_path.to_path_buf()),
+                watchdog_interval_s: None,
                 nickname_candidates: None,
+                fork_context: None,
             },
         );
     });

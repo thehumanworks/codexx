@@ -71,6 +71,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use codex_model_provider_info::built_in_model_providers;
 use codex_model_provider_info::merge_configured_model_providers;
+pub use codex_models_manager::CustomModelConfig;
 use codex_models_manager::ModelsManagerConfig;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::ForcedLoginMethod;
@@ -164,6 +165,7 @@ pub(crate) const MAX_MULTI_AGENT_V2_WAIT_TIMEOUT_MS: i64 = 3600 * 1000;
 pub(crate) const DEFAULT_AGENT_MAX_DEPTH: i32 = 1;
 pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
 const LOCAL_DEV_BUILD_VERSION: &str = "0.0.0";
+pub(crate) const DEFAULT_WATCHDOG_INTERVAL_S: i64 = 10;
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
 
@@ -553,6 +555,9 @@ pub struct Config {
     /// Combined provider map (defaults plus user-defined providers).
     pub model_providers: HashMap<String, ModelProviderInfo>,
 
+    /// User-defined model aliases shown in the picker.
+    pub custom_models: HashMap<String, CustomModelConfig>,
+
     /// Maximum number of bytes to include from an AGENTS.md project doc file.
     pub project_doc_max_bytes: usize,
 
@@ -566,6 +571,13 @@ pub struct Config {
     pub agent_max_threads: Option<usize>,
     /// Maximum runtime in seconds for agent job workers before they are failed.
     pub agent_job_max_runtime_seconds: Option<u64>,
+    /// When true, inbound agent messages to non-subagent threads are delivered
+    /// as a synthetic function_call/function_call_output pair instead of plain
+    /// user input.
+    pub agent_use_function_call_inbox: bool,
+
+    /// Watchdog polling interval in seconds.
+    pub watchdog_interval_s: i64,
 
     /// Whether to record a model-visible message when an agent turn is interrupted.
     pub agent_interrupt_message_enabled: bool,
@@ -962,6 +974,7 @@ impl Config {
             personality_enabled: self.features.enabled(Feature::Personality),
             model_supports_reasoning_summaries: self.model_supports_reasoning_summaries,
             model_catalog: self.model_catalog.clone(),
+            custom_models: self.custom_models.clone(),
         }
     }
 
@@ -1413,10 +1426,16 @@ pub struct AgentRoleConfig {
     /// Human-facing role documentation used in spawn tool guidance.
     /// Required for loaded user-defined roles after deprecated/new metadata precedence resolves.
     pub description: Option<String>,
+    /// Optional model override applied by this role.
+    pub model: Option<String>,
     /// Path to a role-specific config layer.
     pub config_file: Option<PathBuf>,
+    /// Optional watchdog interval for roles that should spawn as idle-time watchdog handles.
+    pub watchdog_interval_s: Option<i64>,
     /// Candidate nicknames for agents spawned with this role.
     pub nickname_candidates: Option<Vec<String>>,
+    /// Default fork-context behavior for this role.
+    pub fork_context: Option<bool>,
 }
 
 fn resolve_tool_suggest_config(
@@ -2251,6 +2270,24 @@ impl Config {
         let model_providers =
             merge_configured_model_providers(built_in_model_providers(openai_base_url), cfg.model_providers)
                 .map_err(|message| std::io::Error::new(std::io::ErrorKind::InvalidData, message))?;
+        let mut custom_models = HashMap::new();
+        for custom in cfg.custom_models {
+            let alias = custom.name;
+            if custom_models.contains_key(&alias) {
+                return Err(std::io::Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("duplicate custom model alias: {alias}"),
+                ));
+            }
+            custom_models.insert(
+                alias,
+                CustomModelConfig {
+                    model: custom.model,
+                    model_context_window: custom.model_context_window,
+                    model_auto_compact_token_limit: custom.model_auto_compact_token_limit,
+                },
+            );
+        }
 
         let model_provider_id = model_provider
             .or(config_profile.model_provider)
@@ -2332,6 +2369,7 @@ impl Config {
             .as_ref()
             .and_then(|agents| agents.job_max_runtime_seconds)
             .or(DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS);
+        let agent_use_function_call_inbox = features.enabled(Feature::AgentFunctionCallInbox);
         if agent_job_max_runtime_seconds == Some(0) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -2351,6 +2389,15 @@ impl Config {
             .as_ref()
             .and_then(|agents| agents.interrupt_message)
             .unwrap_or(true);
+        let watchdog_interval_s = cfg
+            .watchdog_interval_s
+            .unwrap_or(DEFAULT_WATCHDOG_INTERVAL_S);
+        if watchdog_interval_s <= 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "watchdog_interval_s must be at least 1",
+            ));
+        }
         let background_terminal_max_timeout = cfg
             .background_terminal_max_timeout
             .unwrap_or(DEFAULT_MAX_BACKGROUND_TERMINAL_TIMEOUT_MS)
@@ -2683,6 +2730,7 @@ impl Config {
             mcp_oauth_callback_port: cfg.mcp_oauth_callback_port,
             mcp_oauth_callback_url: cfg.mcp_oauth_callback_url.clone(),
             model_providers,
+            custom_models,
             project_doc_max_bytes: cfg.project_doc_max_bytes.unwrap_or(AGENTS_MD_MAX_BYTES),
             project_doc_fallback_filenames: cfg
                 .project_doc_fallback_filenames
@@ -2704,6 +2752,8 @@ impl Config {
             memories: cfg.memories.unwrap_or_default().into(),
             agent_job_max_runtime_seconds,
             agent_interrupt_message_enabled,
+            agent_use_function_call_inbox,
+            watchdog_interval_s,
             codex_home,
             sqlite_home,
             log_dir,
