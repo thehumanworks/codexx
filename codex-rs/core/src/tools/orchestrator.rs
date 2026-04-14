@@ -214,7 +214,8 @@ impl ToolOrchestrator {
 
         // 2) First attempt under the selected sandbox.
         let managed_network_active = turn_ctx.network.is_some();
-        let initial_sandbox = match tool.sandbox_mode_for_first_attempt(req) {
+        let initial_sandbox =
+            match tool.sandbox_mode_for_first_attempt(req, &file_system_sandbox_policy) {
             SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
             SandboxOverride::NoOverride => self.sandbox.select_initial(
                 &file_system_sandbox_policy,
