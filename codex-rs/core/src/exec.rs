@@ -607,47 +607,23 @@ async fn exec_windows_sandbox(
     let proxy_enforced = network.is_some();
     let use_elevated = windows_sandbox_uses_elevated_backend(sandbox_level, proxy_enforced);
     let additional_deny_write_paths = windows_sandbox_filesystem_overrides
-        .map(|overrides| {
-            overrides
-                .additional_deny_write_paths
-                .iter()
-                .map(AbsolutePathBuf::to_path_buf)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        .map(|overrides| overrides.additional_deny_write_paths.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(AbsolutePathBuf::into_path_buf)
+        .collect::<Vec<_>>();
     let additional_deny_read_paths = windows_sandbox_filesystem_overrides
-        .map(|overrides| {
-            overrides
-                .additional_deny_read_paths
-                .iter()
-                .map(AbsolutePathBuf::to_path_buf)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        .map(|overrides| overrides.additional_deny_read_paths.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .map(AbsolutePathBuf::into_path_buf)
+        .collect::<Vec<_>>();
     let elevated_read_roots_override = windows_sandbox_filesystem_overrides
         .and_then(|overrides| overrides.read_roots_override.clone());
     let elevated_read_roots_include_platform_defaults = windows_sandbox_filesystem_overrides
         .is_some_and(|overrides| overrides.read_roots_include_platform_defaults);
     let elevated_write_roots_override = windows_sandbox_filesystem_overrides
         .and_then(|overrides| overrides.write_roots_override.clone());
-    let elevated_deny_write_paths = windows_sandbox_filesystem_overrides
-        .map(|overrides| {
-            overrides
-                .additional_deny_write_paths
-                .iter()
-                .map(AbsolutePathBuf::to_path_buf)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let elevated_deny_read_paths = windows_sandbox_filesystem_overrides
-        .map(|overrides| {
-            overrides
-                .additional_deny_read_paths
-                .iter()
-                .map(AbsolutePathBuf::to_path_buf)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
     let spawn_res = tokio::task::spawn_blocking(move || {
         if use_elevated {
             run_windows_sandbox_capture_elevated(
@@ -665,8 +641,8 @@ async fn exec_windows_sandbox(
                     read_roots_include_platform_defaults:
                         elevated_read_roots_include_platform_defaults,
                     write_roots_override: elevated_write_roots_override.as_deref(),
-                    deny_read_paths_override: &elevated_deny_read_paths,
-                    deny_write_paths_override: &elevated_deny_write_paths,
+                    deny_read_paths_override: &additional_deny_read_paths,
+                    deny_write_paths_override: &additional_deny_write_paths,
                 },
             )
         } else {
@@ -1082,7 +1058,7 @@ pub(crate) fn resolve_windows_restricted_token_filesystem_overrides(
         );
     }
 
-    let additional_deny_read_paths = crate::windows_deny_read::resolve_windows_deny_read_paths(
+    let additional_deny_read_paths = codex_windows_sandbox::resolve_windows_deny_read_paths(
         file_system_sandbox_policy,
         sandbox_policy_cwd,
     )?;
@@ -1204,7 +1180,7 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         ));
     }
 
-    let additional_deny_read_paths = crate::windows_deny_read::resolve_windows_deny_read_paths(
+    let additional_deny_read_paths = codex_windows_sandbox::resolve_windows_deny_read_paths(
         file_system_sandbox_policy,
         sandbox_policy_cwd,
     )?;
