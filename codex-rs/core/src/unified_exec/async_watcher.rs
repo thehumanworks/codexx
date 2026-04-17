@@ -43,7 +43,7 @@ pub(crate) fn start_streaming_output(
     transcript: Arc<Mutex<HeadTailBuffer>>,
 ) {
     let mut receiver = process.output_receiver();
-    let output_drained = process.output_drained_notify();
+    let output_drained = process.output_drained_signal();
     let exit_token = process.cancellation_token();
 
     let session_ref = Arc::clone(&context.session);
@@ -70,7 +70,7 @@ pub(crate) fn start_streaming_output(
                         sleep.as_mut().await;
                     }
                 }, if grace_sleep.is_some() => {
-                    output_drained.notify_one();
+                    output_drained.mark_drained();
                     break;
                 }
 
@@ -81,7 +81,7 @@ pub(crate) fn start_streaming_output(
                             continue;
                         },
                         Err(RecvError::Closed) => {
-                            output_drained.notify_one();
+                            output_drained.mark_drained();
                             break;
                         }
                     };
@@ -116,11 +116,11 @@ pub(crate) fn spawn_exit_watcher(
     started_at: Instant,
 ) {
     let exit_token = process.cancellation_token();
-    let output_drained = process.output_drained_notify();
+    let output_drained = process.output_drained_signal();
 
     tokio::spawn(async move {
         exit_token.cancelled().await;
-        output_drained.notified().await;
+        output_drained.wait().await;
 
         let duration = Instant::now().saturating_duration_since(started_at);
         if let Some(message) = process.failure_message() {
