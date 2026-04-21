@@ -53,9 +53,11 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use super::GUARDIAN_REVIEW_TIMEOUT;
 use super::GUARDIAN_REVIEWER_NAME;
 use super::GuardianApprovalRequest;
+use super::prompt::GuardianApprovalPromptItems;
 use super::prompt::GuardianPromptMode;
 use super::prompt::GuardianTranscriptCursor;
 use super::prompt::build_guardian_approval_request_items;
+use super::prompt::build_guardian_initial_approval_request_items;
 use super::prompt::build_guardian_transcript_sync_items;
 use super::prompt::guardian_policy_prompt;
 use super::prompt::guardian_policy_prompt_with_config;
@@ -775,14 +777,37 @@ async fn run_review_on_session(
                 )
                 .await;
 
-            sync_parent_transcript_to_session(review_session, params.parent_session.as_ref())
+            let initial_turn = {
+                let state = review_session.state.lock().await;
+                state.prior_review_count == 0 && state.last_synced_transcript_cursor.is_none()
+            };
+            let (prompt_items, initial_transcript_cursor) = if initial_turn {
+                let prompt_items = build_guardian_initial_approval_request_items(
+                    params.parent_session.as_ref(),
+                    params.retry_reason.clone(),
+                    params.request.clone(),
+                )
                 .await?;
-            build_guardian_approval_request_items(
-                params.parent_session.as_ref(),
-                params.retry_reason.clone(),
-                params.request.clone(),
-            )
-            .map_err(anyhow::Error::from)
+                (
+                    GuardianApprovalPromptItems {
+                        items: prompt_items.items,
+                        reviewed_action_truncated: prompt_items.reviewed_action_truncated,
+                    },
+                    Some(prompt_items.transcript_cursor),
+                )
+            } else {
+                sync_parent_transcript_to_session(review_session, params.parent_session.as_ref())
+                    .await?;
+                (
+                    build_guardian_approval_request_items(
+                        params.parent_session.as_ref(),
+                        params.retry_reason.clone(),
+                        params.request.clone(),
+                    )?,
+                    None,
+                )
+            };
+            Ok::<_, anyhow::Error>((prompt_items, initial_transcript_cursor))
         }),
     )
     .await;
@@ -800,6 +825,7 @@ async fn run_review_on_session(
             );
         }
     };
+    let (prompt_items, initial_transcript_cursor) = prompt_items;
     let reviewed_action_truncated = prompt_items.reviewed_action_truncated;
     let token_usage_at_review_start = review_session
         .codex
@@ -840,6 +866,10 @@ async fn run_review_on_session(
         }
         Err(outcome) => return (outcome, false, analytics_result),
     }
+    if let Some(transcript_cursor) = initial_transcript_cursor {
+        let mut state = review_session.state.lock().await;
+        state.last_synced_transcript_cursor = Some(transcript_cursor);
+    }
     analytics_result.reviewed_action_truncated = reviewed_action_truncated;
 
     let outcome = wait_for_guardian_review(
@@ -871,6 +901,9 @@ async fn sync_parent_transcript_to_session(
 ) -> anyhow::Result<bool> {
     let last_synced_transcript_cursor = {
         let state = review_session.state.lock().await;
+        if state.prior_review_count == 0 && state.last_synced_transcript_cursor.is_none() {
+            return Ok(false);
+        }
         state.last_synced_transcript_cursor
     };
     let prompt_mode = last_synced_transcript_cursor
