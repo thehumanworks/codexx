@@ -168,6 +168,8 @@ pub(crate) const DEFAULT_AGENT_MAX_DEPTH: i32 = 1;
 pub(crate) const DEFAULT_AGENT_JOB_MAX_RUNTIME_SECONDS: Option<u64> = None;
 const LOCAL_DEV_BUILD_VERSION: &str = "0.0.0";
 pub(crate) const DEFAULT_WATCHDOG_INTERVAL_S: i64 = 10;
+/// Default delay before holding Space on a non-empty composer switches into voice transcription.
+pub const DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS: u64 = 1_000;
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
 
@@ -671,6 +673,10 @@ pub struct Config {
 
     /// Machine-local realtime audio device preferences used by realtime voice.
     pub realtime_audio: RealtimeAudioConfig,
+
+    /// Delay before holding Space on a non-empty composer switches into voice
+    /// transcription instead of inserting a literal space.
+    pub voice_transcription_space_hold_delay_ms: u64,
 
     /// Experimental / do not use. Overrides only the realtime conversation
     /// websocket transport base URL (the `Op::RealtimeConversation`
@@ -2804,6 +2810,9 @@ impl Config {
                     microphone: audio.microphone,
                     speaker: audio.speaker,
                 }),
+            voice_transcription_space_hold_delay_ms: cfg
+                .voice_transcription_space_hold_delay_ms
+                .unwrap_or(DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS),
             experimental_realtime_ws_base_url: cfg.experimental_realtime_ws_base_url,
             experimental_realtime_ws_model: cfg.experimental_realtime_ws_model,
             realtime: cfg

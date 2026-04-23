@@ -5539,6 +5539,14 @@ impl ChatWidget {
         if let Some(keymap) = runtime_keymap {
             widget.bottom_pane.set_keymap_bindings(&keymap);
         }
+        widget.bottom_pane.set_voice_transcription_enabled(
+            widget.config.features.enabled(Feature::VoiceTranscription),
+        );
+        widget
+            .bottom_pane
+            .set_voice_transcription_space_hold_delay_ms(
+                widget.config.voice_transcription_space_hold_delay_ms,
+            );
         widget
             .bottom_pane
             .set_realtime_conversation_enabled(widget.realtime_conversation_enabled());
@@ -5720,82 +5728,81 @@ impl ChatWidget {
             }
             _ => {
                 let had_modal_or_popup = !self.bottom_pane.no_modal_or_popup_active();
-                match self.bottom_pane.handle_key_event(key_event) {
-                    InputResult::Submitted {
-                        text,
-                        text_elements,
-                    } => {
-                        let local_images = self
-                            .bottom_pane
-                            .take_recent_submission_images_with_placeholders();
-                        let remote_image_urls = self.take_remote_image_urls();
-                        let user_message = UserMessage {
-                            text,
-                            local_images,
-                            remote_image_urls,
-                            text_elements,
-                            mention_bindings: self
-                                .bottom_pane
-                                .take_recent_submission_mention_bindings(),
-                        };
-                        if user_message.text.is_empty()
-                            && user_message.local_images.is_empty()
-                            && user_message.remote_image_urls.is_empty()
-                        {
-                            return;
-                        }
-                        let should_submit_now =
-                            self.is_session_configured() && !self.is_plan_streaming_in_tui();
-                        if should_submit_now {
-                            if self.only_user_shell_commands_running()
-                                && !user_message.text.starts_with('!')
-                            {
-                                self.queue_user_message(user_message);
-                                return;
-                            }
-                            // Submitted is emitted when user submits.
-                            // Reset any reasoning header only when we are actually submitting a turn.
-                            self.reasoning_buffer.clear();
-                            self.full_reasoning_buffer.clear();
-                            self.set_status_header(String::from("Working"));
-                            self.submit_user_message(user_message);
-                        } else {
-                            self.queue_user_message(user_message);
-                        }
-                    }
-                    InputResult::Queued {
-                        text,
-                        text_elements,
-                        action,
-                    } => {
-                        let local_images = self
-                            .bottom_pane
-                            .take_recent_submission_images_with_placeholders();
-                        let remote_image_urls = self.take_remote_image_urls();
-                        let user_message = UserMessage {
-                            text,
-                            local_images,
-                            remote_image_urls,
-                            text_elements,
-                            mention_bindings: self
-                                .bottom_pane
-                                .take_recent_submission_mention_bindings(),
-                        };
-                        self.queue_user_message_with_options(user_message, action);
-                    }
-                    InputResult::Command(cmd) => {
-                        self.handle_slash_command_dispatch(cmd);
-                    }
-                    InputResult::CommandWithArgs(cmd, args, text_elements) => {
-                        self.handle_slash_command_with_args_dispatch(cmd, args, text_elements);
-                    }
-                    InputResult::None => {}
-                }
+                let input_result = self.bottom_pane.handle_key_event(key_event);
+                self.handle_bottom_pane_input_result(input_result);
                 if had_modal_or_popup && self.bottom_pane.no_modal_or_popup_active() {
                     self.maybe_send_next_queued_input();
                 }
                 self.refresh_plan_mode_nudge();
             }
+        }
+        self.maybe_signal_watchdog_owner_activity_if_draft_changed(&composer_before);
+    }
+
+    fn user_message_from_composer_submission(
+        &mut self,
+        text: String,
+        text_elements: Vec<TextElement>,
+    ) -> UserMessage {
+        UserMessage {
+            text,
+            local_images: self
+                .bottom_pane
+                .take_recent_submission_images_with_placeholders(),
+            remote_image_urls: self.take_remote_image_urls(),
+            text_elements,
+            mention_bindings: self.bottom_pane.take_recent_submission_mention_bindings(),
+        }
+    }
+
+    fn handle_bottom_pane_input_result(&mut self, input_result: InputResult) {
+        let composer_before = self.bottom_pane.composer_text_with_pending();
+        match input_result {
+            InputResult::Submitted {
+                text,
+                text_elements,
+            } => {
+                let user_message = self.user_message_from_composer_submission(text, text_elements);
+                if user_message.text.is_empty()
+                    && user_message.local_images.is_empty()
+                    && user_message.remote_image_urls.is_empty()
+                {
+                    return;
+                }
+                let should_submit_now =
+                    self.is_session_configured() && !self.is_plan_streaming_in_tui();
+                if should_submit_now {
+                    if self.only_user_shell_commands_running()
+                        && !user_message.text.starts_with('!')
+                    {
+                        self.queue_user_message(user_message);
+                        return;
+                    }
+                    // Submitted is emitted when user submits.
+                    // Reset any reasoning header only when we are actually submitting a turn.
+                    self.reasoning_buffer.clear();
+                    self.full_reasoning_buffer.clear();
+                    self.set_status_header(String::from("Working"));
+                    self.submit_user_message(user_message);
+                } else {
+                    self.queue_user_message(user_message);
+                }
+            }
+            InputResult::Queued {
+                text,
+                text_elements,
+                action,
+            } => {
+                let user_message = self.user_message_from_composer_submission(text, text_elements);
+                self.queue_user_message_with_options(user_message, action);
+            }
+            InputResult::Command(cmd) => {
+                self.handle_slash_command_dispatch(cmd);
+            }
+            InputResult::CommandWithArgs(cmd, args, text_elements) => {
+                self.handle_slash_command_with_args_dispatch(cmd, args, text_elements);
+            }
+            InputResult::None => {}
         }
         self.maybe_signal_watchdog_owner_activity_if_draft_changed(&composer_before);
     }
@@ -12137,6 +12144,13 @@ impl ChatWidget {
 
 #[cfg(not(target_os = "linux"))]
 impl ChatWidget {
+    pub(crate) fn replace_transcription(&mut self, id: &str, text: &str) {
+        let input_result = self.bottom_pane.replace_transcription(id, text);
+        self.handle_bottom_pane_input_result(input_result);
+        // Ensure the UI redraws to reflect the updated transcription.
+        self.request_redraw();
+    }
+
     pub(crate) fn update_recording_meter_in_place(&mut self, id: &str, text: &str) -> bool {
         let updated = self.bottom_pane.update_recording_meter_in_place(id, text);
         if updated {
@@ -12145,9 +12159,31 @@ impl ChatWidget {
         updated
     }
 
+    pub(crate) fn show_transcription_retrying(
+        &mut self,
+        id: &str,
+        attempt: usize,
+        max_attempts: usize,
+    ) {
+        let updated = self
+            .bottom_pane
+            .show_transcription_retrying(id, attempt, max_attempts);
+        if updated {
+            self.request_redraw();
+        }
+    }
+
     pub(crate) fn remove_recording_meter_placeholder(&mut self, id: &str) {
         self.bottom_pane.remove_recording_meter_placeholder(id);
         // Ensure the UI redraws to reflect placeholder removal.
+        self.request_redraw();
+    }
+
+    pub(crate) fn fail_transcription(&mut self, id: &str, error: &str) {
+        self.bottom_pane.remove_transcription_placeholder(id);
+        self.add_to_history(history_cell::new_error_event(format!(
+            "Voice transcription failed: {error}"
+        )));
         self.request_redraw();
     }
 }

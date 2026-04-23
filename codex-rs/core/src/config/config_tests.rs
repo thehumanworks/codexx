@@ -6045,6 +6045,8 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             personality: Some(Personality::Pragmatic),
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             realtime_audio: RealtimeAudioConfig::default(),
+            voice_transcription_space_hold_delay_ms:
+                DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS,
             experimental_realtime_start_instructions: None,
             experimental_realtime_ws_base_url: None,
             experimental_realtime_ws_model: None,
@@ -6244,6 +6246,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         realtime_audio: RealtimeAudioConfig::default(),
+        voice_transcription_space_hold_delay_ms: DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS,
         experimental_realtime_start_instructions: None,
         experimental_realtime_ws_base_url: None,
         experimental_realtime_ws_model: None,
@@ -6397,6 +6400,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         realtime_audio: RealtimeAudioConfig::default(),
+        voice_transcription_space_hold_delay_ms: DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS,
         experimental_realtime_start_instructions: None,
         experimental_realtime_ws_base_url: None,
         experimental_realtime_ws_model: None,
@@ -6535,6 +6539,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         realtime_audio: RealtimeAudioConfig::default(),
+        voice_transcription_space_hold_delay_ms: DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS,
         experimental_realtime_start_instructions: None,
         experimental_realtime_ws_base_url: None,
         experimental_realtime_ws_model: None,
@@ -8674,6 +8679,29 @@ speaker = "Desk Speakers"
         config.realtime_audio.speaker.as_deref(),
         Some("Desk Speakers")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn voice_transcription_space_hold_delay_loads_from_config_toml() -> std::io::Result<()> {
+    let cfg: ConfigToml = toml::from_str(
+        r#"
+voice_transcription_space_hold_delay_ms = 250
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    assert_eq!(cfg.voice_transcription_space_hold_delay_ms, Some(250));
+
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(config.voice_transcription_space_hold_delay_ms, 250);
     Ok(())
 }
 

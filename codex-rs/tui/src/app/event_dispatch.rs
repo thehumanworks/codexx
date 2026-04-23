@@ -1723,6 +1723,25 @@ impl App {
                 }
             },
             #[cfg(not(target_os = "linux"))]
+            AppEvent::TranscriptionComplete { id, text } => {
+                self.chat_widget.replace_transcription(&id, &text);
+                tui.frame_requester().schedule_frame();
+            }
+            #[cfg(not(target_os = "linux"))]
+            AppEvent::TranscriptionFailed { id, error } => {
+                self.chat_widget.fail_transcription(&id, &error);
+            }
+            #[cfg(not(target_os = "linux"))]
+            AppEvent::TranscriptionRetrying {
+                id,
+                attempt,
+                max_attempts,
+            } => {
+                self.chat_widget
+                    .show_transcription_retrying(&id, attempt, max_attempts);
+                tui.frame_requester().schedule_frame();
+            }
+            #[cfg(not(target_os = "linux"))]
             AppEvent::UpdateRecordingMeter { id, text } => {
                 // Update in place to preserve the element id for subsequent frames.
                 let updated = self.chat_widget.update_recording_meter_in_place(&id, &text);

@@ -42,6 +42,27 @@ async fn deleted_realtime_meter_uses_shared_stop_path() {
     );
 }
 
+#[cfg(not(target_os = "linux"))]
+#[tokio::test]
+async fn transcription_failure_keeps_draft_and_renders_error() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.bottom_pane
+        .set_composer_text("draft ".to_string(), Vec::new(), Vec::new());
+    let placeholder_id = chat.bottom_pane.insert_recording_meter_placeholder("⠋");
+
+    chat.fail_transcription(&placeholder_id, "boom");
+
+    assert_eq!("draft ", chat.bottom_pane.composer_text());
+    let rendered = drain_insert_history(&mut rx)
+        .into_iter()
+        .map(|lines| lines_to_single_string(&lines))
+        .collect::<Vec<_>>();
+    insta::assert_snapshot!(
+        rendered.join("\n\n"),
+        @"■ Voice transcription failed: boom"
+    );
+}
+
 #[tokio::test]
 async fn experimental_mode_plan_is_ignored_on_startup() {
     let codex_home = tempdir().expect("tempdir");

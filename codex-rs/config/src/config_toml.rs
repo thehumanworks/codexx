@@ -292,6 +292,10 @@ pub struct ConfigToml {
     #[serde(default)]
     pub audio: Option<RealtimeAudioToml>,
 
+    /// Delay before holding Space on a non-empty composer switches into voice
+    /// transcription instead of inserting a literal space.
+    pub voice_transcription_space_hold_delay_ms: Option<u64>,
+
     /// Experimental / do not use. Overrides only the realtime conversation
     /// websocket transport base URL (the `Op::RealtimeConversation`
     /// `/v1/realtime`

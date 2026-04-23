@@ -607,7 +607,7 @@ impl ChatWidget {
             flag.store(true, Ordering::Relaxed);
         }
         if let Some(capture) = self.realtime_conversation.capture.take() {
-            capture.stop();
+            let _ = capture.stop();
         }
         if let Some(id) = self.realtime_conversation.meter_placeholder_id.take() {
             self.remove_recording_meter_placeholder(&id);

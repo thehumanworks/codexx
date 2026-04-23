@@ -729,6 +729,29 @@ pub(crate) enum AppEvent {
         text: String,
     },
 
+    /// Voice transcription finished for the given placeholder id.
+    #[cfg(not(target_os = "linux"))]
+    TranscriptionComplete {
+        id: String,
+        text: String,
+    },
+
+    /// Voice transcription failed; remove the placeholder identified by `id`.
+    #[cfg(not(target_os = "linux"))]
+    TranscriptionFailed {
+        id: String,
+        #[allow(dead_code)]
+        error: String,
+    },
+
+    /// Voice transcription timed out or hit a transient failure and is retrying.
+    #[cfg(not(target_os = "linux"))]
+    TranscriptionRetrying {
+        id: String,
+        attempt: usize,
+        max_attempts: usize,
+    },
+
     /// Open the branch picker option from the review popup.
     OpenReviewBranchPicker(PathBuf),
 

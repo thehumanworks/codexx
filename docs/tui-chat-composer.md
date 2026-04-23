@@ -84,6 +84,7 @@ Flags:
 - `popups_enabled`
 - `slash_commands_enabled`
 - `image_paste_enabled`
+- `voice_transcription_space_hold_delay_ms`
 
 Key effects when disabled:
 
@@ -91,6 +92,8 @@ Key effects when disabled:
 - When `slash_commands_enabled` is `false`, the composer does not treat `/...` input as commands.
 - When `slash_commands_enabled` is `false`, slash-context paste-burst exceptions are disabled.
 - When `image_paste_enabled` is `false`, file-path paste image attachment is skipped.
+- `voice_transcription_space_hold_delay_ms` only affects the non-empty-composer Space hold path;
+  empty composers still start voice capture immediately.
 - `ChatWidget` may toggle `image_paste_enabled` at runtime based on the selected model's
   `input_modalities`; attach and submit paths also re-check support and emit a warning instead of
   dropping the draft.
@@ -119,6 +122,14 @@ the input starts with `!` (shell command).
 
 The same preparation path is reused for slash commands with arguments (for example `/plan` and
 `/review`) so pasted content and text elements are preserved when extracting args.
+
+If a voice transcription placeholder is still resolving, `handle_submission` records whether the
+user pressed Enter (submit) or Tab (queue while a task is running, submit otherwise) and leaves the
+draft visible. While that pending transcription submission exists, key edits are ignored so the
+submitted draft cannot drift from what the user committed. When transcription completes, the
+placeholder is replaced with the produced text and the normal `prepare_submission_text` path runs.
+If transcription fails, the placeholder is removed, the draft remains editable, and the UI renders
+a transcription error instead of submitting anything.
 
 The composer also treats the textarea kill buffer as separate editing state from the visible draft.
 After submit or slash-command dispatch clears the textarea, the most recent `Ctrl+K` payload is

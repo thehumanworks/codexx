@@ -590,6 +590,9 @@
             "use_linux_sandbox_bwrap": {
               "type": "boolean"
             },
+            "voice_transcription": {
+              "type": "boolean"
+            },
             "web_search": {
               "type": "boolean"
             },
@@ -3633,6 +3636,9 @@
         "use_linux_sandbox_bwrap": {
           "type": "boolean"
         },
+        "voice_transcription": {
+          "type": "boolean"
+        },
         "web_search": {
           "type": "boolean"
         },
@@ -4042,6 +4048,12 @@
         }
       ],
       "description": "Collection of settings that are specific to the TUI."
+    },
+    "voice_transcription_space_hold_delay_ms": {
+      "description": "Delay before holding Space on a non-empty composer switches into voice transcription instead of inserting a literal space.",
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": "integer"
     },
     "watchdog_interval_s": {
       "description": "Watchdog polling interval in seconds.",
