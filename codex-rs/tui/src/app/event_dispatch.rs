@@ -564,6 +564,12 @@ impl App {
                     self.send_add_credits_nudge_email(app_server, credit_type);
                 }
             }
+            AppEvent::TrackUsageLimitBanner {
+                action,
+                banner_type,
+            } => {
+                self.track_usage_limit_banner(app_server, action, banner_type);
+            }
             AppEvent::AddCreditsNudgeEmailFinished { result } => {
                 self.chat_widget
                     .finish_add_credits_nudge_email_request(result);

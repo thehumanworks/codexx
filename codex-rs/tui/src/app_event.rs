@@ -22,6 +22,8 @@ use codex_app_server_protocol::PluginReadResponse;
 use codex_app_server_protocol::PluginUninstallResponse;
 use codex_app_server_protocol::SkillsListResponse;
 use codex_app_server_protocol::ThreadGoalStatus;
+use codex_app_server_protocol::TrackUsageLimitBannerAction;
+use codex_app_server_protocol::UsageLimitBannerType;
 use codex_file_search::FileMatch;
 use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelPreset;
@@ -232,6 +234,12 @@ pub(crate) enum AppEvent {
     /// Send a user-confirmed request to notify the workspace owner.
     SendAddCreditsNudgeEmail {
         credit_type: AddCreditsNudgeCreditType,
+    },
+
+    /// Track an analytics event for the workspace-owner nudge prompt.
+    TrackUsageLimitBanner {
+        action: TrackUsageLimitBannerAction,
+        banner_type: UsageLimitBannerType,
     },
 
     /// Result of notifying the workspace owner.

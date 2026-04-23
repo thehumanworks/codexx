@@ -106,10 +106,12 @@ use codex_app_server_protocol::ThreadGoalStatus as AppThreadGoalStatus;
 use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::ThreadTokenUsage;
 use codex_app_server_protocol::ToolRequestUserInputParams;
+use codex_app_server_protocol::TrackUsageLimitBannerAction;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UsageLimitBannerType;
 use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::types::ApprovalsReviewer;
@@ -8581,7 +8583,19 @@ impl ChatWidget {
                 "Request a limit increase from your owner to continue using codex. Request increase?",
             ),
         };
+        let banner_type = match credit_type {
+            AddCreditsNudgeCreditType::Credits => {
+                UsageLimitBannerType::WorkspaceMemberCreditsDepleted
+            }
+            AddCreditsNudgeCreditType::UsageLimit => {
+                UsageLimitBannerType::WorkspaceMemberUsageLimitReached
+            }
+        };
         let send_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            tx.send(AppEvent::TrackUsageLimitBanner {
+                action: TrackUsageLimitBannerAction::CtaClicked,
+                banner_type,
+            });
             tx.send(AppEvent::SendAddCreditsNudgeEmail { credit_type });
         })];
         let items = vec![
@@ -8608,6 +8622,10 @@ impl ChatWidget {
             items,
             initial_selected_idx: Some(1),
             ..Default::default()
+        });
+        self.app_event_tx.send(AppEvent::TrackUsageLimitBanner {
+            action: TrackUsageLimitBannerAction::Shown,
+            banner_type,
         });
     }
 
