@@ -21,13 +21,9 @@ impl Session {
         self: Arc<Self>,
         request: McpElicitationReviewRequest,
     ) -> Option<ElicitationResponse> {
-        if !guardian_can_review_mcp_elicitation(&request.request) {
-            return None;
-        }
-
         let (turn_context, cancellation_token) =
             self.active_turn_context_and_cancellation_token().await?;
-        if !crate::guardian::routes_approval_to_guardian(turn_context.as_ref()) {
+        if !should_route_mcp_elicitation_to_guardian(turn_context.as_ref(), &request.request) {
             return None;
         }
 
@@ -386,6 +382,14 @@ fn guardian_can_review_mcp_elicitation(
     }
 }
 
+fn should_route_mcp_elicitation_to_guardian(
+    turn_context: &TurnContext,
+    request: &codex_protocol::approvals::ElicitationRequest,
+) -> bool {
+    crate::guardian::routes_approval_to_guardian(turn_context)
+        && guardian_can_review_mcp_elicitation(request)
+}
+
 fn mcp_elicitation_form_has_empty_schema(requested_schema: &serde_json::Value) -> bool {
     let properties_empty = requested_schema
         .get("properties")
@@ -457,3 +461,7 @@ fn mcp_elicitation_response_from_guardian_decision(
         meta: None,
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_tests.rs"]
+mod tests;
