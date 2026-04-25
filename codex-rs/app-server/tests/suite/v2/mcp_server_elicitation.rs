@@ -73,6 +73,7 @@ const TOOL_CALL_ID: &str = "call-calendar-confirm";
 const ELICITATION_MESSAGE: &str = "Allow this request?";
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[cfg_attr(windows, ignore = "temporary shard-15 bisection for #19606")]
 async fn mcp_server_elicitation_round_trip() -> Result<()> {
     let responses_server = responses::start_mock_server().await;
     let tool_call_arguments = serde_json::to_string(&json!({}))?;
