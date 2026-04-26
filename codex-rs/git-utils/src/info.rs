@@ -144,18 +144,27 @@ pub async fn get_git_remote_urls_assume_git_repo(cwd: &Path) -> Option<BTreeMap<
 
 /// Return the current HEAD commit hash without checking whether `cwd` is in a git repo.
 pub async fn get_head_commit_hash(cwd: &Path) -> Option<GitSha> {
-    let output = run_git_command_with_timeout(&["rev-parse", "HEAD"], cwd).await?;
-    if !output.status.success() {
-        return None;
+    if let Some(output) = run_git_command_with_timeout(&["rev-parse", "HEAD"], cwd).await
+        && output.status.success()
+        && let Ok(stdout) = String::from_utf8(output.stdout)
+    {
+        let hash = stdout.trim();
+        if !hash.is_empty() {
+            return Some(GitSha::new(hash));
+        }
     }
 
-    let stdout = String::from_utf8(output.stdout).ok()?;
-    let hash = stdout.trim();
-    if hash.is_empty() {
-        None
-    } else {
-        Some(GitSha::new(hash))
-    }
+    // Keep the `git` fast path so HEAD is resolved the same way as the other
+    // turn-metadata probes in the common case. `gix` is only a narrower
+    // fallback for the CI flake where `git rev-parse HEAD` failed even though
+    // the repository metadata was still readable.
+    get_head_commit_hash_from_gix(cwd)
+}
+
+fn get_head_commit_hash_from_gix(cwd: &Path) -> Option<GitSha> {
+    let base = if cwd.is_dir() { cwd } else { cwd.parent()? };
+    let head = gix::discover(base).ok()?.head_id().ok()?.detach();
+    Some(GitSha::new(&head.to_string()))
 }
 
 pub async fn get_has_changes(cwd: &Path) -> Option<bool> {
@@ -723,4 +732,109 @@ pub async fn current_branch_name(cwd: &Path) -> Option<String> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|name| !name.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    use super::get_head_commit_hash_from_gix;
+    use crate::GitSha;
+    use pretty_assertions::assert_eq;
+    use tempfile::TempDir;
+
+    fn run_git(cwd: &Path, git_config_global: &Path, args: &[&str]) -> std::process::Output {
+        let output = Command::new("git")
+            .env("GIT_CONFIG_GLOBAL", git_config_global)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(args)
+            .current_dir(cwd)
+            .output()
+            .expect("git command should run");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: stdout={} stderr={}",
+            args,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output
+    }
+
+    fn create_repo_with_commit(temp_dir: &TempDir) -> (PathBuf, PathBuf, String) {
+        let repo_root = temp_dir.path().join("repo");
+        let git_config_global = temp_dir.path().join("empty-git-config");
+        std::fs::create_dir_all(&repo_root).expect("create repo");
+        std::fs::write(&git_config_global, "").expect("write empty git config");
+
+        run_git(&repo_root, &git_config_global, &["init"]);
+        run_git(
+            &repo_root,
+            &git_config_global,
+            &["config", "user.name", "Test User"],
+        );
+        run_git(
+            &repo_root,
+            &git_config_global,
+            &["config", "user.email", "test@example.com"],
+        );
+        std::fs::write(repo_root.join("README.md"), "hello").expect("write README");
+        run_git(&repo_root, &git_config_global, &["add", "."]);
+        run_git(
+            &repo_root,
+            &git_config_global,
+            &["commit", "-m", "initial commit"],
+        );
+        let expected = String::from_utf8(
+            run_git(&repo_root, &git_config_global, &["rev-parse", "HEAD"]).stdout,
+        )
+        .expect("git rev-parse output should be valid UTF-8")
+        .trim()
+        .to_string();
+
+        (repo_root, git_config_global, expected)
+    }
+
+    #[tokio::test]
+    async fn get_head_commit_hash_from_gix_reads_packed_refs() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (repo_root, git_config_global, expected) = create_repo_with_commit(&temp_dir);
+        run_git(&repo_root, &git_config_global, &["pack-refs", "--all"]);
+
+        assert_eq!(
+            get_head_commit_hash_from_gix(&repo_root),
+            Some(GitSha::new(&expected))
+        );
+    }
+
+    #[tokio::test]
+    async fn get_head_commit_hash_from_gix_reads_worktree_head() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let (repo_root, git_config_global, _) = create_repo_with_commit(&temp_dir);
+        let worktree_root = temp_dir.path().join("worktree");
+        run_git(
+            &repo_root,
+            &git_config_global,
+            &[
+                "worktree",
+                "add",
+                worktree_root.to_str().expect("utf-8 path"),
+                "-b",
+                "feature-x",
+            ],
+        );
+        let expected = String::from_utf8(
+            run_git(&worktree_root, &git_config_global, &["rev-parse", "HEAD"]).stdout,
+        )
+        .expect("git rev-parse output should be valid UTF-8")
+        .trim()
+        .to_string();
+
+        assert_eq!(
+            get_head_commit_hash_from_gix(&worktree_root),
+            Some(GitSha::new(&expected))
+        );
+    }
 }
