@@ -8,11 +8,9 @@ use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use crate::McpAuthStatusEntry;
 use crate::client::StartupOutcomeError;
-use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 pub(crate) use crate::mcp_tool_names::qualify_tools;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -30,18 +28,10 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Map;
 use serde_json::Value as JsonValue;
-use sha1::Digest;
-use sha1::Sha1;
 use url::Url;
 
 use codex_config::McpServerConfig;
 use codex_config::McpServerTransportConfig;
-use codex_login::CodexAuth;
-use codex_utils_plugins::mcp_connector::is_connector_id_allowed;
-use codex_utils_plugins::mcp_connector::sanitize_name;
-
-/// Delimiter used to separate MCP tool-name parts.
-const MCP_TOOL_NAME_DELIMITER: &str = "__";
 
 /// Default timeout for initializing MCP server & initially listing tools.
 pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -49,9 +39,8 @@ pub(crate) const DEFAULT_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 /// Default timeout for individual tool calls.
 pub(crate) const DEFAULT_TOOL_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub(crate) const CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION: u8 = 2;
-const CODEX_APPS_TOOLS_CACHE_DIR: &str = "cache/codex_apps_tools";
-const MCP_TOOLS_CACHE_WRITE_DURATION_METRIC: &str = "codex.mcp.tools.cache_write.duration_ms";
+pub(crate) const MCP_TOOLS_CACHE_WRITE_DURATION_METRIC: &str =
+    "codex.mcp.tools.cache_write.duration_ms";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolInfo {
@@ -95,31 +84,6 @@ pub fn declared_openai_file_input_param_names(
         .filter_map(JsonValue::as_str)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-        .collect()
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodexAppsToolsCacheKey {
-    pub(crate) account_id: Option<String>,
-    pub(crate) chatgpt_user_id: Option<String>,
-    pub(crate) is_workspace_account: bool,
-}
-
-pub fn codex_apps_tools_cache_key(auth: Option<&CodexAuth>) -> CodexAppsToolsCacheKey {
-    CodexAppsToolsCacheKey {
-        account_id: auth.and_then(CodexAuth::get_account_id),
-        chatgpt_user_id: auth.and_then(CodexAuth::get_chatgpt_user_id),
-        is_workspace_account: auth.is_some_and(CodexAuth::is_workspace_account),
-    }
-}
-
-pub fn filter_non_codex_apps_mcp_tools_only(
-    mcp_tools: &HashMap<String, ToolInfo>,
-) -> HashMap<String, ToolInfo> {
-    mcp_tools
-        .iter()
-        .filter(|(_, tool)| tool.server_name != CODEX_APPS_MCP_SERVER_NAME)
-        .map(|(name, tool)| (name.clone(), tool.clone()))
         .collect()
 }
 
@@ -203,41 +167,6 @@ impl ToolFilter {
 
         !self.disabled.contains(tool_name)
     }
-}
-
-fn sha1_hex(s: &str) -> String {
-    let mut hasher = Sha1::new();
-    hasher.update(s.as_bytes());
-    let sha1 = hasher.finalize();
-    format!("{sha1:x}")
-}
-
-#[derive(Clone)]
-pub(crate) struct CodexAppsToolsCacheContext {
-    pub(crate) codex_home: PathBuf,
-    pub(crate) user_key: CodexAppsToolsCacheKey,
-}
-
-impl CodexAppsToolsCacheContext {
-    pub(crate) fn cache_path(&self) -> PathBuf {
-        let user_key_json = serde_json::to_string(&self.user_key).unwrap_or_default();
-        let user_key_hash = sha1_hex(&user_key_json);
-        self.codex_home
-            .join(CODEX_APPS_TOOLS_CACHE_DIR)
-            .join(format!("{user_key_hash}.json"))
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct CodexAppsToolsDiskCache {
-    schema_version: u8,
-    tools: Vec<ToolInfo>,
-}
-
-pub(crate) enum CachedCodexAppsToolsLoad {
-    Hit(Vec<ToolInfo>),
-    Missing,
-    Invalid,
 }
 
 const META_OPENAI_FILE_PARAMS: &str = "openai/fileParams";
@@ -326,86 +255,6 @@ pub(crate) fn filter_tools(tools: Vec<ToolInfo>, filter: &ToolFilter) -> Vec<Too
         .collect()
 }
 
-pub(crate) fn normalize_codex_apps_tool_title(
-    server_name: &str,
-    connector_name: Option<&str>,
-    value: &str,
-) -> String {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
-        return value.to_string();
-    }
-
-    let Some(connector_name) = connector_name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    else {
-        return value.to_string();
-    };
-
-    let prefix = format!("{connector_name}_");
-    if let Some(stripped) = value.strip_prefix(&prefix)
-        && !stripped.is_empty()
-    {
-        return stripped.to_string();
-    }
-
-    value.to_string()
-}
-
-pub(crate) fn normalize_codex_apps_callable_name(
-    server_name: &str,
-    tool_name: &str,
-    connector_id: Option<&str>,
-    connector_name: Option<&str>,
-) -> String {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
-        return tool_name.to_string();
-    }
-
-    let tool_name = sanitize_name(tool_name);
-
-    if let Some(connector_name) = connector_name
-        .map(str::trim)
-        .map(sanitize_name)
-        .filter(|name| !name.is_empty())
-        && let Some(stripped) = tool_name.strip_prefix(&connector_name)
-        && !stripped.is_empty()
-    {
-        return stripped.to_string();
-    }
-
-    if let Some(connector_id) = connector_id
-        .map(str::trim)
-        .map(sanitize_name)
-        .filter(|name| !name.is_empty())
-        && let Some(stripped) = tool_name.strip_prefix(&connector_id)
-        && !stripped.is_empty()
-    {
-        return stripped.to_string();
-    }
-
-    tool_name
-}
-
-pub(crate) fn normalize_codex_apps_callable_namespace(
-    server_name: &str,
-    connector_name: Option<&str>,
-) -> String {
-    if server_name == CODEX_APPS_MCP_SERVER_NAME
-        && let Some(connector_name) = connector_name
-    {
-        format!(
-            "mcp{}{}{}{}",
-            MCP_TOOL_NAME_DELIMITER,
-            server_name,
-            MCP_TOOL_NAME_DELIMITER,
-            sanitize_name(connector_name)
-        )
-    } else {
-        format!("mcp{MCP_TOOL_NAME_DELIMITER}{server_name}{MCP_TOOL_NAME_DELIMITER}")
-    }
-}
-
 pub(crate) fn resolve_bearer_token(
     server_name: &str,
     bearer_token_env_var: Option<&str>,
@@ -431,104 +280,6 @@ pub(crate) fn resolve_bearer_token(
             "Environment variable {env_var} for MCP server '{server_name}' contains invalid Unicode"
         )),
     }
-}
-
-pub(crate) fn write_cached_codex_apps_tools_if_needed(
-    server_name: &str,
-    cache_context: Option<&CodexAppsToolsCacheContext>,
-    tools: &[ToolInfo],
-) {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
-        return;
-    }
-
-    if let Some(cache_context) = cache_context {
-        let cache_write_start = Instant::now();
-        write_cached_codex_apps_tools(cache_context, tools);
-        emit_duration(
-            MCP_TOOLS_CACHE_WRITE_DURATION_METRIC,
-            cache_write_start.elapsed(),
-            &[],
-        );
-    }
-}
-
-pub(crate) fn load_startup_cached_codex_apps_tools_snapshot(
-    server_name: &str,
-    cache_context: Option<&CodexAppsToolsCacheContext>,
-) -> Option<Vec<ToolInfo>> {
-    if server_name != CODEX_APPS_MCP_SERVER_NAME {
-        return None;
-    }
-
-    let cache_context = cache_context?;
-
-    match load_cached_codex_apps_tools(cache_context) {
-        CachedCodexAppsToolsLoad::Hit(tools) => Some(tools),
-        CachedCodexAppsToolsLoad::Missing | CachedCodexAppsToolsLoad::Invalid => None,
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn read_cached_codex_apps_tools(
-    cache_context: &CodexAppsToolsCacheContext,
-) -> Option<Vec<ToolInfo>> {
-    match load_cached_codex_apps_tools(cache_context) {
-        CachedCodexAppsToolsLoad::Hit(tools) => Some(tools),
-        CachedCodexAppsToolsLoad::Missing | CachedCodexAppsToolsLoad::Invalid => None,
-    }
-}
-
-pub(crate) fn load_cached_codex_apps_tools(
-    cache_context: &CodexAppsToolsCacheContext,
-) -> CachedCodexAppsToolsLoad {
-    let cache_path = cache_context.cache_path();
-    let bytes = match std::fs::read(cache_path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return CachedCodexAppsToolsLoad::Missing;
-        }
-        Err(_) => return CachedCodexAppsToolsLoad::Invalid,
-    };
-    let cache: CodexAppsToolsDiskCache = match serde_json::from_slice(&bytes) {
-        Ok(cache) => cache,
-        Err(_) => return CachedCodexAppsToolsLoad::Invalid,
-    };
-    if cache.schema_version != CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION {
-        return CachedCodexAppsToolsLoad::Invalid;
-    }
-    CachedCodexAppsToolsLoad::Hit(filter_disallowed_codex_apps_tools(cache.tools))
-}
-
-pub(crate) fn write_cached_codex_apps_tools(
-    cache_context: &CodexAppsToolsCacheContext,
-    tools: &[ToolInfo],
-) {
-    let cache_path = cache_context.cache_path();
-    if let Some(parent) = cache_path.parent()
-        && std::fs::create_dir_all(parent).is_err()
-    {
-        return;
-    }
-    let tools = filter_disallowed_codex_apps_tools(tools.to_vec());
-    let Ok(bytes) = serde_json::to_vec_pretty(&CodexAppsToolsDiskCache {
-        schema_version: CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION,
-        tools,
-    }) else {
-        return;
-    };
-    let _ = std::fs::write(cache_path, bytes);
-}
-
-pub(crate) fn filter_disallowed_codex_apps_tools(tools: Vec<ToolInfo>) -> Vec<ToolInfo> {
-    tools
-        .into_iter()
-        .filter(|tool| {
-            tool.connector_id
-                .as_deref()
-                .is_none_or(is_connector_id_allowed)
-        })
-        .collect()
 }
 
 pub(crate) fn emit_duration(metric: &str, duration: Duration, tags: &[(&str, &str)]) {

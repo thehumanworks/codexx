@@ -8,8 +8,8 @@ pub use mcp::CODEX_APPS_MCP_SERVER_NAME;
 pub use mcp::McpConfig;
 pub use mcp::ToolPluginProvenance;
 
-pub use mcp_connection::CodexAppsToolsCacheKey;
-pub use mcp_connection::codex_apps_tools_cache_key;
+pub use apps::CodexAppsToolsCacheKey;
+pub use apps::codex_apps_tools_cache_key;
 
 pub use mcp::configured_mcp_servers;
 pub use mcp::effective_mcp_servers;
@@ -33,11 +33,12 @@ pub use mcp::oauth_login_support;
 pub use mcp::resolve_oauth_scopes;
 pub use mcp::should_retry_without_scopes;
 
+pub use apps::filter_non_codex_apps_mcp_tools_only;
 pub use mcp::mcp_permission_prompt_is_auto_approved;
 pub use mcp::qualified_mcp_tool_name_prefix;
 pub use mcp_connection::declared_openai_file_input_param_names;
-pub use mcp_connection::filter_non_codex_apps_mcp_tools_only;
 
+pub(crate) mod apps;
 pub(crate) mod client;
 pub(crate) mod elicitation;
 pub(crate) mod manager;
