@@ -38,11 +38,10 @@ struct HookHandlerSource<'a> {
 pub(crate) fn discover_handlers(
     config_layer_stack: Option<&ConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
-    plugin_hook_load_warnings: Vec<String>,
 ) -> DiscoveryResult {
     let Some(config_layer_stack) = config_layer_stack else {
         let mut handlers = Vec::new();
-        let mut warnings = plugin_hook_load_warnings;
+        let mut warnings = Vec::new();
         let mut display_order = 0_i64;
         append_plugin_hook_sources(
             &mut handlers,
@@ -54,7 +53,7 @@ pub(crate) fn discover_handlers(
     };
 
     let mut handlers = Vec::new();
-    let mut warnings = plugin_hook_load_warnings;
+    let mut warnings = Vec::new();
     let mut display_order = 0_i64;
 
     append_managed_requirement_handlers(
@@ -169,7 +168,8 @@ fn append_plugin_hook_sources(
         } = source;
         let mut env = HashMap::new();
         let plugin_root_value = plugin_root.display().to_string();
-        env.insert("AGENTS_PLUGIN_ROOT".to_string(), plugin_root_value.clone());
+        env.insert("PLUGIN_ROOT".to_string(), plugin_root_value.clone());
+        // For OOTB compat with existing plugins that use this env var.
         env.insert("CLAUDE_PLUGIN_ROOT".to_string(), plugin_root_value);
         append_hook_events(
             handlers,

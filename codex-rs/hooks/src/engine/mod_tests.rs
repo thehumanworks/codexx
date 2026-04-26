@@ -109,7 +109,6 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
         /*enabled*/ true,
         Some(&config_layer_stack),
         Vec::new(),
-        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -193,7 +192,6 @@ fn requirements_managed_hooks_warn_when_managed_dir_is_missing() {
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
-        Vec::new(),
         Vec::new(),
         CommandShell {
             program: String::new(),
@@ -303,7 +301,6 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         /*enabled*/ true,
         Some(&config_layer_stack),
         Vec::new(),
-        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -352,7 +349,7 @@ import os
 from pathlib import Path
 
 Path(r"{log_path}").write_text(json.dumps({{
-    "agents": os.environ.get("AGENTS_PLUGIN_ROOT"),
+    "plugin": os.environ.get("PLUGIN_ROOT"),
     "claude": os.environ.get("CLAUDE_PLUGIN_ROOT"),
 }}), encoding="utf-8")
 "#,
@@ -383,7 +380,6 @@ Path(r"{log_path}").write_text(json.dumps({{
         /*enabled*/ true,
         None,
         plugin_hook_sources,
-        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -429,7 +425,7 @@ Path(r"{log_path}").write_text(json.dumps({{
     assert_eq!(
         logged,
         serde_json::json!({
-            "agents": plugin_root.display().to_string(),
+            "plugin": plugin_root.display().to_string(),
             "claude": plugin_root.display().to_string(),
         })
     );

@@ -483,7 +483,6 @@ async fn load_plugin(
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
         hook_sources: Vec::new(),
-        hook_load_warnings: Vec::new(),
         error: None,
     };
 
@@ -552,9 +551,7 @@ async fn load_plugin(
     }
     loaded_plugin.mcp_servers = mcp_servers;
     loaded_plugin.apps = load_plugin_apps(plugin_root.as_path()).await;
-    let hook_discovery = load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
-    loaded_plugin.hook_sources = hook_discovery.sources;
-    loaded_plugin.hook_load_warnings = hook_discovery.warnings;
+    loaded_plugin.hook_sources = load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
     loaded_plugin
 }
 
@@ -684,22 +681,19 @@ fn default_app_config_paths(plugin_root: &Path) -> Vec<AbsolutePathBuf> {
     paths
 }
 
-#[derive(Debug, Default)]
-pub struct PluginHookDiscovery {
-    pub sources: Vec<PluginHookSource>,
-    pub warnings: Vec<String>,
-}
-
+// Discover plugin-bundled hooks from manifest `hooks` entries when present
+// (path, paths, inline object, or inline objects), otherwise from the default
+// `hooks/hooks.json` file.
 pub fn load_plugin_hooks(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
     manifest_paths: &PluginManifestPaths,
-) -> PluginHookDiscovery {
-    let mut discovery = PluginHookDiscovery::default();
+) -> Vec<PluginHookSource> {
+    let mut sources = Vec::new();
     match &manifest_paths.hooks {
         Some(PluginManifestHooks::Paths(paths)) => {
             for path in paths {
-                append_plugin_hook_file(plugin_root, plugin_id, path, &mut discovery);
+                append_plugin_hook_file(plugin_root, plugin_id, path, &mut sources);
             }
         }
         Some(PluginManifestHooks::Inline(hooks_files)) => {
@@ -710,7 +704,7 @@ pub fn load_plugin_hooks(
                 if hooks_file.hooks.is_empty() {
                     continue;
                 }
-                discovery.sources.push(PluginHookSource {
+                sources.push(PluginHookSource {
                     plugin_id: plugin_id.clone(),
                     plugin_root: plugin_root.clone(),
                     source_path: manifest_path.clone(),
@@ -722,36 +716,38 @@ pub fn load_plugin_hooks(
         None => {
             let default_path = plugin_root.join(DEFAULT_HOOKS_CONFIG_FILE);
             if default_path.as_path().is_file() {
-                append_plugin_hook_file(plugin_root, plugin_id, &default_path, &mut discovery);
+                append_plugin_hook_file(plugin_root, plugin_id, &default_path, &mut sources);
             }
         }
     }
-    discovery
+    sources
 }
 
+// Load one resolved plugin hook file and keep source metadata with its parsed
+// hook events so runtime discovery can report plugin-originated hook runs.
 fn append_plugin_hook_file(
     plugin_root: &AbsolutePathBuf,
     plugin_id: &PluginId,
     path: &AbsolutePathBuf,
-    discovery: &mut PluginHookDiscovery,
+    sources: &mut Vec<PluginHookSource>,
 ) {
     let contents = match fs::read_to_string(path.as_path()) {
         Ok(contents) => contents,
         Err(err) => {
-            discovery.warnings.push(format!(
-                "failed to read plugin hooks config {}: {err}",
-                path.display()
-            ));
+            warn!(
+                path = %path.display(),
+                "failed to read plugin hooks config: {err}"
+            );
             return;
         }
     };
     let parsed = match serde_json::from_str::<HooksFile>(&contents) {
         Ok(parsed) => parsed,
         Err(err) => {
-            discovery.warnings.push(format!(
-                "failed to parse plugin hooks config {}: {err}",
-                path.display()
-            ));
+            warn!(
+                path = %path.display(),
+                "failed to parse plugin hooks config: {err}"
+            );
             return;
         }
     };
@@ -759,7 +755,7 @@ fn append_plugin_hook_file(
         return;
     }
 
-    discovery.sources.push(PluginHookSource {
+    sources.push(PluginHookSource {
         plugin_id: plugin_id.clone(),
         plugin_root: plugin_root.clone(),
         source_path: path.clone(),
@@ -1241,19 +1237,15 @@ mod tests {
 
         let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
         let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
-        let discovery = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
+        let sources = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
 
-        assert_eq!(discovery.warnings, Vec::<String>::new());
-        assert_eq!(discovery.sources.len(), 1);
+        assert_eq!(sources.len(), 1);
         assert_eq!(
-            discovery.sources[0].plugin_id,
+            sources[0].plugin_id,
             PluginId::parse("demo-plugin@test-marketplace").expect("plugin id")
         );
-        assert_eq!(
-            discovery.sources[0].source_relative_path,
-            "hooks/hooks.json"
-        );
-        assert_eq!(discovery.sources[0].hooks.handler_count(), 1);
+        assert_eq!(sources[0].source_relative_path, "hooks/hooks.json");
+        assert_eq!(sources[0].hooks.handler_count(), 1);
     }
 
     #[test]
@@ -1313,20 +1305,17 @@ mod tests {
 
         let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
         let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
-        let discovery = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
+        let sources = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
 
-        assert_eq!(discovery.warnings, Vec::<String>::new());
         assert_eq!(
-            discovery
-                .sources
+            sources
                 .iter()
                 .map(|source| source.source_relative_path.as_str())
                 .collect::<Vec<_>>(),
             vec!["hooks/one.json", "hooks/two.json"]
         );
         assert_eq!(
-            discovery
-                .sources
+            sources
                 .iter()
                 .map(|source| source.hooks.handler_count())
                 .collect::<Vec<_>>(),
@@ -1360,15 +1349,11 @@ mod tests {
 
         let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
         let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
-        let discovery = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
+        let sources = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
 
-        assert_eq!(discovery.warnings, Vec::<String>::new());
-        assert_eq!(discovery.sources.len(), 1);
-        assert_eq!(
-            discovery.sources[0].source_relative_path,
-            "plugin.json#hooks[0]"
-        );
-        assert_eq!(discovery.sources[0].hooks.handler_count(), 1);
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].source_relative_path, "plugin.json#hooks[0]");
+        assert_eq!(sources[0].hooks.handler_count(), 1);
     }
 
     #[test]
