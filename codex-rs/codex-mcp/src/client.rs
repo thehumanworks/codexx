@@ -25,8 +25,6 @@ use crate::mcp_connection::DEFAULT_TOOL_TIMEOUT;
 use crate::mcp_connection::MCP_SANDBOX_STATE_META_CAPABILITY;
 use crate::mcp_connection::McpRuntimeEnvironment;
 use crate::mcp_connection::emit_duration;
-use crate::mcp_connection::resolve_bearer_token;
-use crate::mcp_connection::validate_mcp_server_name;
 use crate::tools::ToolFilter;
 use crate::tools::ToolInfo;
 use crate::tools::filter_tools;
@@ -296,6 +294,44 @@ pub(crate) fn elicitation_capability_for_server(
         }),
         url: None,
     })
+}
+
+fn resolve_bearer_token(
+    server_name: &str,
+    bearer_token_env_var: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(env_var) = bearer_token_env_var else {
+        return Ok(None);
+    };
+
+    match env::var(env_var) {
+        Ok(value) => {
+            if value.is_empty() {
+                Err(anyhow!(
+                    "Environment variable {env_var} for MCP server '{server_name}' is empty"
+                ))
+            } else {
+                Ok(Some(value))
+            }
+        }
+        Err(env::VarError::NotPresent) => Err(anyhow!(
+            "Environment variable {env_var} for MCP server '{server_name}' is not set"
+        )),
+        Err(env::VarError::NotUnicode(_)) => Err(anyhow!(
+            "Environment variable {env_var} for MCP server '{server_name}' contains invalid Unicode"
+        )),
+    }
+}
+
+fn validate_mcp_server_name(server_name: &str) -> Result<()> {
+    let re = regex_lite::Regex::new(r"^[a-zA-Z0-9_-]+$")?;
+    if !re.is_match(server_name) {
+        return Err(anyhow!(
+            "Invalid MCP server name '{server_name}': must match pattern {pattern}",
+            pattern = re.as_str()
+        ));
+    }
+    Ok(())
 }
 
 async fn start_server_task(
