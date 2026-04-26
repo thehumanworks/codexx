@@ -4,11 +4,10 @@ use crate::config::ThreadStoreConfig;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
-use crate::config_loader::RequirementSource;
-use crate::config_loader::project_trust_key;
 use crate::plugins::PluginsManager;
 use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
+use codex_config::RequirementSource;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
 use codex_config::config_toml::AutoReviewToml;
@@ -21,6 +20,7 @@ use codex_config::config_toml::RealtimeTransport;
 use codex_config::config_toml::RealtimeWsMode;
 use codex_config::config_toml::RealtimeWsVersion;
 use codex_config::config_toml::ToolsToml;
+use codex_config::loader::project_trust_key;
 use codex_config::permissions_toml::FilesystemPermissionToml;
 use codex_config::permissions_toml::FilesystemPermissionsToml;
 use codex_config::permissions_toml::NetworkDomainPermissionToml;
@@ -3983,7 +3983,7 @@ async fn load_config_uses_requirements_guardian_policy_config() -> std::io::Resu
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        crate::config_loader::ConfigRequirementsToml {
+        codex_config::ConfigRequirementsToml {
             guardian_policy_config: Some(
                 "  Use the workspace-managed guardian policy.  ".to_string(),
             ),
@@ -4064,7 +4064,7 @@ async fn requirements_guardian_policy_beats_auto_review() -> std::io::Result<()>
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        crate::config_loader::ConfigRequirementsToml {
+        codex_config::ConfigRequirementsToml {
             guardian_policy_config: Some("Use the managed guardian policy.".to_string()),
             ..Default::default()
         },
@@ -4128,7 +4128,7 @@ async fn load_config_ignores_empty_requirements_guardian_policy_config() -> std:
     let config_layer_stack = ConfigLayerStack::new(
         Vec::new(),
         Default::default(),
-        crate::config_loader::ConfigRequirementsToml {
+        codex_config::ConfigRequirementsToml {
             guardian_policy_config: Some("   ".to_string()),
             ..Default::default()
         },
@@ -4260,15 +4260,15 @@ config_file = "./agents/researcher.toml"
 "#,
     )
     .expect("agent role layer config should parse");
-    let config_layer_stack = crate::config_loader::ConfigLayerStack::new(
-        vec![crate::config_loader::ConfigLayerEntry::new(
+    let config_layer_stack = codex_config::ConfigLayerStack::new(
+        vec![codex_config::ConfigLayerEntry::new(
             codex_app_server_protocol::ConfigLayerSource::User {
                 file: codex_home.path().join(CONFIG_TOML_FILE).abs(),
             },
             layer_config,
         )],
         Default::default(),
-        crate::config_loader::ConfigRequirementsToml::default(),
+        codex_config::ConfigRequirementsToml::default(),
     )
     .map_err(std::io::Error::other)?;
 
@@ -6037,14 +6037,12 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
 {
     let fixture = create_test_fixture()?;
 
-    let requirements_toml = crate::config_loader::ConfigRequirementsToml {
+    let requirements_toml = codex_config::ConfigRequirementsToml {
         allowed_approval_policies: None,
         allowed_approvals_reviewers: None,
         allowed_sandbox_modes: None,
         remote_sandbox_config: None,
-        allowed_web_search_modes: Some(vec![
-            crate::config_loader::WebSearchModeRequirement::Cached,
-        ]),
+        allowed_web_search_modes: Some(vec![codex_config::WebSearchModeRequirement::Cached]),
         feature_requirements: None,
         hooks: None,
         mcp_servers: None,
@@ -6055,7 +6053,7 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
         permissions: None,
         guardian_policy_config: None,
     };
-    let requirement_source = crate::config_loader::RequirementSource::Unknown;
+    let requirement_source = codex_config::RequirementSource::Unknown;
     let requirement_source_for_error = requirement_source.clone();
     let allowed = vec![WebSearchMode::Disabled, WebSearchMode::Cached];
     let constrained = Constrained::new(WebSearchMode::Cached, move |candidate| {
@@ -6070,15 +6068,15 @@ async fn test_requirements_web_search_mode_allowlist_does_not_warn_when_unset() 
             })
         }
     })?;
-    let requirements = crate::config_loader::ConfigRequirements {
-        web_search_mode: crate::config_loader::ConstrainedWithSource::new(
+    let requirements = codex_config::ConfigRequirements {
+        web_search_mode: codex_config::ConstrainedWithSource::new(
             constrained,
             Some(requirement_source),
         ),
         ..Default::default()
     };
     let config_layer_stack =
-        crate::config_loader::ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)
+        codex_config::ConfigLayerStack::new(Vec::new(), requirements, requirements_toml)
             .expect("config layer stack");
 
     let config = Config::load_config_with_layer_stack(
@@ -6690,10 +6688,8 @@ async fn requirements_disallowing_default_sandbox_falls_back_to_required_default
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                allowed_sandbox_modes: Some(vec![
-                    crate::config_loader::SandboxModeRequirement::ReadOnly,
-                ]),
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
                 ..Default::default()
             }))
         }))
@@ -6715,10 +6711,10 @@ async fn explicit_sandbox_mode_falls_back_when_disallowed_by_requirements() -> s
 "#,
     )?;
 
-    let requirements = crate::config_loader::ConfigRequirementsToml {
+    let requirements = codex_config::ConfigRequirementsToml {
         allowed_approval_policies: None,
         allowed_approvals_reviewers: None,
-        allowed_sandbox_modes: Some(vec![crate::config_loader::SandboxModeRequirement::ReadOnly]),
+        allowed_sandbox_modes: Some(vec![codex_config::SandboxModeRequirement::ReadOnly]),
         remote_sandbox_config: None,
         allowed_web_search_modes: None,
         feature_requirements: None,
@@ -6851,9 +6847,9 @@ async fn requirements_web_search_mode_overrides_danger_full_access_default() -> 
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_web_search_modes: Some(vec![
-                    crate::config_loader::WebSearchModeRequirement::Cached,
+                    codex_config::WebSearchModeRequirement::Cached,
                 ]),
                 ..Default::default()
             }))
@@ -6892,7 +6888,7 @@ trust_level = "untrusted"
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(workspace.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
                 ..Default::default()
             }))
@@ -6921,7 +6917,7 @@ async fn explicit_approval_policy_falls_back_when_disallowed_by_requirements() -
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_approval_policies: Some(vec![AskForApproval::OnRequest]),
                 ..Default::default()
             }))
@@ -6942,8 +6938,8 @@ async fn feature_requirements_normalize_effective_feature_values() -> std::io::R
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
                         ("shell_tool".to_string(), false),
@@ -6976,8 +6972,8 @@ async fn feature_requirements_auto_review_disables_guardian_approval() -> std::i
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([("auto_review".to_string(), false)]),
                 }),
                 ..Default::default()
@@ -6998,8 +6994,8 @@ async fn browser_feature_requirements_are_valid() -> std::io::Result<()> {
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("in_app_browser".to_string(), false),
                         ("browser_use".to_string(), false),
@@ -7033,8 +7029,8 @@ shell_tool = true
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
                         ("shell_tool".to_string(), false),
@@ -7180,7 +7176,7 @@ async fn requirements_disallowing_default_approvals_reviewer_falls_back_to_requi
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -7206,7 +7202,7 @@ async fn root_approvals_reviewer_falls_back_when_disallowed_by_requirements() ->
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -7243,7 +7239,7 @@ approvals_reviewer = "user"
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![ApprovalsReviewer::AutoReview]),
                 ..Default::default()
             }))
@@ -7269,7 +7265,7 @@ async fn approvals_reviewer_preserves_valid_user_choice_when_allowed_by_requirem
         .codex_home(codex_home.path().to_path_buf())
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
                 allowed_approvals_reviewers: Some(vec![
                     ApprovalsReviewer::User,
                     ApprovalsReviewer::AutoReview,
@@ -7421,8 +7417,8 @@ async fn feature_requirements_normalize_runtime_feature_mutations() -> std::io::
     let mut config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([
                         ("personality".to_string(), true),
                         ("shell_tool".to_string(), false),
@@ -7457,8 +7453,8 @@ async fn feature_requirements_warn_on_collab_legacy_alias() -> std::io::Result<(
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([("collab".to_string(), true)]),
                 }),
                 ..Default::default()
@@ -7487,8 +7483,8 @@ async fn feature_requirements_warn_and_ignore_unknown_feature() -> std::io::Resu
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .cloud_requirements(CloudRequirementsLoader::new(async {
-            Ok(Some(crate::config_loader::ConfigRequirementsToml {
-                feature_requirements: Some(crate::config_loader::FeatureRequirementsToml {
+            Ok(Some(codex_config::ConfigRequirementsToml {
+                feature_requirements: Some(codex_config::FeatureRequirementsToml {
                     entries: BTreeMap::from([("made_up_feature".to_string(), true)]),
                 }),
                 ..Default::default()
