@@ -378,7 +378,7 @@ Path(r"{log_path}").write_text(json.dumps({{
     }];
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        None,
+        /*config_layer_stack*/ None,
         plugin_hook_sources,
         CommandShell {
             program: String::new(),
