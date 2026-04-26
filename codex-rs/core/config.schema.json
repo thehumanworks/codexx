@@ -859,6 +859,35 @@
         }
       ]
     },
+    "HookConfig": {
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "key": {
+          "type": "string"
+        },
+        "plugin_id": {
+          "default": null,
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/definitions/HookConfigSource"
+        }
+      },
+      "required": [
+        "enabled",
+        "key",
+        "source"
+      ],
+      "type": "object"
+    },
+    "HookConfigSource": {
+      "enum": [
+        "plugin"
+      ],
+      "type": "string"
+    },
     "HookEventsToml": {
       "properties": {
         "PermissionRequest": {
@@ -900,6 +929,13 @@
           "default": [],
           "items": {
             "$ref": "#/definitions/MatcherGroup"
+          },
+          "type": "array"
+        },
+        "config": {
+          "default": [],
+          "items": {
+            "$ref": "#/definitions/HookConfig"
           },
           "type": "array"
         }

@@ -430,3 +430,93 @@ Path(r"{log_path}").write_text(json.dumps({{
         })
     );
 }
+
+#[test]
+fn plugin_hook_sources_can_be_disabled_by_user_config() {
+    let temp = tempdir().expect("create temp dir");
+    let plugin_root =
+        AbsolutePathBuf::try_from(temp.path().join("demo-plugin")).expect("plugin root");
+    let source_path = plugin_root.join("hooks/hooks.json");
+    let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
+    let plugin_hook_sources = vec![PluginHookSource {
+        plugin_id,
+        plugin_root,
+        source_path,
+        source_relative_path: "hooks/hooks.json".to_string(),
+        hooks: HookEventsToml {
+            pre_tool_use: vec![MatcherGroup {
+                matcher: Some("Bash".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: "echo plugin".to_string(),
+                    timeout_sec: Some(5),
+                    r#async: false,
+                    status_message: None,
+                }],
+            }],
+            ..Default::default()
+        },
+    }];
+    let mut config_toml = TomlValue::Table(Default::default());
+    let TomlValue::Table(config_table) = &mut config_toml else {
+        unreachable!("config TOML root should be a table");
+    };
+    let mut hooks_table = TomlValue::Table(Default::default());
+    let TomlValue::Table(hooks_entries) = &mut hooks_table else {
+        unreachable!("hooks entry should be a table");
+    };
+    let mut config_entry = TomlValue::Table(Default::default());
+    let TomlValue::Table(config_entry_table) = &mut config_entry else {
+        unreachable!("hooks config entry should be a table");
+    };
+    config_entry_table.insert(
+        "source".to_string(),
+        TomlValue::String("plugin".to_string()),
+    );
+    config_entry_table.insert(
+        "plugin_id".to_string(),
+        TomlValue::String("demo-plugin@test-marketplace".to_string()),
+    );
+    config_entry_table.insert(
+        "key".to_string(),
+        TomlValue::String("hooks/hooks.json:PreToolUse:0:0".to_string()),
+    );
+    config_entry_table.insert("enabled".to_string(), TomlValue::Boolean(false));
+    hooks_entries.insert("config".to_string(), TomlValue::Array(vec![config_entry]));
+    config_table.insert("hooks".to_string(), hooks_table);
+    let config_path =
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute config path");
+    let config_layer_stack = ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            ConfigLayerSource::User { file: config_path },
+            config_toml,
+        )],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack");
+
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        Some(&config_layer_stack),
+        plugin_hook_sources,
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
+        session_id: ThreadId::new(),
+        turn_id: "turn-1".to_string(),
+        cwd: cwd(),
+        transcript_path: None,
+        model: "gpt-test".to_string(),
+        permission_mode: "default".to_string(),
+        tool_name: "Bash".to_string(),
+        matcher_aliases: Vec::new(),
+        tool_use_id: "tool-1".to_string(),
+        tool_input: serde_json::json!({ "command": "echo hello" }),
+    });
+
+    assert_eq!(preview, Vec::new());
+}

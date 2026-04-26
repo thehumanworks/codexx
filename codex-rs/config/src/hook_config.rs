@@ -26,6 +26,8 @@ pub struct HookEventsToml {
     pub user_prompt_submit: Vec<MatcherGroup>,
     #[serde(rename = "Stop", default)]
     pub stop: Vec<MatcherGroup>,
+    #[serde(default)]
+    pub config: Vec<HookConfig>,
 }
 
 impl HookEventsToml {
@@ -37,6 +39,7 @@ impl HookEventsToml {
             session_start,
             user_prompt_submit,
             stop,
+            config: _,
         } = self;
         pre_tool_use.is_empty()
             && permission_request.is_empty()
@@ -54,6 +57,7 @@ impl HookEventsToml {
             session_start,
             user_prompt_submit,
             stop,
+            config: _,
         } = self;
         [
             pre_tool_use,
@@ -79,6 +83,21 @@ impl HookEventsToml {
             (HookEventName::Stop, self.stop),
         ]
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HookConfigSource {
+    Plugin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HookConfig {
+    pub source: HookConfigSource,
+    #[serde(default)]
+    pub plugin_id: Option<String>,
+    pub key: String,
+    pub enabled: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -1,6 +1,8 @@
 pub(crate) mod command_runner;
+pub(crate) mod config_rules;
 pub(crate) mod discovery;
 pub(crate) mod dispatcher;
+pub(crate) mod inventory;
 pub(crate) mod output_parser;
 pub(crate) mod schema_loader;
 

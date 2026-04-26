@@ -75,6 +75,14 @@ use codex_app_server_protocol::GetConversationSummaryParams;
 use codex_app_server_protocol::GetConversationSummaryResponse;
 use codex_app_server_protocol::GitDiffToRemoteResponse;
 use codex_app_server_protocol::GitInfo as ApiGitInfo;
+use codex_app_server_protocol::HookConfigSource as ApiHookConfigSource;
+use codex_app_server_protocol::HookErrorInfo;
+use codex_app_server_protocol::HookMetadata;
+use codex_app_server_protocol::HooksConfigWriteParams;
+use codex_app_server_protocol::HooksConfigWriteResponse;
+use codex_app_server_protocol::HooksListEntry;
+use codex_app_server_protocol::HooksListParams;
+use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
@@ -296,6 +304,7 @@ use codex_feedback::CodexFeedback;
 use codex_feedback::FeedbackUploadOptions;
 use codex_git_utils::git_diff_to_remote;
 use codex_git_utils::resolve_root_git_project_for_trust;
+use codex_hooks::HookInventoryEntry;
 use codex_login::AuthManager;
 use codex_login::CLIENT_ID;
 use codex_login::CodexAuth;
@@ -1042,6 +1051,10 @@ impl CodexMessageProcessor {
                 self.skills_list(to_connection_request_id(request_id), params)
                     .await;
             }
+            ClientRequest::HooksList { request_id, params } => {
+                self.hooks_list(to_connection_request_id(request_id), params)
+                    .await;
+            }
             ClientRequest::MarketplaceAdd { request_id, params } => {
                 self.marketplace_add(to_connection_request_id(request_id), params)
                     .await;
@@ -1068,6 +1081,10 @@ impl CodexMessageProcessor {
             }
             ClientRequest::SkillsConfigWrite { request_id, params } => {
                 self.skills_config_write(to_connection_request_id(request_id), params)
+                    .await;
+            }
+            ClientRequest::HooksConfigWrite { request_id, params } => {
+                self.hooks_config_write(to_connection_request_id(request_id), params)
                     .await;
             }
             ClientRequest::PluginInstall { request_id, params } => {
@@ -6896,6 +6913,84 @@ impl CodexMessageProcessor {
             .send_response(request_id, SkillsListResponse { data })
             .await;
     }
+
+    async fn hooks_list(&self, request_id: ConnectionRequestId, params: HooksListParams) {
+        let mut cwds = params.cwds.unwrap_or_default();
+        if cwds.is_empty() {
+            cwds.push(self.config.cwd.to_path_buf());
+        }
+
+        let auth = self.auth_manager.auth().await;
+        let plugins_manager = self.thread_manager.plugins_manager();
+        let mut data = Vec::new();
+        for cwd in cwds {
+            let cwd_abs = match AbsolutePathBuf::relative_to_current_dir(cwd.as_path()) {
+                Ok(path) => path,
+                Err(err) => {
+                    let error_path = cwd.clone();
+                    data.push(HooksListEntry {
+                        cwd,
+                        hooks: Vec::new(),
+                        errors: vec![HookErrorInfo {
+                            path: error_path,
+                            message: err.to_string(),
+                        }],
+                    });
+                    continue;
+                }
+            };
+
+            let config = match self
+                .config_manager
+                .load_latest_config(Some(cwd_abs.to_path_buf()))
+                .await
+            {
+                Ok(config) => config,
+                Err(err) => {
+                    let error_path = cwd.clone();
+                    data.push(HooksListEntry {
+                        cwd,
+                        hooks: Vec::new(),
+                        errors: vec![HookErrorInfo {
+                            path: error_path,
+                            message: err.to_string(),
+                        }],
+                    });
+                    continue;
+                }
+            };
+            let workspace_codex_plugins_enabled = self
+                .workspace_codex_plugins_enabled(&config, auth.as_ref())
+                .await;
+            let plugin_hook_sources = if config.features.enabled(Feature::PluginHooks)
+                && workspace_codex_plugins_enabled
+            {
+                plugins_manager
+                    .plugins_for_config(&config)
+                    .await
+                    .effective_plugin_hook_sources()
+            } else {
+                Vec::new()
+            };
+            let hooks = codex_hooks::list_plugin_hooks(
+                Some(&config.config_layer_stack),
+                &plugin_hook_sources,
+            )
+            .into_iter()
+            .map(hook_to_info)
+            .collect();
+            data.push(HooksListEntry {
+                cwd,
+                hooks,
+                errors: Vec::new(),
+            });
+        }
+
+        self.outgoing
+            .send_response(request_id, HooksListResponse { data })
+            .await;
+    }
+
     async fn marketplace_remove(
         &self,
         request_id: ConnectionRequestId,
@@ -7068,6 +7163,71 @@ impl CodexMessageProcessor {
                 let error = JSONRPCErrorError {
                     code: INTERNAL_ERROR_CODE,
                     message: format!("failed to update skill settings: {err}"),
+                    data: None,
+                };
+                self.outgoing.send_error(request_id, error).await;
+            }
+        }
+    }
+
+    async fn hooks_config_write(
+        &self,
+        request_id: ConnectionRequestId,
+        params: HooksConfigWriteParams,
+    ) {
+        let HooksConfigWriteParams {
+            source,
+            plugin_id,
+            key,
+            enabled,
+        } = params;
+        let edit = match source {
+            ApiHookConfigSource::Plugin => {
+                let Some(plugin_id) = plugin_id.filter(|plugin_id| !plugin_id.trim().is_empty())
+                else {
+                    self.send_invalid_request_error(
+                        request_id,
+                        "hooks/config/write requires pluginId when source is plugin".to_string(),
+                    )
+                    .await;
+                    return;
+                };
+                if key.trim().is_empty() {
+                    self.send_invalid_request_error(
+                        request_id,
+                        "hooks/config/write requires a non-empty key".to_string(),
+                    )
+                    .await;
+                    return;
+                }
+                ConfigEdit::SetHookConfig {
+                    plugin_id,
+                    key,
+                    enabled,
+                }
+            }
+        };
+        let result = ConfigEditsBuilder::new(&self.config.codex_home)
+            .with_edits([edit])
+            .apply()
+            .await;
+
+        match result {
+            Ok(()) => {
+                self.thread_manager.plugins_manager().clear_cache();
+                self.outgoing
+                    .send_response(
+                        request_id,
+                        HooksConfigWriteResponse {
+                            effective_enabled: enabled,
+                        },
+                    )
+                    .await;
+            }
+            Err(err) => {
+                let error = JSONRPCErrorError {
+                    code: INTERNAL_ERROR_CODE,
+                    message: format!("failed to write hooks config: {err}"),
                     data: None,
                 };
                 self.outgoing.send_error(request_id, error).await;
@@ -9385,6 +9545,23 @@ fn plugin_skills_to_info(
             enabled: !disabled_skill_paths.contains(&skill.path_to_skills_md),
         })
         .collect()
+}
+
+fn hook_to_info(hook: HookInventoryEntry) -> HookMetadata {
+    HookMetadata {
+        source: hook.source.into(),
+        plugin_id: hook.plugin_id,
+        key: hook.key,
+        event_name: hook.event_name.into(),
+        matcher: hook.matcher,
+        handler_type: hook.handler_type.into(),
+        command: hook.command,
+        timeout_sec: hook.timeout_sec,
+        status_message: hook.status_message,
+        source_path: hook.source_path,
+        source_relative_path: hook.source_relative_path,
+        enabled: hook.enabled,
+    }
 }
 
 fn local_plugin_interface_to_info(interface: PluginManifestInterface) -> PluginInterface {

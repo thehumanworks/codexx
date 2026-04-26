@@ -18,6 +18,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 use super::ConfiguredHandler;
+use super::config_rules::HookConfigRules;
+use super::config_rules::hook_config_key;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
 use codex_protocol::protocol::HookSource;
@@ -33,6 +35,20 @@ struct HookHandlerSource<'a> {
     is_managed: bool,
     source: HookSource,
     env: HashMap<String, String>,
+    plugin: Option<PluginHandlerSource>,
+}
+
+#[derive(Clone)]
+struct PluginHandlerSource {
+    plugin_id: String,
+    source_relative_path: String,
+}
+
+struct AppendGroupHandlersContext<'a, 'b> {
+    handlers: &'a mut Vec<ConfiguredHandler>,
+    warnings: &'a mut Vec<String>,
+    display_order: &'a mut i64,
+    hook_config_rules: &'b HookConfigRules,
 }
 
 pub(crate) fn discover_handlers(
@@ -48,6 +64,7 @@ pub(crate) fn discover_handlers(
             &mut warnings,
             &mut display_order,
             plugin_hook_sources,
+            &HookConfigRules::default(),
         );
         return DiscoveryResult { handlers, warnings };
     };
@@ -55,6 +72,7 @@ pub(crate) fn discover_handlers(
     let mut handlers = Vec::new();
     let mut warnings = Vec::new();
     let mut display_order = 0_i64;
+    let hook_config_rules = HookConfigRules::from_stack(config_layer_stack, &mut warnings);
 
     append_managed_requirement_handlers(
         &mut handlers,
@@ -93,8 +111,10 @@ pub(crate) fn discover_handlers(
                     is_managed: false,
                     source: hook_source,
                     env: HashMap::new(),
+                    plugin: None,
                 },
                 hook_events,
+                &hook_config_rules,
             );
         }
 
@@ -108,8 +128,10 @@ pub(crate) fn discover_handlers(
                     is_managed: false,
                     source: hook_source,
                     env: HashMap::new(),
+                    plugin: None,
                 },
                 hook_events,
+                &hook_config_rules,
             );
         }
     }
@@ -119,6 +141,7 @@ pub(crate) fn discover_handlers(
         &mut warnings,
         &mut display_order,
         plugin_hook_sources,
+        &hook_config_rules,
     );
 
     DiscoveryResult { handlers, warnings }
@@ -147,8 +170,10 @@ fn append_managed_requirement_handlers(
             is_managed: true,
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             env: HashMap::new(),
+            plugin: None,
         },
         managed_hooks.get().hooks.clone(),
+        &HookConfigRules::default(),
     );
 }
 
@@ -157,14 +182,15 @@ fn append_plugin_hook_sources(
     warnings: &mut Vec<String>,
     display_order: &mut i64,
     plugin_hook_sources: Vec<PluginHookSource>,
+    hook_config_rules: &HookConfigRules,
 ) {
-    // TODO(abhinav): check enabled/trusted state here before plugin hooks become runnable.
     for source in plugin_hook_sources {
         let PluginHookSource {
+            plugin_id,
             plugin_root,
             source_path,
+            source_relative_path,
             hooks,
-            ..
         } = source;
         let mut env = HashMap::new();
         let plugin_root_value = plugin_root.display().to_string();
@@ -180,8 +206,13 @@ fn append_plugin_hook_sources(
                 is_managed: false,
                 source: HookSource::Plugin,
                 env,
+                plugin: Some(PluginHandlerSource {
+                    plugin_id: plugin_id.as_key(),
+                    source_relative_path,
+                }),
             },
             hooks,
+            hook_config_rules,
         );
     }
 }
@@ -328,6 +359,7 @@ fn append_hook_events(
     display_order: &mut i64,
     source: HookHandlerSource<'_>,
     hook_events: HookEventsToml,
+    hook_config_rules: &HookConfigRules,
 ) {
     for (event_name, groups) in hook_events.into_matcher_groups() {
         append_matcher_groups(
@@ -337,6 +369,7 @@ fn append_hook_events(
             source.clone(),
             event_name,
             groups,
+            hook_config_rules,
         );
     }
 }
@@ -348,14 +381,20 @@ fn append_matcher_groups(
     source: HookHandlerSource<'_>,
     event_name: codex_protocol::protocol::HookEventName,
     groups: Vec<MatcherGroup>,
+    hook_config_rules: &HookConfigRules,
 ) {
-    for group in groups {
+    let mut context = AppendGroupHandlersContext {
+        handlers,
+        warnings,
+        display_order,
+        hook_config_rules,
+    };
+    for (group_index, group) in groups.into_iter().enumerate() {
         append_group_handlers(
-            handlers,
-            warnings,
-            display_order,
+            &mut context,
             source.clone(),
             event_name,
+            group_index,
             matcher_pattern_for_event(event_name, group.matcher.as_deref()),
             group.hooks,
         );
@@ -363,25 +402,39 @@ fn append_matcher_groups(
 }
 
 fn append_group_handlers(
-    handlers: &mut Vec<ConfiguredHandler>,
-    warnings: &mut Vec<String>,
-    display_order: &mut i64,
+    context: &mut AppendGroupHandlersContext<'_, '_>,
     source: HookHandlerSource<'_>,
     event_name: codex_protocol::protocol::HookEventName,
+    group_index: usize,
     matcher: Option<&str>,
     group_handlers: Vec<HookHandlerConfig>,
 ) {
     if let Some(matcher) = matcher
         && let Err(err) = validate_matcher_pattern(matcher)
     {
-        warnings.push(format!(
+        context.warnings.push(format!(
             "invalid matcher {matcher:?} in {}: {err}",
             source.path.display()
         ));
         return;
     }
 
-    for handler in group_handlers {
+    for (handler_index, handler) in group_handlers.into_iter().enumerate() {
+        if let Some(plugin) = &source.plugin {
+            let key = hook_config_key(
+                &plugin.source_relative_path,
+                event_name,
+                group_index,
+                handler_index,
+            );
+            if !context
+                .hook_config_rules
+                .enabled_for_plugin_hook(&plugin.plugin_id, &key)
+            {
+                continue;
+            }
+        }
+
         match handler {
             HookHandlerConfig::Command {
                 command,
@@ -390,21 +443,21 @@ fn append_group_handlers(
                 status_message,
             } => {
                 if r#async {
-                    warnings.push(format!(
+                    context.warnings.push(format!(
                         "skipping async hook in {}: async hooks are not supported yet",
                         source.path.display()
                     ));
                     continue;
                 }
                 if command.trim().is_empty() {
-                    warnings.push(format!(
+                    context.warnings.push(format!(
                         "skipping empty hook command in {}",
                         source.path.display()
                     ));
                     continue;
                 }
                 let timeout_sec = timeout_sec.unwrap_or(600).max(1);
-                handlers.push(ConfiguredHandler {
+                context.handlers.push(ConfiguredHandler {
                     event_name,
                     is_managed: source.is_managed,
                     matcher: matcher.map(ToOwned::to_owned),
@@ -413,16 +466,16 @@ fn append_group_handlers(
                     status_message,
                     source_path: source.path.clone(),
                     source: source.source,
-                    display_order: *display_order,
+                    display_order: *context.display_order,
                     env: source.env.clone(),
                 });
-                *display_order += 1;
+                *context.display_order += 1;
             }
-            HookHandlerConfig::Prompt {} => warnings.push(format!(
+            HookHandlerConfig::Prompt {} => context.warnings.push(format!(
                 "skipping prompt hook in {}: prompt hooks are not supported yet",
                 source.path.display()
             )),
-            HookHandlerConfig::Agent {} => warnings.push(format!(
+            HookHandlerConfig::Agent {} => context.warnings.push(format!(
                 "skipping agent hook in {}: agent hooks are not supported yet",
                 source.path.display()
             )),
@@ -489,7 +542,12 @@ mod tests {
             is_managed: false,
             source: hook_source(),
             env: std::collections::HashMap::new(),
+            plugin: None,
         }
+    }
+
+    fn hook_config_rules() -> crate::engine::config_rules::HookConfigRules {
+        crate::engine::config_rules::HookConfigRules::default()
     }
 
     fn command_group(matcher: Option<&str>) -> MatcherGroup {
@@ -518,6 +576,7 @@ mod tests {
             hook_handler_source(&source_path),
             HookEventName::UserPromptSubmit,
             vec![command_group(Some("["))],
+            &hook_config_rules(),
         );
 
         assert_eq!(warnings, Vec::<String>::new());
@@ -552,6 +611,7 @@ mod tests {
             hook_handler_source(&source_path),
             HookEventName::PreToolUse,
             vec![command_group(Some("^Bash$"))],
+            &hook_config_rules(),
         );
 
         assert_eq!(warnings, Vec::<String>::new());
@@ -586,6 +646,7 @@ mod tests {
             hook_handler_source(&source_path),
             HookEventName::PreToolUse,
             vec![command_group(Some("*"))],
+            &hook_config_rules(),
         );
 
         assert_eq!(warnings, Vec::<String>::new());
@@ -607,6 +668,7 @@ mod tests {
             hook_handler_source(&source_path),
             HookEventName::PostToolUse,
             vec![command_group(Some("Edit|Write"))],
+            &hook_config_rules(),
         );
 
         assert_eq!(warnings, Vec::<String>::new());

@@ -134,6 +134,58 @@ enabled = false
 }
 
 #[test]
+fn set_hook_config_writes_disabled_plugin_entry() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([ConfigEdit::SetHookConfig {
+            plugin_id: "demo-plugin@test-marketplace".to_string(),
+            key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+            enabled: false,
+        }])
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"[[hooks.config]]
+source = "plugin"
+plugin_id = "demo-plugin@test-marketplace"
+key = "hooks/hooks.json:PreToolUse:0:0"
+enabled = false
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
+fn set_hook_config_removes_entry_when_enabled() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"[[hooks.config]]
+source = "plugin"
+plugin_id = "demo-plugin@test-marketplace"
+key = "hooks/hooks.json:PreToolUse:0:0"
+enabled = false
+"#,
+    )
+    .expect("seed config");
+
+    ConfigEditsBuilder::new(codex_home)
+        .with_edits([ConfigEdit::SetHookConfig {
+            plugin_id: "demo-plugin@test-marketplace".to_string(),
+            key: "hooks/hooks.json:PreToolUse:0:0".to_string(),
+            enabled: true,
+        }])
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    assert_eq!(contents, "");
+}
+
+#[test]
 fn blocking_set_model_preserves_inline_table_contents() {
     let tmp = tempdir().expect("tmpdir");
     let codex_home = tmp.path();

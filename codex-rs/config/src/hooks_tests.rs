@@ -1,5 +1,7 @@
 use pretty_assertions::assert_eq;
 
+use super::HookConfig;
+use super::HookConfigSource;
 use super::HookEventsToml;
 use super::HookHandlerConfig;
 use super::HooksFile;
@@ -78,6 +80,30 @@ statusMessage = "checking"
             }],
             ..Default::default()
         }
+    );
+}
+
+#[test]
+fn hook_events_deserialize_config_overrides() {
+    let parsed: HookEventsToml = toml::from_str(
+        r#"
+[[config]]
+source = "plugin"
+plugin_id = "openai-curated/superpowers"
+key = "hooks/hooks.json:SessionStart:0:0"
+enabled = false
+"#,
+    )
+    .expect("hook config TOML should deserialize");
+
+    assert_eq!(
+        parsed.config,
+        vec![HookConfig {
+            source: HookConfigSource::Plugin,
+            plugin_id: Some("openai-curated/superpowers".to_string()),
+            key: "hooks/hooks.json:SessionStart:0:0".to_string(),
+            enabled: false,
+        }]
     );
 }
 
