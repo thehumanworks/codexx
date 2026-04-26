@@ -1,4 +1,5 @@
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
+use crate::manifest::PluginManifestHooks;
 use crate::manifest::PluginManifestPaths;
 use crate::manifest::load_plugin_manifest;
 use crate::marketplace::MarketplacePluginSource;
@@ -7,6 +8,7 @@ use crate::marketplace::load_marketplace;
 use crate::store::PluginStore;
 use crate::store::plugin_version_for_source;
 use codex_config::ConfigLayerStack;
+use codex_config::HooksFile;
 use codex_config::types::McpServerConfig;
 use codex_config::types::PluginConfig;
 use codex_core_skills::SkillMetadata;
@@ -19,6 +21,7 @@ use codex_exec_server::LOCAL_FS;
 use codex_plugin::AppConnectorId;
 use codex_plugin::LoadedPlugin;
 use codex_plugin::PluginCapabilitySummary;
+use codex_plugin::PluginHookSource;
 use codex_plugin::PluginId;
 use codex_plugin::PluginIdError;
 use codex_plugin::PluginLoadOutcome;
@@ -26,6 +29,7 @@ use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_plugins::find_plugin_manifest_path;
 use serde::Deserialize;
 use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
@@ -39,6 +43,7 @@ use tempfile::TempDir;
 use tracing::warn;
 
 const DEFAULT_SKILLS_DIR_NAME: &str = "skills";
+const DEFAULT_HOOKS_CONFIG_FILE: &str = "hooks/hooks.json";
 const DEFAULT_MCP_CONFIG_FILE: &str = ".mcp.json";
 const DEFAULT_APP_CONFIG_FILE: &str = ".app.json";
 const CONFIG_TOML_FILE: &str = "config.toml";
@@ -477,6 +482,8 @@ async fn load_plugin(
         has_enabled_skills: false,
         mcp_servers: HashMap::new(),
         apps: Vec::new(),
+        hook_sources: Vec::new(),
+        hook_load_warnings: Vec::new(),
         error: None,
     };
 
@@ -484,14 +491,14 @@ async fn load_plugin(
         return loaded_plugin;
     }
 
-    let plugin_root = match plugin_id {
-        Ok(_) => match active_plugin_root {
-            Some(plugin_root) => plugin_root,
-            None => {
+    let (loaded_plugin_id, plugin_root) = match plugin_id {
+        Ok(plugin_id) => {
+            let Some(plugin_root) = active_plugin_root else {
                 loaded_plugin.error = Some("plugin is not installed".to_string());
                 return loaded_plugin;
-            }
-        },
+            };
+            (plugin_id, plugin_root)
+        }
         Err(err) => {
             loaded_plugin.error = Some(err.to_string());
             return loaded_plugin;
@@ -545,6 +552,9 @@ async fn load_plugin(
     }
     loaded_plugin.mcp_servers = mcp_servers;
     loaded_plugin.apps = load_plugin_apps(plugin_root.as_path()).await;
+    let hook_discovery = load_plugin_hooks(&plugin_root, &loaded_plugin_id, manifest_paths);
+    loaded_plugin.hook_sources = hook_discovery.sources;
+    loaded_plugin.hook_load_warnings = hook_discovery.warnings;
     loaded_plugin
 }
 
@@ -672,6 +682,97 @@ fn default_app_config_paths(plugin_root: &Path) -> Vec<AbsolutePathBuf> {
     paths.sort_unstable_by(|left, right| left.as_path().cmp(right.as_path()));
     paths.dedup_by(|left, right| left.as_path() == right.as_path());
     paths
+}
+
+#[derive(Debug, Default)]
+pub struct PluginHookDiscovery {
+    pub sources: Vec<PluginHookSource>,
+    pub warnings: Vec<String>,
+}
+
+pub fn load_plugin_hooks(
+    plugin_root: &AbsolutePathBuf,
+    plugin_id: &PluginId,
+    manifest_paths: &PluginManifestPaths,
+) -> PluginHookDiscovery {
+    let mut discovery = PluginHookDiscovery::default();
+    match &manifest_paths.hooks {
+        Some(PluginManifestHooks::Paths(paths)) => {
+            for path in paths {
+                append_plugin_hook_file(plugin_root, plugin_id, path, &mut discovery);
+            }
+        }
+        Some(PluginManifestHooks::Inline(hooks_files)) => {
+            let manifest_path = find_plugin_manifest_path(plugin_root.as_path())
+                .and_then(|path| AbsolutePathBuf::try_from(path).ok())
+                .unwrap_or_else(|| plugin_root.join(".codex-plugin/plugin.json"));
+            for (index, hooks_file) in hooks_files.iter().enumerate() {
+                if hooks_file.hooks.is_empty() {
+                    continue;
+                }
+                discovery.sources.push(PluginHookSource {
+                    plugin_id: plugin_id.clone(),
+                    plugin_root: plugin_root.clone(),
+                    source_path: manifest_path.clone(),
+                    source_relative_path: format!("plugin.json#hooks[{index}]"),
+                    hooks: hooks_file.hooks.clone(),
+                });
+            }
+        }
+        None => {
+            let default_path = plugin_root.join(DEFAULT_HOOKS_CONFIG_FILE);
+            if default_path.as_path().is_file() {
+                append_plugin_hook_file(plugin_root, plugin_id, &default_path, &mut discovery);
+            }
+        }
+    }
+    discovery
+}
+
+fn append_plugin_hook_file(
+    plugin_root: &AbsolutePathBuf,
+    plugin_id: &PluginId,
+    path: &AbsolutePathBuf,
+    discovery: &mut PluginHookDiscovery,
+) {
+    let contents = match fs::read_to_string(path.as_path()) {
+        Ok(contents) => contents,
+        Err(err) => {
+            discovery.warnings.push(format!(
+                "failed to read plugin hooks config {}: {err}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    let parsed = match serde_json::from_str::<HooksFile>(&contents) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            discovery.warnings.push(format!(
+                "failed to parse plugin hooks config {}: {err}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    if parsed.hooks.is_empty() {
+        return;
+    }
+
+    discovery.sources.push(PluginHookSource {
+        plugin_id: plugin_id.clone(),
+        plugin_root: plugin_root.clone(),
+        source_path: path.clone(),
+        source_relative_path: plugin_relative_path(plugin_root.as_path(), path.as_path()),
+        hooks: parsed.hooks,
+    });
+}
+
+fn plugin_relative_path(plugin_root: &Path, path: &Path) -> String {
+    path.strip_prefix(plugin_root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
 }
 
 async fn load_apps_from_paths(
@@ -1109,6 +1210,165 @@ mod tests {
             "export-backup"
         );
         assert_eq!(curated_plugin_cache_version("0123456"), "0123456");
+    }
+
+    #[test]
+    fn load_plugin_hooks_discovers_default_hooks_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plugin_root =
+            AbsolutePathBuf::try_from(tmp.path().join("demo-plugin")).expect("plugin root");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).expect("create manifest dir");
+        fs::create_dir_all(plugin_root.join("hooks")).expect("create hooks dir");
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{ "name": "demo-plugin" }"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            plugin_root.join("hooks/hooks.json"),
+            r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [{ "type": "command", "command": "echo default" }]
+      }
+    ]
+  }
+}"#,
+        )
+        .expect("write hooks");
+
+        let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+        let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
+        let discovery = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
+
+        assert_eq!(discovery.warnings, Vec::<String>::new());
+        assert_eq!(discovery.sources.len(), 1);
+        assert_eq!(
+            discovery.sources[0].plugin_id,
+            PluginId::parse("demo-plugin@test-marketplace").expect("plugin id")
+        );
+        assert_eq!(
+            discovery.sources[0].source_relative_path,
+            "hooks/hooks.json"
+        );
+        assert_eq!(discovery.sources[0].hooks.handler_count(), 1);
+    }
+
+    #[test]
+    fn load_plugin_hooks_manifest_paths_replace_default_hooks_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plugin_root =
+            AbsolutePathBuf::try_from(tmp.path().join("demo-plugin")).expect("plugin root");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).expect("create manifest dir");
+        fs::create_dir_all(plugin_root.join("hooks")).expect("create hooks dir");
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{
+  "name": "demo-plugin",
+  "hooks": ["./hooks/one.json", "./hooks/two.json"]
+}"#,
+        )
+        .expect("write manifest");
+        fs::write(
+            plugin_root.join("hooks/hooks.json"),
+            r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "echo ignored" }]
+      }
+    ]
+  }
+}"#,
+        )
+        .expect("write default hooks");
+        fs::write(
+            plugin_root.join("hooks/one.json"),
+            r#"{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "echo one" }]
+      }
+    ]
+  }
+}"#,
+        )
+        .expect("write first hooks");
+        fs::write(
+            plugin_root.join("hooks/two.json"),
+            r#"{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [{ "type": "command", "command": "echo two" }]
+      }
+    ]
+  }
+}"#,
+        )
+        .expect("write second hooks");
+
+        let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+        let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
+        let discovery = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
+
+        assert_eq!(discovery.warnings, Vec::<String>::new());
+        assert_eq!(
+            discovery
+                .sources
+                .iter()
+                .map(|source| source.source_relative_path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["hooks/one.json", "hooks/two.json"]
+        );
+        assert_eq!(
+            discovery
+                .sources
+                .iter()
+                .map(|source| source.hooks.handler_count())
+                .collect::<Vec<_>>(),
+            vec![1, 1]
+        );
+    }
+
+    #[test]
+    fn load_plugin_hooks_supports_inline_manifest_hooks() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plugin_root =
+            AbsolutePathBuf::try_from(tmp.path().join("demo-plugin")).expect("plugin root");
+        fs::create_dir_all(plugin_root.join(".codex-plugin")).expect("create manifest dir");
+        fs::write(
+            plugin_root.join(".codex-plugin/plugin.json"),
+            r#"{
+  "name": "demo-plugin",
+  "hooks": {
+    "hooks": {
+      "SessionStart": [
+        {
+          "matcher": "startup",
+          "hooks": [{ "type": "command", "command": "echo inline" }]
+        }
+      ]
+    }
+  }
+}"#,
+        )
+        .expect("write manifest");
+
+        let manifest = load_plugin_manifest(plugin_root.as_path()).expect("manifest");
+        let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
+        let discovery = load_plugin_hooks(&plugin_root, &plugin_id, &manifest.paths);
+
+        assert_eq!(discovery.warnings, Vec::<String>::new());
+        assert_eq!(discovery.sources.len(), 1);
+        assert_eq!(
+            discovery.sources[0].source_relative_path,
+            "plugin.json#hooks[0]"
+        );
+        assert_eq!(discovery.sources[0].hooks.handler_count(), 1);
     }
 
     #[test]

@@ -15,7 +15,10 @@ use codex_config::ManagedHooksRequirementsToml;
 use codex_config::MatcherGroup;
 use codex_config::RequirementSource;
 use codex_config::TomlValue;
+use codex_plugin::PluginHookSource;
+use codex_plugin::PluginId;
 use codex_protocol::ThreadId;
+use codex_protocol::protocol::HookSource;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 
@@ -105,6 +108,8 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
+        Vec::new(),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -188,6 +193,8 @@ fn requirements_managed_hooks_warn_when_managed_dir_is_missing() {
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
+        Vec::new(),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -295,6 +302,8 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
+        Vec::new(),
+        Vec::new(),
         CommandShell {
             program: String::new(),
             args: Vec::new(),
@@ -324,4 +333,104 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
     assert!(engine.handlers.iter().all(|handler| !handler.is_managed));
     assert_eq!(preview[0].source_path, hooks_json_path);
     assert_eq!(preview[1].source_path, config_path);
+}
+
+#[tokio::test]
+async fn plugin_hook_sources_run_with_plugin_env_and_plugin_source() {
+    let temp = tempdir().expect("create temp dir");
+    let plugin_root =
+        AbsolutePathBuf::try_from(temp.path().join("demo-plugin")).expect("plugin root");
+    fs::create_dir_all(plugin_root.join("hooks")).expect("create hooks dir");
+    let source_path = plugin_root.join("hooks/hooks.json");
+    let log_path = plugin_root.join("env.json");
+    let script_path = plugin_root.join("hooks/write_env.py");
+    fs::write(
+        script_path.as_path(),
+        format!(
+            r#"import json
+import os
+from pathlib import Path
+
+Path(r"{log_path}").write_text(json.dumps({{
+    "agents": os.environ.get("AGENTS_PLUGIN_ROOT"),
+    "claude": os.environ.get("CLAUDE_PLUGIN_ROOT"),
+}}), encoding="utf-8")
+"#,
+            log_path = log_path.display(),
+        ),
+    )
+    .expect("write hook script");
+    let plugin_id = PluginId::parse("demo-plugin@test-marketplace").expect("plugin id");
+    let plugin_hook_sources = vec![PluginHookSource {
+        plugin_id,
+        plugin_root: plugin_root.clone(),
+        source_path: source_path.clone(),
+        source_relative_path: "hooks/hooks.json".to_string(),
+        hooks: HookEventsToml {
+            pre_tool_use: vec![MatcherGroup {
+                matcher: Some("Bash".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: format!("python3 {}", script_path.display()),
+                    timeout_sec: Some(5),
+                    r#async: false,
+                    status_message: None,
+                }],
+            }],
+            ..Default::default()
+        },
+    }];
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        None,
+        plugin_hook_sources,
+        Vec::new(),
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    let preview = engine.preview_pre_tool_use(&PreToolUseRequest {
+        session_id: ThreadId::new(),
+        turn_id: "turn-1".to_string(),
+        cwd: cwd(),
+        transcript_path: None,
+        model: "gpt-test".to_string(),
+        permission_mode: "default".to_string(),
+        tool_name: "Bash".to_string(),
+        matcher_aliases: Vec::new(),
+        tool_use_id: "tool-1".to_string(),
+        tool_input: serde_json::json!({ "command": "echo hello" }),
+    });
+    assert_eq!(preview.len(), 1);
+    assert_eq!(preview[0].source, HookSource::Plugin);
+    assert_eq!(preview[0].source_path, source_path);
+
+    let outcome = engine
+        .run_pre_tool_use(PreToolUseRequest {
+            session_id: ThreadId::new(),
+            turn_id: "turn-1".to_string(),
+            cwd: cwd(),
+            transcript_path: None,
+            model: "gpt-test".to_string(),
+            permission_mode: "default".to_string(),
+            tool_name: "Bash".to_string(),
+            matcher_aliases: Vec::new(),
+            tool_use_id: "tool-1".to_string(),
+            tool_input: serde_json::json!({ "command": "echo hello" }),
+        })
+        .await;
+
+    assert_eq!(outcome.hook_events.len(), 1);
+    assert_eq!(outcome.hook_events[0].run.source, HookSource::Plugin);
+    let logged: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(log_path.as_path()).expect("read env log"))
+            .expect("parse env log");
+    assert_eq!(
+        logged,
+        serde_json::json!({
+            "agents": plugin_root.display().to_string(),
+            "claude": plugin_root.display().to_string(),
+        })
+    );
 }
