@@ -1582,13 +1582,13 @@
             },
             "method": {
               "enum": [
-                "account/usageLimitBanner/track"
+                "analytics/productEvent/track"
               ],
-              "title": "Account/usageLimitBanner/trackRequestMethod",
+              "title": "Analytics/productEvent/trackRequestMethod",
               "type": "string"
             },
             "params": {
-              "$ref": "#/definitions/v2/TrackUsageLimitBannerParams"
+              "$ref": "#/definitions/v2/TrackProductAnalyticsEventParams"
             }
           },
           "required": [
@@ -1596,7 +1596,7 @@
             "method",
             "params"
           ],
-          "title": "Account/usageLimitBanner/trackRequest",
+          "title": "Analytics/productEvent/trackRequest",
           "type": "object"
         },
         {
@@ -12063,6 +12063,34 @@
         ],
         "type": "object"
       },
+      "ProductAnalyticsEvent": {
+        "oneOf": [
+          {
+            "properties": {
+              "action": {
+                "$ref": "#/definitions/v2/UsageLimitBannerAction"
+              },
+              "bannerType": {
+                "$ref": "#/definitions/v2/UsageLimitBannerType"
+              },
+              "type": {
+                "enum": [
+                  "usageLimitBanner"
+                ],
+                "title": "UsageLimitBannerProductAnalyticsEventType",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action",
+              "bannerType",
+              "type"
+            ],
+            "title": "UsageLimitBannerProductAnalyticsEvent",
+            "type": "object"
+          }
+        ]
+      },
       "ProfileV2": {
         "additionalProperties": true,
         "properties": {
@@ -16917,33 +16945,22 @@
         },
         "type": "object"
       },
-      "TrackUsageLimitBannerAction": {
-        "enum": [
-          "shown",
-          "cta_clicked"
-        ],
-        "type": "string"
-      },
-      "TrackUsageLimitBannerParams": {
+      "TrackProductAnalyticsEventParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
-          "action": {
-            "$ref": "#/definitions/v2/TrackUsageLimitBannerAction"
-          },
-          "bannerType": {
-            "$ref": "#/definitions/v2/UsageLimitBannerType"
+          "event": {
+            "$ref": "#/definitions/v2/ProductAnalyticsEvent"
           }
         },
         "required": [
-          "action",
-          "bannerType"
+          "event"
         ],
-        "title": "TrackUsageLimitBannerParams",
+        "title": "TrackProductAnalyticsEventParams",
         "type": "object"
       },
-      "TrackUsageLimitBannerResponse": {
+      "TrackProductAnalyticsEventResponse": {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "TrackUsageLimitBannerResponse",
+        "title": "TrackProductAnalyticsEventResponse",
         "type": "object"
       },
       "Turn": {
@@ -17369,6 +17386,13 @@
         ],
         "title": "TurnSteerResponse",
         "type": "object"
+      },
+      "UsageLimitBannerAction": {
+        "enum": [
+          "shown",
+          "cta_clicked"
+        ],
+        "type": "string"
       },
       "UsageLimitBannerType": {
         "enum": [

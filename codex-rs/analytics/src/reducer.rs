@@ -52,6 +52,7 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ClientResponse;
 use codex_app_server_protocol::CodexErrorInfo;
 use codex_app_server_protocol::InitializeParams;
+use codex_app_server_protocol::ProductAnalyticsEvent;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::TurnSteerResponse;
@@ -333,10 +334,17 @@ impl AnalyticsReducer {
                     }),
                 );
             }
-            ClientRequest::TrackUsageLimitBanner { params, .. } => {
-                out.push(TrackEventRequest::UsageLimitBanner(
-                    usage_limit_banner_event_request(params),
-                ));
+            ClientRequest::TrackProductAnalyticsEvent { params, .. } => {
+                let event = match params.event {
+                    ProductAnalyticsEvent::UsageLimitBanner {
+                        action,
+                        banner_type,
+                    } => TrackEventRequest::UsageLimitBanner(usage_limit_banner_event_request(
+                        action,
+                        banner_type,
+                    )),
+                };
+                out.push(event);
             }
             _ => {}
         }

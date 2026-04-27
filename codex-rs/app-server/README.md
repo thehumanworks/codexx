@@ -1559,7 +1559,6 @@ Codex supports these authentication modes. The current mode is surfaced in `acco
 - `account/rateLimits/read` — fetch ChatGPT rate limits; updates arrive via `account/rateLimits/updated` (notify).
 - `account/rateLimits/updated` (notify) — emitted whenever a user's ChatGPT rate limits change.
 - `account/sendAddCreditsNudgeEmail` — ask ChatGPT to email the workspace owner about depleted credits or a reached usage limit.
-- `account/usageLimitBanner/track` — record that the CLI workspace-owner nudge prompt was shown or its CTA was clicked.
 - `mcpServer/oauthLogin/completed` (notify) — emitted after a `mcpServer/oauth/login` flow finishes for a server; payload includes `{ name, success, error? }`.
 - `mcpServer/startupStatus/updated` (notify) — emitted when a configured MCP server's startup status changes for a loaded thread; payload includes `{ name, status, error }` where `status` is `starting`, `ready`, `failed`, or `cancelled`.
 
@@ -1672,14 +1671,18 @@ Field notes:
 
 Use `creditType: "credits"` when workspace credits are depleted, or `creditType: "usage_limit"` when the workspace usage limit has been reached. If the owner was already notified recently, the response status is `cooldown_active`.
 
-### 9) Track a usage-limit banner
+## Product analytics endpoints
+
+- `analytics/productEvent/track` — record a typed client-side product analytics event.
+
+### Track a product analytics event
 
 ```json
-{ "method": "account/usageLimitBanner/track", "id": 9, "params": { "action": "shown", "bannerType": "workspace_member_usage_limit_reached" } }
+{ "method": "analytics/productEvent/track", "id": 9, "params": { "event": { "type": "usageLimitBanner", "action": "shown", "bannerType": "workspace_member_usage_limit_reached" } } }
 { "id": 9, "result": {} }
 ```
 
-Use `action: "shown"` when the banner is displayed, and `action: "cta_clicked"` when the user confirms it. The current workspace-owner nudge variants are `workspace_member_credits_depleted` and `workspace_member_usage_limit_reached`.
+The current `usageLimitBanner` product event records when the CLI workspace-owner nudge prompt is shown or its CTA is clicked. Use `action: "shown"` when the banner is displayed, and `action: "cta_clicked"` when the user confirms it. The current workspace-owner nudge variants are `workspace_member_credits_depleted` and `workspace_member_usage_limit_reached`.
 
 ## Experimental API Opt-in
 

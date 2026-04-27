@@ -20,8 +20,7 @@ use crate::facts::TurnSteerResult;
 use crate::facts::TurnSubmissionType;
 use crate::now_unix_seconds;
 use codex_app_server_protocol::CodexErrorInfo;
-use codex_app_server_protocol::TrackUsageLimitBannerAction;
-use codex_app_server_protocol::TrackUsageLimitBannerParams;
+use codex_app_server_protocol::UsageLimitBannerAction;
 use codex_app_server_protocol::UsageLimitBannerType;
 use codex_login::default_client::originator;
 use codex_plugin::PluginTelemetryMetadata;
@@ -591,35 +590,36 @@ pub(crate) fn plugin_state_event_type(state: PluginState) -> &'static str {
 }
 
 pub(crate) fn usage_limit_banner_event_request(
-    params: TrackUsageLimitBannerParams,
+    action: UsageLimitBannerAction,
+    banner_type: UsageLimitBannerType,
 ) -> UsageLimitBannerEventRequest {
-    let limit_reason = match params.banner_type {
+    let limit_reason = match banner_type {
         UsageLimitBannerType::WorkspaceMemberCreditsDepleted => "credits",
         UsageLimitBannerType::WorkspaceMemberUsageLimitReached => "usage_limit",
     };
-    let banner_type = match params.banner_type {
+    let banner_type_param = match banner_type {
         UsageLimitBannerType::WorkspaceMemberCreditsDepleted => "workspace_member_credits_depleted",
         UsageLimitBannerType::WorkspaceMemberUsageLimitReached => {
             "workspace_member_usage_limit_reached"
         }
     };
-    let cta_action = match params.banner_type {
+    let cta_action = match banner_type {
         UsageLimitBannerType::WorkspaceMemberCreditsDepleted => "notify_owner",
         UsageLimitBannerType::WorkspaceMemberUsageLimitReached => "request_increase",
     };
-    let cta_action = match params.action {
-        TrackUsageLimitBannerAction::Shown => None,
-        TrackUsageLimitBannerAction::CtaClicked => Some(cta_action),
+    let cta_action = match action {
+        UsageLimitBannerAction::Shown => None,
+        UsageLimitBannerAction::CtaClicked => Some(cta_action),
     };
 
     UsageLimitBannerEventRequest {
-        event_type: match params.action {
-            TrackUsageLimitBannerAction::Shown => "codex_usage_limit_banner_shown",
-            TrackUsageLimitBannerAction::CtaClicked => "codex_usage_limit_banner_cta_clicked",
+        event_type: match action {
+            UsageLimitBannerAction::Shown => "codex_usage_limit_banner_shown",
+            UsageLimitBannerAction::CtaClicked => "codex_usage_limit_banner_cta_clicked",
         },
         event_params: UsageLimitBannerEventParams {
             platform: "codex_cli",
-            banner_type,
+            banner_type: banner_type_param,
             limit_reason,
             cta_action,
         },

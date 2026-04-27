@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "ProductAnalyticsEvent": {
+      "oneOf": [
+        {
+          "properties": {
+            "action": {
+              "$ref": "#/definitions/UsageLimitBannerAction"
+            },
+            "bannerType": {
+              "$ref": "#/definitions/UsageLimitBannerType"
+            },
+            "type": {
+              "enum": [
+                "usageLimitBanner"
+              ],
+              "title": "UsageLimitBannerProductAnalyticsEventType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "bannerType",
+            "type"
+          ],
+          "title": "UsageLimitBannerProductAnalyticsEvent",
+          "type": "object"
+        }
+      ]
+    },
+    "UsageLimitBannerAction": {
+      "enum": [
+        "shown",
+        "cta_clicked"
+      ],
+      "type": "string"
+    },
+    "UsageLimitBannerType": {
+      "enum": [
+        "workspace_member_credits_depleted",
+        "workspace_member_usage_limit_reached"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "event": {
+      "$ref": "#/definitions/ProductAnalyticsEvent"
+    }
+  },
+  "required": [
+    "event"
+  ],
+  "title": "TrackProductAnalyticsEventParams",
+  "type": "object"
+}

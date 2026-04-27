@@ -2126,6 +2126,34 @@
       ],
       "type": "object"
     },
+    "ProductAnalyticsEvent": {
+      "oneOf": [
+        {
+          "properties": {
+            "action": {
+              "$ref": "#/definitions/UsageLimitBannerAction"
+            },
+            "bannerType": {
+              "$ref": "#/definitions/UsageLimitBannerType"
+            },
+            "type": {
+              "enum": [
+                "usageLimitBanner"
+              ],
+              "title": "UsageLimitBannerProductAnalyticsEventType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "action",
+            "bannerType",
+            "type"
+          ],
+          "title": "UsageLimitBannerProductAnalyticsEvent",
+          "type": "object"
+        }
+      ]
+    },
     "RealtimeOutputModality": {
       "enum": [
         "text",
@@ -4082,25 +4110,14 @@
       ],
       "type": "object"
     },
-    "TrackUsageLimitBannerAction": {
-      "enum": [
-        "shown",
-        "cta_clicked"
-      ],
-      "type": "string"
-    },
-    "TrackUsageLimitBannerParams": {
+    "TrackProductAnalyticsEventParams": {
       "properties": {
-        "action": {
-          "$ref": "#/definitions/TrackUsageLimitBannerAction"
-        },
-        "bannerType": {
-          "$ref": "#/definitions/UsageLimitBannerType"
+        "event": {
+          "$ref": "#/definitions/ProductAnalyticsEvent"
         }
       },
       "required": [
-        "action",
-        "bannerType"
+        "event"
       ],
       "type": "object"
     },
@@ -4286,6 +4303,13 @@
         "threadId"
       ],
       "type": "object"
+    },
+    "UsageLimitBannerAction": {
+      "enum": [
+        "shown",
+        "cta_clicked"
+      ],
+      "type": "string"
     },
     "UsageLimitBannerType": {
       "enum": [
@@ -5843,13 +5867,13 @@
         },
         "method": {
           "enum": [
-            "account/usageLimitBanner/track"
+            "analytics/productEvent/track"
           ],
-          "title": "Account/usageLimitBanner/trackRequestMethod",
+          "title": "Analytics/productEvent/trackRequestMethod",
           "type": "string"
         },
         "params": {
-          "$ref": "#/definitions/TrackUsageLimitBannerParams"
+          "$ref": "#/definitions/TrackProductAnalyticsEventParams"
         }
       },
       "required": [
@@ -5857,7 +5881,7 @@
         "method",
         "params"
       ],
-      "title": "Account/usageLimitBanner/trackRequest",
+      "title": "Analytics/productEvent/trackRequest",
       "type": "object"
     },
     {

@@ -2253,15 +2253,26 @@ pub struct SendAddCreditsNudgeEmailParams {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-pub struct TrackUsageLimitBannerParams {
-    pub action: TrackUsageLimitBannerAction,
-    pub banner_type: UsageLimitBannerType,
+pub struct TrackProductAnalyticsEventParams {
+    pub event: ProductAnalyticsEvent,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "type", rename_all = "camelCase")]
+#[ts(export_to = "v2/", tag = "type", rename_all = "camelCase")]
+pub enum ProductAnalyticsEvent {
+    UsageLimitBanner {
+        action: UsageLimitBannerAction,
+        #[serde(rename = "bannerType")]
+        #[ts(rename = "bannerType")]
+        banner_type: UsageLimitBannerType,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export_to = "v2/", rename_all = "snake_case")]
-pub enum TrackUsageLimitBannerAction {
+pub enum UsageLimitBannerAction {
     Shown,
     CtaClicked,
 }
@@ -2292,7 +2303,7 @@ pub struct SendAddCreditsNudgeEmailResponse {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
-pub struct TrackUsageLimitBannerResponse {}
+pub struct TrackProductAnalyticsEventResponse {}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]

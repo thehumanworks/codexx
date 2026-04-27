@@ -573,9 +573,9 @@ client_request_definitions! {
         response: v2::SendAddCreditsNudgeEmailResponse,
     },
 
-    TrackUsageLimitBanner => "account/usageLimitBanner/track" {
-        params: v2::TrackUsageLimitBannerParams,
-        response: v2::TrackUsageLimitBannerResponse,
+    TrackProductAnalyticsEvent => "analytics/productEvent/track" {
+        params: v2::TrackProductAnalyticsEventParams,
+        response: v2::TrackProductAnalyticsEventResponse,
     },
 
     FeedbackUpload => "feedback/upload" {
@@ -1468,23 +1468,28 @@ mod tests {
     }
 
     #[test]
-    fn serialize_track_usage_limit_banner() -> Result<()> {
-        let request = ClientRequest::TrackUsageLimitBanner {
+    fn serialize_track_product_analytics_event() -> Result<()> {
+        let request = ClientRequest::TrackProductAnalyticsEvent {
             request_id: RequestId::Integer(2),
-            params: v2::TrackUsageLimitBannerParams {
-                action: v2::TrackUsageLimitBannerAction::CtaClicked,
-                banner_type: v2::UsageLimitBannerType::WorkspaceMemberUsageLimitReached,
+            params: v2::TrackProductAnalyticsEventParams {
+                event: v2::ProductAnalyticsEvent::UsageLimitBanner {
+                    action: v2::UsageLimitBannerAction::CtaClicked,
+                    banner_type: v2::UsageLimitBannerType::WorkspaceMemberUsageLimitReached,
+                },
             },
         };
         assert_eq!(request.id(), &RequestId::Integer(2));
-        assert_eq!(request.method(), "account/usageLimitBanner/track");
+        assert_eq!(request.method(), "analytics/productEvent/track");
         assert_eq!(
             json!({
-                "method": "account/usageLimitBanner/track",
+                "method": "analytics/productEvent/track",
                 "id": 2,
                 "params": {
-                    "action": "cta_clicked",
-                    "bannerType": "workspace_member_usage_limit_reached",
+                    "event": {
+                        "type": "usageLimitBanner",
+                        "action": "cta_clicked",
+                        "bannerType": "workspace_member_usage_limit_reached",
+                    },
                 },
             }),
             serde_json::to_value(&request)?,

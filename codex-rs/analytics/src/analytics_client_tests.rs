@@ -66,6 +66,7 @@ use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::NonSteerableTurnKind;
 use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
+use codex_app_server_protocol::ProductAnalyticsEvent;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
@@ -74,8 +75,7 @@ use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus as AppServerThreadStatus;
-use codex_app_server_protocol::TrackUsageLimitBannerAction;
-use codex_app_server_protocol::TrackUsageLimitBannerParams;
+use codex_app_server_protocol::TrackProductAnalyticsEventParams;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
@@ -84,6 +84,7 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
+use codex_app_server_protocol::UsageLimitBannerAction;
 use codex_app_server_protocol::UsageLimitBannerType;
 use codex_app_server_protocol::UserInput;
 use codex_login::default_client::DEFAULT_ORIGINATOR;
@@ -2417,11 +2418,13 @@ async fn usage_limit_banner_shown_request_emits_credits_event() {
             AnalyticsFact::Request {
                 connection_id: 7,
                 request_id: RequestId::Integer(1),
-                request: Box::new(ClientRequest::TrackUsageLimitBanner {
+                request: Box::new(ClientRequest::TrackProductAnalyticsEvent {
                     request_id: RequestId::Integer(1),
-                    params: TrackUsageLimitBannerParams {
-                        action: TrackUsageLimitBannerAction::Shown,
-                        banner_type: UsageLimitBannerType::WorkspaceMemberCreditsDepleted,
+                    params: TrackProductAnalyticsEventParams {
+                        event: ProductAnalyticsEvent::UsageLimitBanner {
+                            action: UsageLimitBannerAction::Shown,
+                            banner_type: UsageLimitBannerType::WorkspaceMemberCreditsDepleted,
+                        },
                     },
                 }),
             },
@@ -2453,11 +2456,13 @@ async fn usage_limit_banner_click_request_emits_usage_limit_event() {
             AnalyticsFact::Request {
                 connection_id: 7,
                 request_id: RequestId::Integer(1),
-                request: Box::new(ClientRequest::TrackUsageLimitBanner {
+                request: Box::new(ClientRequest::TrackProductAnalyticsEvent {
                     request_id: RequestId::Integer(1),
-                    params: TrackUsageLimitBannerParams {
-                        action: TrackUsageLimitBannerAction::CtaClicked,
-                        banner_type: UsageLimitBannerType::WorkspaceMemberUsageLimitReached,
+                    params: TrackProductAnalyticsEventParams {
+                        event: ProductAnalyticsEvent::UsageLimitBanner {
+                            action: UsageLimitBannerAction::CtaClicked,
+                            banner_type: UsageLimitBannerType::WorkspaceMemberUsageLimitReached,
+                        },
                     },
                 }),
             },
