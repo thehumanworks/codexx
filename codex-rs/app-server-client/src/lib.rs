@@ -405,6 +405,7 @@ impl InProcessClientStartArgs {
             session_source: self.session_source,
             enable_codex_api_key_env: self.enable_codex_api_key_env,
             initialize,
+            identity_key: None,
             channel_capacity: self.channel_capacity,
         }
     }

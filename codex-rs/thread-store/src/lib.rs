@@ -22,6 +22,7 @@ pub use in_memory::InMemoryThreadStoreCalls;
 pub use live_thread::LiveThread;
 pub use live_thread::LiveThreadInitGuard;
 pub use local::LocalThreadStore;
+pub use remote::IDENTITY_KEY_HEADER;
 pub use remote::RemoteThreadStore;
 pub use store::ThreadStore;
 pub use types::AppendThreadItemsParams;

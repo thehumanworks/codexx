@@ -51,6 +51,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use crate::config_manager::ConfigManager;
+use crate::IdentityKey;
 use crate::error_code::INTERNAL_ERROR_CODE;
 use crate::error_code::INVALID_REQUEST_ERROR_CODE;
 use crate::error_code::OVERLOADED_ERROR_CODE;
@@ -135,6 +136,8 @@ pub struct InProcessStartArgs {
     pub enable_codex_api_key_env: bool,
     /// Initialize params used for initial handshake.
     pub initialize: InitializeParams,
+    /// Opaque identity key forwarded to remote contract implementations.
+    pub identity_key: Option<IdentityKey>,
     /// Capacity used for all runtime queues (clamped to at least 1).
     pub channel_capacity: usize,
 }
@@ -416,6 +419,7 @@ fn start_uninitialized(args: InProcessStartArgs) -> InProcessClientHandle {
                 rpc_transport: AppServerRpcTransport::InProcess,
                 remote_control_handle: None,
                 plugin_startup_tasks: crate::PluginStartupTasks::Start,
+                identity_key: args.identity_key,
             }));
             let mut thread_created_rx = processor.thread_created_receiver();
             let session = Arc::new(ConnectionSessionState::new(ConnectionOrigin::InProcess));
@@ -763,6 +767,7 @@ mod tests {
                 },
                 capabilities: None,
             },
+            identity_key: None,
             channel_capacity,
         };
         start(args).await.expect("in-process runtime should start")

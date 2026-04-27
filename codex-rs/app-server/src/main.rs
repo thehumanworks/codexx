@@ -2,6 +2,7 @@ use clap::Parser;
 use codex_app_server::AppServerRuntimeOptions;
 use codex_app_server::AppServerTransport;
 use codex_app_server::AppServerWebsocketAuthArgs;
+use codex_app_server::IdentityKey;
 use codex_app_server::PluginStartupTasks;
 use codex_app_server::run_main_with_transport_options;
 use codex_arg0::Arg0DispatchPaths;
@@ -9,6 +10,7 @@ use codex_arg0::arg0_dispatch_or_else;
 use codex_config::LoaderOverrides;
 use codex_protocol::protocol::SessionSource;
 use codex_utils_cli::CliConfigOverrides;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 // Debug-only test hook: lets integration tests point the server at a temporary
@@ -39,6 +41,10 @@ struct AppServerArgs {
     #[command(flatten)]
     auth: AppServerWebsocketAuthArgs,
 
+    /// Opaque identity key forwarded to remote contract implementations.
+    #[arg(long = "identity-key", value_name = "KEY")]
+    identity_key: Option<OsString>,
+
     /// Hidden debug-only test hook used by integration tests that spawn the
     /// production app-server binary.
     #[cfg(debug_assertions)]
@@ -60,6 +66,7 @@ fn main() -> anyhow::Result<()> {
         let session_source = args.session_source;
         let auth = args.auth.try_into_settings()?;
         let mut runtime_options = AppServerRuntimeOptions::default();
+        runtime_options.identity_key = args.identity_key.map(IdentityKey::from_os_string);
         #[cfg(debug_assertions)]
         if args.disable_plugin_startup_tasks_for_tests {
             runtime_options.plugin_startup_tasks = PluginStartupTasks::Skip;

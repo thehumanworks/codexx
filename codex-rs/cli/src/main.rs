@@ -35,6 +35,7 @@ use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use owo_colors::OwoColorize;
+use std::ffi::OsString;
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use supports_color::Stream;
@@ -440,6 +441,10 @@ struct AppServerCommand {
 
     #[command(flatten)]
     auth: codex_app_server::AppServerWebsocketAuthArgs,
+
+    /// Opaque identity key forwarded to remote contract implementations.
+    #[arg(long = "identity-key", value_name = "KEY")]
+    identity_key: Option<OsString>,
 }
 
 #[derive(Debug, Parser)]
@@ -817,6 +822,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 listen,
                 analytics_default_enabled,
                 auth,
+                identity_key,
             } = app_server_cli;
             reject_remote_mode_for_app_server_subcommand(
                 root_remote.as_deref(),
@@ -827,7 +833,13 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 None => {
                     let transport = listen;
                     let auth = auth.try_into_settings()?;
-                    codex_app_server::run_main_with_transport(
+                    let identity_key =
+                        identity_key.map(codex_app_server::IdentityKey::from_os_string);
+                    let runtime_options = codex_app_server::AppServerRuntimeOptions {
+                        identity_key,
+                        ..Default::default()
+                    };
+                    codex_app_server::run_main_with_transport_options(
                         arg0_paths.clone(),
                         root_config_overrides,
                         codex_config::LoaderOverrides::default(),
@@ -835,6 +847,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         transport,
                         codex_protocol::protocol::SessionSource::VSCode,
                         auth,
+                        runtime_options,
                     )
                     .await?;
                 }
@@ -2165,6 +2178,17 @@ mod tests {
         let app_server =
             app_server_from_args(["codex", "app-server", "--analytics-default-enabled"].as_ref());
         assert!(app_server.analytics_default_enabled);
+    }
+
+    #[test]
+    fn app_server_identity_key_flag_parses() {
+        let app_server = app_server_from_args(
+            ["codex", "app-server", "--identity-key", "tenant-key-123"].as_ref(),
+        );
+        assert_eq!(
+            app_server.identity_key.as_deref(),
+            Some(std::ffi::OsStr::new("tenant-key-123"))
+        );
     }
 
     #[test]

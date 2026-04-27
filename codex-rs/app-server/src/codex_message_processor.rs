@@ -412,6 +412,7 @@ mod plugin_mcp_oauth;
 mod plugins;
 mod token_usage_replay;
 
+use crate::IdentityKey;
 use crate::filters::compute_source_filters;
 use crate::filters::source_kind_matches;
 use crate::thread_state::ThreadListenerCommand;
@@ -674,6 +675,7 @@ pub(crate) struct CodexMessageProcessorArgs {
     pub(crate) config_manager: ConfigManager,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
+    pub(crate) identity_key: Option<IdentityKey>,
 }
 
 fn configured_thread_store(config: &Config) -> Arc<dyn ThreadStore> {
@@ -770,6 +772,7 @@ impl CodexMessageProcessor {
             config_manager,
             feedback,
             log_db,
+            identity_key: _identity_key,
         } = args;
         Self {
             auth_manager,
