@@ -355,9 +355,8 @@ impl App {
 
         self.transcript_reflow.clear_pending_reflow();
 
-        // Track that a reflow happened during an active stream or while trailing
-        // unconsolidated AgentMessageCells are still pending consolidation so
-        // ConsolidateAgentMessage can schedule a follow-up reflow.
+        // Track that a reflow happened during a stream with transient cells so stream
+        // consolidation can schedule a follow-up reflow.
         let reflow_ran_during_stream =
             !self.transcript_cells.is_empty() && self.should_mark_reflow_as_stream_time();
 
@@ -468,14 +467,11 @@ impl App {
 
     /// Return whether current transcript state should be treated as stream-time resize state.
     ///
-    /// The active stream controllers cover normal streaming. The trailing-cell checks cover the
-    /// narrow window after a controller has stopped but before the app has processed the
-    /// consolidation event that replaces transient stream cells with source-backed cells.
+    /// The plan stream controller covers normal plan streaming. The trailing-cell check covers the
+    /// narrow window after a plan controller has stopped but before the app has processed the
+    /// consolidation event that replaces transient plan stream cells with source-backed cells.
     pub(super) fn should_mark_reflow_as_stream_time(&self) -> bool {
-        self.chat_widget.has_active_agent_stream()
-            || self.chat_widget.has_active_plan_stream()
-            || trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells)
-                < self.transcript_cells.len()
+        self.chat_widget.has_active_plan_stream()
             || trailing_run_start::<history_cell::ProposedPlanStreamCell>(&self.transcript_cells)
                 < self.transcript_cells.len()
     }

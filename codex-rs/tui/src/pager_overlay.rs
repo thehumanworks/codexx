@@ -555,11 +555,10 @@ impl TranscriptOverlay {
 
     /// Replace a range of committed cells with a single consolidated cell.
     ///
-    /// Mirrors the splice performed on `App::transcript_cells` during
-    /// `ConsolidateAgentMessage` so the Ctrl+T overlay stays in sync with the
-    /// main transcript. The range is clamped defensively: cells may have been
-    /// inserted after the overlay opened, leaving it with fewer entries than
-    /// the main transcript.
+    /// Mirrors source-backed stream consolidation on `App::transcript_cells` so the Ctrl+T overlay
+    /// stays in sync with the main transcript. The range is clamped defensively: cells may have
+    /// been inserted after the overlay opened, leaving it with fewer entries than the main
+    /// transcript.
     pub(crate) fn consolidate_cells(
         &mut self,
         range: std::ops::Range<usize>,

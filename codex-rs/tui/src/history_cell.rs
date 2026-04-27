@@ -455,11 +455,13 @@ impl HistoryCell for ReasoningSummaryCell {
 }
 
 #[derive(Debug)]
+#[cfg(test)]
 pub(crate) struct AgentMessageCell {
     lines: Vec<Line<'static>>,
     is_first_line: bool,
 }
 
+#[cfg(test)]
 impl AgentMessageCell {
     pub(crate) fn new(lines: Vec<Line<'static>>, is_first_line: bool) -> Self {
         Self {
@@ -469,6 +471,7 @@ impl AgentMessageCell {
     }
 }
 
+#[cfg(test)]
 impl HistoryCell for AgentMessageCell {
     fn display_lines(&self, width: u16) -> Vec<Line<'static>> {
         adaptive_wrap_lines(
@@ -490,10 +493,8 @@ impl HistoryCell for AgentMessageCell {
 
 /// A consolidated agent message cell that stores raw markdown source and re-renders from it.
 ///
-/// After a stream finalizes, the `ConsolidateAgentMessage` handler in `App`
-/// replaces the contiguous run of `AgentMessageCell`s with a single
-/// `AgentMarkdownCell`. On terminal resize, `display_lines(width)` re-renders
-/// from source via `append_markdown`.
+/// The chat widget uses this both while assistant output is live and after the stream finalizes.
+/// On terminal resize, `display_lines(width)` re-renders from source via `append_markdown`.
 ///
 /// The cell snapshots `cwd` at construction so local file-link display remains aligned with the
 /// session that produced the message. Reusing the current process cwd during reflow would make old
@@ -5154,82 +5155,6 @@ mod tests {
         assert_eq!(
             before, after,
             "word_wrap_lines should not alter lines that already fit within width"
-        );
-    }
-
-    /// Simulate the consolidation backward-walk logic from `App::handle_event`
-    /// to verify it correctly identifies and replaces `AgentMessageCell` runs.
-    #[test]
-    fn consolidation_walker_replaces_agent_message_cells() {
-        use std::sync::Arc;
-
-        // Build a transcript with: [UserCell, AgentMsg(head), AgentMsg(cont), AgentMsg(cont)]
-        let user = Arc::new(UserHistoryCell {
-            message: "hello".to_string(),
-            text_elements: Vec::new(),
-            local_image_paths: Vec::new(),
-            remote_image_urls: Vec::new(),
-        }) as Arc<dyn HistoryCell>;
-        let head = Arc::new(AgentMessageCell::new(
-            vec![Line::from("line 1")],
-            /*is_first_line*/ true,
-        )) as Arc<dyn HistoryCell>;
-        let cont1 = Arc::new(AgentMessageCell::new(
-            vec![Line::from("line 2")],
-            /*is_first_line*/ false,
-        )) as Arc<dyn HistoryCell>;
-        let cont2 = Arc::new(AgentMessageCell::new(
-            vec![Line::from("line 3")],
-            /*is_first_line*/ false,
-        )) as Arc<dyn HistoryCell>;
-
-        let mut transcript_cells: Vec<Arc<dyn HistoryCell>> =
-            vec![user.clone(), head, cont1, cont2];
-
-        // Run the same consolidation logic as the handler.
-        let source = "line 1\nline 2\nline 3\n".to_string();
-        let end = transcript_cells.len();
-        let mut start = end;
-        while start > 0
-            && transcript_cells[start - 1].is_stream_continuation()
-            && transcript_cells[start - 1]
-                .as_any()
-                .is::<AgentMessageCell>()
-        {
-            start -= 1;
-        }
-        if start > 0
-            && transcript_cells[start - 1]
-                .as_any()
-                .is::<AgentMessageCell>()
-            && !transcript_cells[start - 1].is_stream_continuation()
-        {
-            start -= 1;
-        }
-
-        assert_eq!(
-            start, 1,
-            "should find all 3 agent cells starting at index 1"
-        );
-        assert_eq!(end, 4);
-
-        // Splice.
-        let consolidated: Arc<dyn HistoryCell> =
-            Arc::new(AgentMarkdownCell::new(source, &test_cwd()));
-        transcript_cells.splice(start..end, std::iter::once(consolidated));
-
-        assert_eq!(transcript_cells.len(), 2, "should be [user, consolidated]");
-
-        // Verify first cell is still the user cell.
-        assert!(
-            transcript_cells[0].as_any().is::<UserHistoryCell>(),
-            "first cell should be UserHistoryCell"
-        );
-
-        // Verify second cell is AgentMarkdownCell.
-        assert!(
-            transcript_cells[1].as_any().is::<AgentMarkdownCell>(),
-            "second cell should be AgentMarkdownCell"
         );
     }
 }

@@ -210,23 +210,24 @@ impl StreamCore {
     }
 }
 
-/// Controls newline-gated streaming for assistant messages.
+/// Test-only newline-gated streaming controller for transient assistant cells.
 ///
-/// The controller emits transient `AgentMessageCell`s for live display and returns raw markdown
-/// source on `finalize` so the app can replace those transient cells with a source-backed
-/// `AgentMarkdownCell`. Callers should use `set_width` on terminal resize; rebuilding the queue
-/// from already emitted cells would duplicate output instead of preserving the stream position.
+/// Production assistant streaming is source-backed. This controller remains as coverage for the
+/// lower-level line streamer behavior that the plan stream still shares.
+#[cfg(test)]
 pub(crate) struct StreamController {
     core: StreamCore,
     header_emitted: bool,
 }
 
+#[cfg(test)]
 impl StreamController {
     /// Create a stream controller that renders markdown relative to the given width and cwd.
     ///
     /// `width` is the content width available to markdown rendering, not necessarily the full
     /// terminal width. Passing a stale width after resize will keep queued live output wrapped for
     /// the old viewport until app-level reflow repairs the finalized transcript.
+    #[cfg(test)]
     pub(crate) fn new(width: Option<usize>, cwd: &Path) -> Self {
         Self {
             core: StreamCore::new(width, cwd),
@@ -238,6 +239,7 @@ impl StreamController {
     ///
     /// Deltas are committed only through newline boundaries. A `false` return can still mean source
     /// was buffered; it only means no newly renderable complete line is ready for live emission.
+    #[cfg(test)]
     pub(crate) fn push(&mut self, delta: &str) -> bool {
         self.core.push_delta(delta)
     }
@@ -247,6 +249,7 @@ impl StreamController {
     /// The source is `None` only when the stream never accumulated content. Callers that discard the
     /// returned source cannot later consolidate the transcript into a width-sensitive finalized
     /// cell.
+    #[cfg(test)]
     pub(crate) fn finalize(&mut self) -> (Option<Box<dyn HistoryCell>>, Option<String>) {
         let remaining = self.core.finalize_remaining();
         if self.core.raw_source.is_empty() {
@@ -277,14 +280,7 @@ impl StreamController {
         self.core.queued_lines()
     }
 
-    pub(crate) fn oldest_queued_age(&self, now: Instant) -> Option<Duration> {
-        self.core.oldest_queued_age(now)
-    }
-
-    pub(crate) fn clear_queue(&mut self) {
-        self.core.clear_queue();
-    }
-
+    #[cfg(test)]
     pub(crate) fn set_width(&mut self, width: Option<usize>) {
         self.core.set_width(width);
     }
@@ -301,11 +297,53 @@ impl StreamController {
     }
 }
 
+/// Keeps assistant output source-backed while the message is still streaming.
+///
+/// This controller does not emit transient history cells. The chat widget renders the current
+/// source through an active `AgentMarkdownCell`, then commits the same source-backed cell once the
+/// stream finishes.
+pub(crate) struct SourceBackedStreamController {
+    markdown_source: String,
+    cwd: PathBuf,
+}
+
+impl SourceBackedStreamController {
+    pub(crate) fn new(cwd: &Path) -> Self {
+        Self {
+            markdown_source: String::new(),
+            cwd: cwd.to_path_buf(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, delta: &str) {
+        self.markdown_source.push_str(delta);
+    }
+
+    pub(crate) fn set_markdown(&mut self, markdown_source: String) {
+        self.markdown_source = markdown_source;
+    }
+
+    pub(crate) fn active_cell(&self) -> history_cell::AgentMarkdownCell {
+        history_cell::AgentMarkdownCell::new(self.markdown_source.clone(), self.cwd.as_path())
+    }
+
+    pub(crate) fn finalize(self) -> Option<Box<dyn HistoryCell>> {
+        if self.markdown_source.trim().is_empty() {
+            return None;
+        }
+        Some(Box::new(history_cell::AgentMarkdownCell::new(
+            self.markdown_source,
+            self.cwd.as_path(),
+        )))
+    }
+}
+
 /// Controls newline-gated streaming for proposed plan markdown.
 ///
-/// This follows the same source-retention contract as `StreamController`, but wraps emitted lines
-/// in the proposed-plan header, padding, and style. Finalization must return source for
-/// `ProposedPlanCell`; otherwise a resized finalized plan would keep the transient stream shape.
+/// This follows the same source-retention contract as the lower-level stream core, but wraps
+/// emitted lines in the proposed-plan header, padding, and style. Finalization must return source
+/// for `ProposedPlanCell`; otherwise a resized finalized plan would keep the transient stream
+/// shape.
 pub(crate) struct PlanStreamController {
     core: StreamCore,
     header_emitted: bool,
@@ -315,8 +353,8 @@ pub(crate) struct PlanStreamController {
 impl PlanStreamController {
     /// Create a proposed-plan stream controller that renders markdown relative to the given cwd.
     ///
-    /// The width has the same meaning as in `StreamController`: it is the markdown body width, and
-    /// callers must update it when the terminal width changes.
+    /// The width is the markdown body width, and callers must update it when the terminal width
+    /// changes.
     pub(crate) fn new(width: Option<usize>, cwd: &Path) -> Self {
         Self {
             core: StreamCore::new(width, cwd),

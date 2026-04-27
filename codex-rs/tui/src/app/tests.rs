@@ -14,6 +14,7 @@ use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use crate::chatwidget::tests::set_chatgpt_auth;
 use crate::chatwidget::tests::set_fast_mode_test_catalog;
 use crate::file_search::FileSearchManager;
+use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
@@ -68,14 +69,19 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Settings;
+use codex_protocol::items::AgentMessageContent;
+use codex_protocol::items::AgentMessageItem;
+use codex_protocol::items::TurnItem;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::NetworkPermissions;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::protocol::AgentMessageDeltaEvent;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileChange;
+use codex_protocol::protocol::ItemCompletedEvent;
 use codex_protocol::protocol::NetworkApprovalContext;
 use codex_protocol::protocol::NetworkApprovalProtocol;
 use codex_protocol::protocol::RolloutItem;
@@ -3959,6 +3965,69 @@ async fn height_shrink_schedules_resize_reflow() {
         &frame_requester,
     ));
     assert!(app.transcript_reflow.has_pending_reflow());
+}
+
+#[tokio::test]
+async fn finalized_assistant_stream_is_source_backed_for_resize_reflow() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+
+    app.chat_widget.handle_codex_event(Event {
+        id: "delta-1".to_string(),
+        msg: EventMsg::AgentMessageDelta(AgentMessageDeltaEvent {
+            delta: "draft text".to_string(),
+        }),
+    });
+    assert!(
+        app_event_rx.try_recv().is_err(),
+        "assistant deltas should stay in the active cell until completion"
+    );
+
+    app.chat_widget.handle_codex_event(Event {
+        id: "item-1".to_string(),
+        msg: EventMsg::ItemCompleted(ItemCompletedEvent {
+            thread_id: ThreadId::new(),
+            turn_id: "turn-1".to_string(),
+            item: TurnItem::AgentMessage(AgentMessageItem {
+                id: "assistant-1".to_string(),
+                content: vec![AgentMessageContent::Text {
+                    text: "final source backed assistant text that wraps differently".to_string(),
+                }],
+                phase: None,
+                memory_citation: None,
+            }),
+        }),
+    });
+
+    let cell = match app_event_rx
+        .try_recv()
+        .expect("expected finalized assistant history")
+    {
+        AppEvent::InsertHistoryCell(cell) => cell,
+        other => panic!("expected InsertHistoryCell, got {other:?}"),
+    };
+    let cell: Arc<dyn HistoryCell> = cell.into();
+    assert!(
+        cell.as_any().is::<AgentMarkdownCell>(),
+        "finalized assistant stream should insert a source-backed cell"
+    );
+    app.transcript_cells.push(cell);
+
+    let wide = app.render_transcript_lines_for_reflow(/*width*/ 100);
+    let narrow = app.render_transcript_lines_for_reflow(/*width*/ 28);
+    assert!(
+        narrow.lines.len() > wide.lines.len(),
+        "source-backed transcript cell should re-render at resize width"
+    );
+    let narrow_text = narrow
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let normalized_narrow_text = narrow_text.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized_narrow_text.contains("final source backed assistant"));
+    assert!(!normalized_narrow_text.contains("draft text"));
 }
 
 fn test_turn(turn_id: &str, status: TurnStatus, items: Vec<ThreadItem>) -> Turn {

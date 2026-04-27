@@ -412,7 +412,7 @@ use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
 use crate::streaming::commit_tick::run_commit_tick;
 use crate::streaming::controller::PlanStreamController;
-use crate::streaming::controller::StreamController;
+use crate::streaming::controller::SourceBackedStreamController;
 
 use chrono::Local;
 use codex_file_search::FileMatch;
@@ -833,8 +833,8 @@ pub(crate) struct ChatWidget {
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     add_credits_nudge_email_in_flight: Option<AddCreditsNudgeCreditType>,
     adaptive_chunking: AdaptiveChunkingPolicy,
-    // Stream lifecycle controller
-    stream_controller: Option<StreamController>,
+    // Source-backed lifecycle controller for assistant output.
+    stream_controller: Option<SourceBackedStreamController>,
     // Stream lifecycle controller for proposed plan output.
     plan_stream_controller: Option<PlanStreamController>,
     /// Holds the platform clipboard lease so copied text remains available while supported.
@@ -2038,32 +2038,18 @@ impl ChatWidget {
     }
 
     fn flush_answer_stream_with_separator(&mut self) {
-        let had_stream_controller = self.stream_controller.is_some();
-        if let Some(mut controller) = self.stream_controller.take() {
-            let (cell, source) = controller.finalize();
-            if let Some(cell) = cell {
+        if let Some(controller) = self.stream_controller.take() {
+            self.active_cell = None;
+            self.bump_active_cell_revision();
+            if let Some(cell) = controller.finalize() {
                 self.add_boxed_history(cell);
-            }
-            // Consolidate the run of streaming AgentMessageCells into a single AgentMarkdownCell
-            // that can re-render from source on resize.
-            if let Some(source) = source {
-                self.app_event_tx.send(AppEvent::ConsolidateAgentMessage {
-                    source,
-                    cwd: self.config.cwd.to_path_buf(),
-                });
             }
         }
         self.adaptive_chunking.reset();
-        if had_stream_controller && self.stream_controllers_idle() {
-            self.app_event_tx.send(AppEvent::StopCommitAnimation);
-        }
     }
 
     fn stream_controllers_idle(&self) -> bool {
-        self.stream_controller
-            .as_ref()
-            .map(|controller| controller.queued_lines() == 0)
-            .unwrap_or(true)
+        self.stream_controller.is_none()
             && self
                 .plan_stream_controller
                 .as_ref()
@@ -2594,13 +2580,14 @@ impl ChatWidget {
     }
 
     fn finalize_completed_assistant_message(&mut self, message: Option<&str>) {
-        // If we have a stream_controller, the finalized message payload is redundant because the
-        // visible content has already been accumulated through deltas.
-        if self.stream_controller.is_none()
-            && let Some(message) = message
-            && !message.is_empty()
-        {
-            self.handle_streaming_delta(message.to_string());
+        if let Some(message) = message.filter(|message| !message.is_empty()) {
+            if let Some(controller) = self.stream_controller.as_mut() {
+                controller.set_markdown(message.to_string());
+                self.active_cell = Some(Box::new(controller.active_cell()));
+                self.bump_active_cell_revision();
+            } else {
+                self.handle_streaming_delta(message.to_string());
+            }
         }
         self.flush_answer_stream_with_separator();
         self.handle_stream_finished();
@@ -4757,7 +4744,6 @@ impl ChatWidget {
         let now = Instant::now();
         let outcome = run_commit_tick(
             &mut self.adaptive_chunking,
-            self.stream_controller.as_mut(),
             self.plan_stream_controller.as_mut(),
             scope,
             now,
@@ -4810,11 +4796,11 @@ impl ChatWidget {
 
     #[inline]
     fn handle_streaming_delta(&mut self, delta: String) {
-        // Before streaming agent content, flush any active exec cell group.
-        self.flush_unified_exec_wait_streak();
-        self.flush_active_cell();
-
         if self.stream_controller.is_none() {
+            // Before streaming agent content, flush any active exec cell group.
+            self.flush_unified_exec_wait_streak();
+            self.flush_active_cell();
+
             // If the previous turn inserted non-stream history (exec output, patch status, MCP
             // calls), render a separator before starting the next streamed assistant message.
             if self.needs_final_message_separator && self.had_work_activity {
@@ -4826,17 +4812,14 @@ impl ChatWidget {
                 // Reset the flag even if we don't show separator (no work was done)
                 self.needs_final_message_separator = false;
             }
-            self.stream_controller = Some(StreamController::new(
-                self.current_stream_width(/*reserved_cols*/ 2),
-                &self.config.cwd,
-            ));
+            self.stream_controller = Some(SourceBackedStreamController::new(&self.config.cwd));
         }
-        if let Some(controller) = self.stream_controller.as_mut()
-            && controller.push(&delta)
-        {
-            self.app_event_tx.send(AppEvent::StartCommitAnimation);
-            self.run_catch_up_commit_tick();
+        if let Some(controller) = self.stream_controller.as_mut() {
+            controller.push(&delta);
+            self.active_cell = Some(Box::new(controller.active_cell()));
+            self.bump_active_cell_revision();
         }
+        self.bottom_pane.hide_status_indicator();
         self.request_redraw();
     }
 
@@ -11365,22 +11348,13 @@ impl ChatWidget {
     pub(crate) fn on_terminal_resize(&mut self, width: u16) {
         let had_rendered_width = self.last_rendered_width.get().is_some();
         self.last_rendered_width.set(Some(width as usize));
-        let stream_width = self.current_stream_width(/*reserved_cols*/ 2);
         let plan_stream_width = self.current_stream_width(/*reserved_cols*/ 4);
-        if let Some(controller) = self.stream_controller.as_mut() {
-            controller.set_width(stream_width);
-        }
         if let Some(controller) = self.plan_stream_controller.as_mut() {
             controller.set_width(plan_stream_width);
         }
         if !had_rendered_width {
             self.request_redraw();
         }
-    }
-
-    /// Whether an agent message stream is active (not a plan stream).
-    pub(crate) fn has_active_agent_stream(&self) -> bool {
-        self.stream_controller.is_some()
     }
 
     /// Whether a proposed-plan stream is active.
@@ -11538,9 +11512,6 @@ impl ChatWidget {
         if matches!(op.view(), crate::app_command::AppCommandView::Interrupt)
             && self.agent_turn_running
         {
-            if let Some(controller) = self.stream_controller.as_mut() {
-                controller.clear_queue();
-            }
             if let Some(controller) = self.plan_stream_controller.as_mut() {
                 controller.clear_queue();
             }
