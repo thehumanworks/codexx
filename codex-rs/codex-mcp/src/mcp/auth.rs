@@ -9,8 +9,12 @@ use codex_exec_server::ReqwestHttpClient;
 use codex_login::CodexAuth;
 use codex_protocol::protocol::McpAuthStatus;
 use codex_rmcp_client::OAuthProviderError;
+use codex_rmcp_client::OauthLoginHandle;
 use codex_rmcp_client::determine_streamable_http_auth_status_with_client;
 use codex_rmcp_client::discover_streamable_http_oauth_with_client;
+use codex_rmcp_client::perform_oauth_login_return_url_with_client;
+use codex_rmcp_client::perform_oauth_login_silent_with_client;
+use codex_rmcp_client::perform_oauth_login_with_client;
 use futures::future::join_all;
 use std::sync::Arc;
 use tracing::warn;
@@ -54,7 +58,28 @@ pub struct McpAuthStatusEntry {
     pub auth_status: McpAuthStatus,
 }
 
-pub async fn oauth_login_support(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum McpOAuthLoginOutcome {
+    Completed,
+    Unsupported,
+}
+
+pub async fn oauth_login_support(transport: &McpServerTransportConfig) -> McpOAuthLoginSupport {
+    oauth_login_support_with_client(transport, Arc::new(ReqwestHttpClient)).await
+}
+
+pub async fn oauth_login_support_for_server(
+    config: &McpServerConfig,
+    runtime_environment: McpRuntimeEnvironment,
+) -> McpOAuthLoginSupport {
+    let http_client = match http_client_for_server(config, runtime_environment) {
+        Ok(http_client) => http_client,
+        Err(err) => return McpOAuthLoginSupport::Unknown(err),
+    };
+    oauth_login_support_with_client(&config.transport, http_client).await
+}
+
+async fn oauth_login_support_with_client(
     transport: &McpServerTransportConfig,
     http_client: Arc<dyn HttpClient>,
 ) -> McpOAuthLoginSupport {
@@ -93,9 +118,25 @@ pub async fn oauth_login_support(
 
 pub async fn discover_supported_scopes(
     transport: &McpServerTransportConfig,
+) -> Option<Vec<String>> {
+    discover_supported_scopes_with_client(transport, Arc::new(ReqwestHttpClient)).await
+}
+
+pub async fn discover_supported_scopes_for_server(
+    config: &McpServerConfig,
+    runtime_environment: McpRuntimeEnvironment,
+) -> Option<Vec<String>> {
+    match oauth_login_support_for_server(config, runtime_environment).await {
+        McpOAuthLoginSupport::Supported(config) => config.discovered_scopes,
+        McpOAuthLoginSupport::Unsupported | McpOAuthLoginSupport::Unknown(_) => None,
+    }
+}
+
+async fn discover_supported_scopes_with_client(
+    transport: &McpServerTransportConfig,
     http_client: Arc<dyn HttpClient>,
 ) -> Option<Vec<String>> {
-    match oauth_login_support(transport, http_client).await {
+    match oauth_login_support_with_client(transport, http_client).await {
         McpOAuthLoginSupport::Supported(config) => config.discovered_scopes,
         McpOAuthLoginSupport::Unsupported | McpOAuthLoginSupport::Unknown(_) => None,
     }
@@ -138,6 +179,172 @@ pub fn resolve_oauth_scopes(
 pub fn should_retry_without_scopes(scopes: &ResolvedMcpOAuthScopes, error: &anyhow::Error) -> bool {
     scopes.source == McpOAuthScopesSource::Discovered
         && error.downcast_ref::<OAuthProviderError>().is_some()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_return_url_for_server(
+    server_name: &str,
+    config: &McpServerConfig,
+    store_mode: OAuthCredentialsStoreMode,
+    explicit_scopes: Option<Vec<String>>,
+    timeout_secs: Option<i64>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    runtime_environment: McpRuntimeEnvironment,
+) -> Result<OauthLoginHandle> {
+    let McpServerTransportConfig::StreamableHttp {
+        url,
+        http_headers,
+        env_http_headers,
+        ..
+    } = &config.transport
+    else {
+        anyhow::bail!("OAuth login is only supported for streamable HTTP servers.");
+    };
+
+    let http_client = http_client_for_server(config, runtime_environment)?;
+    let discovered_scopes = if explicit_scopes.is_none() && config.scopes.is_none() {
+        discover_supported_scopes_with_client(&config.transport, http_client.clone()).await
+    } else {
+        None
+    };
+    let resolved_scopes =
+        resolve_oauth_scopes(explicit_scopes, config.scopes.clone(), discovered_scopes);
+
+    perform_oauth_login_return_url_with_client(
+        server_name,
+        url,
+        store_mode,
+        http_headers.clone(),
+        env_http_headers.clone(),
+        &resolved_scopes.scopes,
+        config.oauth_resource.as_deref(),
+        timeout_secs,
+        callback_port,
+        callback_url,
+        http_client,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_silent_for_server(
+    server_name: &str,
+    config: &McpServerConfig,
+    store_mode: OAuthCredentialsStoreMode,
+    explicit_scopes: Option<Vec<String>>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    runtime_environment: McpRuntimeEnvironment,
+) -> Result<McpOAuthLoginOutcome> {
+    let http_client = http_client_for_server(config, runtime_environment)?;
+    let oauth_config =
+        match oauth_login_support_with_client(&config.transport, http_client.clone()).await {
+            McpOAuthLoginSupport::Supported(config) => config,
+            McpOAuthLoginSupport::Unsupported => return Ok(McpOAuthLoginOutcome::Unsupported),
+            McpOAuthLoginSupport::Unknown(err) => return Err(err),
+        };
+
+    let resolved_scopes = resolve_oauth_scopes(
+        explicit_scopes,
+        config.scopes.clone(),
+        oauth_config.discovered_scopes.clone(),
+    );
+
+    let first_attempt = perform_oauth_login_silent_with_client(
+        server_name,
+        &oauth_config.url,
+        store_mode,
+        oauth_config.http_headers.clone(),
+        oauth_config.env_http_headers.clone(),
+        &resolved_scopes.scopes,
+        config.oauth_resource.as_deref(),
+        callback_port,
+        callback_url,
+        http_client.clone(),
+    )
+    .await;
+
+    let final_result = match first_attempt {
+        Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
+            perform_oauth_login_silent_with_client(
+                server_name,
+                &oauth_config.url,
+                store_mode,
+                oauth_config.http_headers,
+                oauth_config.env_http_headers,
+                &[],
+                config.oauth_resource.as_deref(),
+                callback_port,
+                callback_url,
+                http_client,
+            )
+            .await
+        }
+        result => result,
+    };
+
+    final_result.map(|()| McpOAuthLoginOutcome::Completed)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn perform_oauth_login_for_server(
+    server_name: &str,
+    config: &McpServerConfig,
+    store_mode: OAuthCredentialsStoreMode,
+    explicit_scopes: Option<Vec<String>>,
+    callback_port: Option<u16>,
+    callback_url: Option<&str>,
+    runtime_environment: McpRuntimeEnvironment,
+) -> Result<McpOAuthLoginOutcome> {
+    let http_client = http_client_for_server(config, runtime_environment)?;
+    let oauth_config =
+        match oauth_login_support_with_client(&config.transport, http_client.clone()).await {
+            McpOAuthLoginSupport::Supported(config) => config,
+            McpOAuthLoginSupport::Unsupported => return Ok(McpOAuthLoginOutcome::Unsupported),
+            McpOAuthLoginSupport::Unknown(err) => return Err(err),
+        };
+
+    let resolved_scopes = resolve_oauth_scopes(
+        explicit_scopes,
+        config.scopes.clone(),
+        oauth_config.discovered_scopes.clone(),
+    );
+
+    let first_attempt = perform_oauth_login_with_client(
+        server_name,
+        &oauth_config.url,
+        store_mode,
+        oauth_config.http_headers.clone(),
+        oauth_config.env_http_headers.clone(),
+        &resolved_scopes.scopes,
+        config.oauth_resource.as_deref(),
+        callback_port,
+        callback_url,
+        http_client.clone(),
+    )
+    .await;
+
+    let final_result = match first_attempt {
+        Err(err) if should_retry_without_scopes(&resolved_scopes, &err) => {
+            perform_oauth_login_with_client(
+                server_name,
+                &oauth_config.url,
+                store_mode,
+                oauth_config.http_headers,
+                oauth_config.env_http_headers,
+                &[],
+                config.oauth_resource.as_deref(),
+                callback_port,
+                callback_url,
+                http_client,
+            )
+            .await
+        }
+        result => result,
+    };
+
+    final_result.map(|()| McpOAuthLoginOutcome::Completed)
 }
 
 pub async fn compute_auth_statuses<'a, I>(

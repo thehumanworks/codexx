@@ -1,12 +1,18 @@
 pub use auth::McpAuthStatusEntry;
 pub use auth::McpOAuthLoginConfig;
+pub use auth::McpOAuthLoginOutcome;
 pub use auth::McpOAuthLoginSupport;
 pub use auth::McpOAuthScopesSource;
 pub use auth::ResolvedMcpOAuthScopes;
 pub use auth::compute_auth_statuses;
 pub use auth::discover_supported_scopes;
+pub use auth::discover_supported_scopes_for_server;
 pub use auth::http_client_for_server;
 pub use auth::oauth_login_support;
+pub use auth::oauth_login_support_for_server;
+pub use auth::perform_oauth_login_for_server;
+pub use auth::perform_oauth_login_return_url_for_server;
+pub use auth::perform_oauth_login_silent_for_server;
 pub use auth::resolve_oauth_scopes;
 pub use auth::should_retry_without_scopes;
 

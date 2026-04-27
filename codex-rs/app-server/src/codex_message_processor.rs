@@ -310,11 +310,9 @@ use codex_mcp::McpRuntimeEnvironment;
 use codex_mcp::McpServerStatusSnapshot;
 use codex_mcp::McpSnapshotDetail;
 use codex_mcp::collect_mcp_server_status_snapshot_with_detail;
-use codex_mcp::discover_supported_scopes;
 use codex_mcp::effective_mcp_servers;
-use codex_mcp::http_client_for_server;
+use codex_mcp::perform_oauth_login_return_url_for_server;
 use codex_mcp::read_mcp_resource as read_mcp_resource_without_thread;
-use codex_mcp::resolve_oauth_scopes;
 use codex_model_provider::ProviderAccountError;
 use codex_model_provider::create_model_provider;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
@@ -356,7 +354,6 @@ use codex_protocol::protocol::USER_MESSAGE_BEGIN;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::MAX_USER_INPUT_TEXT_CHARS;
 use codex_protocol::user_input::UserInput as CoreInputItem;
-use codex_rmcp_client::perform_oauth_login_return_url_with_client;
 use codex_rollout::state_db::StateDbHandle;
 use codex_rollout::state_db::get_state_db;
 use codex_rollout::state_db::reconcile_rollout;
@@ -5942,13 +5939,8 @@ impl CodexMessageProcessor {
             return;
         };
 
-        let (url, http_headers, env_http_headers) = match &server.transport {
-            McpServerTransportConfig::StreamableHttp {
-                url,
-                http_headers,
-                env_http_headers,
-                ..
-            } => (url.clone(), http_headers.clone(), env_http_headers.clone()),
+        match &server.transport {
+            McpServerTransportConfig::StreamableHttp { .. } => {}
             _ => {
                 let error = JSONRPCErrorError {
                     code: INVALID_REQUEST_ERROR_CODE,
@@ -5969,39 +5961,16 @@ impl CodexMessageProcessor {
                 config.cwd.to_path_buf(),
             ),
         };
-        let http_client = match http_client_for_server(server, runtime_environment) {
-            Ok(http_client) => http_client,
-            Err(err) => {
-                let error = JSONRPCErrorError {
-                    code: INVALID_REQUEST_ERROR_CODE,
-                    message: format!("failed to resolve MCP server OAuth environment: {err}"),
-                    data: None,
-                };
-                self.outgoing.send_error(request_id, error).await;
-                return;
-            }
-        };
 
-        let discovered_scopes = if scopes.is_none() && server.scopes.is_none() {
-            discover_supported_scopes(&server.transport, http_client.clone()).await
-        } else {
-            None
-        };
-        let resolved_scopes =
-            resolve_oauth_scopes(scopes, server.scopes.clone(), discovered_scopes);
-
-        match perform_oauth_login_return_url_with_client(
+        match perform_oauth_login_return_url_for_server(
             &name,
-            &url,
+            server,
             config.mcp_oauth_credentials_store_mode,
-            http_headers,
-            env_http_headers,
-            &resolved_scopes.scopes,
-            server.oauth_resource.as_deref(),
+            scopes,
             timeout_secs,
             config.mcp_oauth_callback_port,
             config.mcp_oauth_callback_url.as_deref(),
-            http_client,
+            runtime_environment,
         )
         .await
         {

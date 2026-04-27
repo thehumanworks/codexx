@@ -24,13 +24,19 @@ pub use mcp::read_mcp_resource;
 
 pub use mcp::McpAuthStatusEntry;
 pub use mcp::McpOAuthLoginConfig;
+pub use mcp::McpOAuthLoginOutcome;
 pub use mcp::McpOAuthLoginSupport;
 pub use mcp::McpOAuthScopesSource;
 pub use mcp::ResolvedMcpOAuthScopes;
 pub use mcp::compute_auth_statuses;
 pub use mcp::discover_supported_scopes;
+pub use mcp::discover_supported_scopes_for_server;
 pub use mcp::http_client_for_server;
 pub use mcp::oauth_login_support;
+pub use mcp::oauth_login_support_for_server;
+pub use mcp::perform_oauth_login_for_server;
+pub use mcp::perform_oauth_login_return_url_for_server;
+pub use mcp::perform_oauth_login_silent_for_server;
 pub use mcp::resolve_oauth_scopes;
 pub use mcp::should_retry_without_scopes;
 
