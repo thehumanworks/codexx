@@ -108,7 +108,6 @@ async fn returns_config_error_for_invalid_user_config_toml() {
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect_err("expected error");
@@ -140,7 +139,6 @@ async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
         },
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -172,7 +170,6 @@ async fn ignore_rules_marks_config_stack_for_exec_policy_rule_skip() -> std::io:
         },
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -198,7 +195,6 @@ async fn returns_config_error_for_invalid_managed_config_toml() {
         overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect_err("expected error");
@@ -285,7 +281,6 @@ extra = true
         overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect("load config");
@@ -320,7 +315,6 @@ async fn returns_empty_when_all_layers_missing() {
         overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect("load layers");
@@ -396,7 +390,6 @@ async fn includes_thread_config_layers_in_stack() -> anyhow::Result<()> {
             features: BTreeMap::from([("plugins".to_string(), false)]),
             ..Default::default()
         })]),
-        /*host_name*/ None,
     )
     .await?;
 
@@ -473,7 +466,6 @@ flag = false
         overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect("load config");
@@ -577,7 +569,6 @@ allowed_sandbox_modes = ["read-only"]
         loader_overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -642,7 +633,6 @@ allowed_approval_policies = ["never"]
         loader_overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -684,7 +674,6 @@ personality = true
         LOCAL_FS.as_ref(),
         &mut config_requirements_toml,
         &requirements_file,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -800,7 +789,6 @@ allowed_approval_policies = ["on-request"]
             }))
         }),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -860,7 +848,6 @@ allowed_approval_policies = ["on-request"]
         LOCAL_FS.as_ref(),
         &mut config_requirements_toml,
         &AbsolutePathBuf::try_from(requirements_file)?,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -953,7 +940,6 @@ deny_read = ["./sensitive", "../shared/secret.txt"]
         LOCAL_FS.as_ref(),
         &mut config_requirements_toml,
         &requirements_file,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1008,7 +994,6 @@ deny_read = ["./sensitive/**/*.txt"]
         LOCAL_FS.as_ref(),
         &mut config_requirements_toml,
         &requirements_file,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1077,7 +1062,6 @@ async fn load_config_layers_includes_cloud_requirements() -> anyhow::Result<()> 
         LoaderOverrides::default(),
         cloud_requirements,
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1140,7 +1124,6 @@ async fn load_config_layers_includes_cloud_hook_requirements() -> anyhow::Result
         LoaderOverrides::default(),
         cloud_requirements,
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1227,7 +1210,6 @@ async fn load_config_layers_fails_when_cloud_requirements_loader_fails() -> anyh
             ))
         }),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect_err("cloud requirements failure should fail closed");
@@ -1276,7 +1258,6 @@ async fn project_layers_prefer_closest_cwd() -> std::io::Result<()> {
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1423,7 +1404,6 @@ async fn project_layer_is_added_when_dot_codex_exists_without_config_toml() -> s
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1465,7 +1445,6 @@ async fn codex_home_is_not_loaded_as_project_layer_from_home_dir() -> std::io::R
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1524,7 +1503,6 @@ async fn codex_home_within_project_tree_is_not_double_loaded() -> std::io::Resul
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1597,7 +1575,6 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
     let project_layers_untrusted: Vec<_> = layers_untrusted
@@ -1638,7 +1615,6 @@ async fn project_layers_disabled_when_untrusted_or_unknown() -> std::io::Result<
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
     let project_layers_unknown: Vec<_> = layers_unknown
@@ -1706,7 +1682,6 @@ async fn project_trust_does_not_match_configured_alias_for_canonical_cwd() -> st
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -1861,7 +1836,6 @@ async fn invalid_project_config_ignored_when_untrusted_or_unknown() -> std::io::
             LoaderOverrides::default(),
             CloudRequirementsLoader::default(),
             &codex_config::NoopThreadConfigLoader,
-            /*host_name*/ None,
         )
         .await?;
         let project_layers: Vec<_> = layers
@@ -1931,7 +1905,6 @@ async fn project_layer_without_config_toml_is_disabled_when_untrusted_or_unknown
             LoaderOverrides::default(),
             CloudRequirementsLoader::default(),
             &codex_config::NoopThreadConfigLoader,
-            /*host_name*/ None,
         )
         .await?;
         let project_layers: Vec<_> = layers
@@ -1993,7 +1966,6 @@ async fn cli_overrides_with_relative_paths_do_not_break_trust_check() -> std::io
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
@@ -2038,7 +2010,6 @@ async fn project_root_markers_supports_alternate_markers() -> std::io::Result<()
         LoaderOverrides::default(),
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await?;
 
