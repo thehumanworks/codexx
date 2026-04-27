@@ -1051,43 +1051,37 @@ impl HistoryCell for CompletedMcpToolCallWithImageOutput {
     }
 }
 
-const CODEX_LOGO_LINES: [&str; 8] = [
-    "    ⢀⣠⣤⣤⣄⡀",
-    "   ⣠⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄",
-    " ⣴⣿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⡆",
-    "⢰⣿⣿⣿⣄⠈⢿⣿⣿⣿⣿⣿⣿⣿⣧",
-    " ⢻⣿⣿⠏⢀⣾⣿⠿⠿⠿⠿⣿⣿⣿⡇",
-    " ⢸⣿⣿⣶⣿⣿⣿⣶⣶⣶⣶⣿⣿⡟",
-    "  ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⠏⠁",
-    "    ⠉⠉⠙⠻⠿⠿⠟⠋",
+const CODEX_LOGO_LINES: [&str; 6] = [
+    "  ⢀⣴⣶⣶⣦⣤⣤⣀",
+    "⢀⣴⣾⣿⣿⣿⣿⣿⣿⣿⣷",
+    "⣾⣿⣷⡀⢻⣿⣿⣿⣿⣿⣿⡄",
+    "⠘⣿⣿⠁⣼⣿⠛⠛⠛⣿⣿⣿",
+    " ⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁",
+    " ⠈⠛⠛⠻⢿⣿⣿⠿⠃",
 ];
-const CODEX_LOGO_WIDTH: usize = 16;
+const CODEX_LOGO_WIDTH: usize = 12;
 const CODEX_LOGO_GAP_WIDTH: usize = 2;
 const SESSION_HEADER_TEXT_MAX_INNER_WIDTH: usize = 56; // Just an eyeballed value
 pub(crate) const SESSION_HEADER_MAX_INNER_WIDTH: usize =
     CODEX_LOGO_WIDTH + CODEX_LOGO_GAP_WIDTH + SESSION_HEADER_TEXT_MAX_INNER_WIDTH;
-const CODEX_LOGO_BRIGHT_GRADIENT: [(u8, u8, u8); 8] = [
+const CODEX_LOGO_BRIGHT_GRADIENT: [(u8, u8, u8); 6] = [
     (169, 162, 255),
-    (151, 161, 255),
-    (130, 160, 255),
-    (112, 143, 255),
-    (88, 119, 255),
-    (75, 96, 255),
-    (63, 78, 250),
+    (143, 161, 255),
+    (116, 146, 255),
+    (85, 114, 255),
+    (68, 85, 252),
     (49, 66, 245),
 ];
-const CODEX_LOGO_DARK_GRADIENT: [(u8, u8, u8); 8] = [
+const CODEX_LOGO_DARK_GRADIENT: [(u8, u8, u8); 6] = [
     (82, 72, 190),
-    (69, 85, 205),
-    (55, 101, 218),
-    (43, 112, 225),
-    (35, 96, 216),
-    (31, 77, 200),
-    (28, 58, 180),
+    (63, 91, 210),
+    (45, 110, 224),
+    (34, 92, 213),
+    (29, 66, 188),
     (24, 43, 155),
 ];
 
-fn codex_logo_gradient_for_bg(terminal_bg: Option<(u8, u8, u8)>) -> [(u8, u8, u8); 8] {
+fn codex_logo_gradient_for_bg(terminal_bg: Option<(u8, u8, u8)>) -> [(u8, u8, u8); 6] {
     if terminal_bg.is_some_and(crate::color::is_light) {
         CODEX_LOGO_DARK_GRADIENT
     } else {
@@ -4164,8 +4158,8 @@ mod tests {
         let title_column = title_line.find("OpenAI Codex").expect("title");
 
         assert!(logo_column < title_column);
-        assert_eq!(lines.len(), 10);
-        assert_eq!(lines[3], title_line.as_str());
+        assert_eq!(lines.len(), 8);
+        assert_eq!(lines[2], title_line.as_str());
     }
 
     #[test]

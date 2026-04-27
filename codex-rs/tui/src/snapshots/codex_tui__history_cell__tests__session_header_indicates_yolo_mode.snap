@@ -1,15 +1,13 @@
 ---
 source: tui/src/history_cell.rs
-assertion_line: 4216
+assertion_line: 4236
 expression: rendered
 ---
-╭─────────────────────────────────────────────────────────╮
-│     ⢀⣠⣤⣤⣄⡀                                              │
-│    ⣠⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄    >_ OpenAI Codex (vtest)               │
-│  ⣴⣿⣿⠿⢿⣿⣿⣿⣿⣿⣿⣿⣿⡆                                         │
-│ ⢰⣿⣿⣿⣄⠈⢿⣿⣿⣿⣿⣿⣿⣿⣧   model:       gpt-5   /model to change │
-│  ⢻⣿⣿⠏⢀⣾⣿⠿⠿⠿⠿⣿⣿⣿⡇  directory:   /tmp/project             │
-│  ⢸⣿⣿⣶⣿⣿⣿⣶⣶⣶⣶⣿⣿⡟   permissions: YOLO mode                │
-│   ⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⠏⠁                                          │
-│     ⠉⠉⠙⠻⠿⠿⠟⠋                                            │
-╰─────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────╮
+│   ⢀⣴⣶⣶⣦⣤⣤⣀    >_ OpenAI Codex (vtest)               │
+│ ⢀⣴⣾⣿⣿⣿⣿⣿⣿⣿⣷                                         │
+│ ⣾⣿⣷⡀⢻⣿⣿⣿⣿⣿⣿⡄  model:       gpt-5   /model to change │
+│ ⠘⣿⣿⠁⣼⣿⠛⠛⠛⣿⣿⣿  directory:   /tmp/project             │
+│  ⣿⣿⣿⣿⣿⣿⣿⣿⣿⠟⠁  permissions: YOLO mode                │
+│  ⠈⠛⠛⠻⢿⣿⣿⠿⠃                                          │
+╰─────────────────────────────────────────────────────╯
