@@ -50,9 +50,6 @@ pub(super) async fn read_thread(
         })?;
 
     let mut thread = read_thread_from_rollout_path(store, path).await?;
-    if let Some(metadata) = sqlite_metadata.as_ref() {
-        apply_metadata_git_info(&mut thread, metadata);
-    }
     attach_history_if_requested(&mut thread, params.include_history).await?;
     Ok(thread)
 }
@@ -85,9 +82,6 @@ pub(super) async fn read_thread_by_rollout_path(
         return Err(ThreadStoreError::InvalidRequest {
             message: format!("thread {} is archived", thread.thread_id),
         });
-    }
-    if let Some(metadata) = read_sqlite_metadata(store, thread.thread_id).await {
-        apply_metadata_git_info(&mut thread, &metadata);
     }
     attach_history_if_requested(&mut thread, include_history).await?;
     Ok(thread)
@@ -159,20 +153,23 @@ async fn read_thread_from_rollout_path(
     store: &LocalThreadStore,
     path: std::path::PathBuf,
 ) -> ThreadStoreResult<StoredThread> {
-    let Some(item) = read_thread_item_from_rollout(path.clone()).await else {
-        return stored_thread_from_session_meta(store, path).await;
-    };
-    let archived = path.starts_with(
-        store
-            .config
-            .codex_home
-            .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR),
-    );
-    let mut thread =
+    let mut thread = if let Some(item) = read_thread_item_from_rollout(path.clone()).await {
+        let archived = path.starts_with(
+            store
+                .config
+                .codex_home
+                .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR),
+        );
         stored_thread_from_rollout_item(item, archived, store.config.model_provider_id.as_str())
             .ok_or_else(|| ThreadStoreError::Internal {
                 message: format!("failed to read thread id from {}", path.display()),
-            })?;
+            })?
+    } else {
+        stored_thread_from_session_meta(store, path.clone()).await?
+    };
+    if let Some(metadata) = read_sqlite_metadata(store, thread.thread_id).await {
+        apply_metadata_git_info(&mut thread, &metadata);
+    }
     thread.forked_from_id = read_session_meta_line(path.as_path())
         .await
         .ok()
