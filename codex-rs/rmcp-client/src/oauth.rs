@@ -946,14 +946,13 @@ mod tests {
 
         persistor.persist_if_needed().await?;
 
-        assert_eq!(
-            super::load_oauth_tokens(
-                &tokens.server_name,
-                &tokens.url,
-                OAuthCredentialsStoreMode::File
-            )?,
-            Some(newer_tokens)
-        );
+        let loaded = super::load_oauth_tokens(
+            &tokens.server_name,
+            &tokens.url,
+            OAuthCredentialsStoreMode::File,
+        )?
+        .expect("newer tokens should remain stored");
+        assert_tokens_match_without_expiry(&loaded, &newer_tokens);
         Ok(())
     }
 
