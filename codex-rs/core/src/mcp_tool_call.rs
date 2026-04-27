@@ -12,7 +12,6 @@ use tracing::error;
 
 use crate::arc_monitor::ArcMonitorOutcome;
 use crate::arc_monitor::monitor_action;
-use crate::codex_apps_file_download::maybe_materialize_codex_apps_file_download_result;
 use crate::config::Config;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
@@ -27,6 +26,7 @@ use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
 use crate::hook_runtime::run_permission_request_hooks;
+use crate::mcp_openai_file::postprocess_mcp_tool_result_for_openai_files;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
 use crate::mcp_tool_approval_templates::render_mcp_tool_approval_template;
@@ -336,12 +336,19 @@ async fn handle_approved_mcp_tool_call(
             &server,
             &tool_name,
             rewritten_arguments,
-            metadata,
             request_meta,
         )
+        .await?;
+        let result = postprocess_mcp_tool_result_for_openai_files(
+            sess,
+            turn_context,
+            &server,
+            metadata.and_then(|metadata| metadata.codex_apps_meta.as_ref()),
+            result,
+        )
         .await;
-        record_mcp_result_span_telemetry(&Span::current(), result.as_ref().ok());
-        result
+        record_mcp_result_span_telemetry(&Span::current(), Some(&result));
+        Ok(result)
     }
     .instrument(mcp_tool_call_span(
         sess,
@@ -536,7 +543,6 @@ async fn execute_mcp_tool_call(
     server: &str,
     tool_name: &str,
     rewritten_arguments: Option<JsonValue>,
-    metadata: Option<&McpToolApprovalMetadata>,
     request_meta: Option<JsonValue>,
 ) -> Result<CallToolResult, String> {
     let request_meta =
@@ -549,14 +555,6 @@ async fn execute_mcp_tool_call(
         .call_tool(server, tool_name, rewritten_arguments, request_meta)
         .await
         .map_err(|e| format!("tool call error: {e:?}"))?;
-    let result = maybe_materialize_codex_apps_file_download_result(
-        sess,
-        turn_context,
-        server,
-        metadata.and_then(|metadata| metadata.codex_apps_meta.as_ref()),
-        result,
-    )
-    .await;
     sanitize_mcp_tool_result_for_model(
         turn_context
             .model_info
