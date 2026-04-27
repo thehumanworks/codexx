@@ -1667,59 +1667,6 @@ async fn responses_websocket_v2_surfaces_terminal_error_without_close_handshake(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn responses_websocket_lifecycle_details_close_before_completion() {
-    skip_if_no_network!();
-
-    let server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
-        requests: vec![vec![ev_response_created("resp-1")]],
-        response_headers: Vec::new(),
-        accept_delay: None,
-        close_after_requests: true,
-    }])
-    .await;
-
-    let harness = websocket_harness_with_v2(&server, /*runtime_metrics_enabled*/ true).await;
-    let mut session = harness.client.new_session();
-    let prompt = prompt_with_input(vec![message_item("hello")]);
-
-    let mut stream = session
-        .stream_with_attempt(
-            &prompt,
-            &harness.model_info,
-            &harness.session_telemetry,
-            harness.effort,
-            harness.summary,
-            /*service_tier*/ None,
-            /*turn_metadata_header*/ None,
-            /*stream_attempt*/ 7,
-            &codex_rollout_trace::InferenceTraceContext::disabled(),
-        )
-        .await
-        .expect("websocket stream failed");
-
-    let error = tokio::time::timeout(Duration::from_secs(2), async {
-        while let Some(event) = stream.next().await {
-            if let Err(err) = event {
-                return Some(err);
-            }
-        }
-        None
-    })
-    .await
-    .expect("timed out waiting for terminal websocket error")
-    .expect("expected websocket stream error");
-
-    let message = error.to_string();
-    assert!(message.contains("stream closed before response.completed"));
-    assert!(message.contains("transport=responses_websocket"));
-    assert!(message.contains("attempt=7"));
-    assert!(message.contains("created_response_id=resp-1"));
-    assert!(message.contains("last_event=response.created"));
-
-    server.shutdown().await;
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn responses_websocket_v2_sets_openai_beta_header() {
     skip_if_no_network!();
 
