@@ -133,7 +133,7 @@ impl OAuthHttpClient {
                         name: OAUTH_DISCOVERY_HEADER.to_string(),
                         value: OAUTH_DISCOVERY_VERSION.to_string(),
                     }],
-                    None,
+                    /*body*/ None,
                     Some(DISCOVERY_TIMEOUT),
                 )
                 .await

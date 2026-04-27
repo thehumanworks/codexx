@@ -876,7 +876,11 @@ mod tests {
 
         let persistor = OAuthPersistor::new(
             tokens.server_name.clone(),
-            OAuthHttpClient::new(Arc::new(FailingHttpClient), None, None)?,
+            OAuthHttpClient::new(
+                Arc::new(FailingHttpClient),
+                /*http_headers*/ None,
+                /*env_http_headers*/ None,
+            )?,
             OAuthCredentialsStoreMode::File,
             Some(tokens.clone()),
         );
@@ -904,7 +908,11 @@ mod tests {
 
         let persistor = OAuthPersistor::new(
             tokens.server_name.clone(),
-            OAuthHttpClient::new(Arc::new(FailingHttpClient), None, None)?,
+            OAuthHttpClient::new(
+                Arc::new(FailingHttpClient),
+                /*http_headers*/ None,
+                /*env_http_headers*/ None,
+            )?,
             OAuthCredentialsStoreMode::File,
             Some(tokens),
         );
