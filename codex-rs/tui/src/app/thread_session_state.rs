@@ -191,8 +191,9 @@ mod tests {
         app.chat_widget
             .set_sandbox_policy(expected_sandbox_policy.clone())
             .expect("set widget sandbox policy");
-        app.config.permissions.sandbox_policy =
-            codex_config::Constrained::allow_any(expected_sandbox_policy.clone());
+        app.config
+            .set_legacy_sandbox_policy(expected_sandbox_policy.clone())
+            .expect("set sandbox policy");
 
         app.sync_active_thread_permission_settings_to_cached_session()
             .await;
