@@ -12,6 +12,7 @@ use codex_rmcp_client::OAuthProviderError;
 use codex_rmcp_client::OauthLoginHandle;
 use codex_rmcp_client::determine_streamable_http_auth_status;
 use codex_rmcp_client::determine_streamable_http_auth_status_with_client;
+use codex_rmcp_client::discover_streamable_http_oauth;
 use codex_rmcp_client::discover_streamable_http_oauth_with_client;
 use codex_rmcp_client::perform_oauth_login_return_url_with_client;
 use codex_rmcp_client::perform_oauth_login_silent_with_client;
@@ -66,18 +67,56 @@ pub enum McpOAuthLoginOutcome {
 }
 
 pub async fn oauth_login_support(transport: &McpServerTransportConfig) -> McpOAuthLoginSupport {
-    oauth_login_support_with_client(transport, Arc::new(ReqwestHttpClient)).await
+    oauth_login_support_with_discovery(transport).await
 }
 
 pub async fn oauth_login_support_for_server(
     config: &McpServerConfig,
     runtime_environment: McpRuntimeEnvironment,
 ) -> McpOAuthLoginSupport {
-    let http_client = match http_client_for_server(config, runtime_environment) {
-        Ok(http_client) => http_client,
-        Err(err) => return McpOAuthLoginSupport::Unknown(err),
+    match config.experimental_environment.as_deref() {
+        Some("remote") => {
+            let http_client = match http_client_for_server(config, runtime_environment) {
+                Ok(http_client) => http_client,
+                Err(err) => return McpOAuthLoginSupport::Unknown(err),
+            };
+            oauth_login_support_with_client(&config.transport, http_client).await
+        }
+        None | Some("local") => oauth_login_support(&config.transport).await,
+        Some(environment) => McpOAuthLoginSupport::Unknown(anyhow::anyhow!(
+            "unsupported experimental_environment `{environment}`"
+        )),
+    }
+}
+
+async fn oauth_login_support_with_discovery(
+    transport: &McpServerTransportConfig,
+) -> McpOAuthLoginSupport {
+    let McpServerTransportConfig::StreamableHttp {
+        url,
+        bearer_token_env_var,
+        http_headers,
+        env_http_headers,
+    } = transport
+    else {
+        return McpOAuthLoginSupport::Unsupported;
     };
-    oauth_login_support_with_client(&config.transport, http_client).await
+
+    if bearer_token_env_var.is_some() {
+        return McpOAuthLoginSupport::Unsupported;
+    }
+
+    match discover_streamable_http_oauth(url, http_headers.clone(), env_http_headers.clone()).await
+    {
+        Ok(Some(discovery)) => McpOAuthLoginSupport::Supported(McpOAuthLoginConfig {
+            url: url.clone(),
+            http_headers: http_headers.clone(),
+            env_http_headers: env_http_headers.clone(),
+            discovered_scopes: discovery.scopes_supported,
+        }),
+        Ok(None) => McpOAuthLoginSupport::Unsupported,
+        Err(err) => McpOAuthLoginSupport::Unknown(err),
+    }
 }
 
 async fn oauth_login_support_with_client(
@@ -120,7 +159,10 @@ async fn oauth_login_support_with_client(
 pub async fn discover_supported_scopes(
     transport: &McpServerTransportConfig,
 ) -> Option<Vec<String>> {
-    discover_supported_scopes_with_client(transport, Arc::new(ReqwestHttpClient)).await
+    match oauth_login_support(transport).await {
+        McpOAuthLoginSupport::Supported(config) => config.discovered_scopes,
+        McpOAuthLoginSupport::Unsupported | McpOAuthLoginSupport::Unknown(_) => None,
+    }
 }
 
 pub async fn discover_supported_scopes_for_server(
