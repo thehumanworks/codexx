@@ -135,6 +135,8 @@ impl ResponseStreamLifecycleSummary {
     }
 
     fn log(&self) {
+        // Keep lifecycle logs focused on streams that did not complete normally,
+        // plus the suspicious case where created/completed response IDs disagree.
         if self.terminal_state == ResponseStreamTerminalState::Completed && !self.ids_mismatch() {
             return;
         }
