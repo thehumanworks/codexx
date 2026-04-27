@@ -97,6 +97,7 @@ async fn status_snapshot_includes_reasoning_details() {
     config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
     config.model_reasoning_summary = Some(ReasoningSummary::Detailed);
+    config.cwd = test_path_buf("/workspace/tests").abs();
     config
         .set_legacy_sandbox_policy(SandboxPolicy::WorkspaceWrite {
             writable_roots: Vec::new(),
@@ -105,8 +106,6 @@ async fn status_snapshot_includes_reasoning_details() {
             exclude_slash_tmp: false,
         })
         .expect("set sandbox policy");
-
-    config.cwd = test_path_buf("/workspace/tests").abs();
 
     let account_display = test_status_account_display();
     let usage = TokenUsage {
@@ -180,6 +179,7 @@ async fn status_permissions_non_default_workspace_write_is_custom() {
         .approval_policy
         .set(AskForApproval::OnRequest)
         .expect("set approval policy");
+    config.cwd = test_path_buf("/workspace/tests").abs();
     config
         .set_legacy_sandbox_policy(SandboxPolicy::WorkspaceWrite {
             writable_roots: Vec::new(),
@@ -188,7 +188,6 @@ async fn status_permissions_non_default_workspace_write_is_custom() {
             exclude_slash_tmp: false,
         })
         .expect("set sandbox policy");
-    config.cwd = test_path_buf("/workspace/tests").abs();
 
     let account_display = test_status_account_display();
     let usage = TokenUsage::default();
