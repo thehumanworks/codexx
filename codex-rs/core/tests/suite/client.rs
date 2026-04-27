@@ -2808,14 +2808,23 @@ async fn incomplete_response_emits_content_filter_error_message() -> anyhow::Res
         .await?;
 
     let error_event = wait_for_event(&codex, |ev| matches!(ev, EventMsg::Error(_))).await;
+    let EventMsg::Error(err) = error_event else {
+        panic!("expected incomplete content filter error; got {error_event:?}");
+    };
     assert!(
-        matches!(
-            error_event,
-            EventMsg::Error(ref err)
-                if err.message
-                    == "stream disconnected before completion: Incomplete response returned, reason: content_filter"
+        err.message.starts_with(
+            "stream disconnected before completion: Incomplete response returned, reason: content_filter"
         ),
-        "expected incomplete content filter error; got {error_event:?}"
+        "expected incomplete content filter error; got {err:?}"
+    );
+    assert!(
+        err.message
+            .contains("Stream lifecycle: diagnostic: stream failed after receiving events"),
+        "expected lifecycle diagnostic; got {err:?}"
+    );
+    assert!(
+        err.message.contains("last_event=response.incomplete"),
+        "expected incomplete event diagnostic; got {err:?}"
     );
 
     assert_eq!(responses_mock.requests().len(), 1);
