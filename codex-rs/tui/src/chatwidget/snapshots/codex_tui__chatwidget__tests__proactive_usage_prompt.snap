@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/status_and_layout.rs
+expression: popup
+---
+  Approaching usage limit
+  You've used at least 90% of your Codex usage limit. Upgrade now to keep going?
+
+  1. Upgrade now (y)
+› 2. No (default) (n)
+
+  Press enter to confirm or esc to go back

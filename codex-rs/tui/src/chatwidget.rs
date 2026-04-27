@@ -201,6 +201,7 @@ use codex_protocol::protocol::Op;
 use codex_protocol::protocol::PatchApplyBeginEvent;
 use codex_protocol::protocol::RateLimitReachedType;
 use codex_protocol::protocol::RateLimitSnapshot;
+use codex_protocol::protocol::RateLimitWindow;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget;
 use codex_protocol::protocol::SkillMetadata as ProtocolSkillMetadata;
@@ -479,6 +480,11 @@ fn is_standard_tool_call(parsed_cmd: &[ParsedCommand]) -> bool {
 const RATE_LIMIT_WARNING_THRESHOLDS: [f64; 3] = [75.0, 90.0, 95.0];
 const NUDGE_MODEL_SLUG: &str = "gpt-5.4-mini";
 const RATE_LIMIT_SWITCH_PROMPT_THRESHOLD: f64 = 90.0;
+const PROACTIVE_USAGE_PROMPT_THRESHOLD: f64 = 90.0;
+const PROACTIVE_USAGE_PROMPT_USAGE_URL: &str = "https://chatgpt.com/codex/settings/usage?utm_source=codex_cli&utm_medium=cli&utm_campaign=usage_limit_prompt&utm_content=threshold_90";
+const PROACTIVE_USAGE_PROMPT_PRO_URL: &str = "https://chatgpt.com/explore/pro?utm_source=codex_cli&utm_medium=cli&utm_campaign=usage_limit_prompt&utm_content=threshold_90";
+const PROACTIVE_USAGE_PROMPT_BROWSER_MESSAGE: &str =
+    "Finish in your browser, then return here to continue.";
 const MAX_AGENT_COPY_HISTORY: usize = 32;
 
 #[derive(Debug)]
@@ -552,6 +558,21 @@ impl RateLimitWarningState {
     }
 }
 
+fn rate_limit_snapshot_crosses_proactive_prompt_threshold(snapshot: &RateLimitSnapshot) -> bool {
+    snapshot
+        .primary
+        .as_ref()
+        .is_some_and(rate_limit_window_crosses_proactive_prompt_threshold)
+        || snapshot
+            .secondary
+            .as_ref()
+            .is_some_and(rate_limit_window_crosses_proactive_prompt_threshold)
+}
+
+fn rate_limit_window_crosses_proactive_prompt_threshold(window: &RateLimitWindow) -> bool {
+    window.used_percent >= PROACTIVE_USAGE_PROMPT_THRESHOLD && window.used_percent < 100.0
+}
+
 pub(crate) fn get_limits_duration(windows_minutes: i64) -> String {
     const MINUTES_PER_HOUR: i64 = 60;
     const MINUTES_PER_DAY: i64 = 24 * MINUTES_PER_HOUR;
@@ -602,6 +623,20 @@ enum RateLimitSwitchPromptState {
     Idle,
     Pending,
     Shown,
+}
+
+#[derive(Default)]
+enum ProactiveUsagePromptState {
+    #[default]
+    Idle,
+    Pending,
+    Shown,
+}
+
+struct ProactiveUsagePromptContent {
+    action_label: &'static str,
+    subtitle: &'static str,
+    url: &'static str,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -811,6 +846,7 @@ pub(crate) struct ChatWidget {
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     rate_limit_warnings: RateLimitWarningState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
+    proactive_usage_prompt: ProactiveUsagePromptState,
     add_credits_nudge_email_in_flight: Option<AddCreditsNudgeCreditType>,
     adaptive_chunking: AdaptiveChunkingPolicy,
     // Stream lifecycle controller
@@ -2989,8 +3025,15 @@ impl ChatWidget {
                 .as_ref()
                 .map(|credits| credits.has_credits)
                 .unwrap_or(false);
+            let proactive_usage_prompt_eligible =
+                is_codex_limit && self.should_show_proactive_usage_prompt(&snapshot);
+
+            if proactive_usage_prompt_eligible {
+                self.proactive_usage_prompt = ProactiveUsagePromptState::Pending;
+            }
 
             if high_usage
+                && !proactive_usage_prompt_eligible
                 && !has_workspace_credits
                 && !self.rate_limit_switch_prompt_hidden()
                 && self.current_model() != NUDGE_MODEL_SLUG
@@ -5204,6 +5247,7 @@ impl ChatWidget {
             codex_rate_limit_reached_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
+            proactive_usage_prompt: ProactiveUsagePromptState::default(),
             add_credits_nudge_email_in_flight: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
             stream_controller: None,
@@ -7974,7 +8018,67 @@ impl ChatWidget {
             .unwrap_or(false)
     }
 
+    fn should_show_proactive_usage_prompt(&self, snapshot: &RateLimitSnapshot) -> bool {
+        if !self.has_chatgpt_account
+            || !matches!(self.proactive_usage_prompt, ProactiveUsagePromptState::Idle)
+            || !rate_limit_snapshot_crosses_proactive_prompt_threshold(snapshot)
+        {
+            return false;
+        }
+
+        let plan_type = snapshot.plan_type.or(self.plan_type);
+        let paid_personal_user = matches!(
+            plan_type,
+            Some(PlanType::Plus | PlanType::Pro | PlanType::ProLite)
+        );
+        let workspace_owner = matches!(
+            snapshot
+                .rate_limit_reached_type
+                .or(self.codex_rate_limit_reached_type),
+            Some(
+                RateLimitReachedType::WorkspaceOwnerCreditsDepleted
+                    | RateLimitReachedType::WorkspaceOwnerUsageLimitReached
+            )
+        );
+
+        paid_personal_user || workspace_owner
+    }
+
+    fn proactive_usage_prompt_content(&self) -> Option<ProactiveUsagePromptContent> {
+        let workspace_owner = matches!(
+            self.codex_rate_limit_reached_type,
+            Some(
+                RateLimitReachedType::WorkspaceOwnerCreditsDepleted
+                    | RateLimitReachedType::WorkspaceOwnerUsageLimitReached
+            )
+        );
+        if workspace_owner {
+            return Some(ProactiveUsagePromptContent {
+                action_label: "Review usage options",
+                subtitle: "You've used at least 90% of your Codex usage limit. Review usage options to keep going?",
+                url: PROACTIVE_USAGE_PROMPT_USAGE_URL,
+            });
+        }
+
+        match self.plan_type {
+            Some(PlanType::Plus) => Some(ProactiveUsagePromptContent {
+                action_label: "Upgrade now",
+                subtitle: "You've used at least 90% of your Codex usage limit. Upgrade now to keep going?",
+                url: PROACTIVE_USAGE_PROMPT_PRO_URL,
+            }),
+            Some(PlanType::Pro | PlanType::ProLite) => Some(ProactiveUsagePromptContent {
+                action_label: "Buy credits",
+                subtitle: "You've used at least 90% of your Codex usage limit. Buy credits to keep going?",
+                url: PROACTIVE_USAGE_PROMPT_USAGE_URL,
+            }),
+            _ => None,
+        }
+    }
+
     fn maybe_show_pending_rate_limit_prompt(&mut self) {
+        if self.maybe_show_pending_proactive_usage_prompt() {
+            return;
+        }
         if self.rate_limit_switch_prompt_hidden() {
             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
             return;
@@ -7991,6 +8095,61 @@ impl ChatWidget {
         } else {
             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
         }
+    }
+
+    fn maybe_show_pending_proactive_usage_prompt(&mut self) -> bool {
+        if !matches!(
+            self.proactive_usage_prompt,
+            ProactiveUsagePromptState::Pending
+        ) {
+            return false;
+        }
+
+        self.open_proactive_usage_prompt();
+        self.proactive_usage_prompt = ProactiveUsagePromptState::Shown;
+        true
+    }
+
+    fn open_proactive_usage_prompt(&mut self) {
+        let Some(content) = self.proactive_usage_prompt_content() else {
+            self.proactive_usage_prompt = ProactiveUsagePromptState::Idle;
+            return;
+        };
+
+        let url = content.url;
+        let yes_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            tx.send(AppEvent::OpenUrlInBrowser {
+                url: url.to_string(),
+            });
+            tx.send(AppEvent::AddInfoMessage {
+                message: PROACTIVE_USAGE_PROMPT_BROWSER_MESSAGE.to_string(),
+            });
+        })];
+        let items = vec![
+            SelectionItem {
+                name: content.action_label.to_string(),
+                display_shortcut: Some(key_hint::plain(KeyCode::Char('y'))),
+                actions: yes_actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "No".to_string(),
+                display_shortcut: Some(key_hint::plain(KeyCode::Char('n'))),
+                is_default: true,
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Approaching usage limit".to_string()),
+            subtitle: Some(content.subtitle.to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            initial_selected_idx: Some(1),
+            ..Default::default()
+        });
     }
 
     fn open_rate_limit_switch_prompt(&mut self, preset: ModelPreset) {

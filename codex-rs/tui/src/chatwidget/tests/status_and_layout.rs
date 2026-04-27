@@ -542,6 +542,138 @@ async fn rate_limit_switch_prompt_popup_snapshot() {
 }
 
 #[tokio::test]
+async fn proactive_usage_prompt_skips_75_percent() {
+    let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 75.0);
+    limits.plan_type = Some(PlanType::Plus);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+
+    assert!(matches!(
+        chat.proactive_usage_prompt,
+        ProactiveUsagePromptState::Idle
+    ));
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_shows_for_paid_personal_user_at_90_percent() {
+    let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 90.0);
+    limits.plan_type = Some(PlanType::Plus);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+    assert!(matches!(
+        chat.proactive_usage_prompt,
+        ProactiveUsagePromptState::Pending
+    ));
+    assert!(matches!(
+        chat.rate_limit_switch_prompt,
+        RateLimitSwitchPromptState::Idle
+    ));
+
+    chat.maybe_show_pending_rate_limit_prompt();
+
+    assert!(matches!(
+        chat.proactive_usage_prompt,
+        ProactiveUsagePromptState::Shown
+    ));
+    let popup = render_bottom_popup(&chat, /*width*/ 90);
+    assert_chatwidget_snapshot!("proactive_usage_prompt", popup);
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_yes_opens_usage_url_with_utm_params() {
+    let (mut chat, mut rx, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 92.0);
+    limits.plan_type = Some(PlanType::Pro);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+    chat.maybe_show_pending_rate_limit_prompt();
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    let (url, message) = next_open_url_and_info_message_events(&mut rx);
+    assert_eq!(url, PROACTIVE_USAGE_PROMPT_USAGE_URL);
+    assert_eq!(message, PROACTIVE_USAGE_PROMPT_BROWSER_MESSAGE);
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_plus_user_opens_upgrade_url_with_utm_params() {
+    let (mut chat, mut rx, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 92.0);
+    limits.plan_type = Some(PlanType::Plus);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+    chat.maybe_show_pending_rate_limit_prompt();
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    let (url, message) = next_open_url_and_info_message_events(&mut rx);
+    assert_eq!(url, PROACTIVE_USAGE_PROMPT_PRO_URL);
+    assert_eq!(message, PROACTIVE_USAGE_PROMPT_BROWSER_MESSAGE);
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_no_suppresses_repeat_prompts() {
+    let (mut chat, mut rx, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 90.0);
+    limits.plan_type = Some(PlanType::Plus);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+    chat.maybe_show_pending_rate_limit_prompt();
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+    let mut later_limits = snapshot(/*percent*/ 95.0);
+    later_limits.plan_type = Some(PlanType::Plus);
+    chat.on_rate_limit_snapshot(Some(later_limits));
+    chat.maybe_show_pending_rate_limit_prompt();
+
+    assert!(matches!(
+        chat.proactive_usage_prompt,
+        ProactiveUsagePromptState::Shown
+    ));
+    assert_no_open_url_or_info_message(&mut rx);
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_excludes_workspace_member_without_owner_signal() {
+    let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 90.0);
+    limits.plan_type = Some(PlanType::Team);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+
+    assert!(matches!(
+        chat.proactive_usage_prompt,
+        ProactiveUsagePromptState::Idle
+    ));
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_allows_explicit_workspace_owner_signal() {
+    let (mut chat, _, _) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.has_chatgpt_account = true;
+    let mut limits = snapshot(/*percent*/ 90.0);
+    limits.plan_type = Some(PlanType::Team);
+    limits.rate_limit_reached_type = Some(RateLimitReachedType::WorkspaceOwnerUsageLimitReached);
+
+    chat.on_rate_limit_snapshot(Some(limits));
+
+    assert!(matches!(
+        chat.proactive_usage_prompt,
+        ProactiveUsagePromptState::Pending
+    ));
+    assert!(matches!(
+        chat.rate_limit_switch_prompt,
+        RateLimitSwitchPromptState::Idle
+    ));
+}
+
+#[tokio::test]
 async fn workspace_owner_usage_nudge_flag_disabled_keeps_generic_rate_limit_error() {
     {
         let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
@@ -889,6 +1021,42 @@ fn next_send_add_credits_nudge_email_event(
         }
     }
     panic!("expected SendAddCreditsNudgeEmail app event");
+}
+
+fn next_open_url_and_info_message_events(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>,
+) -> (String, String) {
+    let mut url = None;
+    let mut message = None;
+    while let Ok(event) = rx.try_recv() {
+        match event {
+            AppEvent::OpenUrlInBrowser { url: event_url } => {
+                url = Some(event_url);
+            }
+            AppEvent::AddInfoMessage {
+                message: event_message,
+            } => {
+                message = Some(event_message);
+            }
+            _ => {}
+        }
+    }
+    (
+        url.expect("expected OpenUrlInBrowser app event"),
+        message.expect("expected AddInfoMessage app event"),
+    )
+}
+
+fn assert_no_open_url_or_info_message(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) {
+    while let Ok(event) = rx.try_recv() {
+        assert!(
+            !matches!(
+                event,
+                AppEvent::OpenUrlInBrowser { .. } | AppEvent::AddInfoMessage { .. }
+            ),
+            "unexpected event: {event:?}"
+        );
+    }
 }
 
 fn assert_no_owner_nudge_or_rate_limit_refresh(

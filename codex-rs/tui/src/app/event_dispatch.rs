@@ -302,6 +302,9 @@ impl App {
             AppEvent::OpenUrlInBrowser { url } => {
                 self.open_url_in_browser(url);
             }
+            AppEvent::AddInfoMessage { message } => {
+                self.chat_widget.add_info_message(message, /*hint*/ None);
+            }
             AppEvent::RefreshConnectors { force_refetch } => {
                 self.chat_widget.refresh_connectors(force_refetch);
             }

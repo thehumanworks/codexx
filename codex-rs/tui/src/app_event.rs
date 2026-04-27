@@ -228,6 +228,11 @@ pub(crate) enum AppEvent {
         url: String,
     },
 
+    /// Add an informational message to the transcript.
+    AddInfoMessage {
+        message: String,
+    },
+
     /// Refresh app connector state and mention bindings.
     RefreshConnectors {
         force_refetch: bool,
