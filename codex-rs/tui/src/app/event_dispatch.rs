@@ -726,6 +726,19 @@ impl App {
                     self.chat_widget.show_windows_sandbox_setup_status();
                     self.windows_sandbox.setup_started_at = Some(Instant::now());
                     let session_telemetry = self.session_telemetry.clone();
+                    let policy = match permission_profile
+                        .to_legacy_sandbox_policy(policy_cwd.as_path())
+                    {
+                        Ok(policy) => policy,
+                        Err(err) => {
+                            tracing::error!(
+                                %err,
+                                "approval preset permissions cannot be projected for elevated Windows sandbox setup"
+                            );
+                            tx.send(AppEvent::OpenWindowsSandboxFallbackPrompt { preset });
+                            return Ok(AppRunControl::Continue);
+                        }
+                    };
                     tokio::task::spawn_blocking(move || {
                         let policy = match permission_profile
                             .to_legacy_sandbox_policy(policy_cwd.as_path())
@@ -812,6 +825,19 @@ impl App {
                     let session_telemetry = self.session_telemetry.clone();
 
                     self.chat_widget.show_windows_sandbox_setup_status();
+                    let policy = match permission_profile
+                        .to_legacy_sandbox_policy(policy_cwd.as_path())
+                    {
+                        Ok(policy) => policy,
+                        Err(err) => {
+                            tracing::error!(
+                                %err,
+                                "approval preset permissions cannot be projected for legacy Windows sandbox setup"
+                            );
+                            tx.send(AppEvent::OpenWindowsSandboxFallbackPrompt { preset });
+                            return Ok(AppRunControl::Continue);
+                        }
+                    };
                     tokio::task::spawn_blocking(move || {
                         let policy = match permission_profile
                             .to_legacy_sandbox_policy(policy_cwd.as_path())
