@@ -394,7 +394,6 @@ approval_policy = "on-failure"
         overrides,
         CloudRequirementsLoader::default(),
         &codex_config::NoopThreadConfigLoader,
-        /*host_name*/ None,
     )
     .await
     .expect("load layers");
@@ -406,7 +405,7 @@ approval_policy = "on-failure"
     assert_eq!(user_layers.len(), 2);
     assert_eq!(
         user_layers[0].name,
-        super::ConfigLayerSource::User {
+        ConfigLayerSource::User {
             file: AbsolutePathBuf::from_absolute_path(tmp.path().join(CONFIG_TOML_FILE))
                 .expect("base user config path")
         }
@@ -414,7 +413,7 @@ approval_policy = "on-failure"
     let user_layer = layers.get_user_layer().expect("selected user layer");
     assert_eq!(
         user_layer.name,
-        super::ConfigLayerSource::User {
+        ConfigLayerSource::User {
             file: AbsolutePathBuf::from_absolute_path(&selected_config)
                 .expect("selected user config path")
         }
