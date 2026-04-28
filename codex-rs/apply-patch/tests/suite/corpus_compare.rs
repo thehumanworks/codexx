@@ -116,3 +116,58 @@ fn reduced_repros_document_current_parser_mismatches() {
         );
     }
 }
+
+#[test]
+fn reduced_repro_for_indented_update_header_both_parsers_succeed_but_disagree() {
+    let patch = "\
+*** Begin Patch
+*** Update File: a.txt
+@@
+-old a
++new a
+ *** Update File: b.txt
+@@
+-old b
++new b
+*** End Patch";
+
+    match compare_patch_outputs(patch) {
+        CompareResult::Mismatch {
+            legacy: Ok(legacy),
+            streaming: Ok(streaming),
+        } => {
+            assert_eq!(legacy.len(), 1);
+            assert_eq!(streaming.len(), 2);
+
+            match &legacy[..] {
+                [Hunk::UpdateFile { path, chunks, .. }] => {
+                    assert_eq!(path.to_string_lossy(), "a.txt");
+                    assert_eq!(chunks.len(), 2);
+                }
+                other => panic!("unexpected legacy parse result: {other:?}"),
+            }
+
+            match &streaming[..] {
+                [
+                    Hunk::UpdateFile {
+                        path: first_path,
+                        chunks: first_chunks,
+                        ..
+                    },
+                    Hunk::UpdateFile {
+                        path: second_path,
+                        chunks: second_chunks,
+                        ..
+                    },
+                ] => {
+                    assert_eq!(first_path.to_string_lossy(), "a.txt");
+                    assert_eq!(second_path.to_string_lossy(), "b.txt");
+                    assert_eq!(first_chunks.len(), 1);
+                    assert_eq!(second_chunks.len(), 1);
+                }
+                other => panic!("unexpected streaming parse result: {other:?}"),
+            }
+        }
+        other => panic!("expected both parsers to succeed with different hunks, got {other:?}"),
+    }
+}
