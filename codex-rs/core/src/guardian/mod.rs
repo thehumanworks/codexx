@@ -24,6 +24,8 @@ use serde::Deserialize;
 use serde::Serialize;
 
 pub(crate) use approval_request::GuardianApprovalRequest;
+pub(crate) use approval_request::GuardianFileContentSharing;
+pub(crate) use approval_request::GuardianFileContentSharingArgument;
 pub(crate) use approval_request::GuardianMcpAnnotations;
 pub(crate) use approval_request::GuardianNetworkAccessTrigger;
 pub(crate) use approval_request::guardian_approval_request_to_json;

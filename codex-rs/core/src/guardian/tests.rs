@@ -724,6 +724,7 @@ fn guardian_approval_request_to_json_renders_mcp_tool_call_shape() -> serde_json
         arguments: Some(serde_json::json!({
             "url": "https://example.com",
         })),
+        file_content_sharing: None,
         connector_id: None,
         connector_name: Some("Playwright".to_string()),
         connector_description: None,
@@ -751,6 +752,55 @@ fn guardian_approval_request_to_json_renders_mcp_tool_call_shape() -> serde_json
                 "destructive_hint": true,
                 "read_only_hint": false,
             },
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn guardian_approval_request_to_json_renders_file_content_sharing() -> serde_json::Result<()> {
+    let action = GuardianApprovalRequest::McpToolCall {
+        id: "call-1".to_string(),
+        server: "codex_apps".to_string(),
+        tool_name: "gmail_send_email".to_string(),
+        arguments: Some(serde_json::json!({
+            "attachment_files": ["/Users/alice/report.pdf"],
+        })),
+        file_content_sharing: Some(GuardianFileContentSharing {
+            summary: "Local file contents from the listed paths will be shared with the downstream MCP server.",
+            arguments: vec![GuardianFileContentSharingArgument {
+                name: "attachment_files".to_string(),
+                local_paths: vec!["/Users/alice/report.pdf".to_string()],
+            }],
+        }),
+        connector_id: None,
+        connector_name: Some("Gmail".to_string()),
+        connector_description: None,
+        tool_title: Some("send_email".to_string()),
+        tool_description: None,
+        annotations: None,
+    };
+
+    assert_eq!(
+        guardian_approval_request_to_json(&action)?,
+        serde_json::json!({
+            "tool": "mcp_tool_call",
+            "server": "codex_apps",
+            "tool_name": "gmail_send_email",
+            "arguments": {
+                "attachment_files": ["/Users/alice/report.pdf"],
+            },
+            "file_content_sharing": {
+                "summary": "Local file contents from the listed paths will be shared with the downstream MCP server.",
+                "arguments": [
+                    {
+                        "name": "attachment_files",
+                        "local_paths": ["/Users/alice/report.pdf"],
+                    },
+                ],
+            },
+            "connector_name": "Gmail",
+            "tool_title": "send_email",
         })
     );
     Ok(())

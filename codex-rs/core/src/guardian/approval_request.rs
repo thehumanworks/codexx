@@ -61,6 +61,7 @@ pub(crate) enum GuardianApprovalRequest {
         server: String,
         tool_name: String,
         arguments: Option<Value>,
+        file_content_sharing: Option<GuardianFileContentSharing>,
         connector_id: Option<String>,
         connector_name: Option<String>,
         connector_description: Option<String>,
@@ -102,6 +103,18 @@ pub(crate) struct GuardianMcpAnnotations {
     pub(crate) read_only_hint: Option<bool>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct GuardianFileContentSharing {
+    pub(crate) summary: &'static str,
+    pub(crate) arguments: Vec<GuardianFileContentSharingArgument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub(crate) struct GuardianFileContentSharingArgument {
+    pub(crate) name: String,
+    pub(crate) local_paths: Vec<String>,
+}
+
 #[derive(Serialize)]
 struct CommandApprovalAction<'a> {
     tool: &'a str,
@@ -134,6 +147,8 @@ struct McpToolCallApprovalAction<'a> {
     tool_name: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     arguments: Option<&'a Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_content_sharing: Option<&'a GuardianFileContentSharing>,
     #[serde(skip_serializing_if = "Option::is_none")]
     connector_id: Option<&'a String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -340,6 +355,7 @@ pub(crate) fn guardian_approval_request_to_json(
             server,
             tool_name,
             arguments,
+            file_content_sharing,
             connector_id,
             connector_name,
             connector_description,
@@ -351,6 +367,7 @@ pub(crate) fn guardian_approval_request_to_json(
             server,
             tool_name,
             arguments: arguments.as_ref(),
+            file_content_sharing: file_content_sharing.as_ref(),
             connector_id: connector_id.as_ref(),
             connector_name: connector_name.as_ref(),
             connector_description: connector_description.as_ref(),

@@ -1073,11 +1073,62 @@ fn guardian_mcp_review_request_includes_invocation_metadata() {
             arguments: Some(serde_json::json!({
                 "url": "https://example.com",
             })),
+            file_content_sharing: None,
             connector_id: Some("playwright".to_string()),
             connector_name: Some("Playwright".to_string()),
             connector_description: Some("Browser automation".to_string()),
             tool_title: Some("Navigate".to_string()),
             tool_description: Some("Open a page".to_string()),
+            annotations: None,
+        }
+    );
+}
+
+#[test]
+fn guardian_mcp_review_request_includes_file_content_sharing_for_openai_file_params() {
+    let invocation = McpInvocation {
+        server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        tool: "gmail_send_email".to_string(),
+        arguments: Some(serde_json::json!({
+            "to": "alice@example.com",
+            "attachment_files": ["/Users/alice/report.pdf"],
+        })),
+    };
+    let mut metadata = approval_metadata(
+        Some("gmail"),
+        Some("Gmail"),
+        Some("Find and reference emails from your inbox."),
+        Some("send_email"),
+        Some("Send an email from the authenticated Gmail account."),
+    );
+    metadata.openai_file_input_params = Some(vec!["attachment_files".to_string()]);
+
+    let request = build_guardian_mcp_tool_review_request("call-1", &invocation, Some(&metadata));
+
+    assert_eq!(
+        request,
+        GuardianApprovalRequest::McpToolCall {
+            id: "call-1".to_string(),
+            server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+            tool_name: "gmail_send_email".to_string(),
+            arguments: Some(serde_json::json!({
+                "to": "alice@example.com",
+                "attachment_files": ["/Users/alice/report.pdf"],
+            })),
+            file_content_sharing: Some(GuardianFileContentSharing {
+                summary: "Local file contents from the listed paths will be shared with the downstream MCP server.",
+                arguments: vec![GuardianFileContentSharingArgument {
+                    name: "attachment_files".to_string(),
+                    local_paths: vec!["/Users/alice/report.pdf".to_string()],
+                }],
+            }),
+            connector_id: Some("gmail".to_string()),
+            connector_name: Some("Gmail".to_string()),
+            connector_description: Some("Find and reference emails from your inbox.".to_string()),
+            tool_title: Some("send_email".to_string()),
+            tool_description: Some(
+                "Send an email from the authenticated Gmail account.".to_string()
+            ),
             annotations: None,
         }
     );
@@ -1111,6 +1162,7 @@ fn guardian_mcp_review_request_includes_annotations_when_present() {
             server: "custom_server".to_string(),
             tool_name: "dangerous_tool".to_string(),
             arguments: None,
+            file_content_sharing: None,
             connector_id: None,
             connector_name: None,
             connector_description: None,
@@ -1157,6 +1209,51 @@ fn prepare_arc_request_action_serializes_mcp_tool_call_shape() {
             },
             "connector_name": "Playwright",
             "tool_title": "Navigate",
+        })
+    );
+}
+
+#[test]
+fn prepare_arc_request_action_includes_file_content_sharing() {
+    let invocation = McpInvocation {
+        server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        tool: "gmail_send_email".to_string(),
+        arguments: Some(serde_json::json!({
+            "attachment_files": "/Users/alice/report.pdf",
+        })),
+    };
+    let mut metadata = approval_metadata(
+        Some("gmail"),
+        Some("Gmail"),
+        /*connector_description*/ None,
+        Some("send_email"),
+        /*tool_description*/ None,
+    );
+    metadata.openai_file_input_params = Some(vec!["attachment_files".to_string()]);
+
+    let action = prepare_arc_request_action(&invocation, Some(&metadata));
+
+    assert_eq!(
+        action,
+        serde_json::json!({
+            "tool": "mcp_tool_call",
+            "server": CODEX_APPS_MCP_SERVER_NAME,
+            "tool_name": "gmail_send_email",
+            "arguments": {
+                "attachment_files": "/Users/alice/report.pdf",
+            },
+            "file_content_sharing": {
+                "summary": "Local file contents from the listed paths will be shared with the downstream MCP server.",
+                "arguments": [
+                    {
+                        "name": "attachment_files",
+                        "local_paths": ["/Users/alice/report.pdf"],
+                    },
+                ],
+            },
+            "connector_id": "gmail",
+            "connector_name": "Gmail",
+            "tool_title": "send_email",
         })
     );
 }

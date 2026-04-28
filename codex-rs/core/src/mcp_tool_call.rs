@@ -18,6 +18,8 @@ use crate::config::edit::ConfigEditsBuilder;
 use crate::config::load_global_mcp_servers;
 use crate::connectors;
 use crate::guardian::GuardianApprovalRequest;
+use crate::guardian::GuardianFileContentSharing;
+use crate::guardian::GuardianFileContentSharingArgument;
 use crate::guardian::GuardianMcpAnnotations;
 use crate::guardian::guardian_approval_request_to_json;
 use crate::guardian::guardian_rejection_message;
@@ -1141,6 +1143,10 @@ pub(crate) fn build_guardian_mcp_tool_review_request(
         server: invocation.server.clone(),
         tool_name: invocation.tool.clone(),
         arguments: invocation.arguments.clone(),
+        file_content_sharing: guardian_file_content_sharing_for_openai_file_params(
+            invocation.arguments.as_ref(),
+            metadata.and_then(|metadata| metadata.openai_file_input_params.as_deref()),
+        ),
         connector_id: metadata.and_then(|metadata| metadata.connector_id.clone()),
         connector_name: metadata.and_then(|metadata| metadata.connector_name.clone()),
         connector_description: metadata.and_then(|metadata| metadata.connector_description.clone()),
@@ -1154,6 +1160,39 @@ pub(crate) fn build_guardian_mcp_tool_review_request(
                 read_only_hint: annotations.read_only_hint,
             }),
     }
+}
+
+fn guardian_file_content_sharing_for_openai_file_params(
+    arguments: Option<&serde_json::Value>,
+    openai_file_input_params: Option<&[String]>,
+) -> Option<GuardianFileContentSharing> {
+    let arguments = arguments?.as_object()?;
+    let shared_arguments = openai_file_input_params?
+        .iter()
+        .filter_map(|field_name| {
+            let value = arguments.get(field_name)?;
+            let local_paths = match value {
+                serde_json::Value::String(path) => vec![path.clone()],
+                serde_json::Value::Array(values) => values
+                    .iter()
+                    .map(serde_json::Value::as_str)
+                    .collect::<Option<Vec<_>>>()?
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect(),
+                _ => return None,
+            };
+            (!local_paths.is_empty()).then(|| GuardianFileContentSharingArgument {
+                name: field_name.clone(),
+                local_paths,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    (!shared_arguments.is_empty()).then_some(GuardianFileContentSharing {
+        summary: "Local file contents from the listed paths will be shared with the downstream MCP server.",
+        arguments: shared_arguments,
+    })
 }
 
 async fn mcp_tool_approval_decision_from_guardian(
