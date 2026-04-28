@@ -1601,6 +1601,130 @@ async fn guardian_reuses_prompt_cache_key_and_appends_prior_reviews() -> anyhow:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn guardian_parallel_cold_reviews_both_complete() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let first_assessment = serde_json::json!({
+        "risk_level": "low",
+        "user_authorization": "high",
+        "outcome": "allow",
+        "rationale": "first parallel guardian rationale",
+    })
+    .to_string();
+    let second_assessment = serde_json::json!({
+        "risk_level": "low",
+        "user_authorization": "high",
+        "outcome": "allow",
+        "rationale": "second parallel guardian rationale",
+    })
+    .to_string();
+    let (server, _) = start_streaming_sse_server(vec![
+        vec![StreamingSseChunk {
+            gate: None,
+            body: sse(vec![
+                ev_response_created("resp-guardian-parallel-1"),
+                ev_assistant_message("msg-guardian-parallel-1", &first_assessment),
+                ev_completed("resp-guardian-parallel-1"),
+            ]),
+        }],
+        vec![StreamingSseChunk {
+            gate: None,
+            body: sse(vec![
+                ev_response_created("resp-guardian-parallel-2"),
+                ev_assistant_message("msg-guardian-parallel-2", &second_assessment),
+                ev_completed("resp-guardian-parallel-2"),
+            ]),
+        }],
+    ])
+    .await;
+
+    let (session, turn) = guardian_test_session_and_turn_with_base_url(server.uri()).await;
+    seed_guardian_parent_history(&session, &turn).await;
+
+    let first_session = Arc::clone(&session);
+    let first_turn = Arc::clone(&turn);
+    let first_review = tokio::spawn(async move {
+        run_guardian_review_session_for_test(
+            first_session,
+            first_turn,
+            GuardianApprovalRequest::Shell {
+                id: "shell-guardian-parallel-1".to_string(),
+                command: vec!["git".to_string(), "status".to_string()],
+                cwd: test_path_buf("/repo/codex-rs/core").abs(),
+                sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+                additional_permissions: None,
+                justification: Some("Inspect repo state before proceeding.".to_string()),
+            },
+            /*retry_reason*/ None,
+            guardian_output_schema(),
+            /*external_cancel*/ None,
+        )
+        .await
+    });
+
+    let second_session = Arc::clone(&session);
+    let second_turn = Arc::clone(&turn);
+    let second_review = tokio::spawn(async move {
+        run_guardian_review_session_for_test(
+            second_session,
+            second_turn,
+            GuardianApprovalRequest::Shell {
+                id: "shell-guardian-parallel-2".to_string(),
+                command: vec!["git".to_string(), "diff".to_string()],
+                cwd: test_path_buf("/repo/codex-rs/core").abs(),
+                sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
+                additional_permissions: None,
+                justification: Some("Inspect pending changes before proceeding.".to_string()),
+            },
+            /*retry_reason*/ None,
+            guardian_output_schema(),
+            /*external_cancel*/ None,
+        )
+        .await
+    });
+
+    let (first_outcome, second_outcome) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::try_join!(first_review, second_review)
+    })
+    .await
+    .expect("parallel guardian reviews should complete")?;
+
+    let (GuardianReviewOutcome::Completed(first_assessment), first_metadata) = first_outcome else {
+        panic!("expected first guardian assessment");
+    };
+    let (GuardianReviewOutcome::Completed(second_assessment), second_metadata) = second_outcome
+    else {
+        panic!("expected second guardian assessment");
+    };
+
+    assert_eq!(first_assessment.outcome, GuardianAssessmentOutcome::Allow);
+    assert_eq!(second_assessment.outcome, GuardianAssessmentOutcome::Allow);
+    for metadata in [&first_metadata, &second_metadata] {
+        assert!(matches!(
+            metadata.guardian_session_kind,
+            Some(
+                codex_analytics::GuardianReviewSessionKind::TrunkNew
+                    | codex_analytics::GuardianReviewSessionKind::TrunkReused
+                    | codex_analytics::GuardianReviewSessionKind::EphemeralForked
+            )
+        ));
+        ThreadId::from_string(
+            metadata
+                .guardian_thread_id
+                .as_deref()
+                .expect("guardian thread id"),
+        )
+        .expect("guardian thread id should be a valid UUID");
+    }
+
+    let requests = server.requests().await;
+    assert_eq!(requests.len(), 2);
+    server.shutdown().await;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn guardian_review_surfaces_responses_api_errors_in_rejection_reason() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
 

@@ -275,10 +275,6 @@ impl GuardianReviewSessionManager {
         }
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "review session selection and trunk spawning must stay serialized"
-    )]
     pub(super) async fn run_review(
         &self,
         params: GuardianReviewSessionParams,
@@ -302,53 +298,82 @@ impl GuardianReviewSessionManager {
                     stale_trunk_to_shutdown = state.trunk.take();
                 }
 
-                if state.trunk.is_none() {
-                    let spawn_cancel_token = CancellationToken::new();
-                    let review_session = match run_before_review_deadline_with_cancel(
-                        deadline,
-                        params.external_cancel.as_ref(),
-                        &spawn_cancel_token,
-                        Box::pin(spawn_guardian_review_session(
-                            &params,
-                            params.spawn_config.clone(),
-                            next_reuse_key.clone(),
-                            spawn_cancel_token.clone(),
-                            /*fork_snapshot*/ None,
-                        )),
-                    )
-                    .await
-                    {
-                        Ok(Ok(review_session)) => Arc::new(review_session),
-                        Ok(Err(err)) => {
-                            return (
-                                GuardianReviewSessionOutcome::PromptBuildFailed(err),
-                                GuardianReviewAnalyticsResult::without_session(),
-                            );
-                        }
-                        Err(outcome) => {
-                            return (outcome, GuardianReviewAnalyticsResult::without_session());
-                        }
-                    };
-                    state.trunk = Some(Arc::clone(&review_session));
-                    spawned_trunk = true;
-                }
-
                 state.trunk.as_ref().cloned()
             }
             Err(outcome) => return (outcome, GuardianReviewAnalyticsResult::without_session()),
         };
-
-        if let Some(review_session) = stale_trunk_to_shutdown {
+        if let Some(review_session) = stale_trunk_to_shutdown.take() {
             review_session.shutdown_in_background();
         }
 
-        let Some(trunk) = trunk_candidate else {
-            return (
-                GuardianReviewSessionOutcome::Completed(Err(anyhow!(
-                    "guardian review session was not available after spawn"
-                ))),
-                GuardianReviewAnalyticsResult::without_session(),
-            );
+        let trunk = match trunk_candidate {
+            Some(trunk) => trunk,
+            None => {
+                let spawn_cancel_token = CancellationToken::new();
+                let spawned_review_session = match run_before_review_deadline_with_cancel(
+                    deadline,
+                    params.external_cancel.as_ref(),
+                    &spawn_cancel_token,
+                    Box::pin(spawn_guardian_review_session(
+                        &params,
+                        params.spawn_config.clone(),
+                        next_reuse_key.clone(),
+                        spawn_cancel_token.clone(),
+                        /*fork_snapshot*/ None,
+                    )),
+                )
+                .await
+                {
+                    Ok(Ok(review_session)) => Arc::new(review_session),
+                    Ok(Err(err)) => {
+                        return (
+                            GuardianReviewSessionOutcome::PromptBuildFailed(err),
+                            GuardianReviewAnalyticsResult::without_session(),
+                        );
+                    }
+                    Err(outcome) => {
+                        return (outcome, GuardianReviewAnalyticsResult::without_session());
+                    }
+                };
+
+                let trunk = match run_before_review_deadline(
+                    deadline,
+                    params.external_cancel.as_ref(),
+                    self.state.lock(),
+                )
+                .await
+                {
+                    Ok(mut state) => {
+                        if let Some(current_trunk) = state.trunk.as_ref().cloned() {
+                            if current_trunk.reuse_key != next_reuse_key
+                                && current_trunk.review_lock.try_acquire().is_ok()
+                            {
+                                stale_trunk_to_shutdown =
+                                    state.trunk.replace(Arc::clone(&spawned_review_session));
+                                spawned_trunk = true;
+                                Arc::clone(&spawned_review_session)
+                            } else {
+                                spawned_review_session.shutdown_in_background();
+                                current_trunk
+                            }
+                        } else {
+                            state.trunk = Some(Arc::clone(&spawned_review_session));
+                            spawned_trunk = true;
+                            Arc::clone(&spawned_review_session)
+                        }
+                    }
+                    Err(outcome) => {
+                        spawned_review_session.shutdown_in_background();
+                        return (outcome, GuardianReviewAnalyticsResult::without_session());
+                    }
+                };
+
+                if let Some(review_session) = stale_trunk_to_shutdown.take() {
+                    review_session.shutdown_in_background();
+                }
+
+                trunk
+            }
         };
 
         if trunk.reuse_key != next_reuse_key {
