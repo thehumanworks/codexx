@@ -296,6 +296,7 @@ fn build_specs_with_unavailable_tools(
     )
 }
 
+#[tokio::test]
 async fn get_memory_requires_feature_flag() {
     let config = test_config().await;
     let model_info = construct_model_info_offline("gpt-5.4", &config);
