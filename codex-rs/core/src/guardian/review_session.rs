@@ -49,6 +49,7 @@ use codex_config::types::McpServerConfig;
 use codex_features::Feature;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_output_truncation::approx_token_count;
 
 use super::GUARDIAN_REVIEW_TIMEOUT;
 use super::GUARDIAN_REVIEWER_NAME;
@@ -63,6 +64,9 @@ use super::prompt::guardian_policy_prompt;
 use super::prompt::guardian_policy_prompt_with_config;
 
 const GUARDIAN_INTERRUPT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+// Leave headroom below the model-visible context-item ceiling when transcript
+// sync history is recorded into the guardian trunk.
+const GUARDIAN_MAX_TRANSCRIPT_SYNC_MESSAGE_TOKENS: usize = 8_000;
 #[derive(Debug)]
 pub(crate) enum GuardianReviewSessionOutcome {
     Completed(anyhow::Result<Option<String>>),
@@ -117,6 +121,12 @@ struct GuardianReviewState {
     last_reviewed_transcript_cursor: Option<GuardianTranscriptCursor>,
     last_synced_transcript_cursor: Option<GuardianTranscriptCursor>,
     last_committed_fork_snapshot: Option<GuardianReviewForkSnapshot>,
+}
+
+enum GuardianTranscriptSyncOutcome {
+    NoChange,
+    Synced,
+    DeferredForPendingToolCall,
 }
 
 fn had_prior_review_context(prompt_mode: &GuardianPromptMode) -> bool {
@@ -388,11 +398,13 @@ impl GuardianReviewSessionManager {
         drop(trunk_guard);
 
         match sync_result {
-            Ok(Ok(synced)) => {
-                if synced {
-                    trunk.refresh_last_committed_fork_snapshot().await;
-                }
+            Ok(Ok(GuardianTranscriptSyncOutcome::Synced)) => {
+                trunk.refresh_last_committed_fork_snapshot().await;
             }
+            Ok(Ok(
+                GuardianTranscriptSyncOutcome::NoChange
+                | GuardianTranscriptSyncOutcome::DeferredForPendingToolCall,
+            )) => {}
             Ok(Err(err)) => warn!("guardian transcript sync failed: {err}"),
             Err(outcome) => {
                 warn!("guardian transcript sync did not finish before deadline: {outcome:?}");
@@ -798,16 +810,37 @@ async fn run_review_on_session(
                     initial_transcript_cursor,
                 )
             } else {
-                sync_parent_transcript_to_session(review_session, params.parent_session.as_ref())
-                    .await?;
-                (
-                    build_guardian_approval_request_items(
-                        params.parent_session.as_ref(),
-                        params.retry_reason.clone(),
-                        params.request.clone(),
-                    )?,
-                    None,
+                match sync_parent_transcript_to_session(
+                    review_session,
+                    params.parent_session.as_ref(),
                 )
+                .await?
+                {
+                    GuardianTranscriptSyncOutcome::DeferredForPendingToolCall => {
+                        let prompt_items = build_guardian_initial_approval_request_items(
+                            params.parent_session.as_ref(),
+                            params.retry_reason.clone(),
+                            params.request.clone(),
+                        )
+                        .await?;
+                        (
+                            GuardianApprovalPromptItems {
+                                items: prompt_items.items,
+                                reviewed_action_truncated: prompt_items.reviewed_action_truncated,
+                            },
+                            None,
+                        )
+                    }
+                    GuardianTranscriptSyncOutcome::NoChange
+                    | GuardianTranscriptSyncOutcome::Synced => (
+                        build_guardian_approval_request_items(
+                            params.parent_session.as_ref(),
+                            params.retry_reason.clone(),
+                            params.request.clone(),
+                        )?,
+                        None,
+                    ),
+                }
             };
             Ok::<_, anyhow::Error>((prompt_items, initial_transcript_cursor))
         }),
@@ -900,11 +933,11 @@ async fn run_review_on_session(
 async fn sync_parent_transcript_to_session(
     review_session: &GuardianReviewSession,
     parent_session: &Session,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<GuardianTranscriptSyncOutcome> {
     let last_synced_transcript_cursor = {
         let state = review_session.state.lock().await;
         if state.prior_review_count == 0 && state.last_synced_transcript_cursor.is_none() {
-            return Ok(false);
+            return Ok(GuardianTranscriptSyncOutcome::NoChange);
         }
         state.last_synced_transcript_cursor
     };
@@ -914,20 +947,17 @@ async fn sync_parent_transcript_to_session(
         });
     let prompt_items = build_guardian_transcript_sync_items(parent_session, prompt_mode).await;
     if prompt_items.has_pending_tool_call {
-        return Ok(false);
+        return Ok(GuardianTranscriptSyncOutcome::DeferredForPendingToolCall);
     }
     if Some(prompt_items.transcript_cursor) == last_synced_transcript_cursor {
-        return Ok(false);
+        return Ok(GuardianTranscriptSyncOutcome::NoChange);
     }
-    let mutated_trunk = prompt_items.has_transcript_update
-        || Some(prompt_items.transcript_cursor) != last_synced_transcript_cursor;
-
-    let message = response_item_from_text_inputs(prompt_items.items);
+    let messages = response_items_from_text_inputs(prompt_items.items);
     let turn_context = review_session.codex.session.new_default_turn().await;
     review_session
         .codex
         .session
-        .record_conversation_items(turn_context.as_ref(), std::slice::from_ref(&message))
+        .record_conversation_items(turn_context.as_ref(), messages.as_slice())
         .await;
 
     {
@@ -936,15 +966,18 @@ async fn sync_parent_transcript_to_session(
     }
 
     maybe_compact_guardian_trunk(review_session, turn_context).await?;
-    Ok(mutated_trunk)
+    Ok(GuardianTranscriptSyncOutcome::Synced)
 }
 
-fn response_item_from_text_inputs(
+fn response_items_from_text_inputs(
     items: Vec<codex_protocol::user_input::UserInput>,
-) -> ResponseItem {
-    let content = items
-        .into_iter()
-        .filter_map(|item| match item {
+) -> Vec<ResponseItem> {
+    let mut messages = Vec::new();
+    let mut content = Vec::new();
+    let mut token_count = 0usize;
+
+    for item in items {
+        let Some(content_item) = (match item {
             codex_protocol::user_input::UserInput::Text { text, .. } => {
                 Some(ContentItem::InputText { text })
             }
@@ -953,8 +986,31 @@ fn response_item_from_text_inputs(
             codex_protocol::user_input::UserInput::Skill { .. } => None,
             codex_protocol::user_input::UserInput::Mention { .. } => None,
             _ => None,
-        })
-        .collect();
+        }) else {
+            continue;
+        };
+        let content_item_token_count = match &content_item {
+            ContentItem::InputText { text } => approx_token_count(text),
+            _ => 0,
+        };
+        if !content.is_empty()
+            && token_count + content_item_token_count > GUARDIAN_MAX_TRANSCRIPT_SYNC_MESSAGE_TOKENS
+        {
+            messages.push(response_item_from_content(std::mem::take(&mut content)));
+            token_count = 0;
+        }
+        token_count += content_item_token_count;
+        content.push(content_item);
+    }
+
+    if !content.is_empty() {
+        messages.push(response_item_from_content(content));
+    }
+
+    messages
+}
+
+fn response_item_from_content(content: Vec<ContentItem>) -> ResponseItem {
     ResponseItem::Message {
         id: None,
         role: "user".to_string(),
@@ -1220,6 +1276,8 @@ async fn interrupt_and_drain_turn(codex: &Codex) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_protocol::user_input::UserInput;
+    use codex_utils_output_truncation::approx_bytes_for_tokens;
 
     #[tokio::test]
     async fn guardian_review_session_config_change_invalidates_cached_session() {
@@ -1286,6 +1344,35 @@ mod tests {
         .expect("guardian config");
 
         assert!(!guardian_config.include_skill_instructions);
+    }
+
+    #[test]
+    fn transcript_sync_response_items_stay_below_context_item_cap() {
+        let messages = response_items_from_text_inputs(
+            (0..5)
+                .map(|_| UserInput::Text {
+                    text: "x".repeat(approx_bytes_for_tokens(
+                        super::super::GUARDIAN_MAX_MESSAGE_ENTRY_TOKENS,
+                    )),
+                    text_elements: Vec::new(),
+                })
+                .collect(),
+        );
+        let response_item_approx_token_count = |item: &ResponseItem| match item {
+            ResponseItem::Message { content, .. } => content
+                .iter()
+                .map(|content| match content {
+                    ContentItem::InputText { text } => approx_token_count(text),
+                    _ => 0,
+                })
+                .sum(),
+            _ => 0,
+        };
+
+        assert_eq!(messages.len(), 2);
+        assert!(messages.iter().all(|message| {
+            response_item_approx_token_count(message) <= GUARDIAN_MAX_TRANSCRIPT_SYNC_MESSAGE_TOKENS
+        }));
     }
 
     #[tokio::test(flavor = "current_thread")]

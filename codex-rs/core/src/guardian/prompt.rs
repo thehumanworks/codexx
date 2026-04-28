@@ -63,7 +63,6 @@ pub(crate) struct GuardianPromptItems {
     pub(crate) items: Vec<UserInput>,
     pub(crate) transcript_cursor: GuardianTranscriptCursor,
     pub(crate) reviewed_action_truncated: bool,
-    pub(crate) has_transcript_update: bool,
     pub(crate) has_pending_tool_call: bool,
 }
 
@@ -157,9 +156,6 @@ async fn build_guardian_transcript_items(
             (transcript_entries, omission_note, delta_headings)
         }
     };
-    let has_transcript_update = transcript_entries
-        .first()
-        .is_some_and(|entry| !entry.starts_with("<no retained transcript"));
     let mut items = Vec::new();
     let mut push_text = |text: String| {
         items.push(UserInput::Text {
@@ -186,7 +182,6 @@ async fn build_guardian_transcript_items(
         items,
         transcript_cursor,
         reviewed_action_truncated: false,
-        has_transcript_update,
         has_pending_tool_call,
     }
 }
@@ -252,13 +247,12 @@ fn build_guardian_approval_request_items_with_intro(
         });
     };
 
-    push_text(intro.to_string());
-    push_text(format!(
-        "Reviewed Codex session id: {}\n",
-        session.conversation_id
-    ));
     match &request {
         GuardianApprovalRequest::NetworkAccess { trigger, .. } => {
+            push_text(format!(
+                "Reviewed Codex session id: {}\n",
+                session.conversation_id
+            ));
             push_text(">>> APPROVAL REQUEST START\n".to_string());
             push_text("Below is a proposed network access request under review.\n".to_string());
             if trigger.is_some() {
@@ -279,6 +273,11 @@ fn build_guardian_approval_request_items_with_intro(
             push_text("Network access JSON:\n".to_string());
         }
         _ => {
+            push_text(intro.to_string());
+            push_text(format!(
+                "Reviewed Codex session id: {}\n",
+                session.conversation_id
+            ));
             push_text(">>> APPROVAL REQUEST START\n".to_string());
             if let Some(reason) = retry_reason {
                 push_text("Retry reason:\n".to_string());
