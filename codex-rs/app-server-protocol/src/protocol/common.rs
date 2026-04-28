@@ -184,14 +184,14 @@ macro_rules! client_request_definitions {
                 self,
                 request_id: RequestId,
             ) -> std::result::Result<
-                (RequestId, crate::Result, Option<Box<ClientResponsePayload>>),
+                (RequestId, crate::Result, Option<ClientResponsePayload>),
                 serde_json::Error,
             > {
                 match self {
                     $(
                         Self::$variant(response) => {
                             let result = serde_json::to_value(&response)?;
-                            Ok((request_id, result, Some(Box::new(Self::$variant(response)))))
+                            Ok((request_id, result, Some(Self::$variant(response))))
                         }
                     )*
                     Self::InterruptConversation(response) => {

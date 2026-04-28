@@ -223,7 +223,12 @@ impl AnalyticsEventsClient {
         )));
     }
 
-    pub fn track_request(&self, connection_id: u64, request_id: RequestId, request: ClientRequest) {
+    pub fn track_request(
+        &self,
+        connection_id: u64,
+        request_id: RequestId,
+        request: &ClientRequest,
+    ) {
         if !matches!(
             request,
             ClientRequest::TurnStart { .. } | ClientRequest::TurnSteer { .. }
@@ -233,7 +238,7 @@ impl AnalyticsEventsClient {
         self.record_fact(AnalyticsFact::ClientRequest {
             connection_id,
             request_id,
-            request: Box::new(request),
+            request: Box::new(request.clone()),
         });
     }
 
@@ -331,10 +336,10 @@ impl AnalyticsEventsClient {
         &self,
         connection_id: u64,
         request_id: RequestId,
-        response: Box<ClientResponsePayload>,
+        response: ClientResponsePayload,
     ) {
         if !matches!(
-            response.as_ref(),
+            response,
             ClientResponsePayload::ThreadStart(_)
                 | ClientResponsePayload::ThreadResume(_)
                 | ClientResponsePayload::ThreadFork(_)
@@ -346,7 +351,7 @@ impl AnalyticsEventsClient {
         self.record_fact(AnalyticsFact::ClientResponse {
             connection_id,
             request_id,
-            response,
+            response: Box::new(response),
         });
     }
 
