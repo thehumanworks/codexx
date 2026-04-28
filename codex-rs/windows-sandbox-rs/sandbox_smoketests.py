@@ -248,6 +248,28 @@ def main() -> int:
     rc, out, err = run_sbx("workspace-write", ["cmd", "/c", f"echo nope > {outside_file}"], WS_ROOT)
     add("WS: write outside workspace denied", rc != 0 and assert_not_exists(outside_file), f"rc={rc}")
 
+    # 3a. WS: deny write outside workspace even when the target grants Everyone full control
+    world_writable_outside = OUTSIDE / "world-writable"
+    world_writable_file = world_writable_outside / "blocked.txt"
+    remove_if_exists(world_writable_file)
+    world_writable_outside.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["icacls", str(world_writable_outside), "/grant", "Everyone:(F)"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    rc, out, err = run_sbx(
+        "workspace-write",
+        ["cmd", "/c", f"echo nope > {world_writable_file}"],
+        WS_ROOT,
+    )
+    add(
+        "WS: world-writable outside workspace denied",
+        rc != 0 and assert_not_exists(world_writable_file),
+        f"rc={rc}",
+    )
+
     # 3b. WS: allow write in additional workspace root
     extra_target = EXTRA_ROOT / "extra_ok.txt"
     remove_if_exists(extra_target)
