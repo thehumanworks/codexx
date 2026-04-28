@@ -21,6 +21,16 @@ impl App {
         permission_profile: PermissionProfile,
         tx: AppEventSender,
     ) {
+        let Ok(sandbox_policy) = permission_profile.to_legacy_sandbox_policy(cwd.as_path()) else {
+            tx.send(AppEvent::OpenWorldWritableWarningConfirmation {
+                preset: None,
+                sample_paths: Vec::new(),
+                extra_count: 0usize,
+                failed_scan: true,
+            });
+            return;
+        };
+
         tokio::task::spawn_blocking(move || {
             let logs_base_dir_path = logs_base_dir.as_path();
             let Ok(sandbox_policy) = permission_profile.to_legacy_sandbox_policy(cwd.as_path())
