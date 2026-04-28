@@ -10,8 +10,10 @@ use codex_chatgpt::apply_command::run_apply_command;
 use codex_cli::LandlockCommand;
 use codex_cli::SeatbeltCommand;
 use codex_cli::WindowsCommand;
+use codex_cli::read_agent_identity_from_stdin;
 use codex_cli::read_api_key_from_stdin;
 use codex_cli::run_login_status;
+use codex_cli::run_login_with_agent_identity;
 use codex_cli::run_login_with_api_key;
 use codex_cli::run_login_with_chatgpt;
 use codex_cli::run_login_with_device_code;
@@ -22,12 +24,15 @@ use codex_exec::Command as ExecCommand;
 use codex_exec::ReviewArgs;
 use codex_execpolicy::ExecPolicyCheckCommand;
 use codex_responses_api_proxy::Args as ResponsesApiProxyArgs;
+use codex_rollout_trace::REDUCED_STATE_FILE_NAME;
+use codex_rollout_trace::replay_bundle;
 use codex_state::StateRuntime;
 use codex_state::state_db_path;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli as TuiCli;
 use codex_tui::ExitReason;
 use codex_tui::UpdateAction;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
@@ -40,28 +45,25 @@ mod app_cmd;
 mod desktop_app;
 mod marketplace_cmd;
 mod mcp_cmd;
-mod responses_cmd;
 #[cfg(not(windows))]
 mod wsl_paths;
 
 use crate::marketplace_cmd::MarketplaceCli;
 use crate::mcp_cmd::McpCli;
-use crate::responses_cmd::ResponsesCommand;
-use crate::responses_cmd::run_responses_command;
 
+use codex_config::LoaderOverrides;
 use codex_core::build_models_manager;
-use codex_core::clear_memory_roots_contents;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::edit::ConfigEditsBuilder;
 use codex_core::config::find_codex_home;
 use codex_core::config::resolve_profile_v2_config_path;
-use codex_core::config_loader::LoaderOverrides;
 use codex_features::FEATURES;
 use codex_features::Stage;
 use codex_features::is_known_feature_key;
-use codex_models_manager::AuthManager;
+use codex_login::AuthManager;
+use codex_memories_write::clear_memory_roots_contents;
 use codex_models_manager::bundled_models_response;
 use codex_models_manager::collaboration_mode_presets::CollaborationModesConfig;
 use codex_models_manager::manager::RefreshStrategy;
@@ -135,6 +137,9 @@ enum Subcommand {
     /// Generate shell completion scripts.
     Completion(CompletionCommand),
 
+    /// Update Codex to the latest version.
+    Update,
+
     /// Run commands within a Codex-provided sandbox.
     Sandbox(SandboxArgs),
 
@@ -163,10 +168,6 @@ enum Subcommand {
     #[clap(hide = true)]
     ResponsesApiProxy(ResponsesApiProxyArgs),
 
-    /// Internal: send one raw Responses API payload through Codex auth.
-    #[clap(hide = true)]
-    Responses(ResponsesCommand),
-
     /// Internal: relay stdio to a Unix domain socket.
     #[clap(hide = true, name = "stdio-to-uds")]
     StdioToUds(StdioToUdsCommand),
@@ -179,6 +180,7 @@ enum Subcommand {
 }
 
 #[derive(Debug, Parser)]
+#[command(bin_name = "codex plugin")]
 struct PluginCli {
     #[clap(flatten)]
     pub config_overrides: CliConfigOverrides,
@@ -216,6 +218,10 @@ enum DebugSubcommand {
 
     /// Render the model-visible prompt input list as JSON.
     PromptInput(DebugPromptInputCommand),
+
+    /// Replay a rollout trace bundle and write reduced state JSON.
+    #[clap(hide = true)]
+    TraceReduce(DebugTraceReduceCommand),
 
     /// Internal: reset local memory state for a fresh start.
     #[clap(hide = true)]
@@ -256,6 +262,17 @@ struct DebugModelsCommand {
     /// Skip refresh and dump only the bundled catalog shipped with this binary.
     #[arg(long = "bundled", default_value_t = false)]
     bundled: bool,
+}
+
+#[derive(Debug, Parser)]
+struct DebugTraceReduceCommand {
+    /// Trace bundle directory containing manifest.json and trace.jsonl.
+    #[arg(value_name = "TRACE_BUNDLE")]
+    trace_bundle: PathBuf,
+
+    /// Output path for reduced RolloutTrace JSON. Defaults to TRACE_BUNDLE/state.json.
+    #[arg(long = "output", short = 'o', value_name = "FILE")]
+    output: Option<PathBuf>,
 }
 
 #[derive(Debug, Parser)]
@@ -351,6 +368,12 @@ struct LoginCommand {
     with_api_key: bool,
 
     #[arg(
+        long = "with-agent-identity",
+        help = "Read the experimental Agent Identity token from stdin (e.g. `printenv CODEX_AGENT_IDENTITY | codex login --with-agent-identity`)"
+    )]
+    with_agent_identity: bool,
+
+    #[arg(
         long = "api-key",
         num_args = 0..=1,
         default_missing_value = "",
@@ -395,7 +418,7 @@ struct AppServerCommand {
     subcommand: Option<AppServerSubcommand>,
 
     /// Transport endpoint URL. Supported values: `stdio://` (default),
-    /// `ws://IP:PORT`, `off`.
+    /// `unix://`, `unix://PATH`, `ws://IP:PORT`, `off`.
     #[arg(
         long = "listen",
         value_name = "URL",
@@ -439,6 +462,9 @@ struct ExecServerCommand {
 #[derive(Debug, clap::Subcommand)]
 #[allow(clippy::enum_variant_names)]
 enum AppServerSubcommand {
+    /// Proxy stdio bytes to the running app-server control socket.
+    Proxy(AppServerProxyCommand),
+
     /// [experimental] Generate TypeScript bindings for the app server protocol.
     GenerateTs(GenerateTsCommand),
 
@@ -448,6 +474,13 @@ enum AppServerSubcommand {
     /// [internal] Generate internal JSON Schema artifacts for Codex tooling.
     #[clap(hide = true)]
     GenerateInternalJsonSchema(GenerateInternalJsonSchemaCommand),
+}
+
+#[derive(Debug, Args)]
+struct AppServerProxyCommand {
+    /// Path to the app-server Unix domain socket to connect to.
+    #[arg(long = "sock", value_name = "SOCKET_PATH", value_parser = parse_socket_path)]
+    socket_path: Option<AbsolutePathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -486,8 +519,13 @@ struct GenerateInternalJsonSchemaCommand {
 #[derive(Debug, Parser)]
 struct StdioToUdsCommand {
     /// Path to the Unix domain socket to connect to.
-    #[arg(value_name = "SOCKET_PATH")]
-    socket_path: PathBuf,
+    #[arg(value_name = "SOCKET_PATH", value_parser = parse_socket_path)]
+    socket_path: AbsolutePathBuf,
+}
+
+fn parse_socket_path(raw: &str) -> Result<AbsolutePathBuf, String> {
+    AbsolutePathBuf::relative_to_current_dir(raw)
+        .map_err(|err| format!("failed to resolve socket path `{raw}`: {err}"))
 }
 
 fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<String> {
@@ -581,6 +619,25 @@ fn run_update_action(action: UpdateAction) -> anyhow::Result<()> {
     }
     println!("\n🎉 Update ran successfully! Please restart Codex.");
     Ok(())
+}
+
+fn run_update_command() -> anyhow::Result<()> {
+    #[cfg(debug_assertions)]
+    {
+        anyhow::bail!(
+            "`codex update` is not available in debug builds. Install a release build of Codex to use this command."
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let Some(action) = codex_tui::get_update_action() else {
+            anyhow::bail!(
+                "Could not detect the Codex installation method. Please update manually: https://developers.openai.com/codex/cli/"
+            );
+        };
+        run_update_action(action)
+    }
 }
 
 fn run_execpolicycheck(cmd: ExecPolicyCheckCommand) -> anyhow::Result<()> {
@@ -812,6 +869,16 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     )
                     .await?;
                 }
+                Some(AppServerSubcommand::Proxy(proxy_cli)) => {
+                    let socket_path = match proxy_cli.socket_path {
+                        Some(socket_path) => socket_path,
+                        None => {
+                            let codex_home = find_codex_home()?;
+                            codex_app_server::app_server_control_socket_path(&codex_home)?
+                        }
+                    };
+                    codex_stdio_to_uds::run(socket_path.as_path()).await?;
+                }
                 Some(AppServerSubcommand::GenerateTs(gen_cli)) => {
                     let options = codex_app_server_protocol::GenerateTsOptions {
                         experimental_api: gen_cli.experimental,
@@ -912,7 +979,12 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     run_login_status(login_cli.config_overrides).await;
                 }
                 None => {
-                    if login_cli.use_device_code {
+                    if login_cli.with_api_key && login_cli.with_agent_identity {
+                        eprintln!(
+                            "Choose one login credential source: --with-api-key or --with-agent-identity."
+                        );
+                        std::process::exit(1);
+                    } else if login_cli.use_device_code {
                         run_login_with_device_code(
                             login_cli.config_overrides,
                             login_cli.issuer_base_url,
@@ -927,6 +999,10 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     } else if login_cli.with_api_key {
                         let api_key = read_api_key_from_stdin();
                         run_login_with_api_key(login_cli.config_overrides, api_key).await;
+                    } else if login_cli.with_agent_identity {
+                        let agent_identity = read_agent_identity_from_stdin();
+                        run_login_with_agent_identity(login_cli.config_overrides, agent_identity)
+                            .await;
                     } else {
                         run_login_with_chatgpt(login_cli.config_overrides).await;
                     }
@@ -952,6 +1028,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 "completion",
             )?;
             print_completion(completion_cli);
+        }
+        Some(Subcommand::Update) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "update",
+            )?;
+            run_update_command()?;
         }
         Some(Subcommand::Cloud(mut cloud_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -1047,6 +1131,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 )
                 .await?;
             }
+            DebugSubcommand::TraceReduce(cmd) => {
+                reject_remote_mode_for_subcommand(
+                    root_remote.as_deref(),
+                    root_remote_auth_token_env.as_deref(),
+                    "debug trace-reduce",
+                )?;
+                run_debug_trace_reduce_command(cmd).await?;
+            }
             DebugSubcommand::ClearMemories => {
                 reject_remote_mode_for_subcommand(
                     root_remote.as_deref(),
@@ -1086,14 +1178,6 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             )?;
             tokio::task::spawn_blocking(move || codex_responses_api_proxy::run_main(args))
                 .await??;
-        }
-        Some(Subcommand::Responses(ResponsesCommand {})) => {
-            reject_remote_mode_for_subcommand(
-                root_remote.as_deref(),
-                root_remote_auth_token_env.as_deref(),
-                "responses",
-            )?;
-            run_responses_command(root_config_overrides).await?;
         }
         Some(Subcommand::StdioToUds(cmd)) => {
             reject_remote_mode_for_subcommand(
@@ -1285,6 +1369,19 @@ fn maybe_print_under_development_feature_warning(
     );
 }
 
+async fn run_debug_trace_reduce_command(cmd: DebugTraceReduceCommand) -> anyhow::Result<()> {
+    let output = cmd
+        .output
+        .unwrap_or_else(|| cmd.trace_bundle.join(REDUCED_STATE_FILE_NAME));
+
+    let trace = replay_bundle(&cmd.trace_bundle)?;
+    let reduced_json = serde_json::to_vec_pretty(&trace)?;
+    tokio::fs::write(&output, reduced_json).await?;
+    println!("{}", output.display());
+
+    Ok(())
+}
+
 async fn run_debug_prompt_input_command(
     cmd: DebugPromptInputCommand,
     root_config_overrides: CliConfigOverrides,
@@ -1369,7 +1466,7 @@ async fn run_debug_models_command(
             .map_err(anyhow::Error::msg)?;
         let config = Config::load_with_cli_overrides(cli_overrides).await?;
         let auth_manager =
-            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true);
+            AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ true).await;
         let models_manager =
             build_models_manager(&config, auth_manager, CollaborationModesConfig::default());
         models_manager
@@ -1463,6 +1560,7 @@ fn reject_remote_mode_for_app_server_subcommand(
 ) -> anyhow::Result<()> {
     let subcommand_name = match subcommand {
         None => "app-server",
+        Some(AppServerSubcommand::Proxy(_)) => "app-server proxy",
         Some(AppServerSubcommand::GenerateTs(_)) => "app-server generate-ts",
         Some(AppServerSubcommand::GenerateJsonSchema(_)) => "app-server generate-json-schema",
         Some(AppServerSubcommand::GenerateInternalJsonSchema(_)) => {
@@ -1539,7 +1637,7 @@ async fn run_interactive_tui(
     codex_tui::run_main(
         interactive,
         arg0_paths,
-        codex_core::config_loader::LoaderOverrides::default(),
+        codex_config::LoaderOverrides::default(),
         normalized_remote,
         remote_auth_token,
     )
@@ -1803,6 +1901,12 @@ mod tests {
         app_server
     }
 
+    fn default_app_server_socket_path() -> AbsolutePathBuf {
+        let codex_home = find_codex_home().expect("codex home");
+        codex_app_server::app_server_control_socket_path(&codex_home)
+            .expect("default app-server socket path")
+    }
+
     #[test]
     fn debug_prompt_input_parses_prompt_and_images() {
         let cli = MultitoolCli::try_parse_from([
@@ -1845,12 +1949,37 @@ mod tests {
     }
 
     #[test]
-    fn responses_subcommand_is_hidden_from_help_but_parses() {
-        let help = MultitoolCli::command().render_help().to_string();
-        assert!(!help.contains("responses"));
+    fn responses_subcommand_is_not_registered() {
+        let command = MultitoolCli::command();
+        assert!(
+            command
+                .get_subcommands()
+                .all(|subcommand| subcommand.get_name() != "responses")
+        );
+    }
 
-        let cli = MultitoolCli::try_parse_from(["codex", "responses"]).expect("parse");
-        assert!(matches!(cli.subcommand, Some(Subcommand::Responses(_))));
+    fn help_from_args(args: &[&str]) -> String {
+        let err = MultitoolCli::try_parse_from(args).expect_err("help should short-circuit");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        err.to_string()
+    }
+
+    #[test]
+    fn plugin_marketplace_help_uses_plugin_namespace() {
+        let help = help_from_args(&["codex", "plugin", "marketplace", "--help"]);
+        assert!(
+            help.contains("Usage: codex plugin marketplace [OPTIONS] <COMMAND>"),
+            "{help}"
+        );
+
+        for (subcommand, usage) in [
+            ("add", "Usage: codex plugin marketplace add"),
+            ("upgrade", "Usage: codex plugin marketplace upgrade"),
+            ("remove", "Usage: codex plugin marketplace remove"),
+        ] {
+            let help = help_from_args(&["codex", "plugin", "marketplace", subcommand, "--help"]);
+            assert!(help.contains(usage), "{help}");
+        }
     }
 
     #[test]
@@ -1869,6 +1998,12 @@ mod tests {
                 .expect("parse");
 
         assert!(matches!(cli.subcommand, Some(Subcommand::Plugin(_))));
+    }
+
+    #[test]
+    fn update_parses_as_update_subcommand() {
+        let cli = MultitoolCli::try_parse_from(["codex", "update"]).expect("parse");
+        assert!(matches!(cli.subcommand, Some(Subcommand::Update)));
     }
 
     #[test]
@@ -2282,6 +2417,32 @@ mod tests {
     }
 
     #[test]
+    fn app_server_listen_unix_socket_url_parses() {
+        let app_server =
+            app_server_from_args(["codex", "app-server", "--listen", "unix://"].as_ref());
+        assert_eq!(
+            app_server.listen,
+            codex_app_server::AppServerTransport::UnixSocket {
+                socket_path: default_app_server_socket_path()
+            }
+        );
+    }
+
+    #[test]
+    fn app_server_listen_unix_socket_path_parses() {
+        let app_server = app_server_from_args(
+            ["codex", "app-server", "--listen", "unix:///tmp/codex.sock"].as_ref(),
+        );
+        assert_eq!(
+            app_server.listen,
+            codex_app_server::AppServerTransport::UnixSocket {
+                socket_path: AbsolutePathBuf::from_absolute_path("/tmp/codex.sock")
+                    .expect("absolute path should parse")
+            }
+        );
+    }
+
+    #[test]
     fn app_server_listen_off_parses() {
         let app_server = app_server_from_args(["codex", "app-server", "--listen", "off"].as_ref());
         assert_eq!(app_server.listen, codex_app_server::AppServerTransport::Off);
@@ -2292,6 +2453,45 @@ mod tests {
         let parse_result =
             MultitoolCli::try_parse_from(["codex", "app-server", "--listen", "http://foo"]);
         assert!(parse_result.is_err());
+    }
+
+    #[test]
+    fn app_server_proxy_subcommand_parses() {
+        let app_server = app_server_from_args(["codex", "app-server", "proxy"].as_ref());
+        assert!(matches!(
+            app_server.subcommand,
+            Some(AppServerSubcommand::Proxy(AppServerProxyCommand {
+                socket_path: None
+            }))
+        ));
+    }
+
+    #[test]
+    fn app_server_proxy_sock_path_parses() {
+        let app_server =
+            app_server_from_args(["codex", "app-server", "proxy", "--sock", "codex.sock"].as_ref());
+        let Some(AppServerSubcommand::Proxy(proxy)) = app_server.subcommand else {
+            panic!("expected proxy subcommand");
+        };
+        assert_eq!(
+            proxy.socket_path,
+            Some(
+                AbsolutePathBuf::relative_to_current_dir("codex.sock")
+                    .expect("relative path should resolve")
+            )
+        );
+    }
+
+    #[test]
+    fn reject_remote_auth_token_env_for_app_server_proxy() {
+        let subcommand = AppServerSubcommand::Proxy(AppServerProxyCommand { socket_path: None });
+        let err = reject_remote_mode_for_app_server_subcommand(
+            /*remote*/ None,
+            Some("CODEX_REMOTE_AUTH_TOKEN"),
+            Some(&subcommand),
+        )
+        .expect_err("app-server proxy should reject --remote-auth-token-env");
+        assert!(err.to_string().contains("app-server proxy"));
     }
 
     #[test]
