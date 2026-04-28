@@ -32,10 +32,18 @@ pub struct EnvironmentConfiguration {
 impl EnvironmentConfiguration {
     pub fn static_url(exec_server_url: String) -> Result<Self, ExecServerError> {
         let exec_server_url = normalize_remote_exec_server_url("<static>", exec_server_url)?;
-        Ok(Self {
+        Ok(Self::normalized_static_url(exec_server_url))
+    }
+
+    pub(crate) fn normalized_static_url(exec_server_url: String) -> Self {
+        debug_assert!(matches!(
+            normalize_remote_exec_server_url("<static>", exec_server_url.clone()),
+            Ok(normalized) if normalized == exec_server_url
+        ));
+        Self {
             static_exec_server_url: Some(exec_server_url.clone()),
             resolver: Arc::new(StaticEnvironmentResolver { exec_server_url }),
-        })
+        }
     }
 
     pub fn with_resolver<R>(resolver: R) -> Self
@@ -166,8 +174,7 @@ impl EnvironmentConfigurations {
             default_environment_id: Some(REMOTE_ENVIRONMENT_ID.to_string()),
             environments: HashMap::from([(
                 REMOTE_ENVIRONMENT_ID.to_string(),
-                EnvironmentConfiguration::static_url(exec_server_url)
-                    .expect("remote default provider configuration should be valid"),
+                EnvironmentConfiguration::normalized_static_url(exec_server_url),
             )]),
         }
     }

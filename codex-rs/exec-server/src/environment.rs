@@ -221,8 +221,7 @@ impl Environment {
         Ok(match exec_server_url {
             Some(exec_server_url) => Self::remote_inner(
                 REMOTE_ENVIRONMENT_ID.to_string(),
-                EnvironmentConfiguration::static_url(exec_server_url)
-                    .expect("normalized remote environment URL should be valid"),
+                EnvironmentConfiguration::normalized_static_url(exec_server_url),
                 local_runtime_paths,
             ),
             None => match local_runtime_paths {
