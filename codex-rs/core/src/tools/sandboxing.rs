@@ -34,6 +34,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
+use std::path::Path;
 use std::sync::Arc;
 
 #[derive(Clone, Default, Debug)]
@@ -192,6 +193,50 @@ impl ExecApprovalRequirement {
             _ => None,
         }
     }
+}
+
+/// Applies an early UX check for protected metadata writes only to commands
+/// that would otherwise run in the sandbox. Explicit sandbox-bypass approval
+/// paths keep their existing approval semantics.
+pub(crate) fn apply_protected_metadata_write_preflight(
+    exec_approval_requirement: ExecApprovalRequirement,
+    sandbox_permissions: SandboxPermissions,
+    command: &[String],
+    command_cwd: &Path,
+    sandbox_policy_cwd: &Path,
+    file_system_sandbox_policy: &FileSystemSandboxPolicy,
+) -> ExecApprovalRequirement {
+    let bypasses_sandbox = matches!(
+        &exec_approval_requirement,
+        ExecApprovalRequirement::Skip {
+            bypass_sandbox: true,
+            ..
+        }
+    );
+    let approval_is_for_sandbox_override = sandbox_permissions.requests_sandbox_override()
+        && matches!(
+            &exec_approval_requirement,
+            ExecApprovalRequirement::NeedsApproval { .. }
+        );
+    if bypasses_sandbox
+        || approval_is_for_sandbox_override
+        || matches!(
+            &exec_approval_requirement,
+            ExecApprovalRequirement::Forbidden { .. }
+        )
+    {
+        return exec_approval_requirement;
+    }
+
+    codex_shell_command::metadata_write_forbidden_reason(
+        command,
+        command_cwd,
+        sandbox_policy_cwd,
+        file_system_sandbox_policy,
+    )
+    .map_or(exec_approval_requirement, |reason| {
+        ExecApprovalRequirement::Forbidden { reason }
+    })
 }
 
 /// - Never, OnFailure: do not ask

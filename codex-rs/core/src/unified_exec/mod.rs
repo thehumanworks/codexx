@@ -37,6 +37,7 @@ use tokio::sync::Mutex;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::tools::sandboxing::ExecApprovalRequirement;
 
 mod async_watcher;
 mod errors;
@@ -97,9 +98,10 @@ pub(crate) struct ExecCommandRequest {
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
+    #[cfg(unix)]
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
-    pub prefix_rule: Option<Vec<String>>,
+    pub exec_approval_requirement: ExecApprovalRequirement,
 }
 
 #[derive(Debug)]

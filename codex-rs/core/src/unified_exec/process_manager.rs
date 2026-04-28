@@ -13,7 +13,6 @@ use tokio_util::sync::CancellationToken;
 
 use crate::exec_env::CODEX_THREAD_ID_ENV_VAR;
 use crate::exec_env::create_env;
-use crate::exec_policy::ExecApprovalRequest;
 use crate::sandboxing::ExecRequest;
 use crate::sandboxing::ExecServerEnvConfig;
 use crate::tools::context::ExecCommandToolOutput;
@@ -789,25 +788,6 @@ impl UnifiedExecProcessManager {
             self,
             context.turn.tools_config.unified_exec_shell_mode.clone(),
         );
-        let file_system_sandbox_policy = context.turn.file_system_sandbox_policy();
-        let exec_approval_requirement = context
-            .session
-            .services
-            .exec_policy
-            .create_exec_approval_requirement_for_command(ExecApprovalRequest {
-                command: &request.command,
-                approval_policy: context.turn.approval_policy.value(),
-                permission_profile: context.turn.permission_profile(),
-                file_system_sandbox_policy: &file_system_sandbox_policy,
-                sandbox_cwd: context.turn.cwd.as_path(),
-                sandbox_permissions: if request.additional_permissions_preapproved {
-                    crate::sandboxing::SandboxPermissions::UseDefault
-                } else {
-                    request.sandbox_permissions
-                },
-                prefix_rule: request.prefix_rule.clone(),
-            })
-            .await;
         let req = UnifiedExecToolRequest {
             command: request.command.clone(),
             hook_command: request.hook_command.clone(),
@@ -823,7 +803,7 @@ impl UnifiedExecProcessManager {
             #[cfg(unix)]
             additional_permissions_preapproved: request.additional_permissions_preapproved,
             justification: request.justification.clone(),
-            exec_approval_requirement,
+            exec_approval_requirement: request.exec_approval_requirement.clone(),
         };
         let tool_ctx = ToolCtx {
             session: context.session.clone(),

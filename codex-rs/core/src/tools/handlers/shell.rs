@@ -35,9 +35,11 @@ use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
 use crate::tools::sandboxing::ToolCtx;
+use crate::tools::sandboxing::apply_protected_metadata_write_preflight;
 use codex_features::Feature;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ExecCommandSource;
+use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use codex_shell_command::is_safe_command::is_known_safe_command;
 use codex_tools::ShellCommandBackendConfig;
 
@@ -513,7 +515,11 @@ impl ShellHandler {
         );
         emitter.begin(event_ctx).await;
 
-        let file_system_sandbox_policy = turn.file_system_sandbox_policy();
+        let base_file_system_sandbox_policy = turn.file_system_sandbox_policy();
+        let file_system_sandbox_policy = effective_file_system_sandbox_policy(
+            &base_file_system_sandbox_policy,
+            normalized_additional_permissions.as_ref(),
+        );
         let exec_approval_requirement = session
             .services
             .exec_policy
@@ -531,14 +537,14 @@ impl ShellHandler {
                 prefix_rule,
             })
             .await;
-        let exec_approval_requirement = codex_shell_command::metadata_write_forbidden_reason(
+        let exec_approval_requirement = apply_protected_metadata_write_preflight(
+            exec_approval_requirement,
+            effective_additional_permissions.sandbox_permissions,
             &exec_params.command,
             &exec_params.cwd,
+            turn.cwd.as_path(),
             &file_system_sandbox_policy,
-        )
-        .map_or(exec_approval_requirement, |reason| {
-            crate::tools::sandboxing::ExecApprovalRequirement::Forbidden { reason }
-        });
+        );
 
         let req = ShellRequest {
             command: exec_params.command.clone(),

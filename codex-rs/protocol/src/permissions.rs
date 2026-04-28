@@ -46,7 +46,8 @@ pub fn is_protected_metadata_directory_name(name: &OsStr) -> bool {
 /// should be blocked before execution.
 pub fn forbidden_agent_metadata_write(
     path: &Path,
-    cwd: &Path,
+    path_cwd: &Path,
+    policy_cwd: &Path,
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
 ) -> Option<&'static str> {
     if !matches!(
@@ -56,19 +57,19 @@ pub fn forbidden_agent_metadata_write(
         return None;
     }
 
-    let target = resolve_candidate_path(path, cwd)?;
+    let target = resolve_candidate_path(path, path_cwd)?;
     let (protected_metadata_path, metadata_name) =
-        metadata_child_of_writable_root(file_system_sandbox_policy, target.as_path(), cwd)?;
+        metadata_child_of_writable_root(file_system_sandbox_policy, target.as_path(), policy_cwd)?;
     if has_explicit_write_entry_for_metadata_path(
         file_system_sandbox_policy,
         &protected_metadata_path,
         target.as_path(),
-        cwd,
+        policy_cwd,
     ) {
         return None;
     }
 
-    if !file_system_sandbox_policy.can_write_path_with_cwd(target.as_path(), cwd) {
+    if !file_system_sandbox_policy.can_write_path_with_cwd(target.as_path(), policy_cwd) {
         return Some(metadata_name);
     }
 
@@ -2006,6 +2007,7 @@ mod tests {
         assert_eq!(
             forbidden_agent_metadata_write(
                 Path::new(".git/config"),
+                relative_cwd,
                 relative_cwd,
                 &file_system_policy,
             ),

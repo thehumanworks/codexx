@@ -1,3 +1,4 @@
+use crate::exec_policy::ExecApprovalRequest;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::sandboxing::SandboxPermissions;
@@ -19,6 +20,7 @@ use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
+use crate::tools::sandboxing::apply_protected_metadata_write_preflight;
 use crate::unified_exec::ExecCommandRequest;
 use crate::unified_exec::UnifiedExecContext;
 use crate::unified_exec::UnifiedExecError;
@@ -32,6 +34,7 @@ use codex_otel::TOOL_CALL_UNIFIED_EXEC_METRIC;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TerminalInteractionEvent;
+use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use codex_shell_command::is_safe_command::is_known_safe_command;
 use codex_tools::UnifiedExecShellMode;
 use codex_utils_output_truncation::TruncationPolicy;
@@ -330,6 +333,40 @@ impl ToolHandler for UnifiedExecHandler {
                     });
                 }
 
+                let base_file_system_sandbox_policy = context.turn.file_system_sandbox_policy();
+                let file_system_sandbox_policy = effective_file_system_sandbox_policy(
+                    &base_file_system_sandbox_policy,
+                    normalized_additional_permissions.as_ref(),
+                );
+                let exec_approval_requirement = context
+                    .session
+                    .services
+                    .exec_policy
+                    .create_exec_approval_requirement_for_command(ExecApprovalRequest {
+                        command: &command,
+                        approval_policy: context.turn.approval_policy.value(),
+                        permission_profile: context.turn.permission_profile(),
+                        file_system_sandbox_policy: &file_system_sandbox_policy,
+                        sandbox_cwd: context.turn.cwd.as_path(),
+                        sandbox_permissions: if effective_additional_permissions
+                            .permissions_preapproved
+                        {
+                            SandboxPermissions::UseDefault
+                        } else {
+                            effective_additional_permissions.sandbox_permissions
+                        },
+                        prefix_rule: prefix_rule.clone(),
+                    })
+                    .await;
+                let exec_approval_requirement = apply_protected_metadata_write_preflight(
+                    exec_approval_requirement,
+                    effective_additional_permissions.sandbox_permissions,
+                    &command,
+                    &cwd,
+                    context.turn.cwd.as_path(),
+                    &file_system_sandbox_policy,
+                );
+
                 emit_unified_exec_tty_metric(&turn.session_telemetry, tty);
                 match manager
                     .exec_command(
@@ -345,10 +382,11 @@ impl ToolHandler for UnifiedExecHandler {
                             sandbox_permissions: effective_additional_permissions
                                 .sandbox_permissions,
                             additional_permissions: normalized_additional_permissions,
+                            #[cfg(unix)]
                             additional_permissions_preapproved: effective_additional_permissions
                                 .permissions_preapproved,
                             justification,
-                            prefix_rule,
+                            exec_approval_requirement,
                         },
                         &context,
                     )
