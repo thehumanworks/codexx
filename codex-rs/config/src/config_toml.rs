@@ -178,6 +178,11 @@ pub struct ConfigToml {
     #[schemars(schema_with = "crate::schema::mcp_servers_schema")]
     pub mcp_servers: HashMap<String, McpServerConfig>,
 
+    /// Named loopback bridges that let trusted local plugins call scoped authenticated
+    /// ChatGPT backend subtrees without receiving user credentials directly.
+    #[serde(default)]
+    pub plugin_backend_bridges: HashMap<String, PluginBackendBridgeConfigToml>,
+
     /// Preferred backend for storing MCP OAuth credentials.
     /// keyring: Use an OS-specific keyring service.
     ///          https://github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/oauth.rs#L2
@@ -418,6 +423,16 @@ pub struct ConfigToml {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
     pub oss_provider: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct PluginBackendBridgeConfigToml {
+    /// Path prefix exposed on the loopback bridge listener.
+    pub local_path_prefix: String,
+
+    /// Authenticated ChatGPT backend path prefix that receives forwarded requests.
+    pub backend_path_prefix: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]

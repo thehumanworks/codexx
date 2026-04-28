@@ -58,6 +58,22 @@ disabled_tools = [
 ]
 ```
 
+## Plugin backend bridges
+
+Codex can expose named loopback bridges for trusted local plugins that need to call a
+scoped authenticated backend path through the app server:
+
+```toml
+[plugin_backend_bridges.example]
+local_path_prefix = "/local/example/"
+backend_path_prefix = "/api/codex/example/"
+```
+
+Each bridge listens on loopback only, accepts requests under its configured local
+prefix, and forwards them to the configured backend prefix using the signed-in
+Codex account. Keep each bridge scoped to one backend capability instead of using a
+broad catch-all prefix.
+
 ## Notify
 
 Codex can run a notification hook when the agent finishes a turn. See the configuration reference for the latest notification settings:

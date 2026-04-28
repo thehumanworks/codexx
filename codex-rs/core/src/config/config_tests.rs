@@ -5907,6 +5907,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             cwd: fixture.cwd(),
             cli_auth_credentials_store_mode: Default::default(),
             mcp_servers: Constrained::allow_any(HashMap::new()),
+            plugin_backend_bridges: HashMap::new(),
             mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
                 Default::default(),
                 LOCAL_DEV_BUILD_VERSION,
@@ -6101,6 +6102,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         cwd: fixture.cwd(),
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
+        plugin_backend_bridges: HashMap::new(),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
             Default::default(),
             LOCAL_DEV_BUILD_VERSION,
@@ -6249,6 +6251,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         cwd: fixture.cwd(),
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
+        plugin_backend_bridges: HashMap::new(),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
             Default::default(),
             LOCAL_DEV_BUILD_VERSION,
@@ -6382,6 +6385,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         cwd: fixture.cwd(),
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
+        plugin_backend_bridges: HashMap::new(),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
             Default::default(),
             LOCAL_DEV_BUILD_VERSION,

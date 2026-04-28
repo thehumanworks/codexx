@@ -26,6 +26,7 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingEnvelope;
 use crate::outgoing_message::OutgoingMessageSender;
 use crate::outgoing_message::QueuedOutgoingMessage;
+use crate::plugin_backend_bridge::start_plugin_backend_bridges;
 use crate::transport::CHANNEL_CAPACITY;
 use crate::transport::ConnectionState;
 use crate::transport::OutboundConnectionState;
@@ -90,6 +91,7 @@ pub mod in_process;
 mod message_processor;
 mod models;
 mod outgoing_message;
+mod plugin_backend_bridge;
 mod request_serialization;
 mod server_request_error;
 mod thread_state;
@@ -643,13 +645,24 @@ pub async fn run_main_with_transport_options(
 
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
+    let plugin_backend_bridge_handles = start_plugin_backend_bridges(
+        config.codex_home.to_path_buf(),
+        config.chatgpt_base_url.clone(),
+        auth_manager.clone(),
+        config.plugin_backend_bridges.clone(),
+        transport_shutdown_token.clone(),
+    )
+    .await?;
 
     let remote_control_config_enabled = config.features.enabled(Feature::RemoteControl);
     let remote_control_enabled = remote_control_config_enabled && state_db.is_some();
     if remote_control_config_enabled && state_db.is_none() {
         error!("remote control disabled because sqlite state db is unavailable");
     }
-    if transport_accept_handles.is_empty() && !remote_control_enabled {
+    if transport_accept_handles.is_empty()
+        && plugin_backend_bridge_handles.is_empty()
+        && !remote_control_enabled
+    {
         return Err(std::io::Error::new(
             ErrorKind::InvalidInput,
             if remote_control_config_enabled && state_db.is_none() {
@@ -671,6 +684,7 @@ pub async fn run_main_with_transport_options(
     )
     .await?;
     transport_accept_handles.push(remote_control_accept_handle);
+    transport_accept_handles.extend(plugin_backend_bridge_handles);
 
     let outbound_handle = tokio::spawn(async move {
         let mut outbound_connections = HashMap::<ConnectionId, OutboundConnectionState>::new();

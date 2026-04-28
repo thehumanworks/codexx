@@ -1729,6 +1729,24 @@
       ],
       "type": "string"
     },
+    "PluginBackendBridgeConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "backend_path_prefix": {
+          "description": "Authenticated ChatGPT backend path prefix that receives forwarded requests.",
+          "type": "string"
+        },
+        "local_path_prefix": {
+          "description": "Path prefix exposed on the loopback bridge listener.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "backend_path_prefix",
+        "local_path_prefix"
+      ],
+      "type": "object"
+    },
     "PluginConfig": {
       "additionalProperties": false,
       "properties": {
@@ -3760,6 +3778,14 @@
     },
     "plan_mode_reasoning_effort": {
       "$ref": "#/definitions/ReasoningEffort"
+    },
+    "plugin_backend_bridges": {
+      "additionalProperties": {
+        "$ref": "#/definitions/PluginBackendBridgeConfigToml"
+      },
+      "default": {},
+      "description": "Named loopback bridges that let trusted local plugins call scoped authenticated ChatGPT backend subtrees without receiving user credentials directly.",
+      "type": "object"
     },
     "plugins": {
       "additionalProperties": {

@@ -23,6 +23,7 @@ use codex_config::SandboxModeRequirement;
 use codex_config::Sourced;
 use codex_config::ThreadConfigLoader;
 use codex_config::config_toml::ConfigToml;
+use codex_config::config_toml::PluginBackendBridgeConfigToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::config_toml::RealtimeAudioConfig;
 use codex_config::config_toml::RealtimeConfig;
@@ -528,6 +529,10 @@ pub struct Config {
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     pub mcp_servers: Constrained<HashMap<String, McpServerConfig>>,
+
+    /// Named loopback bridges that let trusted local plugins call scoped authenticated
+    /// ChatGPT backend subtrees without receiving user credentials directly.
+    pub plugin_backend_bridges: HashMap<String, PluginBackendBridgeConfigToml>,
 
     /// Preferred store for MCP OAuth credentials.
     /// keyring: Use an OS-specific keyring service.
@@ -2674,6 +2679,7 @@ impl Config {
                 env!("CARGO_PKG_VERSION"),
             ),
             mcp_servers,
+            plugin_backend_bridges: cfg.plugin_backend_bridges.clone(),
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
             mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
