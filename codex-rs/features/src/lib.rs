@@ -223,6 +223,8 @@ pub enum Feature {
     PreventIdleSleep,
     /// Enable workspace-specific owner nudge copy and prompts in the TUI.
     WorkspaceOwnerUsageNudge,
+    /// Render backend-selected proactive usage-limit prompts in the TUI.
+    CurrentUsageLimitNudge,
     /// Legacy rollout flag for Responses API WebSocket transport experiments.
     ResponsesWebsockets,
     /// Legacy rollout flag for Responses API WebSocket transport v2 experiments.
@@ -1069,6 +1071,12 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "workspace_owner_usage_nudge",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::CurrentUsageLimitNudge,
+        key: "current_usage_limit_nudge",
+        stage: Stage::Stable,
+        default_enabled: true,
     },
     FeatureSpec {
         id: Feature::ResponsesWebsockets,

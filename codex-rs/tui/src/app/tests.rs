@@ -26,6 +26,7 @@ use crate::diff_model::FileChange;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
 use crate::legacy_core::config::TerminalResizeReflowMaxRows;
+use codex_app_server_protocol::AccountRateLimitsUpdatedNotification;
 use codex_app_server_protocol::AdditionalFileSystemPermissions;
 use codex_app_server_protocol::AdditionalNetworkPermissions;
 use codex_app_server_protocol::AdditionalPermissionProfile;
@@ -46,6 +47,8 @@ use codex_app_server_protocol::NetworkPolicyRuleAction as AppServerNetworkPolicy
 use codex_app_server_protocol::NonSteerableTurnKind as AppServerNonSteerableTurnKind;
 use codex_app_server_protocol::PatchChangeKind;
 use codex_app_server_protocol::PermissionsRequestApprovalParams;
+use codex_app_server_protocol::RateLimitSnapshot;
+use codex_app_server_protocol::RateLimitWindow;
 use codex_app_server_protocol::RequestId as AppServerRequestId;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
@@ -63,6 +66,8 @@ use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UsageLimitNudge;
+use codex_app_server_protocol::UsageLimitNudgeAction;
 use codex_app_server_protocol::UserInput;
 use codex_app_server_protocol::UserInput as AppServerUserInput;
 use codex_app_server_protocol::WarningNotification;
@@ -138,6 +143,81 @@ async fn stale_rate_limit_refresh_generations_do_not_move_backward() {
     );
 
     assert_eq!(app.latest_applied_rate_limit_refresh_generation, Some(2));
+}
+
+fn codex_rate_limit_snapshot(
+    used_percent: i32,
+    current_usage_limit_nudge: Option<UsageLimitNudge>,
+) -> RateLimitSnapshot {
+    RateLimitSnapshot {
+        limit_id: Some("codex".to_string()),
+        limit_name: None,
+        primary: Some(RateLimitWindow {
+            used_percent,
+            window_duration_mins: Some(60),
+            resets_at: Some(123),
+        }),
+        secondary: None,
+        credits: None,
+        plan_type: None,
+        rate_limit_reached_type: None,
+        current_usage_limit_nudge,
+    }
+}
+
+#[tokio::test]
+async fn stale_rate_limit_refresh_results_are_ignored() {
+    let mut app = make_test_app().await;
+
+    app.handle_rate_limits_loaded(
+        /*refresh_generation*/ 2,
+        RateLimitRefreshOrigin::UsageNudgePrefetch,
+        Ok(vec![codex_rate_limit_snapshot(
+            /*used_percent*/ 90,
+            Some(UsageLimitNudge {
+                threshold: 90,
+                action: UsageLimitNudgeAction::AddCredits,
+            }),
+        )]),
+    );
+    app.handle_rate_limits_loaded(
+        /*refresh_generation*/ 1,
+        RateLimitRefreshOrigin::UsageNudgePrefetch,
+        Ok(vec![codex_rate_limit_snapshot(
+            /*used_percent*/ 90, None,
+        )]),
+    );
+
+    assert!(
+        app.chat_widget
+            .has_active_current_usage_limit_nudge_for_test()
+    );
+}
+
+#[tokio::test]
+async fn account_rate_limits_updated_prefetches_authoritative_usage_nudge_snapshot() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    while app_event_rx.try_recv().is_ok() {}
+    let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+
+    app.handle_app_server_event(
+        &app_server,
+        codex_app_server_client::AppServerEvent::ServerNotification(
+            ServerNotification::AccountRateLimitsUpdated(AccountRateLimitsUpdatedNotification {
+                rate_limits: codex_rate_limit_snapshot(/*used_percent*/ 75, None),
+            }),
+        ),
+    )
+    .await;
+
+    assert!(matches!(
+        app_event_rx.try_recv(),
+        Ok(AppEvent::RefreshRateLimits {
+            origin: RateLimitRefreshOrigin::UsageNudgePrefetch,
+        })
+    ));
 }
 
 #[test]

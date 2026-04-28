@@ -122,6 +122,7 @@ use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnPlanStepStatus;
 use codex_app_server_protocol::TurnStatus;
+use codex_app_server_protocol::UsageLimitNudge;
 use codex_app_server_protocol::UserInput;
 use codex_chatgpt::connectors;
 use codex_config::ConfigLayerStackOrdering;
@@ -203,6 +204,7 @@ const PLAN_MODE_REASONING_SCOPE_TITLE: &str = "Apply reasoning change";
 const PLAN_MODE_REASONING_SCOPE_PLAN_ONLY: &str = "Apply to Plan mode override";
 const PLAN_MODE_REASONING_SCOPE_ALL_MODES: &str = "Apply to global default and Plan mode override";
 const CONNECTORS_SELECTION_VIEW_ID: &str = "connectors-selection";
+const RATE_LIMIT_SWITCH_PROMPT_VIEW_ID: &str = "rate-limit-switch-prompt";
 const TUI_STUB_MESSAGE: &str = "Not available in TUI yet.";
 
 /// Choose the keybinding used to edit the most-recently queued message.
@@ -315,7 +317,17 @@ use crate::status_indicator_widget::STATUS_DETAILS_DEFAULT_MAX_LINES;
 use crate::status_indicator_widget::StatusDetailsCapitalization;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+mod current_usage_limit_nudge;
 mod goal_status;
+#[cfg(test)]
+use self::current_usage_limit_nudge::CURRENT_USAGE_LIMIT_NUDGE_URL;
+use self::current_usage_limit_nudge::CurrentUsageLimitNudgePromptState;
+#[cfg(test)]
+use self::current_usage_limit_nudge::UPGRADE_USAGE_LIMIT_NUDGE_URL;
+#[cfg(test)]
+use self::current_usage_limit_nudge::WORKSPACE_OWNER_USAGE_LIMIT_NUDGE_URL;
+use self::current_usage_limit_nudge::prompt_subtitle as current_usage_limit_nudge_prompt_subtitle;
+use self::current_usage_limit_nudge::prompt_url as current_usage_limit_nudge_prompt_url;
 use self::goal_status::GoalStatusState;
 #[cfg(test)]
 use self::goal_status::goal_status_indicator_from_app_goal;
@@ -768,6 +780,7 @@ pub(crate) struct ChatWidget {
     plan_type: Option<PlanType>,
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     rate_limit_warnings: RateLimitWarningState,
+    current_usage_limit_nudge_prompt: CurrentUsageLimitNudgePromptState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     add_credits_nudge_email_in_flight: Option<AddCreditsNudgeCreditType>,
     adaptive_chunking: AdaptiveChunkingPolicy,
@@ -2560,7 +2573,8 @@ impl ChatWidget {
         if matches!(
             self.rate_limit_switch_prompt,
             RateLimitSwitchPromptState::Pending
-        ) {
+        ) || self.current_usage_limit_nudge_prompt.has_pending()
+        {
             return;
         }
 
@@ -2827,6 +2841,28 @@ impl ChatWidget {
         }
     }
 
+    pub(crate) fn on_live_rate_limit_snapshot(&mut self, snapshot: RateLimitSnapshot) {
+        if self.should_prefetch_current_usage_limit_nudge(&snapshot) {
+            self.app_event_tx.send(AppEvent::RefreshRateLimits {
+                origin: RateLimitRefreshOrigin::UsageNudgePrefetch,
+            });
+        }
+        self.on_rate_limit_snapshot(Some(snapshot));
+    }
+
+    fn should_prefetch_current_usage_limit_nudge(&mut self, snapshot: &RateLimitSnapshot) -> bool {
+        let is_codex_limit = snapshot
+            .limit_id
+            .as_deref()
+            .unwrap_or("codex")
+            .eq_ignore_ascii_case("codex");
+        is_codex_limit
+            && self.current_usage_limit_nudge_enabled()
+            && self
+                .current_usage_limit_nudge_prompt
+                .should_prefetch(snapshot.primary.as_ref())
+    }
+
     pub(crate) fn on_rate_limit_snapshot(&mut self, snapshot: Option<RateLimitSnapshot>) {
         if let Some(mut snapshot) = snapshot {
             let limit_id = snapshot
@@ -2852,6 +2888,17 @@ impl ChatWidget {
             self.plan_type = snapshot.plan_type.or(self.plan_type);
 
             let is_codex_limit = limit_id.eq_ignore_ascii_case("codex");
+            if is_codex_limit {
+                let nudge = if self.current_usage_limit_nudge_enabled() {
+                    snapshot.current_usage_limit_nudge.clone()
+                } else {
+                    None
+                };
+                self.current_usage_limit_nudge_prompt.update(nudge);
+            }
+            if self.current_usage_limit_nudge_prompt.is_active() {
+                self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
+            }
             if is_codex_limit
                 && let Some(rate_limit_reached_type) = snapshot.rate_limit_reached_type
             {
@@ -2900,6 +2947,7 @@ impl ChatWidget {
 
             if high_usage
                 && !has_workspace_credits
+                && !self.current_usage_limit_nudge_prompt.is_active()
                 && !self.rate_limit_switch_prompt_hidden()
                 && self.current_model() != NUDGE_MODEL_SLUG
                 && !matches!(
@@ -2992,6 +3040,12 @@ impl ChatWidget {
         self.config
             .features
             .enabled(Feature::WorkspaceOwnerUsageNudge)
+    }
+
+    fn current_usage_limit_nudge_enabled(&self) -> bool {
+        self.config
+            .features
+            .enabled(Feature::CurrentUsageLimitNudge)
     }
 
     fn on_rate_limit_error(&mut self, error_kind: RateLimitErrorKind, message: String) {
@@ -4850,6 +4904,7 @@ impl ChatWidget {
             plan_type: initial_plan_type,
             codex_rate_limit_reached_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
+            current_usage_limit_nudge_prompt: CurrentUsageLimitNudgePromptState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             add_credits_nudge_email_in_flight: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
@@ -7146,6 +7201,12 @@ impl ChatWidget {
     }
 
     fn maybe_show_pending_rate_limit_prompt(&mut self) {
+        if self.current_usage_limit_nudge_prompt.is_active() {
+            self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
+        }
+        if self.maybe_show_pending_current_usage_limit_nudge_prompt() {
+            return;
+        }
         if self.rate_limit_switch_prompt_hidden() {
             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
             return;
@@ -7161,6 +7222,64 @@ impl ChatWidget {
             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Shown;
         } else {
             self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
+        }
+    }
+
+    fn maybe_show_pending_current_usage_limit_nudge_prompt(&mut self) -> bool {
+        if !self.current_usage_limit_nudge_enabled() {
+            return false;
+        }
+        let Some(nudge) = self.current_usage_limit_nudge_prompt.take_pending() else {
+            return false;
+        };
+        self.open_current_usage_limit_nudge_prompt(nudge);
+        true
+    }
+
+    fn open_current_usage_limit_nudge_prompt(&mut self, nudge: UsageLimitNudge) {
+        if !self.bottom_pane.replace_selection_view_if_active(
+            RATE_LIMIT_SWITCH_PROMPT_VIEW_ID,
+            self.current_usage_limit_nudge_prompt_params(&nudge),
+        ) {
+            self.bottom_pane
+                .show_selection_view(self.current_usage_limit_nudge_prompt_params(&nudge));
+        }
+    }
+
+    fn current_usage_limit_nudge_prompt_params(
+        &self,
+        nudge: &UsageLimitNudge,
+    ) -> SelectionViewParams {
+        let prompt_url = current_usage_limit_nudge_prompt_url(nudge, self.plan_type).to_string();
+        let yes_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            tx.send(AppEvent::OpenUrlInBrowser {
+                url: prompt_url.clone(),
+            });
+        })];
+        let items = vec![
+            SelectionItem {
+                name: "Yes".to_string(),
+                display_shortcut: Some(key_hint::plain(KeyCode::Char('y'))),
+                actions: yes_actions,
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "No".to_string(),
+                display_shortcut: Some(key_hint::plain(KeyCode::Char('n'))),
+                is_default: true,
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        SelectionViewParams {
+            title: Some("Approaching usage limit".to_string()),
+            subtitle: Some(current_usage_limit_nudge_prompt_subtitle(nudge)),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            initial_selected_idx: Some(1),
+            ..Default::default()
         }
     }
 
@@ -7231,6 +7350,7 @@ impl ChatWidget {
         ];
 
         self.bottom_pane.show_selection_view(SelectionViewParams {
+            view_id: Some(RATE_LIMIT_SWITCH_PROMPT_VIEW_ID),
             title: Some("Approaching rate limits".to_string()),
             subtitle: Some(format!("Switch to {switch_model} for lower credit usage?")),
             footer_hint: Some(standard_popup_hint_line()),
@@ -9127,6 +9247,9 @@ impl ChatWidget {
             self.turn_sleep_inhibitor
                 .set_turn_running(self.agent_turn_running);
         }
+        if feature == Feature::CurrentUsageLimitNudge && !enabled {
+            self.current_usage_limit_nudge_prompt.update(None);
+        }
         #[cfg(target_os = "windows")]
         if matches!(
             feature,
@@ -9141,6 +9264,11 @@ impl ChatWidget {
             );
         }
         enabled
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_active_current_usage_limit_nudge_for_test(&self) -> bool {
+        self.current_usage_limit_nudge_prompt.is_active()
     }
 
     pub(crate) fn set_approvals_reviewer(&mut self, policy: ApprovalsReviewer) {

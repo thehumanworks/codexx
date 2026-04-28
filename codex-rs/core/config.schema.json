@@ -406,6 +406,9 @@
             "connectors": {
               "type": "boolean"
             },
+            "current_usage_limit_nudge": {
+              "type": "boolean"
+            },
             "default_mode_request_user_input": {
               "type": "boolean"
             },
@@ -3823,6 +3826,9 @@
           "type": "boolean"
         },
         "connectors": {
+          "type": "boolean"
+        },
+        "current_usage_limit_nudge": {
           "type": "boolean"
         },
         "default_mode_request_user_input": {

@@ -104,13 +104,17 @@ pub(crate) struct ConnectorsSnapshot {
 ///
 /// A `StartupPrefetch` fires once, concurrently with the rest of TUI init, and
 /// only updates the cached snapshots (no status card to finalize). A
-/// `StatusCommand` is tied to a specific `/status` invocation and must call
-/// `finish_status_rate_limit_refresh` when done so the card stops showing a
-/// "refreshing" state.
+/// `UsageNudgePrefetch` is triggered from coarse live usage signals so the TUI
+/// can fetch the richer backend-authored snapshot once before deciding whether
+/// to queue a prompt. A `StatusCommand` is tied to a specific `/status`
+/// invocation and must call `finish_status_rate_limit_refresh` when done so
+/// the card stops showing a "refreshing" state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RateLimitRefreshOrigin {
     /// Eagerly fetched after bootstrap so the first `/status` already has data.
     StartupPrefetch,
+    /// Best-effort near-limit refresh requested from a live usage update.
+    UsageNudgePrefetch,
     /// User-initiated via `/status`; the `request_id` correlates with the
     /// status card that should be updated when the fetch completes.
     StatusCommand { request_id: u64 },

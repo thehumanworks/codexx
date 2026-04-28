@@ -8,6 +8,7 @@ pub(super) use super::*;
 pub(super) use crate::app_command::AppCommand as Op;
 pub(super) use crate::app_event::AppEvent;
 pub(super) use crate::app_event::ExitMode;
+pub(super) use crate::app_event::RateLimitRefreshOrigin;
 #[cfg(not(target_os = "linux"))]
 pub(super) use crate::app_event::RealtimeAudioDeviceKind;
 pub(super) use crate::app_event_sender::AppEventSender;
@@ -114,6 +115,8 @@ pub(super) use codex_app_server_protocol::TurnCompletedNotification;
 pub(super) use codex_app_server_protocol::TurnError as AppServerTurnError;
 pub(super) use codex_app_server_protocol::TurnStartedNotification;
 pub(super) use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
+pub(super) use codex_app_server_protocol::UsageLimitNudge;
+pub(super) use codex_app_server_protocol::UsageLimitNudgeAction;
 pub(super) use codex_app_server_protocol::UserInput;
 pub(super) use codex_app_server_protocol::UserInput as AppServerUserInput;
 pub(super) use codex_app_server_protocol::WarningNotification;
@@ -222,6 +225,7 @@ macro_rules! assert_chatwidget_snapshot {
 mod app_server;
 mod approval_requests;
 mod composer_submission;
+mod current_usage_limit_nudge;
 mod exec_flow;
 mod goal_menu;
 mod guardian;

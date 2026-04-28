@@ -1,0 +1,35 @@
+---
+source: tui/src/chatwidget/tests/current_usage_limit_nudge.rs
+expression: "rendered_cases.join(\"\\n---\\n\")"
+---
+  Approaching usage limit
+  You're at 75% of your Codex usage limit. Add credits now to keep going?
+
+  1. Yes (y)
+› 2. No (default) (n)
+
+  Press enter to confirm or esc to go back
+---
+  Approaching usage limit
+  You're at 75% of your Codex usage limit. Upgrade now to keep going?
+
+  1. Yes (y)
+› 2. No (default) (n)
+
+  Press enter to confirm or esc to go back
+---
+  Approaching usage limit
+  You're at 90% of your Codex usage limit. Add credits now to keep going?
+
+  1. Yes (y)
+› 2. No (default) (n)
+
+  Press enter to confirm or esc to go back
+---
+  Approaching usage limit
+  You're at 90% of your Codex usage limit. Upgrade now to keep going?
+
+  1. Yes (y)
+› 2. No (default) (n)
+
+  Press enter to confirm or esc to go back

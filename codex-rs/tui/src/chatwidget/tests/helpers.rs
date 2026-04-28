@@ -208,6 +208,7 @@ pub(super) async fn make_chatwidget_manual(
         plan_type: None,
         codex_rate_limit_reached_type: None,
         rate_limit_warnings: RateLimitWarningState::default(),
+        current_usage_limit_nudge_prompt: CurrentUsageLimitNudgePromptState::default(),
         rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
         add_credits_nudge_email_in_flight: None,
         adaptive_chunking: crate::streaming::chunking::AdaptiveChunkingPolicy::default(),
