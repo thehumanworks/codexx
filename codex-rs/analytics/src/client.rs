@@ -22,7 +22,6 @@ use crate::facts::TurnResolvedConfigFact;
 use crate::facts::TurnTokenUsageFact;
 use crate::reducer::AnalyticsReducer;
 use codex_app_server_protocol::ClientRequest;
-use codex_app_server_protocol::ClientResponse;
 use codex_app_server_protocol::ClientResponsePayload;
 use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCErrorError;
@@ -225,7 +224,10 @@ impl AnalyticsEventsClient {
     }
 
     pub fn track_request(&self, connection_id: u64, request_id: RequestId, request: ClientRequest) {
-        if !tracks_client_request(&request) {
+        if !matches!(
+            request,
+            ClientRequest::TurnStart { .. } | ClientRequest::TurnSteer { .. }
+        ) {
             return;
         }
         self.record_fact(AnalyticsFact::ClientRequest {
@@ -325,26 +327,23 @@ impl AnalyticsEventsClient {
         }
     }
 
-    pub fn track_response(&self, connection_id: u64, response: ClientResponse) {
-        if !tracks_client_response(&response) {
-            return;
-        }
-        self.record_fact(AnalyticsFact::ClientResponse {
-            connection_id,
-            response: Box::new(response),
-        });
-    }
-
-    pub fn track_response_payload(
+    pub fn track_response(
         &self,
         connection_id: u64,
         request_id: RequestId,
         response: Box<ClientResponsePayload>,
     ) {
-        if !tracks_client_response_payload(response.as_ref()) {
+        if !matches!(
+            response.as_ref(),
+            ClientResponsePayload::ThreadStart(_)
+                | ClientResponsePayload::ThreadResume(_)
+                | ClientResponsePayload::ThreadFork(_)
+                | ClientResponsePayload::TurnStart(_)
+                | ClientResponsePayload::TurnSteer(_)
+        ) {
             return;
         }
-        self.record_fact(AnalyticsFact::ResponsePayload {
+        self.record_fact(AnalyticsFact::ClientResponse {
             connection_id,
             request_id,
             response,
@@ -383,35 +382,6 @@ impl AnalyticsEventsClient {
             response: Box::new(response),
         });
     }
-}
-
-fn tracks_client_request(request: &ClientRequest) -> bool {
-    matches!(
-        request,
-        ClientRequest::TurnStart { .. } | ClientRequest::TurnSteer { .. }
-    )
-}
-
-fn tracks_client_response(response: &ClientResponse) -> bool {
-    matches!(
-        response,
-        ClientResponse::ThreadStart { .. }
-            | ClientResponse::ThreadResume { .. }
-            | ClientResponse::ThreadFork { .. }
-            | ClientResponse::TurnStart { .. }
-            | ClientResponse::TurnSteer { .. }
-    )
-}
-
-fn tracks_client_response_payload(response: &ClientResponsePayload) -> bool {
-    matches!(
-        response,
-        ClientResponsePayload::ThreadStart(_)
-            | ClientResponsePayload::ThreadResume(_)
-            | ClientResponsePayload::ThreadFork(_)
-            | ClientResponsePayload::TurnStart(_)
-            | ClientResponsePayload::TurnSteer(_)
-    )
 }
 
 async fn send_track_events(

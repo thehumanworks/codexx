@@ -507,7 +507,7 @@ impl OutgoingMessageSender {
             .into_jsonrpc_parts_and_payload(request_id.request_id.clone())
             .map(|(id, result, response)| {
                 if let Some(response) = response {
-                    self.analytics_events_client.track_response_payload(
+                    self.analytics_events_client.track_response(
                         connection_id.0,
                         request_id_for_analytics,
                         response,

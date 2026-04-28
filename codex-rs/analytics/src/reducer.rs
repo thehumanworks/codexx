@@ -180,12 +180,6 @@ impl AnalyticsReducer {
             }
             AnalyticsFact::ClientResponse {
                 connection_id,
-                response,
-            } => {
-                self.ingest_response(connection_id, *response, out);
-            }
-            AnalyticsFact::ResponsePayload {
-                connection_id,
                 request_id,
                 response,
             } => {
