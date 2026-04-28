@@ -805,7 +805,7 @@ async fn default_client_retains_auth_manager() {
     let _client = AnalyticsEventsClient::new(
         auth_manager,
         "http://localhost".to_string(),
-        None,
+        /*analytics_enabled*/ None,
         AuthManagerRetention::Strong,
     );
 
@@ -820,7 +820,7 @@ async fn non_owning_client_does_not_retain_auth_manager() {
     let _client = AnalyticsEventsClient::new(
         Arc::clone(&auth_manager),
         "http://localhost".to_string(),
-        None,
+        /*analytics_enabled*/ None,
         AuthManagerRetention::Weak,
     );
     drop(auth_manager);
