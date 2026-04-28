@@ -19,13 +19,18 @@ pub struct ResolvedEnvironment {
 /// Resolves provider-supplied environment connection details on demand.
 #[async_trait]
 pub trait EnvironmentResolver: Send + Sync + fmt::Debug {
+    /// Returns the static exec-server URL for resolvers that do not need
+    /// asynchronous lookup.
+    fn static_exec_server_url(&self) -> Option<&str> {
+        None
+    }
+
     async fn resolve(&self) -> Result<ResolvedEnvironment, ExecServerError>;
 }
 
 /// Provider-supplied environment definition consumed by `EnvironmentManager`.
 #[derive(Clone, Debug)]
 pub struct EnvironmentConfiguration {
-    static_exec_server_url: Option<String>,
     resolver: Arc<dyn EnvironmentResolver>,
 }
 
@@ -41,7 +46,6 @@ impl EnvironmentConfiguration {
             Ok(normalized) if normalized == exec_server_url
         ));
         Self {
-            static_exec_server_url: Some(exec_server_url.clone()),
             resolver: Arc::new(StaticEnvironmentResolver { exec_server_url }),
         }
     }
@@ -51,7 +55,6 @@ impl EnvironmentConfiguration {
         R: EnvironmentResolver + 'static,
     {
         Self {
-            static_exec_server_url: None,
             resolver: Arc::new(resolver),
         }
     }
@@ -73,7 +76,7 @@ impl EnvironmentConfiguration {
     }
 
     pub(crate) fn static_exec_server_url(&self) -> Option<&str> {
-        self.static_exec_server_url.as_deref()
+        self.resolver.static_exec_server_url()
     }
 
     pub(crate) fn resolver(&self) -> Arc<dyn EnvironmentResolver> {
@@ -88,6 +91,10 @@ struct StaticEnvironmentResolver {
 
 #[async_trait]
 impl EnvironmentResolver for StaticEnvironmentResolver {
+    fn static_exec_server_url(&self) -> Option<&str> {
+        Some(&self.exec_server_url)
+    }
+
     async fn resolve(&self) -> Result<ResolvedEnvironment, ExecServerError> {
         Ok(ResolvedEnvironment {
             exec_server_url: self.exec_server_url.clone(),
