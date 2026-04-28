@@ -429,3 +429,7 @@ async fn send_track_events(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "client_tests.rs"]
+mod tests;
