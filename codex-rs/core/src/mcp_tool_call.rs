@@ -1306,7 +1306,7 @@ pub(crate) async fn lookup_mcp_tool_metadata(
         openai_file_input_params: openai_file_input_params_for_server(
             server,
             tool_info.tool.meta.as_deref(),
-        ))
+        )
         .filter(|params| !params.is_empty()),
         openai_file_upload_options,
     })
