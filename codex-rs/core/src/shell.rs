@@ -1,5 +1,7 @@
 use crate::shell_detect::detect_shell_type;
 use crate::shell_snapshot::ShellSnapshot;
+#[cfg(windows)]
+use codex_shell_command::powershell::try_find_pwsh_executable_blocking;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::PathBuf;
@@ -250,7 +252,9 @@ const POWERSHELL_FALLBACK_PATHS: &[&str] =
 const POWERSHELL_FALLBACK_PATHS: &[&str] = &[];
 
 fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
-    let shell_path = get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS)
+    let shell_path = explicit_shell_path(path)
+        .or_else(autodiscovered_pwsh_path)
+        .or_else(|| get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS))
         .or_else(|| {
             get_shell_path(
                 ShellType::PowerShell,
@@ -265,6 +269,20 @@ fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
         shell_path,
         shell_snapshot: empty_shell_snapshot_receiver(),
     })
+}
+
+fn explicit_shell_path(path: Option<&PathBuf>) -> Option<PathBuf> {
+    path.and_then(file_exists)
+}
+
+#[cfg(windows)]
+fn autodiscovered_pwsh_path() -> Option<PathBuf> {
+    try_find_pwsh_executable_blocking().map(Into::into)
+}
+
+#[cfg(not(windows))]
+fn autodiscovered_pwsh_path() -> Option<PathBuf> {
+    None
 }
 
 fn get_cmd_shell(path: Option<&PathBuf>) -> Option<Shell> {
