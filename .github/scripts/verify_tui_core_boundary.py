@@ -17,6 +17,7 @@ TUI_MANIFEST = TUI_ROOT / "Cargo.toml"
 FORBIDDEN_PACKAGE = "codex-core"
 CODEX_PROTOCOL_PACKAGE = "codex-protocol"
 CODEX_PROTOCOL_MESSAGE = "references `codex_protocol::protocol`"
+CODEX_PROTOCOL_GLOB_MESSAGE = "glob-imports `codex_protocol`, which exposes `protocol`"
 IDENTIFIER = r"(?:r#)?[^\W\d]\w*"
 PROTOCOL_IDENTIFIER = r"(?:r#)?protocol"
 TOKEN_SEPARATOR = r"\s*"
@@ -131,6 +132,14 @@ def source_failures() -> list[str]:
             if key in seen_locations:
                 continue
             failures.append(source_failure(path, text, match.start(), CODEX_PROTOCOL_MESSAGE))
+            seen_locations.add(key)
+        for match in protocol_glob_import_matches(match_text, codex_protocol_names):
+            key = (match.start(), CODEX_PROTOCOL_GLOB_MESSAGE)
+            if key in seen_locations:
+                continue
+            failures.append(
+                source_failure(path, text, match.start(), CODEX_PROTOCOL_GLOB_MESSAGE)
+            )
             seen_locations.add(key)
     return failures
 
@@ -327,6 +336,29 @@ def protocol_reference_matches(
             re.compile(
                 rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
                 rf"\{{[^;]*\b{PROTOCOL_IDENTIFIER}\b"
+            ),
+        )
+        for pattern in patterns:
+            matches.extend(pattern.finditer(text))
+    return matches
+
+
+def protocol_glob_import_matches(
+    text: str, codex_protocol_names: set[str]
+) -> list[re.Match[str]]:
+    matches = []
+    for crate_name in expanded_crate_aliases(text, codex_protocol_names):
+        crate_name_pattern = rf"(?:r#)?{re.escape(normalize_identifier(crate_name))}"
+        patterns = (
+            re.compile(
+                rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
+                rf"(?:::{TOKEN_SEPARATOR})?{crate_name_pattern}"
+                rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\*{TOKEN_SEPARATOR};"
+            ),
+            re.compile(
+                rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
+                rf"(?:::{TOKEN_SEPARATOR})?{crate_name_pattern}"
+                rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{[^;]*\*"
             ),
         )
         for pattern in patterns:
