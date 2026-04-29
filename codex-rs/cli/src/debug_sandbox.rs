@@ -1,21 +1,27 @@
 #[cfg(target_os = "macos")]
 mod pid_tracker;
+mod replay;
 #[cfg(target_os = "macos")]
 mod seatbelt;
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
 
+use anyhow::Context;
 use codex_config::LoaderOverrides;
 use codex_core::config::Config;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::NetworkProxyAuditMetadata;
+use codex_core::config::NetworkProxySpec;
 use codex_core::exec_env::create_env;
 #[cfg(target_os = "macos")]
 use codex_core::spawn::CODEX_SANDBOX_ENV_VAR;
 use codex_core::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_sandboxing::landlock::allow_network_for_proxy;
 use codex_sandboxing::landlock::create_linux_sandbox_command_args_for_permission_profile;
@@ -34,6 +40,8 @@ use crate::LandlockCommand;
 use crate::SeatbeltCommand;
 use crate::WindowsCommand;
 use crate::exit_status::handle_exit_status;
+use replay::SandboxReplayPayload;
+use replay::parse_sandbox_replay_payload;
 
 #[cfg(target_os = "macos")]
 use seatbelt::DenialLogger;
@@ -48,20 +56,26 @@ pub async fn run_command_under_seatbelt(
         permissions_profile,
         cwd,
         include_managed_config,
+        permissions_json,
+        permissions_json_file,
         allow_unix_sockets,
         log_denials,
         config_overrides,
         command,
     } = command;
     run_command_under_sandbox(
-        DebugSandboxConfigOptions {
-            full_auto,
-            permissions_profile,
-            cwd,
-            include_managed_config,
-        },
+        DebugSandboxConfigSource::from_flags(
+            DebugSandboxConfigOptions {
+                full_auto,
+                permissions_profile,
+                cwd,
+                include_managed_config,
+            },
+            permissions_json,
+            permissions_json_file,
+            config_overrides,
+        )?,
         command,
-        config_overrides,
         codex_linux_sandbox_exe,
         SandboxType::Seatbelt {
             allow_unix_sockets,
@@ -88,18 +102,24 @@ pub async fn run_command_under_landlock(
         permissions_profile,
         cwd,
         include_managed_config,
+        permissions_json,
+        permissions_json_file,
         config_overrides,
         command,
     } = command;
     run_command_under_sandbox(
-        DebugSandboxConfigOptions {
-            full_auto,
-            permissions_profile,
-            cwd,
-            include_managed_config,
-        },
+        DebugSandboxConfigSource::from_flags(
+            DebugSandboxConfigOptions {
+                full_auto,
+                permissions_profile,
+                cwd,
+                include_managed_config,
+            },
+            permissions_json,
+            permissions_json_file,
+            config_overrides,
+        )?,
         command,
-        config_overrides,
         codex_linux_sandbox_exe,
         SandboxType::Landlock,
     )
@@ -115,18 +135,24 @@ pub async fn run_command_under_windows(
         permissions_profile,
         cwd,
         include_managed_config,
+        permissions_json,
+        permissions_json_file,
         config_overrides,
         command,
     } = command;
     run_command_under_sandbox(
-        DebugSandboxConfigOptions {
-            full_auto,
-            permissions_profile,
-            cwd,
-            include_managed_config,
-        },
+        DebugSandboxConfigSource::from_flags(
+            DebugSandboxConfigOptions {
+                full_auto,
+                permissions_profile,
+                cwd,
+                include_managed_config,
+            },
+            permissions_json,
+            permissions_json_file,
+            config_overrides,
+        )?,
         command,
-        config_overrides,
         codex_linux_sandbox_exe,
         SandboxType::Windows,
     )
@@ -151,46 +177,185 @@ struct DebugSandboxConfigOptions {
     include_managed_config: bool,
 }
 
+#[derive(Debug)]
+enum DebugSandboxConfigSource {
+    Config {
+        options: DebugSandboxConfigOptions,
+        overrides: CliConfigOverrides,
+    },
+    Replay(Box<SandboxReplayPayload>),
+}
+
+impl DebugSandboxConfigSource {
+    fn from_flags(
+        options: DebugSandboxConfigOptions,
+        permissions_json: Option<String>,
+        permissions_json_file: Option<PathBuf>,
+        overrides: CliConfigOverrides,
+    ) -> anyhow::Result<Self> {
+        let replay = match (permissions_json, permissions_json_file) {
+            (Some(json), None) => Some(parse_sandbox_replay_payload(&json)?),
+            (None, Some(path)) => {
+                let json = std::fs::read_to_string(&path).with_context(|| {
+                    format!("failed to read sandbox replay file {}", path.display())
+                })?;
+                Some(parse_sandbox_replay_payload(&json)?)
+            }
+            (None, None) => None,
+            (Some(_), Some(_)) => {
+                anyhow::bail!(
+                    "--permissions-json and --permissions-json-file are mutually exclusive"
+                )
+            }
+        };
+
+        if let Some(replay) = replay {
+            if !overrides.raw_overrides.is_empty() {
+                anyhow::bail!("sandbox replay JSON cannot be combined with -c/--config overrides");
+            }
+            return Ok(Self::Replay(Box::new(replay)));
+        }
+
+        Ok(Self::Config { options, overrides })
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ManagedRequirementsMode {
     Include,
     Ignore,
 }
 
+struct SandboxRuntimeConfig {
+    permission_profile: PermissionProfile,
+    network: Option<NetworkProxySpec>,
+    managed_network_requirements_enabled: bool,
+    cwd: AbsolutePathBuf,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    codex_home: AbsolutePathBuf,
+    env: HashMap<String, String>,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+    use_legacy_landlock: bool,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    windows_sandbox_level: WindowsSandboxLevel,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    windows_sandbox_private_desktop: bool,
+}
+
+impl SandboxRuntimeConfig {
+    fn from_config(config: &Config) -> Self {
+        Self {
+            permission_profile: config.permissions.permission_profile(),
+            network: config.permissions.network.clone(),
+            managed_network_requirements_enabled: config.managed_network_requirements_enabled(),
+            cwd: config.cwd.clone(),
+            codex_home: config.codex_home.clone(),
+            env: create_env(
+                &config.permissions.shell_environment_policy,
+                /*thread_id*/ None,
+            ),
+            codex_linux_sandbox_exe: config.codex_linux_sandbox_exe.clone(),
+            use_legacy_landlock: config.features.use_legacy_landlock(),
+            windows_sandbox_level: codex_core::windows_sandbox::windows_sandbox_level_from_config(
+                config,
+            ),
+            windows_sandbox_private_desktop: config.permissions.windows_sandbox_private_desktop,
+        }
+    }
+
+    fn from_replay(payload: SandboxReplayPayload) -> anyhow::Result<Self> {
+        let permission_profile = payload.permission_profile;
+        let network = payload
+            .network_proxy
+            .map(|network| {
+                NetworkProxySpec::from_config_and_constraints(
+                    network.config,
+                    network.requirements,
+                    &permission_profile,
+                )
+            })
+            .transpose()?;
+
+        Ok(Self {
+            permission_profile,
+            network,
+            managed_network_requirements_enabled: payload.managed_network_requirements_enabled,
+            cwd: AbsolutePathBuf::from_absolute_path(payload.sandbox_cwd)
+                .context("sandbox replay sandboxCwd must be absolute")?,
+            codex_home: AbsolutePathBuf::from_absolute_path(payload.codex_home)
+                .context("sandbox replay codexHome must be absolute")?,
+            env: payload.env,
+            codex_linux_sandbox_exe: payload.codex_linux_sandbox_exe,
+            use_legacy_landlock: payload.use_legacy_landlock,
+            windows_sandbox_level: payload.windows_sandbox_level,
+            windows_sandbox_private_desktop: payload.windows_sandbox_private_desktop,
+        })
+    }
+
+    fn file_system_sandbox_policy(&self) -> codex_protocol::permissions::FileSystemSandboxPolicy {
+        self.permission_profile.file_system_sandbox_policy()
+    }
+
+    fn network_sandbox_policy(&self) -> NetworkSandboxPolicy {
+        self.permission_profile.network_sandbox_policy()
+    }
+
+    fn legacy_sandbox_policy(
+        &self,
+        sandbox_policy_cwd: &AbsolutePathBuf,
+    ) -> anyhow::Result<codex_protocol::protocol::SandboxPolicy> {
+        self.permission_profile
+            .to_legacy_sandbox_policy(sandbox_policy_cwd.as_path())
+            .map_err(Into::into)
+    }
+}
+
+async fn load_sandbox_runtime_config(
+    source: DebugSandboxConfigSource,
+    codex_linux_sandbox_exe: Option<PathBuf>,
+) -> anyhow::Result<SandboxRuntimeConfig> {
+    match source {
+        DebugSandboxConfigSource::Config { options, overrides } => {
+            let config = load_debug_sandbox_config(
+                overrides.parse_overrides().map_err(anyhow::Error::msg)?,
+                codex_linux_sandbox_exe,
+                options,
+            )
+            .await?;
+            Ok(SandboxRuntimeConfig::from_config(&config))
+        }
+        DebugSandboxConfigSource::Replay(payload) => SandboxRuntimeConfig::from_replay(*payload),
+    }
+}
+
 async fn run_command_under_sandbox(
-    config_options: DebugSandboxConfigOptions,
+    config_source: DebugSandboxConfigSource,
     command: Vec<String>,
-    config_overrides: CliConfigOverrides,
     codex_linux_sandbox_exe: Option<PathBuf>,
     sandbox_type: SandboxType,
 ) -> anyhow::Result<()> {
-    let config = load_debug_sandbox_config(
-        config_overrides
-            .parse_overrides()
-            .map_err(anyhow::Error::msg)?,
-        codex_linux_sandbox_exe,
-        config_options,
-    )
-    .await?;
-
-    // In practice, this should be `std::env::current_dir()` because this CLI
-    // does not support `--cwd`, but let's use the config value for consistency.
-    let cwd = config.cwd.clone();
+    let runtime_config =
+        load_sandbox_runtime_config(config_source, codex_linux_sandbox_exe).await?;
+    let cwd = runtime_config.cwd.clone();
     // For now, we always use the same cwd for both the command and the
     // sandbox policy. In the future, we could add a CLI option to set them
     // separately.
     let sandbox_policy_cwd = cwd.clone();
 
-    let env = create_env(
-        &config.permissions.shell_environment_policy,
-        /*thread_id*/ None,
-    );
+    let env = runtime_config.env.clone();
 
     // Special-case Windows sandbox: execute and exit the process to emulate inherited stdio.
     if let SandboxType::Windows = sandbox_type {
         #[cfg(target_os = "windows")]
         {
-            run_command_under_windows_session(&config, command, cwd, sandbox_policy_cwd, env).await;
+            run_command_under_windows_session(
+                &runtime_config,
+                command,
+                cwd,
+                sandbox_policy_cwd,
+                env,
+            )
+            .await;
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -204,13 +369,13 @@ async fn run_command_under_sandbox(
         SandboxType::Landlock | SandboxType::Windows => None,
     };
 
-    let managed_network_requirements_enabled = config.managed_network_requirements_enabled();
+    let managed_network_requirements_enabled = runtime_config.managed_network_requirements_enabled;
 
     // This proxy should only live for the lifetime of the child process.
-    let network_proxy = match config.permissions.network.as_ref() {
+    let network_proxy = match runtime_config.network.as_ref() {
         Some(spec) => Some(
             spec.start_proxy(
-                config.permissions.permission_profile.get(),
+                &runtime_config.permission_profile,
                 /*policy_decider*/ None,
                 /*blocked_request_observer*/ None,
                 managed_network_requirements_enabled,
@@ -230,8 +395,8 @@ async fn run_command_under_sandbox(
         SandboxType::Seatbelt {
             allow_unix_sockets, ..
         } => {
-            let file_system_sandbox_policy = config.permissions.file_system_sandbox_policy();
-            let network_sandbox_policy = config.permissions.network_sandbox_policy();
+            let file_system_sandbox_policy = runtime_config.file_system_sandbox_policy();
+            let network_sandbox_policy = runtime_config.network_sandbox_policy();
             let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
                 command,
                 file_system_sandbox_policy: &file_system_sandbox_policy,
@@ -259,15 +424,16 @@ async fn run_command_under_sandbox(
         }
         SandboxType::Landlock => {
             #[expect(clippy::expect_used)]
-            let codex_linux_sandbox_exe = config
+            let codex_linux_sandbox_exe = runtime_config
                 .codex_linux_sandbox_exe
+                .clone()
                 .expect("codex-linux-sandbox executable not found");
-            let use_legacy_landlock = config.features.use_legacy_landlock();
-            let network_sandbox_policy = config.permissions.network_sandbox_policy();
+            let use_legacy_landlock = runtime_config.use_legacy_landlock;
+            let network_sandbox_policy = runtime_config.network_sandbox_policy();
             let args = create_linux_sandbox_command_args_for_permission_profile(
                 command,
                 cwd.as_path(),
-                &config.permissions.permission_profile(),
+                &runtime_config.permission_profile,
                 sandbox_policy_cwd.as_path(),
                 use_legacy_landlock,
                 allow_network_for_proxy(managed_network_requirements_enabled),
@@ -317,20 +483,22 @@ async fn run_command_under_sandbox(
 
 #[cfg(target_os = "windows")]
 async fn run_command_under_windows_session(
-    config: &Config,
+    runtime_config: &SandboxRuntimeConfig,
     command: Vec<String>,
     cwd: AbsolutePathBuf,
     sandbox_policy_cwd: AbsolutePathBuf,
     env: std::collections::HashMap<String, String>,
 ) -> ! {
-    use codex_core::windows_sandbox::WindowsSandboxLevelExt;
-    use codex_protocol::config_types::WindowsSandboxLevel;
     use codex_windows_sandbox::spawn_windows_sandbox_session_elevated;
     use codex_windows_sandbox::spawn_windows_sandbox_session_legacy;
 
-    let sandbox_policy = config
-        .permissions
-        .legacy_sandbox_policy(sandbox_policy_cwd.as_path());
+    let sandbox_policy = match runtime_config.legacy_sandbox_policy(&sandbox_policy_cwd) {
+        Ok(sandbox_policy) => sandbox_policy,
+        Err(err) => {
+            eprintln!("windows sandbox failed to project policy: {err}");
+            std::process::exit(1);
+        }
+    };
     let policy_str = match serde_json::to_string(&sandbox_policy) {
         Ok(policy_str) => policy_str,
         Err(err) => {
@@ -340,7 +508,7 @@ async fn run_command_under_windows_session(
     };
 
     let use_elevated = matches!(
-        WindowsSandboxLevel::from_config(config),
+        runtime_config.windows_sandbox_level,
         WindowsSandboxLevel::Elevated
     );
 
@@ -348,28 +516,28 @@ async fn run_command_under_windows_session(
         spawn_windows_sandbox_session_elevated(
             policy_str.as_str(),
             sandbox_policy_cwd.as_path(),
-            config.codex_home.as_path(),
+            runtime_config.codex_home.as_path(),
             command,
             cwd.as_path(),
             env,
             None,
             /*tty*/ false,
             /*stdin_open*/ true,
-            config.permissions.windows_sandbox_private_desktop,
+            runtime_config.windows_sandbox_private_desktop,
         )
         .await
     } else {
         spawn_windows_sandbox_session_legacy(
             policy_str.as_str(),
             sandbox_policy_cwd.as_path(),
-            config.codex_home.as_path(),
+            runtime_config.codex_home.as_path(),
             command,
             cwd.as_path(),
             env,
             None,
             /*tty*/ false,
             /*stdin_open*/ true,
-            config.permissions.windows_sandbox_private_desktop,
+            runtime_config.windows_sandbox_private_desktop,
         )
         .await
     };
@@ -754,6 +922,21 @@ mod tests {
         Ok(())
     }
 
+    fn sample_replay_payload(codex_home: &TempDir, cwd: &TempDir) -> SandboxReplayPayload {
+        SandboxReplayPayload {
+            permission_profile: PermissionProfile::read_only(),
+            network_proxy: None,
+            managed_network_requirements_enabled: false,
+            sandbox_cwd: cwd.path().to_path_buf(),
+            codex_home: codex_home.path().to_path_buf(),
+            env: HashMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
+            codex_linux_sandbox_exe: Some(PathBuf::from("/tmp/codex-linux-sandbox")),
+            use_legacy_landlock: true,
+            windows_sandbox_level: WindowsSandboxLevel::Disabled,
+            windows_sandbox_private_desktop: true,
+        }
+    }
+
     #[tokio::test]
     async fn debug_sandbox_honors_active_permission_profiles() -> anyhow::Result<()> {
         let codex_home = TempDir::new()?;
@@ -927,6 +1110,98 @@ mod tests {
         .await?;
 
         assert_eq!(config.cwd.as_path(), cwd.path());
+
+        Ok(())
+    }
+
+    #[test]
+    fn sandbox_replay_payload_round_trips() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        let payload = sample_replay_payload(&codex_home, &cwd);
+
+        let json = serde_json::to_string(&payload)?;
+        let reparsed = parse_sandbox_replay_payload(&json)?;
+
+        assert_eq!(reparsed, payload);
+        Ok(())
+    }
+
+    #[test]
+    fn debug_sandbox_loads_replay_json_file() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        let payload = sample_replay_payload(&codex_home, &cwd);
+        let replay_file = codex_home.path().join("replay.json");
+        std::fs::write(&replay_file, serde_json::to_vec(&payload)?)?;
+
+        let source = DebugSandboxConfigSource::from_flags(
+            DebugSandboxConfigOptions {
+                full_auto: false,
+                permissions_profile: None,
+                cwd: None,
+                include_managed_config: false,
+            },
+            None,
+            Some(replay_file),
+            CliConfigOverrides::default(),
+        )?;
+
+        let DebugSandboxConfigSource::Replay(parsed) = source else {
+            panic!("expected replay config source");
+        };
+        assert_eq!(*parsed, payload);
+        Ok(())
+    }
+
+    #[test]
+    fn debug_sandbox_replay_rejects_config_overrides() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        let payload = sample_replay_payload(&codex_home, &cwd);
+
+        let err = DebugSandboxConfigSource::from_flags(
+            DebugSandboxConfigOptions {
+                full_auto: false,
+                permissions_profile: None,
+                cwd: None,
+                include_managed_config: false,
+            },
+            Some(serde_json::to_string(&payload)?),
+            None,
+            CliConfigOverrides {
+                raw_overrides: vec!["model=o3".to_string()],
+            },
+        )
+        .expect_err("config overrides should be rejected");
+
+        assert!(
+            err.to_string().contains("-c/--config"),
+            "unexpected error: {err}"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn debug_sandbox_replay_bypasses_ambient_config() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        std::fs::write(codex_home.path().join("config.toml"), "invalid = [")?;
+        let payload = sample_replay_payload(&codex_home, &cwd);
+
+        let runtime = load_sandbox_runtime_config(
+            DebugSandboxConfigSource::Replay(Box::new(payload.clone())),
+            Some(PathBuf::from("/ignored/from/ambient/config")),
+        )
+        .await?;
+
+        assert_eq!(runtime.permission_profile, payload.permission_profile);
+        assert_eq!(runtime.cwd.as_path(), cwd.path());
+        assert_eq!(
+            runtime.codex_linux_sandbox_exe,
+            payload.codex_linux_sandbox_exe
+        );
+        assert_eq!(runtime.env, payload.env);
 
         Ok(())
     }

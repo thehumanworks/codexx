@@ -86,7 +86,8 @@ impl NetworkProxySpec {
         self.config.network.enable_socks5
     }
 
-    pub(crate) fn from_config_and_constraints(
+    /// Build a runtime proxy spec from effective config plus optional managed constraints.
+    pub fn from_config_and_constraints(
         config: NetworkProxyConfig,
         requirements: Option<NetworkConstraints>,
         permission_profile: &PermissionProfile,

@@ -72,6 +72,21 @@ codex debug seatbelt [--full-auto] [--log-denials] [COMMAND]...
 codex debug landlock [--full-auto] [COMMAND]...
 ```
 
+To select a named permissions profile explicitly, pass it by name:
+
+```shell
+codex sandbox macos --permissions-profile :workspace -- echo hello
+codex sandbox linux --permissions-profile my-test-profile -C /tmp/project -- echo hello
+```
+
+To replay an already-resolved sandbox state without reading ambient config, pass the JSON payload
+inline or from a file:
+
+```shell
+codex sandbox macos --permissions-json-file replay.json -- echo hello
+codex sandbox linux --permissions-json '{"permissionProfile":{"type":"disabled"},"networkProxy":null,"managedNetworkRequirementsEnabled":false,"sandboxCwd":"/tmp/project","codexHome":"/tmp/codex-home","env":{},"codexLinuxSandboxExe":"/usr/local/bin/codex-linux-sandbox","useLegacyLandlock":false,"windowsSandboxLevel":"disabled","windowsSandboxPrivateDesktop":true}' -- echo hello
+```
+
 ### Selecting a sandbox policy via `--sandbox`
 
 The Rust CLI exposes a dedicated `--sandbox` (`-s`) flag that lets you pick the sandbox policy **without** having to reach for the generic `-c/--config` option:

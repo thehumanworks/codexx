@@ -47,6 +47,34 @@ pub struct SeatbeltCommand {
     )]
     pub include_managed_config: bool,
 
+    /// Replay a fully resolved sandbox state from inline JSON.
+    #[arg(
+        long = "permissions-json",
+        value_name = "JSON",
+        conflicts_with_all = [
+            "full_auto",
+            "permissions_profile",
+            "cwd",
+            "include_managed_config",
+            "permissions_json_file"
+        ]
+    )]
+    pub permissions_json: Option<String>,
+
+    /// Replay a fully resolved sandbox state from a JSON file.
+    #[arg(
+        long = "permissions-json-file",
+        value_name = "FILE",
+        conflicts_with_all = [
+            "full_auto",
+            "permissions_profile",
+            "cwd",
+            "include_managed_config",
+            "permissions_json"
+        ]
+    )]
+    pub permissions_json_file: Option<PathBuf>,
+
     /// Allow the sandboxed command to bind/connect AF_UNIX sockets rooted at this path. Relative paths are resolved against the current directory. Repeat to allow multiple paths.
     #[arg(long = "allow-unix-socket", value_parser = parse_allow_unix_socket_path)]
     pub allow_unix_sockets: Vec<AbsolutePathBuf>,
@@ -95,6 +123,34 @@ pub struct LandlockCommand {
     )]
     pub include_managed_config: bool,
 
+    /// Replay a fully resolved sandbox state from inline JSON.
+    #[arg(
+        long = "permissions-json",
+        value_name = "JSON",
+        conflicts_with_all = [
+            "full_auto",
+            "permissions_profile",
+            "cwd",
+            "include_managed_config",
+            "permissions_json_file"
+        ]
+    )]
+    pub permissions_json: Option<String>,
+
+    /// Replay a fully resolved sandbox state from a JSON file.
+    #[arg(
+        long = "permissions-json-file",
+        value_name = "FILE",
+        conflicts_with_all = [
+            "full_auto",
+            "permissions_profile",
+            "cwd",
+            "include_managed_config",
+            "permissions_json"
+        ]
+    )]
+    pub permissions_json_file: Option<PathBuf>,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 
@@ -129,6 +185,34 @@ pub struct WindowsCommand {
         requires = "permissions_profile"
     )]
     pub include_managed_config: bool,
+
+    /// Replay a fully resolved sandbox state from inline JSON.
+    #[arg(
+        long = "permissions-json",
+        value_name = "JSON",
+        conflicts_with_all = [
+            "full_auto",
+            "permissions_profile",
+            "cwd",
+            "include_managed_config",
+            "permissions_json_file"
+        ]
+    )]
+    pub permissions_json: Option<String>,
+
+    /// Replay a fully resolved sandbox state from a JSON file.
+    #[arg(
+        long = "permissions-json-file",
+        value_name = "FILE",
+        conflicts_with_all = [
+            "full_auto",
+            "permissions_profile",
+            "cwd",
+            "include_managed_config",
+            "permissions_json"
+        ]
+    )]
+    pub permissions_json_file: Option<PathBuf>,
 
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,

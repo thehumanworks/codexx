@@ -1986,6 +1986,87 @@ mod tests {
     }
 
     #[test]
+    fn sandbox_macos_parses_replay_json_file() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "--permissions-json-file",
+            "/tmp/replay.json",
+            "--",
+            "echo",
+        ])
+        .expect("parse");
+
+        let Some(Subcommand::Sandbox(SandboxArgs {
+            cmd: SandboxCommand::Macos(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected sandbox macos command");
+        };
+
+        assert_eq!(
+            command.permissions_json_file.as_deref(),
+            Some(std::path::Path::new("/tmp/replay.json"))
+        );
+    }
+
+    #[test]
+    fn sandbox_macos_parses_replay_json() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "--permissions-json",
+            "{}",
+            "--",
+            "echo",
+        ])
+        .expect("parse");
+
+        let Some(Subcommand::Sandbox(SandboxArgs {
+            cmd: SandboxCommand::Macos(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected sandbox macos command");
+        };
+
+        assert_eq!(command.permissions_json.as_deref(), Some("{}"));
+    }
+
+    #[test]
+    fn sandbox_macos_rejects_multiple_replay_sources() {
+        let err = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "--permissions-json",
+            "{}",
+            "--permissions-json-file",
+            "/tmp/replay.json",
+        ])
+        .expect_err("parse should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn sandbox_macos_rejects_replay_json_with_profile_flags() {
+        let err = MultitoolCli::try_parse_from([
+            "codex",
+            "sandbox",
+            "macos",
+            "--permissions-json",
+            "{}",
+            "--permissions-profile",
+            ":workspace",
+        ])
+        .expect_err("parse should fail");
+
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
     fn plugin_marketplace_remove_parses_under_plugin() {
         let cli =
             MultitoolCli::try_parse_from(["codex", "plugin", "marketplace", "remove", "debug"])
