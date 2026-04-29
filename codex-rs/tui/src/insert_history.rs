@@ -135,7 +135,9 @@ where
         let line_wrapped = match wrap_policy {
             HistoryLineWrapPolicy::Terminal => vec![line.clone()],
             HistoryLineWrapPolicy::PreWrap
-                if line_contains_url_like(line) && !line_has_mixed_url_and_non_url_tokens(line) =>
+                if is_preformatted_box_table_line(line)
+                    || (line_contains_url_like(line)
+                        && !line_has_mixed_url_and_non_url_tokens(line)) =>
             {
                 vec![line.clone()]
             }
@@ -244,6 +246,19 @@ where
     }
 
     Ok(())
+}
+
+fn is_preformatted_box_table_line(line: &Line<'_>) -> bool {
+    let text: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    let trimmed = text.trim_start();
+    (trimmed.starts_with('│') && trimmed.matches('│').count() >= 2)
+        || trimmed.starts_with('┌')
+        || trimmed.starts_with('├')
+        || trimmed.starts_with('└')
 }
 
 /// Render a single wrapped history line: clear continuation rows for wide lines,
@@ -441,6 +456,22 @@ mod tests {
     use crate::test_backend::VT100Backend;
     use ratatui::layout::Rect;
     use ratatui::style::Color;
+
+    #[test]
+    fn detects_preformatted_box_table_lines() {
+        assert!(is_preformatted_box_table_line(&Line::from(
+            "│       Link │ a (https://example.com/a) │"
+        )));
+        assert!(is_preformatted_box_table_line(&Line::from(
+            "┌──────┬────────┐"
+        )));
+        assert!(!is_preformatted_box_table_line(&Line::from(
+            "plain text with https://example.com"
+        )));
+        assert!(!is_preformatted_box_table_line(&Line::from(
+            "  │ quoted text with https://example.com"
+        )));
+    }
 
     #[test]
     fn writes_bold_then_regular_spans() {
