@@ -71,6 +71,7 @@ use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SessionSource as AppServerSessionSource;
 use codex_app_server_protocol::Thread;
+use codex_app_server_protocol::ThreadExecutionEnvironment;
 use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
@@ -78,7 +79,6 @@ use codex_app_server_protocol::ThreadStatus as AppServerThreadStatus;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnCompletedNotification;
 use codex_app_server_protocol::TurnError as AppServerTurnError;
-use codex_app_server_protocol::TurnExecutionEnvironment;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus as AppServerTurnStatus;
@@ -219,14 +219,6 @@ fn sample_thread_resume_response_with_source(
 }
 
 fn sample_turn_start_request(thread_id: &str, request_id: i64) -> ClientRequest {
-    sample_turn_start_request_with_execution_environment(thread_id, request_id, None)
-}
-
-fn sample_turn_start_request_with_execution_environment(
-    thread_id: &str,
-    request_id: i64,
-    execution_environment: Option<TurnExecutionEnvironment>,
-) -> ClientRequest {
     ClientRequest::TurnStart {
         request_id: RequestId::Integer(request_id),
         params: TurnStartParams {
@@ -240,7 +232,6 @@ fn sample_turn_start_request_with_execution_environment(
                     url: "https://example.com/a.png".to_string(),
                 },
             ],
-            execution_environment,
             ..Default::default()
         },
     }
@@ -347,20 +338,6 @@ fn sample_turn_steer_request(
     expected_turn_id: &str,
     request_id: i64,
 ) -> ClientRequest {
-    sample_turn_steer_request_with_execution_environment(
-        thread_id,
-        expected_turn_id,
-        request_id,
-        None,
-    )
-}
-
-fn sample_turn_steer_request_with_execution_environment(
-    thread_id: &str,
-    expected_turn_id: &str,
-    request_id: i64,
-    execution_environment: Option<TurnExecutionEnvironment>,
-) -> ClientRequest {
     ClientRequest::TurnSteer {
         request_id: RequestId::Integer(request_id),
         params: TurnSteerParams {
@@ -376,7 +353,6 @@ fn sample_turn_steer_request_with_execution_environment(
                 },
             ],
             responsesapi_client_metadata: None,
-            execution_environment,
         },
     }
 }
@@ -503,7 +479,7 @@ async fn ingest_initialize(reducer: &mut AnalyticsReducer, out: &mut Vec<TrackEv
 async fn ingest_thread_start_with_execution_environment(
     reducer: &mut AnalyticsReducer,
     out: &mut Vec<TrackEventRequest>,
-    execution_environment: Option<TurnExecutionEnvironment>,
+    execution_environment: Option<ThreadExecutionEnvironment>,
 ) {
     reducer
         .ingest(
@@ -878,7 +854,7 @@ fn thread_initialized_event_serializes_expected_shape() {
             initialization_mode: ThreadInitializationMode::New,
             subagent_source: None,
             parent_thread_id: None,
-            execution_environment: Some(TurnExecutionEnvironment::Remote),
+            execution_environment: Some(ThreadExecutionEnvironment::Remote),
             created_at: 1,
         },
     });
@@ -1013,27 +989,6 @@ async fn initialize_caches_client_and_thread_lifecycle_publishes_once_initialize
     assert_eq!(
         payload[0]["event_params"]["runtime"]["runtime_arch"],
         "x86_64"
-    );
-}
-
-#[tokio::test]
-async fn thread_start_execution_environment_flows_to_thread_initialized_event() {
-    let mut reducer = AnalyticsReducer::default();
-    let mut out = Vec::new();
-
-    ingest_initialize(&mut reducer, &mut out).await;
-    ingest_thread_start_with_execution_environment(
-        &mut reducer,
-        &mut out,
-        Some(TurnExecutionEnvironment::Remote),
-    )
-    .await;
-
-    let payload = serde_json::to_value(&out[0]).expect("serialize thread event");
-    assert_eq!(payload["event_type"], json!("codex_thread_initialized"));
-    assert_eq!(
-        payload["event_params"]["execution_environment"],
-        json!("remote")
     );
 }
 
@@ -1833,7 +1788,7 @@ fn turn_event_serializes_expected_shape() {
             initialization_mode: ThreadInitializationMode::New,
             subagent_source: None,
             parent_thread_id: None,
-            execution_environment: Some(TurnExecutionEnvironment::Remote),
+            execution_environment: Some(ThreadExecutionEnvironment::Remote),
             model: Some("gpt-5".to_string()),
             model_provider: "openai".to_string(),
             sandbox_policy: Some("read_only"),
@@ -2231,76 +2186,7 @@ async fn turn_lifecycle_emits_turn_event() {
 }
 
 #[tokio::test]
-async fn turn_start_execution_environment_flows_to_turn_event() {
-    let mut reducer = AnalyticsReducer::default();
-    let mut out = Vec::new();
-
-    ingest_initialize(&mut reducer, &mut out).await;
-    reducer
-        .ingest(
-            AnalyticsFact::ClientResponse {
-                connection_id: 7,
-                response: Box::new(sample_thread_start_response(
-                    "thread-2", /*ephemeral*/ false, "gpt-5",
-                )),
-            },
-            &mut out,
-        )
-        .await;
-    out.clear();
-
-    reducer
-        .ingest(
-            AnalyticsFact::ClientRequest {
-                connection_id: 7,
-                request_id: RequestId::Integer(3),
-                request: Box::new(sample_turn_start_request_with_execution_environment(
-                    "thread-2",
-                    /*request_id*/ 3,
-                    Some(TurnExecutionEnvironment::Remote),
-                )),
-            },
-            &mut out,
-        )
-        .await;
-    reducer
-        .ingest(
-            AnalyticsFact::ClientResponse {
-                connection_id: 7,
-                response: Box::new(sample_turn_start_response("turn-2", /*request_id*/ 3)),
-            },
-            &mut out,
-        )
-        .await;
-    reducer
-        .ingest(
-            AnalyticsFact::Custom(CustomAnalyticsFact::TurnResolvedConfig(Box::new(
-                sample_turn_resolved_config("turn-2"),
-            ))),
-            &mut out,
-        )
-        .await;
-    reducer
-        .ingest(
-            AnalyticsFact::Notification(Box::new(sample_turn_completed_notification(
-                "thread-2",
-                "turn-2",
-                AppServerTurnStatus::Completed,
-                /*codex_error_info*/ None,
-            ))),
-            &mut out,
-        )
-        .await;
-
-    let payload = serde_json::to_value(&out[0]).expect("serialize turn event");
-    assert_eq!(
-        payload["event_params"]["execution_environment"],
-        json!("remote")
-    );
-}
-
-#[tokio::test]
-async fn thread_execution_environment_flows_to_turn_and_steer_events() {
+async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     let mut reducer = AnalyticsReducer::default();
     let mut out = Vec::new();
 
@@ -2308,38 +2194,26 @@ async fn thread_execution_environment_flows_to_turn_and_steer_events() {
     ingest_thread_start_with_execution_environment(
         &mut reducer,
         &mut out,
-        Some(TurnExecutionEnvironment::Remote),
+        Some(ThreadExecutionEnvironment::Remote),
     )
     .await;
+
+    let thread_payload = serde_json::to_value(&out[0]).expect("serialize thread event");
+    assert_eq!(
+        thread_payload["event_params"]["execution_environment"],
+        json!("remote")
+    );
     out.clear();
 
-    reducer
-        .ingest(
-            AnalyticsFact::ClientRequest {
-                connection_id: 7,
-                request_id: RequestId::Integer(3),
-                request: Box::new(sample_turn_start_request("thread-2", /*request_id*/ 3)),
-            },
-            &mut out,
-        )
-        .await;
-    reducer
-        .ingest(
-            AnalyticsFact::ClientResponse {
-                connection_id: 7,
-                response: Box::new(sample_turn_start_response("turn-2", /*request_id*/ 3)),
-            },
-            &mut out,
-        )
-        .await;
-    reducer
-        .ingest(
-            AnalyticsFact::Custom(CustomAnalyticsFact::TurnResolvedConfig(Box::new(
-                sample_turn_resolved_config("turn-2"),
-            ))),
-            &mut out,
-        )
-        .await;
+    ingest_turn_prerequisites(
+        &mut reducer,
+        &mut out,
+        /*include_initialize*/ false,
+        /*include_resolved_config*/ true,
+        /*include_started*/ false,
+        /*include_token_usage*/ false,
+    )
+    .await;
     reducer
         .ingest(
             AnalyticsFact::ClientRequest {
@@ -2415,11 +2289,8 @@ async fn accepted_steers_increment_turn_steer_count() {
             AnalyticsFact::ClientRequest {
                 connection_id: 7,
                 request_id: RequestId::Integer(4),
-                request: Box::new(sample_turn_steer_request_with_execution_environment(
-                    "thread-2",
-                    "turn-2",
-                    /*request_id*/ 4,
-                    Some(TurnExecutionEnvironment::Remote),
+                request: Box::new(sample_turn_steer_request(
+                    "thread-2", "turn-2", /*request_id*/ 4,
                 )),
             },
             &mut out,
@@ -2498,10 +2369,6 @@ async fn accepted_steers_increment_turn_steer_count() {
         .find(|event| matches!(event, TrackEventRequest::TurnEvent(_)))
         .expect("turn event should be emitted");
     let payload = serde_json::to_value(turn_event).expect("serialize turn event");
-    assert_eq!(
-        payload["event_params"]["execution_environment"],
-        json!("remote")
-    );
     assert_eq!(payload["event_params"]["steer_count"], json!(2));
 }
 

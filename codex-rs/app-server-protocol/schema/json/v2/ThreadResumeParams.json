@@ -1262,7 +1262,7 @@
       ],
       "type": "string"
     },
-    "TurnExecutionEnvironment": {
+    "ThreadExecutionEnvironment": {
       "enum": [
         "remote"
       ],

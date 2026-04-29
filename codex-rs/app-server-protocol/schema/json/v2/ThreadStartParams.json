@@ -438,6 +438,12 @@
       ],
       "type": "string"
     },
+    "ThreadExecutionEnvironment": {
+      "enum": [
+        "remote"
+      ],
+      "type": "string"
+    },
     "ThreadStartSource": {
       "enum": [
         "startup",
@@ -459,12 +465,6 @@
         "environmentId"
       ],
       "type": "object"
-    },
-    "TurnExecutionEnvironment": {
-      "enum": [
-        "remote"
-      ],
-      "type": "string"
     }
   },
   "properties": {

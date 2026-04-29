@@ -20,7 +20,7 @@ use crate::facts::TurnSteerResult;
 use crate::facts::TurnSubmissionType;
 use crate::now_unix_seconds;
 use codex_app_server_protocol::CodexErrorInfo;
-use codex_app_server_protocol::TurnExecutionEnvironment;
+use codex_app_server_protocol::ThreadExecutionEnvironment;
 use codex_login::default_client::originator;
 use codex_plugin::PluginTelemetryMetadata;
 use codex_protocol::approvals::NetworkApprovalProtocol;
@@ -115,7 +115,7 @@ pub(crate) struct ThreadInitializedEventParams {
     pub(crate) initialization_mode: ThreadInitializationMode,
     pub(crate) subagent_source: Option<String>,
     pub(crate) parent_thread_id: Option<String>,
-    pub(crate) execution_environment: Option<TurnExecutionEnvironment>,
+    pub(crate) execution_environment: Option<ThreadExecutionEnvironment>,
     pub(crate) created_at: u64,
 }
 
@@ -468,7 +468,7 @@ pub(crate) struct CodexTurnEventParams {
     pub(crate) initialization_mode: ThreadInitializationMode,
     pub(crate) subagent_source: Option<String>,
     pub(crate) parent_thread_id: Option<String>,
-    pub(crate) execution_environment: Option<TurnExecutionEnvironment>,
+    pub(crate) execution_environment: Option<ThreadExecutionEnvironment>,
     pub(crate) model: Option<String>,
     pub(crate) model_provider: String,
     pub(crate) sandbox_policy: Option<&'static str>,
@@ -521,7 +521,7 @@ pub(crate) struct CodexTurnSteerEventParams {
     pub(crate) thread_source: Option<String>,
     pub(crate) subagent_source: Option<String>,
     pub(crate) parent_thread_id: Option<String>,
-    pub(crate) execution_environment: Option<TurnExecutionEnvironment>,
+    pub(crate) execution_environment: Option<ThreadExecutionEnvironment>,
     pub(crate) num_input_images: usize,
     pub(crate) result: TurnSteerResult,
     pub(crate) rejection_reason: Option<TurnSteerRejectionReason>,

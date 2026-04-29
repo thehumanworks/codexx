@@ -3481,7 +3481,7 @@ pub struct ThreadStartParams {
     /// Optional thread-scoped execution environment.
     #[experimental("thread/start.executionEnvironment")]
     #[ts(optional = nullable)]
-    pub execution_environment: Option<TurnExecutionEnvironment>,
+    pub execution_environment: Option<ThreadExecutionEnvironment>,
     /// Optional sticky environments for this thread.
     ///
     /// Omitted selects the default environment when environment access is
@@ -3630,7 +3630,7 @@ pub struct ThreadResumeParams {
     /// Optional thread-scoped execution environment.
     #[experimental("thread/resume.executionEnvironment")]
     #[ts(optional = nullable)]
-    pub execution_environment: Option<TurnExecutionEnvironment>,
+    pub execution_environment: Option<ThreadExecutionEnvironment>,
     /// If true, persist additional rollout EventMsg variants required to
     /// reconstruct a richer thread history on subsequent resume/fork/read.
     #[experimental("thread/resume.persistFullHistory")]
@@ -3731,7 +3731,7 @@ pub struct ThreadForkParams {
     /// Optional thread-scoped execution environment.
     #[experimental("thread/fork.executionEnvironment")]
     #[ts(optional = nullable)]
-    pub execution_environment: Option<TurnExecutionEnvironment>,
+    pub execution_environment: Option<ThreadExecutionEnvironment>,
     /// If true, persist additional rollout EventMsg variants required to
     /// reconstruct a richer thread history on subsequent resume/fork/read.
     #[experimental("thread/fork.persistFullHistory")]
@@ -5266,7 +5266,7 @@ pub struct TurnEnvironmentParams {
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case", export_to = "v2/")]
-pub enum TurnExecutionEnvironment {
+pub enum ThreadExecutionEnvironment {
     Remote,
 }
 
@@ -5282,10 +5282,6 @@ pub struct TurnStartParams {
     #[experimental("turn/start.responsesapiClientMetadata")]
     #[ts(optional = nullable)]
     pub responsesapi_client_metadata: Option<HashMap<String, String>>,
-    /// Optional turn-scoped execution environment.
-    #[experimental("turn/start.executionEnvironment")]
-    #[ts(optional = nullable)]
-    pub execution_environment: Option<TurnExecutionEnvironment>,
     /// Optional turn-scoped environments.
     ///
     /// Omitted uses the thread sticky environments. Empty disables
@@ -5435,10 +5431,6 @@ pub struct TurnSteerParams {
     #[experimental("turn/steer.responsesapiClientMetadata")]
     #[ts(optional = nullable)]
     pub responsesapi_client_metadata: Option<HashMap<String, String>>,
-    /// Optional turn-scoped execution environment.
-    #[experimental("turn/steer.executionEnvironment")]
-    #[ts(optional = nullable)]
-    pub execution_environment: Option<TurnExecutionEnvironment>,
     /// Required active turn id precondition. The request fails when it does not
     /// match the currently active turn.
     pub expected_turn_id: String,
@@ -10786,7 +10778,6 @@ mod tests {
             thread_id: "thread_123".to_string(),
             input: vec![],
             responsesapi_client_metadata: None,
-            execution_environment: None,
             environments: None,
             cwd: None,
             approval_policy: None,
