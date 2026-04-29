@@ -17,8 +17,11 @@ TUI_MANIFEST = TUI_ROOT / "Cargo.toml"
 FORBIDDEN_PACKAGE = "codex-core"
 CODEX_PROTOCOL_PACKAGE = "codex-protocol"
 CODEX_PROTOCOL_MESSAGE = "references `codex_protocol::protocol`"
-IDENTIFIER = r"[A-Za-z_][A-Za-z0-9_]*"
+IDENTIFIER = r"(?:r#)?[A-Za-z_][A-Za-z0-9_]*"
+PROTOCOL_IDENTIFIER = r"(?:r#)?protocol"
 TOKEN_SEPARATOR = r"(?:\s|//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/)*"
+REQUIRED_TOKEN_SEPARATOR = r"(?:\s|//[^\n]*(?:\n|$)|/\*(?:.|\n)*?\*/)+"
+PATH_PREFIX = rf"(?:(?:{IDENTIFIER}){TOKEN_SEPARATOR}::{TOKEN_SEPARATOR})*"
 FORBIDDEN_SOURCE_RULES = (
     (
         "imports `codex_core`",
@@ -30,13 +33,26 @@ FORBIDDEN_SOURCE_RULES = (
     ),
 )
 CRATE_ALIAS_PATTERNS = (
-    re.compile(rf"\buse\s+({IDENTIFIER})\s+as\s+({IDENTIFIER})\s*;"),
-    re.compile(rf"\bextern\s+crate\s+({IDENTIFIER})\s+as\s+({IDENTIFIER})\s*;"),
+    re.compile(
+        rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
+        rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER})"
+        rf"{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
+        rf"({IDENTIFIER}){TOKEN_SEPARATOR};"
+    ),
+    re.compile(
+        rf"\bextern{REQUIRED_TOKEN_SEPARATOR}crate{REQUIRED_TOKEN_SEPARATOR}"
+        rf"({IDENTIFIER}){REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
+        rf"({IDENTIFIER}){TOKEN_SEPARATOR};"
+    ),
 )
 GROUPED_USE_PATTERN = re.compile(
-    rf"\buse\s+({IDENTIFIER}){TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{([^;]*)\}}\s*;"
+    rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
+    rf"(?:::{TOKEN_SEPARATOR})?({IDENTIFIER})"
+    rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{([^;]*)\}}\s*;"
 )
-GROUPED_SELF_ALIAS_PATTERN = re.compile(rf"\bself\s+as\s+({IDENTIFIER})\b")
+GROUPED_SELF_ALIAS_PATTERN = re.compile(
+    rf"\bself{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}({IDENTIFIER})\b"
+)
 
 
 def main() -> int:
@@ -162,9 +178,13 @@ def protocol_reference_matches(
     for crate_name in expanded_crate_aliases(text, codex_protocol_names):
         escaped_name = re.escape(crate_name)
         patterns = (
-            re.compile(rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}protocol\b"),
             re.compile(
-                rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{[^;]*\bprotocol\b"
+                rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
+                rf"{PROTOCOL_IDENTIFIER}\b"
+            ),
+            re.compile(
+                rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
+                rf"\{{[^;]*\b{PROTOCOL_IDENTIFIER}\b"
             ),
         )
         for pattern in patterns:
@@ -187,13 +207,17 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
     pairs = []
     for pattern in CRATE_ALIAS_PATTERNS:
         for match in pattern.finditer(text):
-            pairs.append((match.group(1), match.group(2)))
+            pairs.append((path_tail(match.group(1)), match.group(2)))
     for match in GROUPED_USE_PATTERN.finditer(text):
         source = match.group(1)
         body = match.group(2)
         for alias_match in GROUPED_SELF_ALIAS_PATTERN.finditer(body):
             pairs.append((source, alias_match.group(1)))
     return pairs
+
+
+def path_tail(path: str) -> str:
+    return re.split(rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}", path)[-1]
 
 
 def source_failure(path: Path, text: str, offset: int, message: str) -> str:
