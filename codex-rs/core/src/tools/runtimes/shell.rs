@@ -444,7 +444,7 @@ async fn run_remote_shell_request(
         start.elapsed(),
         /*timed_out*/ false,
     );
-    if crate::exec::is_likely_sandbox_denied(request.sandbox.clone(), &output) {
+    if crate::exec::is_likely_sandbox_denied(request.sandbox, &output) {
         return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
             output: Box::new(output),
             network_policy_decision: None,

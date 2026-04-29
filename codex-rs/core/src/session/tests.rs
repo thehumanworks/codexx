@@ -4405,7 +4405,7 @@ async fn mcp_runtime_environment_without_stored_environment_uses_session_cwd() {
     let session_cwd =
         AbsolutePathBuf::try_from(session_configuration.cwd.as_path().join("session-mcp"))
             .expect("absolute path");
-    session_configuration.cwd = session_cwd.clone();
+    session_configuration.cwd = session_cwd;
     session_configuration.environments = Vec::new();
 
     let (environment, cwd) = session

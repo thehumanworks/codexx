@@ -848,34 +848,6 @@ impl CodexMessageProcessor {
         }
     }
 
-    fn resolve_threadless_environment(
-        environment_manager: &EnvironmentManager,
-        environment_id: Option<&str>,
-        api_name: &str,
-    ) -> Result<(Option<String>, Arc<Environment>), JSONRPCErrorError> {
-        match environment_id {
-            Some("") => Err(invalid_request(format!(
-                "{api_name} environmentId must be non-empty"
-            ))),
-            Some(environment_id) => environment_manager
-                .get_environment(environment_id)
-                .map(|environment| (Some(environment_id.to_string()), environment))
-                .ok_or_else(|| {
-                    invalid_request(format!(
-                        "{api_name} unknown environmentId `{environment_id}`"
-                    ))
-                }),
-            None => Ok((
-                environment_manager
-                    .default_environment_id()
-                    .map(str::to_string),
-                environment_manager
-                    .default_environment()
-                    .unwrap_or_else(|| environment_manager.local_environment()),
-            )),
-        }
-    }
-
     fn resolve_threadless_local_environment(
         environment_manager: &EnvironmentManager,
         environment_id: Option<&str>,
