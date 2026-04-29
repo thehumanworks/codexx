@@ -4218,6 +4218,7 @@ async fn thread_switch_replay_buffer_is_disabled_without_row_cap() {
 async fn height_shrink_schedules_resize_reflow() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
     enable_terminal_resize_reflow(&mut app);
+    app.transcript_cells = vec![plain_line_cell("resize source")];
     let frame_requester = crate::tui::FrameRequester::test_dummy();
 
     assert!(!app.handle_draw_size_change(
@@ -4232,6 +4233,10 @@ async fn height_shrink_schedules_resize_reflow() {
         &frame_requester,
     ));
     assert!(app.transcript_reflow.has_pending_reflow());
+    assert!(
+        app.transcript_reflow
+            .pending_is_due(std::time::Instant::now())
+    );
 }
 
 fn test_turn(turn_id: &str, status: TurnStatus, items: Vec<ThreadItem>) -> Turn {

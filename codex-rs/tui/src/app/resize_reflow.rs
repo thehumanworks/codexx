@@ -219,11 +219,6 @@ impl App {
         }
     }
 
-    fn schedule_resize_reflow(&mut self, target_width: Option<u16>) -> bool {
-        debug_assert!(self.terminal_resize_reflow_enabled());
-        self.transcript_reflow.schedule_debounced(target_width)
-    }
-
     fn resize_reflow_max_rows(&self) -> Option<usize> {
         crate::resize_reflow_cap::resize_reflow_max_rows(self.config.terminal_resize_reflow)
     }
@@ -315,12 +310,11 @@ impl App {
                 if reflow_needed && self.should_mark_reflow_as_stream_time() {
                     self.transcript_reflow.mark_resize_requested_during_stream();
                 }
-                let target_width = reflow_needed.then_some(size.width);
-                if self.schedule_resize_reflow(target_width) {
-                    frame_requester.schedule_frame();
-                } else {
-                    frame_requester.schedule_frame_in(TRANSCRIPT_REFLOW_DEBOUNCE);
-                }
+                // Reflow immediately on the draw that observes the resize. Leaving a debounced
+                // gap lets the terminal emulator's native scrollback reflow show stale rows under
+                // Codex's next table repaint, especially in xterm.js-backed split panes.
+                self.transcript_reflow.schedule_immediate();
+                frame_requester.schedule_frame();
             } else if !self.terminal_resize_reflow_enabled() && width.changed {
                 self.transcript_reflow.clear();
             }
@@ -368,7 +362,7 @@ impl App {
         Ok(())
     }
 
-    /// Run a pending transcript reflow when its debounce deadline has arrived.
+    /// Run a pending transcript reflow once it is due.
     ///
     /// Reflow is deferred while an overlay is active because the overlay owns the current draw
     /// surface. Callers must keep using `HistoryCell` source as the rebuild input; attempting to

@@ -27,7 +27,6 @@ pub(crate) const TRANSCRIPT_REFLOW_DEBOUNCE: Duration = Duration::from_millis(75
 pub(crate) struct TranscriptReflowState {
     last_observed_width: Option<u16>,
     last_reflow_width: Option<u16>,
-    pending_reflow_width: Option<u16>,
     pending_until: Option<Instant>,
     ran_during_stream: bool,
     resize_requested_during_stream: bool,
@@ -66,36 +65,15 @@ impl TranscriptReflowState {
     /// the resize event, so the follow-up draw must be able to request one more reflow even if
     /// the observed-width tracker already saw that value.
     pub(crate) fn reflow_needed_for_width(&self, width: u16) -> bool {
-        self.last_reflow_width != Some(width) && self.pending_reflow_width != Some(width)
-    }
-
-    /// Schedule a trailing-debounced reflow and return whether it should run immediately.
-    ///
-    /// Repeated resize events push the deadline out so dragging a terminal edge rebuilds scrollback
-    /// at the final observed width rather than at intermediate widths. `target_width` is present
-    /// only for width-changing rebuilds; height-only exposure still needs a rebuild, but it must not
-    /// suppress a later width repair for the same draw cycle.
-    pub(crate) fn schedule_debounced(&mut self, target_width: Option<u16>) -> bool {
-        let now = Instant::now();
-        if let Some(target_width) = target_width {
-            self.pending_reflow_width = Some(target_width);
-        }
-        self.pending_until = Some(now + TRANSCRIPT_REFLOW_DEBOUNCE);
-        false
+        self.last_reflow_width != Some(width)
     }
 
     /// Schedule an immediate reflow for the next draw opportunity.
     ///
-    /// This is used after stream consolidation when waiting for the debounce interval would leave
-    /// visible terminal-wrapped stream rows in the finalized transcript.
+    /// This is used for terminal resize and stream consolidation so terminal-owned wrapping is
+    /// replaced by source-backed transcript rendering without a stale intermediate frame.
     pub(crate) fn schedule_immediate(&mut self) {
-        self.pending_reflow_width = None;
         self.pending_until = Some(Instant::now());
-    }
-
-    #[cfg(test)]
-    pub(crate) fn set_due_for_test(&mut self) {
-        self.pending_until = Some(Instant::now() - Duration::from_millis(1));
     }
 
     pub(crate) fn pending_is_due(&self, now: Instant) -> bool {
@@ -112,14 +90,13 @@ impl TranscriptReflowState {
 
     pub(crate) fn clear_pending_reflow(&mut self) {
         self.pending_until = None;
-        self.pending_reflow_width = None;
     }
 
     /// Remember the terminal width that actually rebuilt transcript scrollback.
     ///
-    /// Resize scheduling is driven by observed widths, but debounced redraws may run before a
-    /// terminal emulator has settled on its final size. Keeping the rendered width separate avoids
-    /// confusing "seen during a draw" with "scrollback has been repaired at this width".
+    /// Resize scheduling is driven by observed widths, but a terminal emulator may settle on its
+    /// final size after an earlier draw. Keeping the rendered width separate avoids confusing
+    /// "seen during a draw" with "scrollback has been repaired at this width".
     pub(crate) fn mark_reflowed_width(&mut self, width: u16) -> bool {
         self.last_reflow_width.replace(width) != Some(width)
     }
@@ -135,10 +112,9 @@ impl TranscriptReflowState {
 
     /// Remember that the terminal width changed while streaming or pre-consolidation cells existed.
     ///
-    /// This captures the case where the debounce did not fire before the stream finished. Without
+    /// This captures the case where stream consolidation finishes after a resize request. Without
     /// this flag, consolidation could complete without the final source-backed resize repair.
-    /// Marking the request rather than forcing immediate rendering keeps resize drag behavior
-    /// debounced while still guaranteeing that finalized stream cells replace transient rows.
+    /// Marking the request guarantees finalized stream cells replace transient rows.
     pub(crate) fn mark_resize_requested_during_stream(&mut self) {
         self.resize_requested_during_stream = true;
     }
@@ -179,32 +155,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schedule_debounced_postpones_existing_reflow() {
+    fn schedule_immediate_marks_reflow_due_now() {
         let mut state = TranscriptReflowState::default();
 
-        assert!(!state.schedule_debounced(/*target_width*/ None));
-        let first_deadline = state.pending_until().expect("pending reflow");
+        state.schedule_immediate();
 
-        std::thread::sleep(Duration::from_millis(1));
-        assert!(!state.schedule_debounced(/*target_width*/ None));
-
-        assert!(
-            state.pending_until().expect("pending reflow") > first_deadline,
-            "a later resize should push the debounce deadline out"
-        );
-    }
-
-    #[test]
-    fn schedule_debounced_postpones_due_existing_reflow() {
-        let mut state = TranscriptReflowState::default();
-        state.set_due_for_test();
-        let before_reschedule = Instant::now();
-
-        assert!(!state.schedule_debounced(/*target_width*/ None));
-        assert!(
-            state.pending_until().expect("pending reflow") > before_reschedule,
-            "a resize after the old deadline should start a fresh quiet period"
-        );
+        assert!(state.pending_is_due(Instant::now()));
     }
 
     #[test]
@@ -236,28 +192,6 @@ mod tests {
         state.note_width(/*width*/ 80);
         state.mark_reflowed_width(/*width*/ 90);
         state.note_width(/*width*/ 100);
-
-        assert!(state.reflow_needed_for_width(/*width*/ 100));
-    }
-
-    #[test]
-    fn pending_reflow_target_prevents_repeated_reschedule() {
-        let mut state = TranscriptReflowState::default();
-        state.note_width(/*width*/ 80);
-
-        assert!(state.reflow_needed_for_width(/*width*/ 100));
-        state.schedule_debounced(/*target_width*/ Some(100));
-
-        assert!(!state.reflow_needed_for_width(/*width*/ 100));
-    }
-
-    #[test]
-    fn clear_pending_reflow_allows_same_width_to_be_rescheduled() {
-        let mut state = TranscriptReflowState::default();
-        state.note_width(/*width*/ 80);
-        state.schedule_debounced(/*target_width*/ Some(100));
-
-        state.clear_pending_reflow();
 
         assert!(state.reflow_needed_for_width(/*width*/ 100));
     }
