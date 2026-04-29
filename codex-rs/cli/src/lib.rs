@@ -22,10 +22,6 @@ pub use login::run_logout;
 
 #[derive(Debug, Parser)]
 pub struct SeatbeltCommand {
-    /// Convenience alias for low-friction sandboxed automatic execution (network-disabled sandbox that can write to cwd and TMPDIR)
-    #[arg(long = "full-auto", default_value_t = false)]
-    pub full_auto: bool,
-
     /// Named permissions profile to apply from the active configuration stack.
     #[arg(long = "permissions-profile", value_name = "NAME")]
     pub permissions_profile: Option<String>,
@@ -52,7 +48,6 @@ pub struct SeatbeltCommand {
         long = "permissions-json",
         value_name = "JSON",
         conflicts_with_all = [
-            "full_auto",
             "permissions_profile",
             "cwd",
             "include_managed_config",
@@ -66,7 +61,6 @@ pub struct SeatbeltCommand {
         long = "permissions-json-file",
         value_name = "FILE",
         conflicts_with_all = [
-            "full_auto",
             "permissions_profile",
             "cwd",
             "include_managed_config",
@@ -98,10 +92,6 @@ fn parse_allow_unix_socket_path(raw: &str) -> Result<AbsolutePathBuf, String> {
 
 #[derive(Debug, Parser)]
 pub struct LandlockCommand {
-    /// Convenience alias for low-friction sandboxed automatic execution (network-disabled sandbox that can write to cwd and TMPDIR)
-    #[arg(long = "full-auto", default_value_t = false)]
-    pub full_auto: bool,
-
     /// Named permissions profile to apply from the active configuration stack.
     #[arg(long = "permissions-profile", value_name = "NAME")]
     pub permissions_profile: Option<String>,
@@ -128,7 +118,6 @@ pub struct LandlockCommand {
         long = "permissions-json",
         value_name = "JSON",
         conflicts_with_all = [
-            "full_auto",
             "permissions_profile",
             "cwd",
             "include_managed_config",
@@ -142,7 +131,6 @@ pub struct LandlockCommand {
         long = "permissions-json-file",
         value_name = "FILE",
         conflicts_with_all = [
-            "full_auto",
             "permissions_profile",
             "cwd",
             "include_managed_config",
@@ -161,10 +149,6 @@ pub struct LandlockCommand {
 
 #[derive(Debug, Parser)]
 pub struct WindowsCommand {
-    /// Convenience alias for low-friction sandboxed automatic execution (network-disabled sandbox that can write to cwd and TMPDIR)
-    #[arg(long = "full-auto", default_value_t = false)]
-    pub full_auto: bool,
-
     /// Named permissions profile to apply from the active configuration stack.
     #[arg(long = "permissions-profile", value_name = "NAME")]
     pub permissions_profile: Option<String>,
@@ -191,7 +175,6 @@ pub struct WindowsCommand {
         long = "permissions-json",
         value_name = "JSON",
         conflicts_with_all = [
-            "full_auto",
             "permissions_profile",
             "cwd",
             "include_managed_config",
@@ -205,7 +188,6 @@ pub struct WindowsCommand {
         long = "permissions-json-file",
         value_name = "FILE",
         conflicts_with_all = [
-            "full_auto",
             "permissions_profile",
             "cwd",
             "include_managed_config",
