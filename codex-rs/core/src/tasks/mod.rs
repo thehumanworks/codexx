@@ -30,6 +30,7 @@ use crate::hook_runtime::record_input_item;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::state::ActiveTurn;
+use crate::state::PendingInputItem;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
 use codex_analytics::TurnTokenUsageFact;
@@ -41,7 +42,6 @@ use codex_otel::TURN_MEMORY_METRIC;
 use codex_otel::TURN_NETWORK_PROXY_METRIC;
 use codex_otel::TURN_TOKEN_USAGE_METRIC;
 use codex_otel::TURN_TOOL_CALL_METRIC;
-use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
@@ -339,8 +339,8 @@ impl Session {
         {
             warn!("failed to apply goal runtime turn-start event: {err}");
         }
-        let queued_response_items = self.take_queued_response_items_for_next_turn().await;
-        let mailbox_items = self.get_pending_input().await;
+        let queued_input_items = self.take_queued_input_items_for_next_turn().await;
+        let mailbox_items = self.take_pending_input_items().await;
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             let turn = active.get_or_insert_with(ActiveTurn::default);
@@ -350,11 +350,11 @@ impl Session {
         {
             let mut turn_state = turn_state.lock().await;
             turn_state.token_usage_at_turn_start = token_usage_at_turn_start;
-            for item in queued_response_items {
-                turn_state.push_pending_input(item);
+            for item in queued_input_items {
+                turn_state.push_pending_input_item(item);
             }
             for item in mailbox_items {
-                turn_state.push_pending_input(item);
+                turn_state.push_pending_input_item(item);
             }
         }
 
@@ -562,7 +562,7 @@ impl Session {
             .turn_metadata_state
             .cancel_git_enrichment_task();
 
-        let mut pending_input = Vec::<ResponseInputItem>::new();
+        let mut pending_input = Vec::<PendingInputItem>::new();
         let mut should_clear_active_turn = false;
         let mut token_usage_at_turn_start = None;
         let mut turn_had_memory_citation = false;
@@ -587,21 +587,14 @@ impl Session {
         };
         if let Some(turn_state) = turn_state.as_ref() {
             let mut ts = turn_state.lock().await;
-            pending_input = ts.take_pending_input();
+            pending_input = ts.take_pending_input_items();
             turn_had_memory_citation = ts.has_memory_citation;
             turn_tool_calls = ts.tool_calls;
             token_usage_at_turn_start = Some(ts.token_usage_at_turn_start.clone());
         }
         if !pending_input.is_empty() {
             for pending_input_item in pending_input {
-                match inspect_input_item(
-                    self,
-                    &turn_context,
-                    pending_input_item,
-                    /*original_user_input*/ None,
-                )
-                .await
-                {
+                match inspect_input_item(self, &turn_context, pending_input_item).await {
                     InputItemHookDisposition::Accepted(pending_input) => {
                         record_input_item(self, &turn_context, *pending_input).await;
                     }

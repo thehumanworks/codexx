@@ -41,6 +41,7 @@ use crate::resolve_skill_dependencies_for_turn;
 use crate::session::PreviousTurnSettings;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::state::PendingInputItem;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -300,8 +301,13 @@ pub(crate) async fn run_turn(
         return None;
     }
     if !input.is_empty() {
-        let input_item = ResponseInputItem::from(input.clone());
-        match inspect_input_item(&sess, &turn_context, input_item, Some(input.clone())).await {
+        match inspect_input_item(
+            &sess,
+            &turn_context,
+            PendingInputItem::UserInput(input.clone()),
+        )
+        .await
+        {
             InputItemHookDisposition::Accepted(input_item) => {
                 record_input_item(&sess, &turn_context, *input_item).await;
             }
@@ -366,7 +372,7 @@ pub(crate) async fn run_turn(
         // submitted through the UI while the model was running. Though the UI
         // may support this, the model might not.
         let pending_input = if can_drain_pending_input {
-            sess.get_pending_input().await
+            sess.take_pending_input_items().await
         } else {
             Vec::new()
         };
@@ -378,14 +384,7 @@ pub(crate) async fn run_turn(
         if !pending_input.is_empty() {
             let mut pending_input_iter = pending_input.into_iter();
             while let Some(pending_input_item) = pending_input_iter.next() {
-                match inspect_input_item(
-                    &sess,
-                    &turn_context,
-                    pending_input_item,
-                    /*original_user_input*/ None,
-                )
-                .await
-                {
+                match inspect_input_item(&sess, &turn_context, pending_input_item).await {
                     InputItemHookDisposition::Accepted(pending_input) => {
                         accepted_pending_input.push(*pending_input);
                     }
@@ -394,7 +393,9 @@ pub(crate) async fn run_turn(
                     } => {
                         let remaining_pending_input = pending_input_iter.collect::<Vec<_>>();
                         if !remaining_pending_input.is_empty() {
-                            let _ = sess.prepend_pending_input(remaining_pending_input).await;
+                            let _ = sess
+                                .prepend_pending_input_items(remaining_pending_input)
+                                .await;
                             requeued_pending_input = true;
                         }
                         blocked_pending_input_contexts = additional_contexts;

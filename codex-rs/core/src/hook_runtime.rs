@@ -17,6 +17,7 @@ use codex_hooks::UserPromptSubmitRequest;
 use codex_otel::HOOK_RUN_DURATION_METRIC;
 use codex_otel::HOOK_RUN_METRIC;
 use codex_protocol::items::TurnItem;
+use codex_protocol::items::UserMessageItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
@@ -35,6 +36,7 @@ use crate::context::HookAdditionalContext;
 use crate::event_mapping::parse_turn_item;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::state::PendingInputItem;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::PermissionRequestPayload;
 
@@ -279,9 +281,29 @@ pub(crate) async fn run_user_prompt_submit_hooks(
 pub(crate) async fn inspect_input_item(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
-    input_item: ResponseInputItem,
-    original_user_input: Option<Vec<UserInput>>,
+    input_item: PendingInputItem,
 ) -> InputItemHookDisposition {
+    let input_item = match input_item {
+        PendingInputItem::UserInput(content) => {
+            let prompt = UserMessageItem::new(&content).message();
+            let response_item = ResponseItem::from(ResponseInputItem::from(content.clone()));
+            let user_prompt_submit_outcome =
+                run_user_prompt_submit_hooks(sess, turn_context, prompt).await;
+            if user_prompt_submit_outcome.should_stop {
+                return InputItemHookDisposition::Blocked {
+                    additional_contexts: user_prompt_submit_outcome.additional_contexts,
+                };
+            }
+
+            return InputItemHookDisposition::Accepted(Box::new(AcceptedInputItem::UserMessage {
+                content,
+                response_item,
+                additional_contexts: user_prompt_submit_outcome.additional_contexts,
+            }));
+        }
+        PendingInputItem::ResponseInput(input_item) => input_item,
+    };
+
     let response_item = ResponseItem::from(input_item);
     if let Some(TurnItem::UserMessage(user_message)) = parse_turn_item(&response_item) {
         let user_prompt_submit_outcome =
@@ -292,7 +314,7 @@ pub(crate) async fn inspect_input_item(
             }
         } else {
             InputItemHookDisposition::Accepted(Box::new(AcceptedInputItem::UserMessage {
-                content: original_user_input.unwrap_or(user_message.content),
+                content: user_message.content,
                 response_item,
                 additional_contexts: user_prompt_submit_outcome.additional_contexts,
             }))

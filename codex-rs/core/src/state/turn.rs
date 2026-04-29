@@ -24,6 +24,7 @@ use crate::tasks::AnySessionTask;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::protocol::TokenUsage;
+use codex_protocol::user_input::UserInput;
 
 /// Metadata about the currently running turn.
 pub(crate) struct ActiveTurn {
@@ -84,6 +85,22 @@ pub(crate) struct RemovedTask {
     pub(crate) active_turn_is_empty: bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum PendingInputItem {
+    UserInput(Vec<UserInput>),
+    ResponseInput(ResponseInputItem),
+}
+
+impl PendingInputItem {
+    #[cfg(test)]
+    pub(crate) fn into_response_input_item(self) -> ResponseInputItem {
+        match self {
+            Self::UserInput(input) => input.into(),
+            Self::ResponseInput(input) => input,
+        }
+    }
+}
+
 impl ActiveTurn {
     pub(crate) fn add_task(&mut self, task: RunningTask) {
         let sub_id = task.turn_context.sub_id.clone();
@@ -113,7 +130,7 @@ pub(crate) struct TurnState {
     pending_user_input: HashMap<String, oneshot::Sender<RequestUserInputResponse>>,
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
-    pending_input: Vec<ResponseInputItem>,
+    pending_input: Vec<PendingInputItem>,
     mailbox_delivery_phase: MailboxDeliveryPhase,
     granted_permissions: Option<AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
@@ -219,10 +236,19 @@ impl TurnState {
     }
 
     pub(crate) fn push_pending_input(&mut self, input: ResponseInputItem) {
+        self.pending_input
+            .push(PendingInputItem::ResponseInput(input));
+    }
+
+    pub(crate) fn push_pending_user_input(&mut self, input: Vec<UserInput>) {
+        self.pending_input.push(PendingInputItem::UserInput(input));
+    }
+
+    pub(crate) fn push_pending_input_item(&mut self, input: PendingInputItem) {
         self.pending_input.push(input);
     }
 
-    pub(crate) fn prepend_pending_input(&mut self, mut input: Vec<ResponseInputItem>) {
+    pub(crate) fn prepend_pending_input_items(&mut self, mut input: Vec<PendingInputItem>) {
         if input.is_empty() {
             return;
         }
@@ -231,7 +257,7 @@ impl TurnState {
         self.pending_input = input;
     }
 
-    pub(crate) fn take_pending_input(&mut self) -> Vec<ResponseInputItem> {
+    pub(crate) fn take_pending_input_items(&mut self) -> Vec<PendingInputItem> {
         if self.pending_input.is_empty() {
             Vec::with_capacity(0)
         } else {
@@ -239,6 +265,14 @@ impl TurnState {
             std::mem::swap(&mut ret, &mut self.pending_input);
             ret
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn take_pending_input(&mut self) -> Vec<ResponseInputItem> {
+        self.take_pending_input_items()
+            .into_iter()
+            .map(PendingInputItem::into_response_input_item)
+            .collect()
     }
 
     pub(crate) fn has_pending_input(&self) -> bool {

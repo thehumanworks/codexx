@@ -45,6 +45,8 @@ use tokio::time::timeout;
 const FIRST_CONTINUATION_PROMPT: &str = "Retry with exactly the phrase meow meow meow.";
 const SECOND_CONTINUATION_PROMPT: &str = "Now tighten it to just: meow.";
 const BLOCKED_PROMPT_CONTEXT: &str = "Remember the blocked lighthouse note.";
+const HOOK_PROMPT_XML_USER_TEXT: &str =
+    r#"<hook_prompt hook_run_id="hook-run-1">blocked xml prompt</hook_prompt>"#;
 const PERMISSION_REQUEST_HOOK_MATCHER: &str = "^Bash$";
 const PERMISSION_REQUEST_ALLOW_REASON: &str = "should not be used for allow";
 
@@ -1112,6 +1114,77 @@ async fn blocked_user_prompt_submit_persists_additional_context_for_next_turn() 
 }
 
 #[tokio::test]
+async fn fresh_hook_prompt_xml_text_still_runs_user_prompt_submit() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let response = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "second prompt handled"),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+
+    let mut builder = test_codex()
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_user_prompt_submit_hook(
+                home,
+                HOOK_PROMPT_XML_USER_TEXT,
+                BLOCKED_PROMPT_CONTEXT,
+            ) {
+                panic!("failed to write user prompt submit hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn(HOOK_PROMPT_XML_USER_TEXT).await?;
+    test.submit_turn("second prompt").await?;
+
+    let request = response.single_request();
+    assert!(
+        request
+            .message_input_texts("developer")
+            .contains(&BLOCKED_PROMPT_CONTEXT.to_string()),
+        "second request should include context persisted from the blocked XML-shaped prompt",
+    );
+    assert!(
+        request
+            .message_input_texts("user")
+            .iter()
+            .all(|text| !text.contains(HOOK_PROMPT_XML_USER_TEXT)),
+        "blocked XML-shaped prompt should not be sent to the model",
+    );
+
+    let hook_inputs = read_user_prompt_submit_hook_inputs(test.codex_home_path())?;
+    assert_eq!(
+        hook_inputs
+            .iter()
+            .map(|input| {
+                input["prompt"]
+                    .as_str()
+                    .expect("user prompt submit hook prompt")
+                    .to_string()
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            HOOK_PROMPT_XML_USER_TEXT.to_string(),
+            "second prompt".to_string(),
+        ],
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn blocked_queued_prompt_does_not_strand_earlier_accepted_prompt() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -1269,6 +1342,146 @@ async fn blocked_queued_prompt_does_not_strand_earlier_accepted_prompt() -> Resu
             first_queued_turn_id.clone(),
             first_queued_turn_id.clone(),
             first_queued_turn_id,
+        ],
+    );
+
+    server.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_hook_prompt_xml_text_still_runs_user_prompt_submit() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let (gate_completed_tx, gate_completed_rx) = oneshot::channel();
+    let first_chunks = vec![
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_response_created("resp-1")),
+        },
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_message_item_added("msg-1", "")),
+        },
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_output_text_delta("first ")),
+        },
+        StreamingSseChunk {
+            gate: None,
+            body: sse_event(ev_message_item_done("msg-1", "first response")),
+        },
+        StreamingSseChunk {
+            gate: Some(gate_completed_rx),
+            body: sse_event(ev_completed("resp-1")),
+        },
+    ];
+    let second_chunks = vec![StreamingSseChunk {
+        gate: None,
+        body: sse(vec![
+            ev_response_created("resp-2"),
+            ev_assistant_message("msg-2", "accepted queued prompt handled"),
+            ev_completed("resp-2"),
+        ]),
+    }];
+    let (server, _completions) =
+        start_streaming_sse_server(vec![first_chunks, second_chunks]).await;
+
+    let mut builder = test_codex()
+        .with_model("gpt-5.4")
+        .with_pre_build_hook(|home| {
+            if let Err(error) = write_user_prompt_submit_hook(
+                home,
+                HOOK_PROMPT_XML_USER_TEXT,
+                BLOCKED_PROMPT_CONTEXT,
+            ) {
+                panic!("failed to write user prompt submit hook test fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::CodexHooks)
+                .expect("test config should allow feature update");
+        });
+    let test = builder.build_with_streaming_server(&server).await?;
+
+    test.codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "initial prompt".to_string(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await?;
+
+    wait_for_event(&test.codex, |event| {
+        matches!(event, EventMsg::AgentMessageContentDelta(_))
+    })
+    .await;
+
+    for text in ["accepted queued prompt", HOOK_PROMPT_XML_USER_TEXT] {
+        test.codex
+            .submit(Op::UserInput {
+                environments: None,
+                items: vec![UserInput::Text {
+                    text: text.to_string(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+                responsesapi_client_metadata: None,
+            })
+            .await?;
+    }
+
+    sleep(Duration::from_millis(100)).await;
+    let _ = gate_completed_tx.send(());
+
+    let requests = tokio::time::timeout(Duration::from_secs(30), async {
+        loop {
+            let requests = server.requests().await;
+            if requests.len() >= 2 {
+                break requests;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("second request should arrive")
+    .into_iter()
+    .collect::<Vec<_>>();
+
+    sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(requests.len(), 2);
+    let second_user_texts = request_message_input_texts(&requests[1], "user");
+    assert!(
+        second_user_texts.contains(&"accepted queued prompt".to_string()),
+        "second request should include the accepted queued prompt",
+    );
+    assert!(
+        !second_user_texts.contains(&HOOK_PROMPT_XML_USER_TEXT.to_string()),
+        "second request should not include the blocked XML-shaped queued prompt",
+    );
+
+    let hook_inputs = read_user_prompt_submit_hook_inputs(test.codex_home_path())?;
+    assert_eq!(
+        hook_inputs
+            .iter()
+            .map(|input| {
+                input["prompt"]
+                    .as_str()
+                    .expect("queued prompt hook prompt")
+                    .to_string()
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            "initial prompt".to_string(),
+            "accepted queued prompt".to_string(),
+            HOOK_PROMPT_XML_USER_TEXT.to_string(),
         ],
     );
 
