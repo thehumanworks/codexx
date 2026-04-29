@@ -215,6 +215,7 @@ pub(crate) fn interaction_end(ev: CollabAgentInteractionEndEvent) -> PlainHistor
         receiver_agent_role,
         prompt,
         status: _,
+        ..
     } = ev;
 
     let title = title_with_agent(
@@ -240,6 +241,7 @@ pub(crate) fn waiting_begin(ev: CollabWaitingBeginEvent) -> PlainHistoryCell {
         receiver_thread_ids,
         receiver_agents,
         call_id: _,
+        ..
     } = ev;
     let receiver_agents = merge_wait_receivers(&receiver_thread_ids, receiver_agents);
 
@@ -271,6 +273,7 @@ pub(crate) fn waiting_end(ev: CollabWaitingEndEvent) -> PlainHistoryCell {
         sender_thread_id: _,
         agent_statuses,
         statuses,
+        ..
     } = ev;
     let details = wait_complete_lines(&statuses, &agent_statuses);
     collab_event(title_text("Finished waiting"), details)
@@ -284,6 +287,7 @@ pub(crate) fn close_end(ev: CollabCloseEndEvent) -> PlainHistoryCell {
         receiver_agent_nickname,
         receiver_agent_role,
         status: _,
+        ..
     } = ev;
 
     collab_event(
@@ -307,6 +311,7 @@ pub(crate) fn resume_begin(ev: CollabResumeBeginEvent) -> PlainHistoryCell {
         receiver_thread_id,
         receiver_agent_nickname,
         receiver_agent_role,
+        ..
     } = ev;
 
     collab_event(
@@ -331,6 +336,7 @@ pub(crate) fn resume_end(ev: CollabResumeEndEvent) -> PlainHistoryCell {
         receiver_agent_nickname,
         receiver_agent_role,
         status,
+        ..
     } = ev;
 
     collab_event(
