@@ -8,6 +8,7 @@ pub(super) struct TableState {
     current_row: Vec<String>,
     current_cell: String,
     in_cell: bool,
+    current_link_destination: Option<String>,
 }
 
 impl TableState {
@@ -26,7 +27,35 @@ impl TableState {
         }
     }
 
+    pub(super) fn push_html(&mut self, html: &str) {
+        let trimmed = html.trim();
+        if matches!(
+            trimmed.to_ascii_lowercase().as_str(),
+            "<br>" | "<br/>" | "<br />"
+        ) {
+            self.push_text("\n");
+        } else {
+            self.push_text(html);
+        }
+    }
+
+    pub(super) fn start_link(&mut self, destination: String) {
+        self.current_link_destination = Some(destination);
+    }
+
+    pub(super) fn end_link(&mut self) {
+        let Some(destination) = self.current_link_destination.take() else {
+            return;
+        };
+        if self.in_cell && !destination.is_empty() {
+            self.current_cell.push_str(" (");
+            self.current_cell.push_str(&destination);
+            self.current_cell.push(')');
+        }
+    }
+
     pub(super) fn end_cell(&mut self) {
+        self.current_link_destination = None;
         self.current_row
             .push(std::mem::take(&mut self.current_cell));
         self.in_cell = false;
@@ -299,18 +328,28 @@ fn wrap_table_cell(cell: &str, width: usize, hard_wrap: bool) -> Vec<String> {
     if cell.is_empty() {
         return vec![String::new()];
     }
+    let mut lines = Vec::new();
     let options = textwrap::Options::new(width)
         .break_words(hard_wrap)
         .word_separator(textwrap::WordSeparator::AsciiSpace)
         .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit);
-    let wrapped = textwrap::wrap(cell, options)
-        .into_iter()
-        .map(std::borrow::Cow::into_owned)
-        .collect::<Vec<_>>();
-    if wrapped.is_empty() {
+
+    for segment in cell.split('\n') {
+        let wrapped = textwrap::wrap(segment, options.clone())
+            .into_iter()
+            .map(std::borrow::Cow::into_owned)
+            .collect::<Vec<_>>();
+        if wrapped.is_empty() {
+            lines.push(String::new());
+        } else {
+            lines.extend(wrapped);
+        }
+    }
+
+    if lines.is_empty() {
         vec![String::new()]
     } else {
-        wrapped
+        lines
     }
 }
 

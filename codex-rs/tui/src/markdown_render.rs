@@ -285,7 +285,13 @@ where
             Tag::Emphasis => self.push_inline_style(self.styles.emphasis),
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
-            Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
+            Tag::Link { dest_url, .. } => {
+                if let Some(table) = self.table.as_mut() {
+                    table.start_link(dest_url.to_string());
+                } else {
+                    self.push_link(dest_url.to_string());
+                }
+            }
             Tag::Table(_) => self.start_table(),
             Tag::TableHead | Tag::TableRow => self.start_table_row(),
             Tag::TableCell => self.start_table_cell(),
@@ -313,7 +319,13 @@ where
                 self.pending_marker_line = false;
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
-            TagEnd::Link => self.pop_link(),
+            TagEnd::Link => {
+                if let Some(table) = self.table.as_mut() {
+                    table.end_link();
+                } else {
+                    self.pop_link();
+                }
+            }
             TagEnd::Table => self.end_table(),
             TagEnd::TableHead | TagEnd::TableRow => self.end_table_row(),
             TagEnd::TableCell => self.end_table_cell(),
@@ -497,6 +509,10 @@ where
     }
 
     fn html(&mut self, html: CowStr<'a>, inline: bool) {
+        if let Some(table) = self.table.as_mut() {
+            table.push_html(&html);
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }

@@ -95,6 +95,39 @@ fn table_resize_lifecycle_renderer_uses_vertical_fallback_only_at_tiny_width() {
 }
 
 #[test]
+fn table_inline_links_and_html_breaks_stay_inside_table() {
+    let markdown = "| A | B |\n|---|---|\n| [link](https://example.com) | [CLI docs](https://example.com/cli) |\n| one<br>two | three<br>four |\n";
+    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(72), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .filter(|line| !line.trim().is_empty())
+            .all(|line| line.contains('│') || line.contains('─')),
+        "table inline content should not leak outside table: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("link (https://example.com)")),
+        "link destination should render in the table cell: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("CLI docs (https://example.com/cli)")),
+        "second link destination should render in the table cell: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("one"))
+            && lines.iter().any(|line| line.contains("two"))
+            && lines.iter().all(|line| !line.contains("<br>")),
+        "HTML breaks should render as table cell line breaks: {lines:?}"
+    );
+}
+
+#[test]
 fn empty() {
     assert_eq!(render_markdown_text(""), Text::default());
 }
