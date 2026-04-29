@@ -287,6 +287,7 @@ use codex_core_plugins::remote::RemotePluginCatalogError;
 use codex_core_plugins::remote::RemotePluginDetail as RemoteCatalogPluginDetail;
 use codex_core_plugins::remote::RemotePluginServiceConfig;
 use codex_core_plugins::remote::RemotePluginSummary as RemoteCatalogPluginSummary;
+use codex_core_plugins::remote_cache;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::LOCAL_FS;
 use codex_external_agent_sessions::ImportedExternalAgentSession;
@@ -504,6 +505,14 @@ fn thread_read_view_error(err: ThreadReadViewError) -> JSONRPCErrorError {
         ThreadReadViewError::InvalidRequest(message) => invalid_request(message),
         ThreadReadViewError::Internal(message) => internal_error(message),
     }
+}
+
+struct ChatgptLoginCompletionContext {
+    outgoing: Arc<OutgoingMessageSender>,
+    auth_manager: Arc<AuthManager>,
+    config_manager: ConfigManager,
+    fallback_config: Arc<Config>,
+    thread_manager: Arc<ThreadManager>,
 }
 
 impl Drop for ActiveLogin {
@@ -725,6 +734,82 @@ impl CodexMessageProcessor {
     fn clear_plugin_related_caches(&self) {
         self.thread_manager.plugins_manager().clear_cache();
         self.thread_manager.skills_manager().clear_cache();
+    }
+
+    async fn enforce_remote_plugin_cache_after_auth_change(&self) -> Result<(), JSONRPCErrorError> {
+        let loaded_config = self
+            .config_manager
+            .load_latest_config(/*fallback_cwd*/ None)
+            .await;
+        let config = match loaded_config.as_ref() {
+            Ok(config) => config,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "failed to reload config after auth change; using startup config for remote plugin cache cleanup"
+                );
+                self.config.as_ref()
+            }
+        };
+        let auth = self.auth_manager.auth().await;
+        let result = Self::sync_remote_plugin_cache_for_config(config, auth.as_ref()).await;
+        self.clear_plugin_related_caches();
+        result.map_err(|err| {
+            internal_error(format!(
+                "failed to clean remote plugin cache after auth change: {err}"
+            ))
+        })
+    }
+
+    async fn sync_remote_plugin_cache_for_config(
+        config: &Config,
+        auth: Option<&CodexAuth>,
+    ) -> Result<(), RemotePluginCatalogError> {
+        if config.features.enabled(Feature::Plugins)
+            && config.features.enabled(Feature::RemotePlugin)
+        {
+            let remote_plugin_service_config = RemotePluginServiceConfig {
+                chatgpt_base_url: config.chatgpt_base_url.clone(),
+            };
+            remote_cache::prune_remote_plugin_cache_for_current_auth(
+                &remote_plugin_service_config,
+                auth,
+                config.codex_home.to_path_buf(),
+            )
+            .await
+        } else {
+            remote_cache::clear_remote_plugin_cache(config.codex_home.to_path_buf()).await
+        }
+    }
+
+    async fn enforce_remote_plugin_cache_after_async_chatgpt_login(
+        auth_manager: Arc<AuthManager>,
+        config_manager: ConfigManager,
+        fallback_config: Arc<Config>,
+        thread_manager: Arc<ThreadManager>,
+    ) {
+        let loaded_config = config_manager
+            .load_latest_config(/*fallback_cwd*/ None)
+            .await;
+        let config = match loaded_config.as_ref() {
+            Ok(config) => config,
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    "failed to reload config after ChatGPT login; using startup config for remote plugin cache cleanup"
+                );
+                fallback_config.as_ref()
+            }
+        };
+        let auth = auth_manager.auth().await;
+        if let Err(err) = Self::sync_remote_plugin_cache_for_config(config, auth.as_ref()).await {
+            warn!(
+                error = %err,
+                "failed to clean remote plugin cache after ChatGPT login"
+            );
+        }
+        thread_manager.plugins_manager().clear_cache();
+        thread_manager.skills_manager().clear_cache();
     }
 
     fn current_account_updated_notification(&self) -> AccountUpdatedNotification {
@@ -1384,6 +1469,7 @@ impl CodexMessageProcessor {
         ) {
             Ok(()) => {
                 self.auth_manager.reload().await;
+                self.enforce_remote_plugin_cache_after_auth_change().await?;
                 Ok(())
             }
             Err(err) => Err(JSONRPCErrorError {
@@ -1490,11 +1576,14 @@ impl CodexMessageProcessor {
             });
         }
 
-        let outgoing_clone = self.outgoing.clone();
         let active_login = self.active_login.clone();
-        let auth_manager = self.auth_manager.clone();
-        let config_manager = self.config_manager.clone();
-        let chatgpt_base_url = self.config.chatgpt_base_url.clone();
+        let completion_context = ChatgptLoginCompletionContext {
+            outgoing: self.outgoing.clone(),
+            auth_manager: self.auth_manager.clone(),
+            config_manager: self.config_manager.clone(),
+            fallback_config: self.config.clone(),
+            thread_manager: self.thread_manager.clone(),
+        };
         let auth_url = server.auth_url.clone();
         tokio::spawn(async move {
             let (success, error_msg) = match tokio::time::timeout(
@@ -1512,10 +1601,7 @@ impl CodexMessageProcessor {
             };
 
             Self::send_chatgpt_login_completion_notifications(
-                &outgoing_clone,
-                auth_manager,
-                config_manager,
-                chatgpt_base_url,
+                completion_context,
                 login_id,
                 success,
                 error_msg,
@@ -1564,11 +1650,14 @@ impl CodexMessageProcessor {
         let verification_url = device_code.verification_url.clone();
         let user_code = device_code.user_code.clone();
 
-        let outgoing_clone = self.outgoing.clone();
         let active_login = self.active_login.clone();
-        let auth_manager = self.auth_manager.clone();
-        let config_manager = self.config_manager.clone();
-        let chatgpt_base_url = self.config.chatgpt_base_url.clone();
+        let completion_context = ChatgptLoginCompletionContext {
+            outgoing: self.outgoing.clone(),
+            auth_manager: self.auth_manager.clone(),
+            config_manager: self.config_manager.clone(),
+            fallback_config: self.config.clone(),
+            thread_manager: self.thread_manager.clone(),
+        };
         tokio::spawn(async move {
             let (success, error_msg) = tokio::select! {
                 _ = cancel.cancelled() => {
@@ -1583,10 +1672,7 @@ impl CodexMessageProcessor {
             };
 
             Self::send_chatgpt_login_completion_notifications(
-                &outgoing_clone,
-                auth_manager,
-                config_manager,
-                chatgpt_base_url,
+                completion_context,
                 login_id,
                 success,
                 error_msg,
@@ -1709,6 +1795,7 @@ impl CodexMessageProcessor {
         self.config_manager
             .sync_default_client_residency_requirement()
             .await;
+        self.enforce_remote_plugin_cache_after_auth_change().await?;
 
         Ok(LoginAccountResponse::ChatgptAuthTokens {})
     }
@@ -1733,14 +1820,36 @@ impl CodexMessageProcessor {
     }
 
     async fn send_chatgpt_login_completion_notifications(
-        outgoing: &OutgoingMessageSender,
-        auth_manager: Arc<AuthManager>,
-        config_manager: ConfigManager,
-        chatgpt_base_url: String,
+        context: ChatgptLoginCompletionContext,
         login_id: Uuid,
         success: bool,
         error_msg: Option<String>,
     ) {
+        let ChatgptLoginCompletionContext {
+            outgoing,
+            auth_manager,
+            config_manager,
+            fallback_config,
+            thread_manager,
+        } = context;
+        if success {
+            auth_manager.reload().await;
+            config_manager.replace_cloud_requirements_loader(
+                auth_manager.clone(),
+                fallback_config.chatgpt_base_url.clone(),
+            );
+            config_manager
+                .sync_default_client_residency_requirement()
+                .await;
+            Self::enforce_remote_plugin_cache_after_async_chatgpt_login(
+                auth_manager.clone(),
+                config_manager,
+                fallback_config,
+                thread_manager,
+            )
+            .await;
+        }
+
         let payload_v2 = AccountLoginCompletedNotification {
             login_id: Some(login_id.to_string()),
             success,
@@ -1751,13 +1860,6 @@ impl CodexMessageProcessor {
             .await;
 
         if success {
-            auth_manager.reload().await;
-            config_manager
-                .replace_cloud_requirements_loader(auth_manager.clone(), chatgpt_base_url);
-            config_manager
-                .sync_default_client_residency_requirement()
-                .await;
-
             let auth = auth_manager.auth_cached();
             let payload_v2 = AccountUpdatedNotification {
                 auth_mode: auth.as_ref().map(CodexAuth::api_auth_mode),
@@ -1788,6 +1890,14 @@ impl CodexMessageProcessor {
                 });
             }
         }
+        remote_cache::clear_remote_plugin_cache(self.config.codex_home.to_path_buf())
+            .await
+            .map_err(|err| {
+                internal_error(format!(
+                    "failed to clean remote plugin cache after logout: {err}"
+                ))
+            })?;
+        self.clear_plugin_related_caches();
 
         // Reflect the current auth method after logout (likely None).
         Ok(self

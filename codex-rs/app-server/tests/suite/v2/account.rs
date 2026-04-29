@@ -49,6 +49,7 @@ use wiremock::MockServer;
 use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
+use wiremock::matchers::query_param;
 
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 const LOGIN_ISSUER_ENV_VAR: &str = "CODEX_APP_SERVER_LOGIN_ISSUER";
@@ -60,8 +61,10 @@ struct CreateConfigTomlParams {
     forced_workspace_id: Option<String>,
     requires_openai_auth: Option<bool>,
     base_url: Option<String>,
+    chatgpt_base_url: Option<String>,
     model_provider_id: Option<String>,
     extra_provider_config: Option<String>,
+    remote_plugin_enabled: bool,
 }
 
 fn create_config_toml(codex_home: &Path, params: CreateConfigTomlParams) -> std::io::Result<()> {
@@ -83,6 +86,15 @@ fn create_config_toml(codex_home: &Path, params: CreateConfigTomlParams) -> std:
         Some(true) => "requires_openai_auth = true\n".to_string(),
         Some(false) => String::new(),
         None => String::new(),
+    };
+    let chatgpt_base_url_line = params
+        .chatgpt_base_url
+        .map(|base_url| format!("chatgpt_base_url = \"{base_url}\"\n"))
+        .unwrap_or_default();
+    let remote_plugin_feature_lines = if params.remote_plugin_enabled {
+        "plugins = true\nremote_plugin = true\n"
+    } else {
+        ""
     };
     let model_provider_id = params
         .model_provider_id
@@ -106,6 +118,7 @@ stream_max_retries = 0
 model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+{chatgpt_base_url_line}
 {forced_line}
 {forced_workspace_line}
 
@@ -113,6 +126,7 @@ model_provider = "{model_provider_id}"
 
 [features]
 shell_snapshot = false
+{remote_plugin_feature_lines}
 
 {provider_section}
 "#
@@ -172,6 +186,83 @@ async fn mock_device_code_oauth_token(server: &MockServer, id_token: &str) {
         .await;
 }
 
+async fn mock_empty_remote_plugin_directory(server: &MockServer) {
+    for scope in ["GLOBAL", "WORKSPACE"] {
+        Mock::given(method("GET"))
+            .and(path("/backend-api/ps/plugins/list"))
+            .and(query_param("scope", scope))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "plugins": [],
+                "pagination": {
+                    "next_page_token": null
+                }
+            })))
+            .mount(server)
+            .await;
+    }
+}
+
+async fn mock_remote_installed_plugins(
+    server: &MockServer,
+    scope: &'static str,
+    plugins: serde_json::Value,
+) {
+    Mock::given(method("GET"))
+        .and(path("/backend-api/ps/plugins/installed"))
+        .and(query_param("scope", scope))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "plugins": plugins,
+            "pagination": {
+                "next_page_token": null
+            }
+        })))
+        .mount(server)
+        .await;
+}
+
+fn remote_plugin_item(
+    remote_plugin_id: &str,
+    plugin_name: &str,
+    scope: &str,
+    enabled: bool,
+) -> serde_json::Value {
+    json!({
+        "id": remote_plugin_id,
+        "name": plugin_name,
+        "scope": scope,
+        "installation_policy": "AVAILABLE",
+        "authentication_policy": "ON_USE",
+        "enabled": enabled,
+        "release": {
+            "version": "1.0.0",
+            "display_name": plugin_name,
+            "description": plugin_name,
+            "interface": {},
+            "app_ids": [],
+            "skills": []
+        }
+    })
+}
+
+fn write_remote_plugin_cache(
+    codex_home: &TempDir,
+    marketplace_name: &str,
+    plugin_name: &str,
+) -> Result<()> {
+    let plugin_root = codex_home
+        .path()
+        .join("plugins/cache")
+        .join(marketplace_name)
+        .join(plugin_name)
+        .join("1.0.0/.codex-plugin");
+    std::fs::create_dir_all(&plugin_root)?;
+    std::fs::write(
+        plugin_root.join("plugin.json"),
+        format!(r#"{{"name":"{plugin_name}","version":"1.0.0"}}"#),
+    )?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn logout_account_removes_auth_and_notifies() -> Result<()> {
     let codex_home = TempDir::new()?;
@@ -227,6 +318,52 @@ async fn logout_account_removes_auth_and_notifies() -> Result<()> {
     .await??;
     let account: GetAccountResponse = to_response(get_resp)?;
     assert_eq!(account.account, None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn logout_account_removes_remote_plugin_cache() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
+
+    login_with_api_key(
+        codex_home.path(),
+        "sk-test-key",
+        AuthCredentialsStoreMode::File,
+    )?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-global", "linear")?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-workspace", "workspace-tool")?;
+    write_remote_plugin_cache(&codex_home, "openai-curated", "gmail")?;
+
+    let mut mcp = McpProcess::new_with_env(codex_home.path(), &[("OPENAI_API_KEY", None)]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let id = mcp.send_logout_account_request().await?;
+    let resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(id)),
+    )
+    .await??;
+    let _ok: LogoutAccountResponse = to_response(resp)?;
+
+    assert!(
+        !codex_home
+            .path()
+            .join("plugins/cache/chatgpt-global")
+            .exists()
+    );
+    assert!(
+        !codex_home
+            .path()
+            .join("plugins/cache/chatgpt-workspace")
+            .exists()
+    );
+    assert!(
+        codex_home
+            .path()
+            .join("plugins/cache/openai-curated/gmail")
+            .is_dir()
+    );
     Ok(())
 }
 
@@ -303,6 +440,115 @@ async fn set_auth_token_updates_account_and_notifies() -> Result<()> {
         }
     );
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn set_auth_token_prunes_remote_plugin_cache_to_current_account() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mock_server = MockServer::start().await;
+    create_config_toml(
+        codex_home.path(),
+        CreateConfigTomlParams {
+            requires_openai_auth: Some(true),
+            base_url: Some(format!("{}/v1", mock_server.uri())),
+            chatgpt_base_url: Some(format!("{}/backend-api/", mock_server.uri())),
+            remote_plugin_enabled: true,
+            ..Default::default()
+        },
+    )?;
+    write_models_cache(codex_home.path())?;
+    mock_empty_remote_plugin_directory(&mock_server).await;
+    mock_remote_installed_plugins(
+        &mock_server,
+        "GLOBAL",
+        json!([remote_plugin_item(
+            "plugins~Plugin_linear",
+            "linear",
+            "GLOBAL",
+            true
+        )]),
+    )
+    .await;
+    mock_remote_installed_plugins(
+        &mock_server,
+        "WORKSPACE",
+        json!([remote_plugin_item(
+            "plugins~Plugin_workspace",
+            "workspace-tool",
+            "WORKSPACE",
+            false
+        )]),
+    )
+    .await;
+    write_remote_plugin_cache(&codex_home, "chatgpt-global", "linear")?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-global", "plugins~Plugin_linear")?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-global", "stale-global")?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-workspace", "workspace-tool")?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-workspace", "stale-workspace")?;
+    write_remote_plugin_cache(&codex_home, "openai-curated", "gmail")?;
+
+    let access_token = encode_id_token(
+        &ChatGptIdTokenClaims::new()
+            .email("embedded@example.com")
+            .plan_type("pro")
+            .chatgpt_account_id("org-embedded"),
+    )?;
+
+    let mut mcp = McpProcess::new_with_env(codex_home.path(), &[("OPENAI_API_KEY", None)]).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let set_id = mcp
+        .send_chatgpt_auth_tokens_login_request(
+            access_token,
+            "org-embedded".to_string(),
+            Some("pro".to_string()),
+        )
+        .await?;
+    let set_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(set_id)),
+    )
+    .await??;
+    let response: LoginAccountResponse = to_response(set_resp)?;
+    assert_eq!(response, LoginAccountResponse::ChatgptAuthTokens {});
+
+    assert!(
+        codex_home
+            .path()
+            .join("plugins/cache/chatgpt-global/linear")
+            .is_dir()
+    );
+    assert!(
+        codex_home
+            .path()
+            .join("plugins/cache/chatgpt-global/plugins~Plugin_linear")
+            .is_dir()
+    );
+    assert!(
+        !codex_home
+            .path()
+            .join("plugins/cache/chatgpt-global/stale-global")
+            .exists()
+    );
+    assert!(
+        codex_home
+            .path()
+            .join("plugins/cache/chatgpt-workspace/workspace-tool")
+            .is_dir()
+    );
+    assert!(
+        !codex_home
+            .path()
+            .join("plugins/cache/chatgpt-workspace/stale-workspace")
+            .exists()
+    );
+    assert!(
+        codex_home
+            .path()
+            .join("plugins/cache/openai-curated/gmail")
+            .is_dir()
+    );
     Ok(())
 }
 
@@ -925,6 +1171,49 @@ async fn login_account_api_key_succeeds_and_notifies() -> Result<()> {
     pretty_assertions::assert_eq!(payload.plan_type, None);
 
     assert!(codex_home.path().join("auth.json").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn login_account_api_key_removes_remote_plugin_cache() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), CreateConfigTomlParams::default())?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-global", "linear")?;
+    write_remote_plugin_cache(&codex_home, "chatgpt-workspace", "workspace-tool")?;
+    write_remote_plugin_cache(&codex_home, "openai-curated", "gmail")?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let req_id = mcp
+        .send_login_account_api_key_request("sk-test-key")
+        .await?;
+    let resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(req_id)),
+    )
+    .await??;
+    let login: LoginAccountResponse = to_response(resp)?;
+    assert_eq!(login, LoginAccountResponse::ApiKey {});
+
+    assert!(
+        !codex_home
+            .path()
+            .join("plugins/cache/chatgpt-global")
+            .exists()
+    );
+    assert!(
+        !codex_home
+            .path()
+            .join("plugins/cache/chatgpt-workspace")
+            .exists()
+    );
+    assert!(
+        codex_home
+            .path()
+            .join("plugins/cache/openai-curated/gmail")
+            .is_dir()
+    );
     Ok(())
 }
 
