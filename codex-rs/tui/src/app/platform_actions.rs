@@ -28,7 +28,6 @@ impl App {
 
         tokio::task::spawn_blocking(move || {
             let logs_base_dir_path = logs_base_dir.as_path();
-            let sandbox_policy = sandbox_policy.to_core();
             let result = codex_windows_sandbox::apply_world_writable_scan_and_denies(
                 logs_base_dir_path,
                 cwd.as_path(),
