@@ -143,6 +143,11 @@ def non_code_as_whitespace(text: str) -> str:
         if text.startswith("/*", index):
             index = mask_block_comment(chars, index)
             continue
+        char_literal_end_index = char_literal_end(text, index)
+        if char_literal_end_index is not None:
+            mask_range(chars, index, char_literal_end_index)
+            index = char_literal_end_index
+            continue
         raw_string_end_index = raw_string_end(text, index)
         if raw_string_end_index is not None:
             mask_range(chars, index, raw_string_end_index)
@@ -188,6 +193,41 @@ def mask_block_comment(chars: list[str], start: int) -> int:
         chars[index] = "\n" if chars[index] == "\n" else " "
         index += 1
     return index
+
+
+def char_literal_end(text: str, start: int) -> int | None:
+    quote_start = None
+    if text.startswith("'", start):
+        quote_start = start
+    elif text.startswith("b'", start):
+        quote_start = start + 1
+    if quote_start is None:
+        return None
+
+    index = quote_start + 1
+    if index >= len(text) or text[index] == "\n":
+        return None
+    if text[index] == "\\":
+        index = escaped_char_end(text, index)
+    else:
+        index += 1
+    if index < len(text) and text[index] == "'":
+        return index + 1
+    return None
+
+
+def escaped_char_end(text: str, start: int) -> int:
+    index = start + 1
+    if (
+        index < len(text)
+        and text[index] == "u"
+        and index + 1 < len(text)
+        and text[index + 1] == "{"
+    ):
+        closing_index = text.find("}", index + 2)
+        if closing_index != -1:
+            return closing_index + 1
+    return min(start + 2, len(text))
 
 
 def raw_string_end(text: str, start: int) -> int | None:
@@ -276,14 +316,14 @@ def protocol_reference_matches(
 ) -> list[re.Match[str]]:
     matches = []
     for crate_name in expanded_crate_aliases(text, codex_protocol_names):
-        escaped_name = re.escape(crate_name)
+        crate_name_pattern = rf"(?:r#)?{re.escape(normalize_identifier(crate_name))}"
         patterns = (
             re.compile(
-                rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
+                rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
                 rf"{PROTOCOL_IDENTIFIER}\b"
             ),
             re.compile(
-                rf"\b{escaped_name}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
+                rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
                 rf"\{{[^;]*\b{PROTOCOL_IDENTIFIER}\b"
             ),
         )
@@ -293,7 +333,7 @@ def protocol_reference_matches(
 
 
 def expanded_crate_aliases(text: str, crate_names: set[str]) -> set[str]:
-    aliases = set(crate_names)
+    aliases = {normalize_identifier(crate_name) for crate_name in crate_names}
     while True:
         previous_count = len(aliases)
         for source, alias in crate_alias_pairs(text):
@@ -307,13 +347,22 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
     pairs = []
     for pattern in CRATE_ALIAS_PATTERNS:
         for match in pattern.finditer(text):
-            pairs.append((path_tail(match.group(1)), match.group(2)))
+            pairs.append(
+                (
+                    normalize_identifier(path_tail(match.group(1))),
+                    normalize_identifier(match.group(2)),
+                )
+            )
     for match in GROUPED_USE_PATTERN.finditer(text):
-        source = path_tail(match.group(1))
+        source = normalize_identifier(path_tail(match.group(1)))
         body = match.group(2)
         for alias_match in GROUPED_SELF_ALIAS_PATTERN.finditer(body):
-            pairs.append((source, alias_match.group(1)))
+            pairs.append((source, normalize_identifier(alias_match.group(1))))
     return pairs
+
+
+def normalize_identifier(identifier: str) -> str:
+    return identifier.removeprefix("r#")
 
 
 def path_tail(path: str) -> str:
