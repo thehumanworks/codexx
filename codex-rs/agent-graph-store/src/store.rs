@@ -23,8 +23,7 @@ pub trait AgentGraphStore: Send + Sync {
 
     /// Update the persisted lifecycle status of a spawned thread's incoming edge.
     ///
-    /// Implementations should treat missing children as a successful no-op, matching the current
-    /// local SQLite behavior.
+    /// Implementations should treat missing children as a successful no-op.
     async fn set_thread_spawn_edge_status(
         &self,
         child_thread_id: ThreadId,
