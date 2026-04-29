@@ -25,21 +25,23 @@ use std::time::Duration;
 use std::time::Instant;
 
 use super::StreamState;
+use super::source_partition::partition_source;
 
 /// Shared source-retaining stream state for assistant and plan output.
 ///
 /// `raw_source` is the markdown source that has crossed a newline boundary and can be rendered
-/// deterministically. `rendered_lines` is the current-width render of that source. `enqueued_len`
-/// tracks how much of that render has been offered to the commit queue, while `emitted_len` tracks
-/// how much has actually reached history cells. Keeping those counters separate lets width changes
-/// rebuild pending output without duplicating lines that are already visible.
+/// deterministically. Complete top-level markdown blocks are queued for stable history emission.
+/// The final block stays in `active_tail_lines` so it can be redrawn on resize until a later block
+/// proves it stable or finalization consolidates the whole source into a resize-aware history cell.
 struct StreamCore {
     state: StreamState,
     width: Option<usize>,
     raw_source: String,
+    stable_source_end: usize,
     rendered_lines: Vec<Line<'static>>,
     enqueued_len: usize,
     emitted_len: usize,
+    active_tail_lines: Vec<Line<'static>>,
     cwd: PathBuf,
     render_mode: HistoryRenderMode,
 }
@@ -50,9 +52,11 @@ impl StreamCore {
             state: StreamState::new(width, cwd),
             width,
             raw_source: String::with_capacity(1024),
+            stable_source_end: 0,
             rendered_lines: Vec::with_capacity(64),
             enqueued_len: 0,
             emitted_len: 0,
+            active_tail_lines: Vec::with_capacity(16),
             cwd: cwd.to_path_buf(),
             render_mode,
         }
@@ -68,8 +72,7 @@ impl StreamCore {
             && let Some(committed_source) = self.state.collector.commit_complete_source()
         {
             self.raw_source.push_str(&committed_source);
-            self.recompute_render();
-            return self.sync_queue_to_render();
+            return self.sync_from_source();
         }
 
         false
@@ -121,31 +124,27 @@ impl StreamCore {
             return;
         }
 
-        let had_pending_queue = self.state.queued_len() > 0;
         self.width = width;
         self.state.collector.set_width(width);
-        if self.raw_source.is_empty() {
-            return;
-        }
-
-        self.recompute_render();
+        let had_pending_queue = self.state.queued_len() > 0;
+        self.recompute_stable_render();
         self.emitted_len = self.emitted_len.min(self.rendered_lines.len());
         if had_pending_queue
             && self.emitted_len == self.rendered_lines.len()
             && self.emitted_len > 0
         {
-            // If wrapped remainder compresses into fewer lines at the new width,
-            // keep at least one line un-emitted so pre-resize pending content is
-            // not skipped permanently.
+            // If wrapped remainder compresses into fewer lines at the new width, keep at least one
+            // line un-emitted so pre-resize pending content is not skipped permanently.
             self.emitted_len -= 1;
         }
-
         self.state.clear_queue();
         if self.emitted_len > 0 && !had_pending_queue {
             self.enqueued_len = self.rendered_lines.len();
+            self.render_active_tail();
             return;
         }
         self.rebuild_queue_from_render();
+        self.render_active_tail();
     }
 
     fn set_render_mode(&mut self, render_mode: HistoryRenderMode) {
@@ -159,14 +158,16 @@ impl StreamCore {
             return;
         }
 
-        self.recompute_render();
+        self.recompute_stable_render();
         self.emitted_len = self.emitted_len.min(self.rendered_lines.len());
         self.state.clear_queue();
         if self.emitted_len > 0 && !had_pending_queue {
             self.enqueued_len = self.rendered_lines.len();
+            self.render_active_tail();
             return;
         }
         self.rebuild_queue_from_render();
+        self.render_active_tail();
     }
 
     fn clear_queue(&mut self) {
@@ -177,13 +178,32 @@ impl StreamCore {
     fn reset(&mut self) {
         self.state.clear();
         self.raw_source.clear();
+        self.stable_source_end = 0;
         self.rendered_lines.clear();
         self.enqueued_len = 0;
         self.emitted_len = 0;
+        self.active_tail_lines.clear();
     }
 
-    fn recompute_render(&mut self) {
-        self.rendered_lines = self.render_source(&self.raw_source);
+    fn sync_from_source(&mut self) -> bool {
+        let partition = partition_source(&self.raw_source);
+        let enqueued = if partition.stable_end > self.stable_source_end {
+            self.stable_source_end = partition.stable_end;
+            self.recompute_stable_render();
+            self.sync_queue_to_render()
+        } else {
+            false
+        };
+        self.render_active_tail();
+        enqueued
+    }
+
+    fn recompute_stable_render(&mut self) {
+        if self.stable_source_end == 0 {
+            self.rendered_lines.clear();
+            return;
+        }
+        self.rendered_lines = self.render_source(&self.raw_source[..self.stable_source_end]);
     }
 
     fn render_source(&self, source: &str) -> Vec<Line<'static>> {
@@ -197,11 +217,6 @@ impl StreamCore {
         }
     }
 
-    /// Append newly rendered lines to the live queue without replaying already queued rows.
-    ///
-    /// Width changes can make the rendered line count smaller than the previous queue boundary; in
-    /// that case the only safe option is rebuilding the queue from `emitted_len`, because slicing
-    /// from the stale `enqueued_len` would skip pending source.
     fn sync_queue_to_render(&mut self) -> bool {
         let target_len = self.rendered_lines.len().max(self.emitted_len);
         if target_len < self.enqueued_len {
@@ -219,10 +234,6 @@ impl StreamCore {
         true
     }
 
-    /// Rebuild the pending live queue from the current render and current emitted position.
-    ///
-    /// This is used when resize invalidates queued wrapping. It must never enqueue rows before
-    /// `emitted_len`, because those rows have already been inserted into terminal history.
     fn rebuild_queue_from_render(&mut self) {
         self.state.clear_queue();
         let target_len = self.rendered_lines.len().max(self.emitted_len);
@@ -231,6 +242,18 @@ impl StreamCore {
                 .enqueue(self.rendered_lines[self.emitted_len..target_len].to_vec());
         }
         self.enqueued_len = target_len;
+    }
+
+    fn render_active_tail(&mut self) {
+        self.active_tail_lines.clear();
+        if self.stable_source_end >= self.raw_source.len() {
+            return;
+        }
+        self.active_tail_lines = self.render_source(&self.raw_source[self.stable_source_end..]);
+    }
+
+    fn active_tail_lines(&self) -> &[Line<'static>] {
+        &self.active_tail_lines
     }
 }
 
@@ -264,6 +287,17 @@ impl StreamController {
     /// was buffered; it only means no newly renderable complete line is ready for live emission.
     pub(crate) fn push(&mut self, delta: &str) -> bool {
         self.core.push_delta(delta)
+    }
+
+    pub(crate) fn active_tail_cell(&self) -> Option<Box<dyn HistoryCell>> {
+        let lines = self.core.active_tail_lines();
+        if lines.is_empty() {
+            return None;
+        }
+        Some(Box::new(history_cell::AgentMessageCell::new(
+            lines.to_vec(),
+            !self.header_emitted,
+        )))
     }
 
     /// Finish the stream and return the final transient cell plus accumulated markdown source.
@@ -359,6 +393,38 @@ impl PlanStreamController {
     /// when queued lines exist.
     pub(crate) fn push(&mut self, delta: &str) -> bool {
         self.core.push_delta(delta)
+    }
+
+    pub(crate) fn active_tail_cell(&self) -> Option<Box<dyn HistoryCell>> {
+        let lines = self.core.active_tail_lines();
+        if lines.is_empty() {
+            return None;
+        }
+
+        let mut out_lines: Vec<Line<'static>> = Vec::with_capacity(lines.len() + 3);
+        let is_stream_continuation = self.header_emitted;
+        if !self.header_emitted {
+            out_lines.push(vec!["• ".dim(), "Proposed Plan".bold()].into());
+            out_lines.push(Line::from(" "));
+        }
+
+        let mut plan_lines: Vec<Line<'static>> = Vec::with_capacity(lines.len() + 1);
+        if !self.top_padding_emitted {
+            plan_lines.push(Line::from(" "));
+        }
+        plan_lines.extend(lines.iter().cloned());
+
+        let plan_style = proposed_plan_style();
+        out_lines.extend(
+            prefix_lines(plan_lines, "  ".into(), "  ".into())
+                .into_iter()
+                .map(|line| line.style(plan_style)),
+        );
+
+        Some(Box::new(history_cell::new_proposed_plan_stream(
+            out_lines,
+            is_stream_continuation,
+        )))
     }
 
     /// Finish the plan stream and return the final transient cell plus accumulated markdown source.
@@ -487,6 +553,16 @@ mod tests {
             .collect()
     }
 
+    fn active_tail_plain_strings(ctrl: &StreamController) -> Vec<String> {
+        ctrl.active_tail_cell()
+            .map(|cell| lines_to_plain_strings(&cell.transcript_lines(u16::MAX)))
+            .unwrap_or_default()
+    }
+
+    fn table_source() -> &'static str {
+        "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across widths. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n"
+    }
+
     fn collect_streamed_lines(deltas: &[&str], width: Option<usize>) -> Vec<String> {
         let mut ctrl = stream_controller(width);
         let mut lines = Vec::new();
@@ -529,7 +605,8 @@ mod tests {
     #[test]
     fn controller_set_width_rebuilds_queued_lines() {
         let mut ctrl = stream_controller(Some(120));
-        let delta = "This is a long line that should wrap into multiple rows when resized.\n";
+        let delta =
+            "This is a long line that should wrap into multiple rows when resized.\n\nnext\n";
         assert!(ctrl.push(delta));
         assert_eq!(ctrl.queued_lines(), 1);
 
@@ -551,8 +628,7 @@ mod tests {
     #[test]
     fn controller_set_width_no_duplicate_after_emit() {
         let mut ctrl = stream_controller(Some(120));
-        let line =
-            "This is a long line that definitely wraps when the terminal shrinks to 24 columns.\n";
+        let line = "This is a long line that definitely wraps when the terminal shrinks to 24 columns.\n\nnext\n";
         ctrl.push(line);
         let (cell, _) = ctrl.on_commit_tick_batch(usize::MAX);
         assert!(cell.is_some(), "expected emitted cell");
@@ -568,9 +644,67 @@ mod tests {
     }
 
     #[test]
+    fn table_resize_lifecycle_streaming_table_stays_active_tail_until_next_block() {
+        let mut ctrl = stream_controller(Some(48));
+
+        assert!(!ctrl.push("| Area | Result |\n"));
+        assert_eq!(ctrl.queued_lines(), 0);
+        let before_delimiter = active_tail_plain_strings(&ctrl);
+        assert!(
+            before_delimiter
+                .iter()
+                .any(|line| line.contains("| Area | Result |")),
+            "header should be visible as mutable plain markdown before delimiter: {before_delimiter:?}",
+        );
+
+        assert!(!ctrl.push("| --- | --- |\n"));
+        assert!(!ctrl.push("| One | Two |\n"));
+        let after_delimiter = active_tail_plain_strings(&ctrl);
+        assert!(
+            after_delimiter.iter().any(|line| line.contains('┌')),
+            "completed table row should make active tail render as a table: {after_delimiter:?}",
+        );
+        assert_eq!(
+            ctrl.queued_lines(),
+            0,
+            "table should not be committed while it is the final block"
+        );
+
+        assert!(ctrl.push("\nAfter table.\n"));
+        assert!(
+            ctrl.queued_lines() > 0,
+            "table should enter stable queue after a later block appears"
+        );
+        let new_tail = active_tail_plain_strings(&ctrl);
+        assert!(
+            new_tail.iter().any(|line| line.contains("After table.")),
+            "later block should become new active tail: {new_tail:?}",
+        );
+    }
+
+    #[test]
+    fn table_resize_lifecycle_streaming_resize_updates_active_tail_width() {
+        let mut ctrl = stream_controller(Some(36));
+        assert!(!ctrl.push(table_source()));
+        let narrow = active_tail_plain_strings(&ctrl);
+
+        ctrl.set_width(Some(96));
+        let wide = active_tail_plain_strings(&ctrl);
+
+        assert!(
+            narrow.len() > wide.len(),
+            "active table tail should rerender and use wider width\nnarrow={narrow:?}\nwide={wide:?}",
+        );
+        assert!(
+            wide.iter().any(|line| line.contains('┌')),
+            "active tail should remain table-shaped after resize: {wide:?}",
+        );
+    }
+
+    #[test]
     fn controller_tick_batch_zero_is_noop() {
         let mut ctrl = stream_controller(Some(80));
-        assert!(ctrl.push("line one\n"));
+        assert!(ctrl.push("line one\n\nnext\n"));
         assert_eq!(ctrl.queued_lines(), 1);
 
         let (cell, idle) = ctrl.on_commit_tick_batch(/*max_lines*/ 0);
@@ -586,7 +720,7 @@ mod tests {
     #[test]
     fn controller_finalize_returns_raw_source_for_consolidation() {
         let mut ctrl = stream_controller(Some(80));
-        assert!(ctrl.push("hello\n"));
+        ctrl.push("hello\n");
         let (_cell, source) = ctrl.finalize();
         assert_eq!(source, Some("hello\n".to_string()));
     }
@@ -594,7 +728,7 @@ mod tests {
     #[test]
     fn plan_controller_finalize_returns_raw_source_for_consolidation() {
         let mut ctrl = plan_stream_controller(Some(80));
-        assert!(ctrl.push("- step\n"));
+        ctrl.push("- step\n");
         let (_cell, source) = ctrl.finalize();
         assert_eq!(source, Some("- step\n".to_string()));
     }

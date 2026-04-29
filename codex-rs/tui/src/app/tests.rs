@@ -13,6 +13,7 @@ use crate::chatwidget::tests::make_chatwidget_manual_with_sender;
 use crate::chatwidget::tests::set_chatgpt_auth;
 use crate::chatwidget::tests::set_fast_mode_test_catalog;
 use crate::file_search::FileSearchManager;
+use crate::history_cell::AgentMarkdownCell;
 use crate::history_cell::AgentMessageCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
@@ -89,6 +90,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use tempfile::tempdir;
 use tokio::time;
+use unicode_width::UnicodeWidthStr;
 
 macro_rules! assert_app_snapshot {
     ($name:expr, $value:expr $(,)?) => {
@@ -4017,6 +4019,13 @@ fn rendered_line_text(line: &Line<'static>) -> String {
         .collect()
 }
 
+fn markdown_table_cell() -> Arc<dyn HistoryCell> {
+    Arc::new(AgentMarkdownCell::new(
+        "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across terminal widths while staying in table form. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n".to_string(),
+        &std::env::temp_dir(),
+    )) as Arc<dyn HistoryCell>
+}
+
 #[tokio::test]
 async fn capped_resize_reflow_renders_recent_suffix_only() {
     let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
@@ -4082,6 +4091,64 @@ async fn uncapped_resize_reflow_renders_all_cells_under_row_limit() {
             String::new(),
             "cell 2".to_string(),
         ]
+    );
+}
+
+#[tokio::test]
+async fn table_resize_lifecycle_reflow_preserves_scrollback_and_rerenders_width() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    app.transcript_cells = vec![
+        plain_line_cell("BEFORE_TABLE_SENTINEL"),
+        markdown_table_cell(),
+        plain_line_cell("AFTER_TABLE_SENTINEL"),
+    ];
+
+    let narrow = app.render_transcript_lines_for_reflow(/*width*/ 44);
+    let wide = app.render_transcript_lines_for_reflow(/*width*/ 96);
+    let narrow_text = narrow
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+    let wide_text = wide
+        .lines
+        .iter()
+        .map(rendered_line_text)
+        .collect::<Vec<_>>();
+
+    for lines in [&narrow_text, &wide_text] {
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("BEFORE_TABLE_SENTINEL"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.contains("AFTER_TABLE_SENTINEL"))
+                .count(),
+            1
+        );
+        assert!(
+            lines.iter().any(|line| line.contains('┌')),
+            "expected finalized scrollback table to keep box shape after reflow: {lines:?}",
+        );
+    }
+
+    assert!(
+        narrow_text
+            .iter()
+            .filter(|line| line.contains('│') || line.contains('─'))
+            .all(|line| line.width() <= 44),
+        "narrow table lines must fit resized scrollback width: {narrow_text:?}",
+    );
+    assert!(
+        narrow_text.len() > wide_text.len(),
+        "expanded scrollback reflow should reduce table wrapping\nnarrow={narrow_text:?}\nwide={wide_text:?}",
     );
 }
 

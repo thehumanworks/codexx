@@ -4,6 +4,7 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::text::Text;
 use std::path::Path;
+use unicode_width::UnicodeWidthStr;
 
 use crate::markdown_render::COLON_LOCATION_SUFFIX_RE;
 use crate::markdown_render::HASH_LOCATION_SUFFIX_RE;
@@ -25,6 +26,72 @@ fn plain_lines(text: &Text<'_>) -> Vec<String> {
                 .collect::<String>()
         })
         .collect()
+}
+
+fn table_fixture() -> &'static str {
+    "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across widths. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n"
+}
+
+#[test]
+fn table_resize_lifecycle_renderer_uses_thin_borders_and_fits_widths() {
+    for width in [36, 64, 96] {
+        let rendered = render_markdown_text_with_width_and_cwd(
+            table_fixture(),
+            Some(width),
+            /*cwd*/ None,
+        );
+        let lines = plain_lines(&rendered);
+
+        assert!(
+            lines.iter().any(|line| line.contains('┌')),
+            "expected thin table border at width {width}: {lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .filter(|line| line.contains('│') || line.contains('─'))
+                .all(|line| line.width() <= width),
+            "table lines should fit width {width}: {lines:?}"
+        );
+        assert!(
+            lines.iter().all(|line| !line.starts_with("Row ")),
+            "table should not use vertical fallback at width {width}: {lines:?}"
+        );
+    }
+}
+
+#[test]
+fn table_resize_lifecycle_renderer_expansion_reduces_wrapping() {
+    let narrow = plain_lines(&render_markdown_text_with_width_and_cwd(
+        table_fixture(),
+        Some(36),
+        /*cwd*/ None,
+    ));
+    let wide = plain_lines(&render_markdown_text_with_width_and_cwd(
+        table_fixture(),
+        Some(96),
+        /*cwd*/ None,
+    ));
+
+    assert!(
+        narrow.len() > wide.len(),
+        "wider table should use space to reduce wrapping\nnarrow={narrow:?}\nwide={wide:?}"
+    );
+}
+
+#[test]
+fn table_resize_lifecycle_renderer_uses_vertical_fallback_only_at_tiny_width() {
+    let rendered = render_markdown_text_with_width_and_cwd(
+        table_fixture(),
+        Some(18),
+        /*cwd*/ None,
+    );
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines.iter().any(|line| line == "Row 1"),
+        "tiny width should trigger vertical fallback: {lines:?}"
+    );
 }
 
 #[test]
