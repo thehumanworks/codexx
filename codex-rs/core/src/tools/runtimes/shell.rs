@@ -14,6 +14,8 @@ use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
+use crate::sandboxing::ExecRequest;
+use crate::sandboxing::ExecServerEnvConfig;
 use crate::sandboxing::SandboxPermissions;
 use crate::sandboxing::execute_env;
 use crate::shell::ShellType;
@@ -36,7 +38,10 @@ use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
 use crate::tools::sandboxing::sandbox_override_for_first_attempt;
 use crate::tools::sandboxing::with_cached_approval;
 use codex_network_proxy::NetworkProxy;
+use codex_protocol::error::CodexErr;
+use codex_protocol::error::SandboxErr;
 use codex_protocol::exec_output::ExecToolCallOutput;
+use codex_protocol::exec_output::StreamOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
@@ -44,6 +49,10 @@ use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
+use tokio::time::timeout;
 
 #[derive(Clone, Debug)]
 pub struct ShellRequest {
@@ -51,7 +60,10 @@ pub struct ShellRequest {
     pub hook_command: String,
     pub cwd: AbsolutePathBuf,
     pub timeout_ms: Option<u64>,
+    pub environment_id: String,
+    pub environment: Arc<codex_exec_server::Environment>,
     pub env: HashMap<String, String>,
+    pub exec_server_env_config: Option<ExecServerEnvConfig>,
     pub explicit_env_overrides: HashMap<String, String>,
     pub network: Option<NetworkProxy>,
     pub sandbox_permissions: SandboxPermissions,
@@ -98,6 +110,7 @@ pub struct ShellRuntime {
 pub(crate) struct ApprovalKey {
     command: Vec<String>,
     cwd: AbsolutePathBuf,
+    environment_id: String,
     sandbox_permissions: SandboxPermissions,
     additional_permissions: Option<AdditionalPermissionProfile>,
 }
@@ -138,6 +151,7 @@ impl Approvable<ShellRequest> for ShellRuntime {
         vec![ApprovalKey {
             command: canonicalize_command_for_approval(&req.command),
             cwd: req.cwd.clone(),
+            environment_id: req.environment_id.clone(),
             sandbox_permissions: req.sandbox_permissions,
             additional_permissions: req.additional_permissions.clone(),
         }]
@@ -246,16 +260,22 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         ctx: &ToolCtx,
     ) -> Result<ExecToolCallOutput, ToolError> {
         let session_shell = ctx.session.user_shell();
+        let environment = req.environment.as_ref();
         let managed_network =
             managed_network_for_sandbox_permissions(req.network.as_ref(), req.sandbox_permissions);
         let env = exec_env_for_sandbox_permissions(&req.env, req.sandbox_permissions);
-        let command = maybe_wrap_shell_lc_with_snapshot(
-            &req.command,
-            session_shell.as_ref(),
-            &req.cwd,
-            &req.explicit_env_overrides,
-            &env,
-        );
+        let environment_is_remote = environment.is_remote();
+        let command = if environment_is_remote {
+            req.command.clone()
+        } else {
+            maybe_wrap_shell_lc_with_snapshot(
+                &req.command,
+                session_shell.as_ref(),
+                &req.cwd,
+                &req.explicit_env_overrides,
+                &env,
+            )
+        };
         let command = if matches!(session_shell.shell_type, ShellType::PowerShell) {
             prefix_powershell_script_with_utf8(&command)
         } else {
@@ -274,6 +294,11 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         };
 
         if self.backend == ShellRuntimeBackend::ShellCommandZshFork {
+            if environment_is_remote {
+                return Err(ToolError::Rejected(
+                    "shell_command zsh-fork is not supported for remote environments".to_string(),
+                ));
+            }
             match zsh_fork_backend::maybe_run_shell_command(
                 req,
                 &request_cwd_attempt,
@@ -297,12 +322,176 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
             expiration: req.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
         };
-        let env = request_cwd_attempt
+        let mut env = request_cwd_attempt
             .env_for(command, options, managed_network)
             .map_err(|err| ToolError::Codex(err.into()))?;
+        env.exec_server_env_config = req.exec_server_env_config.clone();
+        if environment_is_remote {
+            return run_remote_shell_request(req, ctx, env, environment).await;
+        }
+
         let out = execute_env(env, Self::stdout_stream(ctx))
             .await
             .map_err(ToolError::Codex)?;
         Ok(out)
+    }
+}
+
+async fn run_remote_shell_request(
+    req: &ShellRequest,
+    ctx: &ToolCtx,
+    request: ExecRequest,
+    environment: &codex_exec_server::Environment,
+) -> Result<ExecToolCallOutput, ToolError> {
+    let process_id = format!(
+        "shell-{}-{}",
+        ctx.call_id,
+        crate::unified_exec::generate_chunk_id()
+    );
+    let params = exec_server_params_for_request(process_id, &request);
+    let start = Instant::now();
+    let process = environment
+        .get_exec_backend()
+        .start(params)
+        .await
+        .map_err(|err| ToolError::Rejected(err.to_string()))?
+        .process;
+    let timeout_ms = req.timeout_ms.unwrap_or(30_000);
+    let deadline = start + Duration::from_millis(timeout_ms);
+    let mut after_seq = None;
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut aggregated = Vec::new();
+    let mut exit_code = None;
+
+    loop {
+        let now = Instant::now();
+        if now >= deadline {
+            let _ = process.terminate().await;
+            return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Timeout {
+                output: Box::new(exec_tool_call_output(
+                    stdout,
+                    stderr,
+                    aggregated,
+                    124,
+                    start.elapsed(),
+                    /*timed_out*/ true,
+                )),
+            })));
+        }
+
+        let remaining_ms = deadline
+            .saturating_duration_since(now)
+            .as_millis()
+            .max(1)
+            .min(u128::from(u64::MAX)) as u64;
+        let response = match timeout(
+            Duration::from_millis(remaining_ms),
+            process.read(after_seq, /*max_bytes*/ None, Some(remaining_ms)),
+        )
+        .await
+        {
+            Ok(response) => response.map_err(|err| ToolError::Rejected(err.to_string()))?,
+            Err(_) => {
+                let _ = process.terminate().await;
+                return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Timeout {
+                    output: Box::new(exec_tool_call_output(
+                        stdout,
+                        stderr,
+                        aggregated,
+                        124,
+                        start.elapsed(),
+                        /*timed_out*/ true,
+                    )),
+                })));
+            }
+        };
+
+        for chunk in response.chunks {
+            let bytes = chunk.chunk.into_inner();
+            match chunk.stream {
+                codex_exec_server::ExecOutputStream::Stdout => {
+                    stdout.extend_from_slice(&bytes);
+                    aggregated.extend_from_slice(&bytes);
+                }
+                codex_exec_server::ExecOutputStream::Stderr => {
+                    stderr.extend_from_slice(&bytes);
+                    aggregated.extend_from_slice(&bytes);
+                }
+                codex_exec_server::ExecOutputStream::Pty => {
+                    aggregated.extend_from_slice(&bytes);
+                }
+            }
+        }
+
+        if let Some(failure) = response.failure {
+            return Err(ToolError::Rejected(failure));
+        }
+        if response.exited {
+            exit_code = response.exit_code;
+        }
+        after_seq = response.next_seq.checked_sub(1);
+        if response.closed {
+            break;
+        }
+    }
+
+    let output = exec_tool_call_output(
+        stdout,
+        stderr,
+        aggregated,
+        exit_code.unwrap_or(-1),
+        start.elapsed(),
+        /*timed_out*/ false,
+    );
+    if crate::exec::is_likely_sandbox_denied(request.sandbox.clone(), &output) {
+        return Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied {
+            output: Box::new(output),
+            network_policy_decision: None,
+        })));
+    }
+
+    Ok(output)
+}
+
+fn exec_server_params_for_request(
+    process_id: String,
+    request: &ExecRequest,
+) -> codex_exec_server::ExecParams {
+    let (env_policy, env) = if let Some(exec_server_env_config) = &request.exec_server_env_config {
+        let (policy, env) = exec_server_env_config.exec_server_env_for_request(&request.env);
+        (Some(policy), env)
+    } else {
+        (None, request.env.clone())
+    };
+    codex_exec_server::ExecParams {
+        process_id: process_id.into(),
+        argv: request.command.clone(),
+        cwd: request.cwd.to_path_buf(),
+        env_policy,
+        env,
+        tty: false,
+        pipe_stdin: false,
+        arg0: request.arg0.clone(),
+    }
+}
+
+fn exec_tool_call_output(
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+    aggregated: Vec<u8>,
+    exit_code: i32,
+    duration: Duration,
+    timed_out: bool,
+) -> ExecToolCallOutput {
+    ExecToolCallOutput {
+        exit_code,
+        stdout: StreamOutput::new(codex_protocol::exec_output::bytes_to_string_smart(&stdout)),
+        stderr: StreamOutput::new(codex_protocol::exec_output::bytes_to_string_smart(&stderr)),
+        aggregated_output: StreamOutput::new(codex_protocol::exec_output::bytes_to_string_smart(
+            &aggregated,
+        )),
+        duration,
+        timed_out,
     }
 }

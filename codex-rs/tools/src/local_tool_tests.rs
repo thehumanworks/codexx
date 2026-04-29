@@ -175,6 +175,47 @@ fn exec_command_tool_matches_expected_spec() {
 }
 
 #[test]
+fn process_creation_tools_with_environment_id_include_environment_id_parameter() {
+    for tool in [
+        create_exec_command_tool_with_environment_id(CommandToolOptions {
+            allow_login_shell: true,
+            exec_permission_approvals_enabled: false,
+        }),
+        create_shell_tool_with_environment_id(ShellToolOptions {
+            exec_permission_approvals_enabled: false,
+        }),
+        create_shell_command_tool_with_environment_id(CommandToolOptions {
+            allow_login_shell: true,
+            exec_permission_approvals_enabled: false,
+        }),
+    ] {
+        let ToolSpec::Function(tool) = tool else {
+            panic!("expected function tool");
+        };
+        assert!(
+            tool.parameters
+                .properties
+                .expect("object properties")
+                .contains_key("environment_id"),
+            "expected {} to expose environment_id",
+            tool.name
+        );
+    }
+
+    let ToolSpec::Function(tool) = create_write_stdin_tool() else {
+        panic!("expected function tool");
+    };
+    assert!(
+        !tool
+            .parameters
+            .properties
+            .expect("object properties")
+            .contains_key("environment_id"),
+        "write_stdin must keep routing by session_id only"
+    );
+}
+
+#[test]
 fn write_stdin_tool_matches_expected_spec() {
     let tool = create_write_stdin_tool();
 

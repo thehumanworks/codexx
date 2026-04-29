@@ -102,6 +102,7 @@ async fn exec_command_with_tty(
     if process_started_alive {
         let entry = ProcessEntry {
             process: Arc::clone(&process),
+            _environment_id: "local".to_string(),
             call_id: context.call_id.clone(),
             process_id,
             hook_command: cmd.to_string(),

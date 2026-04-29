@@ -38,6 +38,7 @@ use crate::unified_exec::NoopSpawnLifecycle;
 use crate::unified_exec::UnifiedExecError;
 use crate::unified_exec::UnifiedExecProcess;
 use crate::unified_exec::UnifiedExecProcessManager;
+use codex_exec_server::Environment;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
@@ -51,6 +52,7 @@ use codex_tools::UnifiedExecShellMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Request payload used by the unified-exec runtime after approvals and
 /// sandbox preferences have been resolved for the current turn.
@@ -60,6 +62,8 @@ pub struct UnifiedExecRequest {
     pub hook_command: String,
     pub process_id: i32,
     pub cwd: AbsolutePathBuf,
+    pub environment_id: String,
+    pub environment: Arc<Environment>,
     pub env: HashMap<String, String>,
     pub exec_server_env_config: Option<ExecServerEnvConfig>,
     pub explicit_env_overrides: HashMap<String, String>,
@@ -79,6 +83,7 @@ pub struct UnifiedExecRequest {
 pub struct UnifiedExecApprovalKey {
     pub command: Vec<String>,
     pub cwd: AbsolutePathBuf,
+    pub environment_id: String,
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
@@ -145,6 +150,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         vec![UnifiedExecApprovalKey {
             command: canonicalize_command_for_approval(&req.command),
             cwd: req.cwd.clone(),
+            environment_id: req.environment_id.clone(),
             tty: req.tty,
             sandbox_permissions: req.sandbox_permissions,
             additional_permissions: req.additional_permissions.clone(),
@@ -262,12 +268,7 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
     ) -> Result<UnifiedExecProcess, ToolError> {
         let base_command = &req.command;
         let session_shell = ctx.session.user_shell();
-        let Some(turn_environment) = ctx.turn.primary_environment() else {
-            return Err(ToolError::Rejected(
-                "exec_command is unavailable in this session".to_string(),
-            ));
-        };
-        let environment = &turn_environment.environment;
+        let environment = req.environment.as_ref();
         let managed_network =
             managed_network_for_sandbox_permissions(req.network.as_ref(), req.sandbox_permissions);
         let mut env = exec_env_for_sandbox_permissions(&req.env, req.sandbox_permissions);

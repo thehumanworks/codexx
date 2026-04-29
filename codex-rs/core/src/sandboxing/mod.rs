@@ -16,6 +16,7 @@ use crate::exec::execute_exec_request;
 use crate::spawn::CODEX_SANDBOX_ENV_VAR;
 use crate::spawn::CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR;
 use codex_network_proxy::NetworkProxy;
+use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::PermissionProfile;
@@ -39,6 +40,44 @@ pub(crate) struct ExecOptions {
 pub(crate) struct ExecServerEnvConfig {
     pub(crate) policy: codex_exec_server::ExecEnvPolicy,
     pub(crate) local_policy_env: HashMap<String, String>,
+}
+
+impl ExecServerEnvConfig {
+    pub(crate) fn from_shell_environment_policy(
+        policy: &ShellEnvironmentPolicy,
+        local_policy_env: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            policy: codex_exec_server::ExecEnvPolicy {
+                inherit: policy.inherit.clone(),
+                ignore_default_excludes: policy.ignore_default_excludes,
+                exclude: policy
+                    .exclude
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                r#set: policy.r#set.clone(),
+                include_only: policy
+                    .include_only
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+            },
+            local_policy_env,
+        }
+    }
+
+    pub(crate) fn exec_server_env_for_request(
+        &self,
+        request_env: &HashMap<String, String>,
+    ) -> (codex_exec_server::ExecEnvPolicy, HashMap<String, String>) {
+        let env = request_env
+            .iter()
+            .filter(|(key, value)| self.local_policy_env.get(*key) != Some(*value))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        (self.policy.clone(), env)
+    }
 }
 
 #[derive(Debug)]

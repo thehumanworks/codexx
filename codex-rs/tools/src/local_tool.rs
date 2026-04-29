@@ -17,6 +17,17 @@ pub struct ShellToolOptions {
 }
 
 pub fn create_exec_command_tool(options: CommandToolOptions) -> ToolSpec {
+    create_exec_command_tool_inner(options, /*include_environment_id*/ false)
+}
+
+pub fn create_exec_command_tool_with_environment_id(options: CommandToolOptions) -> ToolSpec {
+    create_exec_command_tool_inner(options, /*include_environment_id*/ true)
+}
+
+fn create_exec_command_tool_inner(
+    options: CommandToolOptions,
+    include_environment_id: bool,
+) -> ToolSpec {
     let mut properties = BTreeMap::from([
         (
             "cmd".to_string(),
@@ -55,6 +66,7 @@ pub fn create_exec_command_tool(options: CommandToolOptions) -> ToolSpec {
             )),
         ),
     ]);
+    maybe_insert_environment_id_parameter(&mut properties, include_environment_id);
     if options.allow_login_shell {
         properties.insert(
             "login".to_string(),
@@ -134,6 +146,14 @@ pub fn create_write_stdin_tool() -> ToolSpec {
 }
 
 pub fn create_shell_tool(options: ShellToolOptions) -> ToolSpec {
+    create_shell_tool_inner(options, /*include_environment_id*/ false)
+}
+
+pub fn create_shell_tool_with_environment_id(options: ShellToolOptions) -> ToolSpec {
+    create_shell_tool_inner(options, /*include_environment_id*/ true)
+}
+
+fn create_shell_tool_inner(options: ShellToolOptions, include_environment_id: bool) -> ToolSpec {
     let mut properties = BTreeMap::from([
         (
             "command".to_string(),
@@ -155,6 +175,7 @@ pub fn create_shell_tool(options: ShellToolOptions) -> ToolSpec {
             )),
         ),
     ]);
+    maybe_insert_environment_id_parameter(&mut properties, include_environment_id);
     properties.extend(create_approval_parameters(
         options.exec_permission_approvals_enabled,
     ));
@@ -197,6 +218,17 @@ Examples of valid command strings:
 }
 
 pub fn create_shell_command_tool(options: CommandToolOptions) -> ToolSpec {
+    create_shell_command_tool_inner(options, /*include_environment_id*/ false)
+}
+
+pub fn create_shell_command_tool_with_environment_id(options: CommandToolOptions) -> ToolSpec {
+    create_shell_command_tool_inner(options, /*include_environment_id*/ true)
+}
+
+fn create_shell_command_tool_inner(
+    options: CommandToolOptions,
+    include_environment_id: bool,
+) -> ToolSpec {
     let mut properties = BTreeMap::from([
         (
             "command".to_string(),
@@ -217,6 +249,7 @@ pub fn create_shell_command_tool(options: CommandToolOptions) -> ToolSpec {
             )),
         ),
     ]);
+    maybe_insert_environment_id_parameter(&mut properties, include_environment_id);
     if options.allow_login_shell {
         properties.insert(
             "login".to_string(),
@@ -264,6 +297,20 @@ Examples of valid command strings:
         ),
         output_schema: None,
     })
+}
+
+fn maybe_insert_environment_id_parameter(
+    properties: &mut BTreeMap<String, JsonSchema>,
+    include_environment_id: bool,
+) {
+    if include_environment_id {
+        properties.insert(
+            "environment_id".to_string(),
+            JsonSchema::string(Some(
+                "Target environment id for this process creation. Omit to use the primary environment.".to_string(),
+            )),
+        );
+    }
 }
 
 pub fn create_request_permissions_tool(description: String) -> ToolSpec {

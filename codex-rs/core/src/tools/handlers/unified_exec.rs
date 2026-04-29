@@ -9,6 +9,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
+use crate::tools::handlers::env_path::resolve_tool_environment;
 use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
@@ -46,6 +47,8 @@ pub struct UnifiedExecHandler;
 pub(crate) struct ExecCommandArgs {
     cmd: String,
     #[serde(default)]
+    environment_id: Option<String>,
+    #[serde(default)]
     pub(crate) workdir: Option<String>,
     #[serde(default)]
     shell: Option<String>,
@@ -77,6 +80,12 @@ struct WriteStdinArgs {
     yield_time_ms: u64,
     #[serde(default)]
     max_output_tokens: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct EnvironmentTargetArgs {
+    #[serde(default)]
+    environment_id: Option<String>,
 }
 
 fn default_exec_yield_time_ms() -> u64 {
@@ -196,20 +205,21 @@ impl ToolHandler for UnifiedExecHandler {
             }
         };
 
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "unified exec is unavailable in this session".to_string(),
-            ));
-        };
-        let environment = &turn_environment.environment;
-        let turn_environment_cwd = &turn_environment.cwd;
-        let fs = environment.get_filesystem();
-
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
         let context = UnifiedExecContext::new(session.clone(), turn.clone(), call_id.clone());
 
         let response = match tool_name.name.as_str() {
             "exec_command" => {
+                let target_args: EnvironmentTargetArgs = parse_arguments(&arguments)?;
+                let turn_environment = resolve_tool_environment(
+                    turn.as_ref(),
+                    target_args.environment_id.as_deref(),
+                    "exec_command",
+                )?;
+                let environment = Arc::clone(&turn_environment.environment);
+                let environment_id = turn_environment.environment_id.clone();
+                let fs = environment.get_filesystem();
+                let turn_environment_cwd = &turn_environment.cwd;
                 let exec_cwd = resolve_workdir_base_path(&arguments, turn_environment_cwd)?;
                 let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &exec_cwd)?;
                 let hook_command = args.cmd.clone();
@@ -231,6 +241,7 @@ impl ToolHandler for UnifiedExecHandler {
 
                 let ExecCommandArgs {
                     workdir: _,
+                    environment_id: _,
                     tty,
                     yield_time_ms,
                     max_output_tokens,
@@ -333,6 +344,8 @@ impl ToolHandler for UnifiedExecHandler {
                             process_id,
                             yield_time_ms,
                             max_output_tokens: Some(max_output_tokens),
+                            environment_id,
+                            environment,
                             cwd: exec_cwd,
                             network: context.turn.network.clone(),
                             tty,

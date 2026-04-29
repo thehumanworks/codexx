@@ -1200,6 +1200,9 @@ pub struct SearchToolCallParams {
 #[derive(Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 pub struct ShellToolCallParams {
     pub command: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub environment_id: Option<String>,
     pub workdir: Option<String>,
 
     /// This is the maximum time in milliseconds that the command is allowed to run.
@@ -1224,6 +1227,9 @@ pub struct ShellToolCallParams {
 #[derive(Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 pub struct ShellCommandToolCallParams {
     pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub environment_id: Option<String>,
     pub workdir: Option<String>,
 
     /// Whether to run the shell with login shell semantics
@@ -2469,6 +2475,7 @@ mod tests {
         assert_eq!(
             ShellToolCallParams {
                 command: vec!["ls".to_string(), "-l".to_string()],
+                environment_id: None,
                 workdir: Some("/tmp".to_string()),
                 timeout_ms: Some(1000),
                 sandbox_permissions: None,

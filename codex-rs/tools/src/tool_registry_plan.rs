@@ -28,6 +28,7 @@ use crate::create_close_agent_tool_v2;
 use crate::create_code_mode_tool;
 use crate::create_create_goal_tool;
 use crate::create_exec_command_tool;
+use crate::create_exec_command_tool_with_environment_id;
 use crate::create_followup_task_tool;
 use crate::create_get_goal_tool;
 use crate::create_image_generation_tool;
@@ -44,7 +45,9 @@ use crate::create_resume_agent_tool;
 use crate::create_send_input_tool_v1;
 use crate::create_send_message_tool;
 use crate::create_shell_command_tool;
+use crate::create_shell_command_tool_with_environment_id;
 use crate::create_shell_tool;
+use crate::create_shell_tool_with_environment_id;
 use crate::create_spawn_agent_tool_v1;
 use crate::create_spawn_agent_tool_v2;
 use crate::create_spawn_agents_on_csv_tool;
@@ -138,10 +141,17 @@ pub fn build_tool_registry_plan(
     if config.has_environment {
         match &config.shell_type {
             ConfigShellToolType::Default => {
-                plan.push_spec(
+                let spec = if config.has_multiple_environments {
+                    create_shell_tool_with_environment_id(ShellToolOptions {
+                        exec_permission_approvals_enabled,
+                    })
+                } else {
                     create_shell_tool(ShellToolOptions {
                         exec_permission_approvals_enabled,
-                    }),
+                    })
+                };
+                plan.push_spec(
+                    spec,
                     /*supports_parallel_tool_calls*/ true,
                     config.code_mode_enabled,
                 );
@@ -154,11 +164,19 @@ pub fn build_tool_registry_plan(
                 );
             }
             ConfigShellToolType::UnifiedExec => {
-                plan.push_spec(
+                let spec = if config.has_multiple_environments {
+                    create_exec_command_tool_with_environment_id(CommandToolOptions {
+                        allow_login_shell: config.allow_login_shell,
+                        exec_permission_approvals_enabled,
+                    })
+                } else {
                     create_exec_command_tool(CommandToolOptions {
                         allow_login_shell: config.allow_login_shell,
                         exec_permission_approvals_enabled,
-                    }),
+                    })
+                };
+                plan.push_spec(
+                    spec,
                     /*supports_parallel_tool_calls*/ true,
                     config.code_mode_enabled,
                 );
@@ -172,11 +190,19 @@ pub fn build_tool_registry_plan(
             }
             ConfigShellToolType::Disabled => {}
             ConfigShellToolType::ShellCommand => {
-                plan.push_spec(
+                let spec = if config.has_multiple_environments {
+                    create_shell_command_tool_with_environment_id(CommandToolOptions {
+                        allow_login_shell: config.allow_login_shell,
+                        exec_permission_approvals_enabled,
+                    })
+                } else {
                     create_shell_command_tool(CommandToolOptions {
                         allow_login_shell: config.allow_login_shell,
                         exec_permission_approvals_enabled,
-                    }),
+                    })
+                };
+                plan.push_spec(
+                    spec,
                     /*supports_parallel_tool_calls*/ true,
                     config.code_mode_enabled,
                 );

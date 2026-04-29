@@ -103,6 +103,7 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
 
     let params = ShellCommandToolCallParams {
         command,
+        environment_id: None,
         workdir: Some(workdir),
         login,
         timeout_ms,
@@ -178,6 +179,7 @@ async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
     turn_context.cwd = expected_cwd.join("stale-turn-cwd");
     let params = ShellCommandToolCallParams {
         command: "echo hello".to_string(),
+        environment_id: None,
         workdir: None,
         login: None,
         timeout_ms: None,
@@ -229,6 +231,7 @@ async fn shell_pre_tool_use_payload_uses_joined_command() {
                 "-lc".to_string(),
                 "printf hi".to_string(),
             ],
+            environment_id: None,
             workdir: None,
             timeout_ms: None,
             sandbox_permissions: None,

@@ -521,6 +521,45 @@ fn disabled_environment_omits_environment_backed_tools() {
 }
 
 #[test]
+fn multiple_environments_add_environment_id_to_process_creation_tools_only() {
+    let model_info = model_info();
+    let mut features = Features::with_defaults();
+    features.enable(Feature::UnifiedExec);
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    })
+    .with_has_multiple_environments(true);
+    let (tools, _) = build_specs(
+        &tools_config,
+        /*mcp_tools*/ None,
+        /*deferred_mcp_tools*/ None,
+        &[],
+    );
+
+    let exec_command = find_tool(&tools, "exec_command");
+    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &exec_command.spec else {
+        panic!("exec_command should be a function tool");
+    };
+    let (properties, _) = expect_object_schema(parameters);
+    assert!(properties.contains_key("environment_id"));
+
+    let write_stdin = find_tool(&tools, "write_stdin");
+    let ToolSpec::Function(ResponsesApiTool { parameters, .. }) = &write_stdin.spec else {
+        panic!("write_stdin should be a function tool");
+    };
+    let (properties, _) = expect_object_schema(parameters);
+    assert!(!properties.contains_key("environment_id"));
+}
+
+#[test]
 fn test_build_specs_agent_job_worker_tools_enabled() {
     let model_info = model_info();
     let mut features = Features::with_defaults();

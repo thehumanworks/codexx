@@ -11,7 +11,9 @@ use crate::exec_env::create_env;
 use crate::exec_policy::ExecApprovalRequest;
 use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
+use crate::sandboxing::ExecServerEnvConfig;
 use crate::session::turn_context::TurnContext;
+use crate::session::turn_context::TurnEnvironment;
 use crate::shell::Shell;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
@@ -21,6 +23,7 @@ use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
 use crate::tools::handlers::apply_granted_turn_permissions;
 use crate::tools::handlers::apply_patch::intercept_apply_patch;
+use crate::tools::handlers::env_path::resolve_tool_environment;
 use crate::tools::handlers::implicit_granted_permissions;
 use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
@@ -80,6 +83,8 @@ struct RunExecLikeArgs {
     tool_name: String,
     exec_params: ExecParams,
     hook_command: String,
+    environment_id: String,
+    environment: Arc<codex_exec_server::Environment>,
     additional_permissions: Option<AdditionalPermissionProfile>,
     prefix_rule: Option<Vec<String>>,
     session: Arc<crate::session::session::Session>,
@@ -88,6 +93,21 @@ struct RunExecLikeArgs {
     call_id: String,
     freeform: bool,
     shell_runtime_backend: ShellRuntimeBackend,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EnvironmentTargetArgs {
+    #[serde(default)]
+    environment_id: Option<String>,
+}
+
+fn resolve_environment_from_arguments<'a>(
+    turn: &'a TurnContext,
+    arguments: &str,
+    tool_name: &str,
+) -> Result<&'a TurnEnvironment, FunctionCallError> {
+    let target_args: EnvironmentTargetArgs = parse_arguments(arguments)?;
+    resolve_tool_environment(turn, target_args.environment_id.as_deref(), tool_name)
 }
 
 impl ShellHandler {
@@ -244,11 +264,8 @@ impl ToolHandler for ShellHandler {
 
         match payload {
             ToolPayload::Function { arguments } => {
-                let Some(turn_environment) = turn.primary_environment() else {
-                    return Err(FunctionCallError::RespondToModel(
-                        "shell is unavailable in this session".to_string(),
-                    ));
-                };
+                let turn_environment =
+                    resolve_environment_from_arguments(turn.as_ref(), &arguments, "shell")?;
                 let cwd = &turn_environment.cwd;
                 let cwd = resolve_workdir_base_path(&arguments, cwd)?;
                 let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
@@ -259,6 +276,8 @@ impl ToolHandler for ShellHandler {
                     tool_name: tool_name.display(),
                     exec_params,
                     hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+                    environment_id: turn_environment.environment_id.clone(),
+                    environment: Arc::clone(&turn_environment.environment),
                     additional_permissions: params.additional_permissions.clone(),
                     prefix_rule,
                     session,
@@ -271,11 +290,11 @@ impl ToolHandler for ShellHandler {
                 .await
             }
             ToolPayload::LocalShell { params } => {
-                let Some(turn_environment) = turn.primary_environment() else {
-                    return Err(FunctionCallError::RespondToModel(
-                        "shell is unavailable in this session".to_string(),
-                    ));
-                };
+                let turn_environment = resolve_tool_environment(
+                    turn.as_ref(),
+                    /*environment_id*/ None,
+                    "local_shell",
+                )?;
                 let cwd = params
                     .workdir
                     .as_deref()
@@ -290,6 +309,8 @@ impl ToolHandler for ShellHandler {
                     tool_name: tool_name.display(),
                     exec_params,
                     hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+                    environment_id: turn_environment.environment_id.clone(),
+                    environment: Arc::clone(&turn_environment.environment),
                     additional_permissions: None,
                     prefix_rule: None,
                     session,
@@ -382,11 +403,8 @@ impl ToolHandler for ShellCommandHandler {
             )));
         };
 
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "shell is unavailable in this session".to_string(),
-            ));
-        };
+        let turn_environment =
+            resolve_environment_from_arguments(turn.as_ref(), &arguments, "shell_command")?;
         let cwd = &turn_environment.cwd;
         let cwd = resolve_workdir_base_path(&arguments, cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
@@ -410,6 +428,8 @@ impl ToolHandler for ShellCommandHandler {
             tool_name: tool_name.display(),
             exec_params,
             hook_command: params.command,
+            environment_id: turn_environment.environment_id.clone(),
+            environment: Arc::clone(&turn_environment.environment),
             additional_permissions: params.additional_permissions.clone(),
             prefix_rule,
             session,
@@ -429,6 +449,8 @@ impl ShellHandler {
             tool_name,
             exec_params,
             hook_command,
+            environment_id,
+            environment,
             additional_permissions,
             prefix_rule,
             session,
@@ -440,12 +462,6 @@ impl ShellHandler {
         } = args;
 
         let mut exec_params = exec_params;
-        let Some(turn_environment) = turn.primary_environment() else {
-            return Err(FunctionCallError::RespondToModel(
-                "shell is unavailable in this session".to_string(),
-            ));
-        };
-        let environment = &turn_environment.environment;
         let fs = environment.get_filesystem();
 
         let dependency_env = session.dependency_env().await;
@@ -566,7 +582,13 @@ impl ShellHandler {
             hook_command,
             cwd: exec_params.cwd.clone(),
             timeout_ms: exec_params.expiration.timeout_ms(),
+            environment_id,
+            environment,
             env: exec_params.env.clone(),
+            exec_server_env_config: Some(ExecServerEnvConfig::from_shell_environment_policy(
+                &turn.shell_environment_policy,
+                create_env(&turn.shell_environment_policy, /*thread_id*/ None),
+            )),
             explicit_env_overrides,
             network: exec_params.network.clone(),
             sandbox_permissions: effective_additional_permissions.sandbox_permissions,

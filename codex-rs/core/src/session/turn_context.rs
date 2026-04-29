@@ -222,6 +222,7 @@ impl TurnContext {
         .with_web_search_config(self.tools_config.web_search_config.clone())
         .with_allow_login_shell(self.tools_config.allow_login_shell)
         .with_has_environment(self.has_attached_environment())
+        .with_has_multiple_environments(self.has_multiple_selected_environments())
         .with_spawn_agent_usage_hint(config.multi_agent_v2.usage_hint_enabled)
         .with_spawn_agent_usage_hint_text(config.multi_agent_v2.usage_hint_text.clone())
         .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
@@ -476,6 +477,7 @@ impl Session {
         let image_generation_tool_auth_allowed =
             image_generation_tool_auth_allowed(auth_manager.as_deref());
         let has_attached_environment = !environments.is_empty();
+        let has_multiple_environments = environments.len() > 1;
         let auth_manager_for_context = auth_manager.clone();
         let provider_for_context = create_model_provider(provider, auth_manager);
         let provider_capabilities = provider_for_context.capabilities();
@@ -501,6 +503,7 @@ impl Session {
         .with_web_search_config(per_turn_config.web_search_config.clone())
         .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
         .with_has_environment(has_attached_environment)
+        .with_has_multiple_environments(has_multiple_environments)
         .with_spawn_agent_usage_hint(per_turn_config.multi_agent_v2.usage_hint_enabled)
         .with_spawn_agent_usage_hint_text(per_turn_config.multi_agent_v2.usage_hint_text.clone())
         .with_hide_spawn_agent_metadata(per_turn_config.multi_agent_v2.hide_spawn_agent_metadata)

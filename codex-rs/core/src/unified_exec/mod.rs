@@ -27,6 +27,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Weak;
 
+use codex_exec_server::Environment;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -92,6 +93,8 @@ pub(crate) struct ExecCommandRequest {
     pub process_id: i32,
     pub yield_time_ms: u64,
     pub max_output_tokens: Option<usize>,
+    pub environment_id: String,
+    pub environment: Arc<Environment>,
     /// Absolute working directory resolved by the tool handler before the
     /// process manager sees the request.
     pub cwd: AbsolutePathBuf,
@@ -148,6 +151,7 @@ impl Default for UnifiedExecProcessManager {
 
 struct ProcessEntry {
     process: Arc<UnifiedExecProcess>,
+    _environment_id: String,
     call_id: String,
     process_id: i32,
     hook_command: String,
