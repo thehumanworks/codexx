@@ -675,10 +675,13 @@ fn maybe_wrap_shell_lc_with_snapshot_keeps_user_proxy_env_when_proxy_inactive() 
         &HashMap::new(),
         &HashMap::new(),
     );
-    let output = Command::new(&rewritten[0])
-        .args(&rewritten[1..])
-        .output()
-        .expect("run rewritten command");
+    let mut process = Command::new(&rewritten[0]);
+    process.args(&rewritten[1..]);
+    for key in PROXY_ENV_KEYS {
+        process.env_remove(key);
+    }
+    process.env_remove(PROXY_ACTIVE_ENV_KEY);
+    let output = process.output().expect("run rewritten command");
 
     assert!(output.status.success(), "command failed: {output:?}");
     assert_eq!(

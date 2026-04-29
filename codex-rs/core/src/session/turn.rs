@@ -40,6 +40,7 @@ use crate::parse_turn_item;
 use crate::plugins::build_plugin_injections;
 use crate::resolve_skill_dependencies_for_turn;
 use crate::session::PreviousTurnSettings;
+use crate::session::sampling_loop::run_sampling_request;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::stream_events_utils::HandleOutputCtx;
@@ -57,7 +58,6 @@ use crate::tools::router::ToolRouterParams;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::turn_timing::record_turn_ttft_metric;
 use crate::unavailable_tool::collect_unavailable_called_tools;
-use crate::util::backoff;
 use crate::util::error_or_panic;
 use codex_analytics::AppInvocation;
 use codex_analytics::CompactionPhase;
@@ -71,6 +71,9 @@ use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
 use codex_hooks::HookPayload;
 use codex_hooks::HookResult;
+use codex_kernel::PromptConfig;
+use codex_kernel::SamplingRequestResult;
+use codex_kernel::ToolConfig;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
@@ -932,16 +935,11 @@ fn connector_inserted_in_messages(
     connector_count == 1 && skill_count == 0 && mention_names_lower.contains(&mention_slug)
 }
 
-pub(crate) fn build_prompt(
-    input: Vec<ResponseItem>,
-    router: &ToolRouter,
+pub(super) fn build_prompt_config(
     turn_context: &TurnContext,
     base_instructions: BaseInstructions,
-) -> Prompt {
-    Prompt {
-        input,
-        tools: router.model_visible_specs(),
-        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
+) -> PromptConfig {
+    PromptConfig {
         base_instructions,
         personality: turn_context.personality,
         output_schema: turn_context.final_output_json_schema.clone(),
@@ -951,154 +949,21 @@ pub(crate) fn build_prompt(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-#[instrument(level = "trace",
-    skip_all,
-    fields(
-        turn_id = %turn_context.sub_id,
-        model = %turn_context.model_info.slug,
-        cwd = %turn_context.cwd.display()
-    )
-)]
-async fn run_sampling_request(
-    sess: Arc<Session>,
-    turn_context: Arc<TurnContext>,
-    turn_diff_tracker: SharedTurnDiffTracker,
-    client_session: &mut ModelClientSession,
-    turn_metadata_header: Option<&str>,
-    input: Vec<ResponseItem>,
-    explicitly_enabled_connectors: &HashSet<String>,
-    skills_outcome: Option<&SkillLoadOutcome>,
-    cancellation_token: CancellationToken,
-) -> CodexResult<SamplingRequestResult> {
-    let router = built_tools(
-        sess.as_ref(),
-        turn_context.as_ref(),
-        &input,
-        explicitly_enabled_connectors,
-        skills_outcome,
-        &cancellation_token,
-    )
-    .await?;
-
-    let base_instructions = sess.get_base_instructions().await;
-
-    let tool_runtime = ToolCallRuntime::new(
-        Arc::clone(&router),
-        Arc::clone(&sess),
-        Arc::clone(&turn_context),
-        Arc::clone(&turn_diff_tracker),
-    );
-    let _code_mode_worker = sess
-        .services
-        .code_mode_service
-        .start_turn_worker(
-            &sess,
-            &turn_context,
-            Arc::clone(&router),
-            Arc::clone(&turn_diff_tracker),
-        )
-        .await;
-    let mut retries = 0;
-    let mut initial_input = Some(input);
-    loop {
-        let prompt_input = if let Some(input) = initial_input.take() {
-            input
-        } else {
-            sess.clone_history()
-                .await
-                .for_prompt(&turn_context.model_info.input_modalities)
-        };
-        let prompt = build_prompt(
-            prompt_input,
-            router.as_ref(),
-            turn_context.as_ref(),
-            base_instructions.clone(),
-        );
-        let err = match try_run_sampling_request(
-            tool_runtime.clone(),
-            Arc::clone(&sess),
-            Arc::clone(&turn_context),
-            client_session,
-            turn_metadata_header,
-            Arc::clone(&turn_diff_tracker),
-            &prompt,
-            cancellation_token.child_token(),
-        )
-        .await
-        {
-            Ok(output) => {
-                return Ok(output);
-            }
-            Err(CodexErr::ContextWindowExceeded) => {
-                sess.set_total_tokens_full(&turn_context).await;
-                return Err(CodexErr::ContextWindowExceeded);
-            }
-            Err(CodexErr::UsageLimitReached(e)) => {
-                let rate_limits = e.rate_limits.clone();
-                if let Some(rate_limits) = rate_limits {
-                    sess.update_rate_limits(&turn_context, *rate_limits).await;
-                }
-                return Err(CodexErr::UsageLimitReached(e));
-            }
-            Err(err) => err,
-        };
-
-        if !err.is_retryable() {
-            return Err(err);
-        }
-
-        // Use the configured provider-specific stream retry budget.
-        let max_retries = turn_context.provider.info().stream_max_retries();
-        if retries >= max_retries
-            && client_session.try_switch_fallback_transport(
-                &turn_context.session_telemetry,
-                &turn_context.model_info,
-            )
-        {
-            sess.send_event(
-                &turn_context,
-                EventMsg::Warning(WarningEvent {
-                    message: format!("Falling back from WebSockets to HTTPS transport. {err:#}"),
-                }),
-            )
-            .await;
-            retries = 0;
-            continue;
-        }
-        if retries < max_retries {
-            retries += 1;
-            let delay = match &err {
-                CodexErr::Stream(_, requested_delay) => {
-                    requested_delay.unwrap_or_else(|| backoff(retries))
-                }
-                _ => backoff(retries),
-            };
-            warn!(
-                "stream disconnected - retrying sampling request ({retries}/{max_retries} in {delay:?})...",
-            );
-
-            // In release builds, hide the first websocket retry notification to reduce noisy
-            // transient reconnect messages. In debug builds, keep full visibility for diagnosis.
-            let report_error = retries > 1
-                || cfg!(debug_assertions)
-                || !sess.services.model_client.responses_websocket_enabled();
-            if report_error {
-                // Surface retry information to any UI/front‑end so the
-                // user understands what is happening instead of staring
-                // at a seemingly frozen screen.
-                sess.notify_stream_error(
-                    &turn_context,
-                    format!("Reconnecting... {retries}/{max_retries}"),
-                    err,
-                )
-                .await;
-            }
-            tokio::time::sleep(delay).await;
-        } else {
-            return Err(err);
-        }
+pub(super) fn build_tool_config(router: &ToolRouter, turn_context: &TurnContext) -> ToolConfig {
+    ToolConfig {
+        tools: router.model_visible_specs(),
+        parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
     }
+}
+
+pub(crate) fn build_prompt(
+    input: Vec<ResponseItem>,
+    router: &ToolRouter,
+    turn_context: &TurnContext,
+    base_instructions: BaseInstructions,
+) -> Prompt {
+    build_prompt_config(turn_context, base_instructions)
+        .build_prompt(input, &build_tool_config(router, turn_context))
 }
 
 #[expect(
@@ -1241,12 +1106,6 @@ pub(crate) async fn built_tools(
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
         },
     )))
-}
-
-#[derive(Debug)]
-struct SamplingRequestResult {
-    needs_follow_up: bool,
-    last_agent_message: Option<String>,
 }
 
 /// Ephemeral per-response state for streaming a single proposed plan.
@@ -1806,7 +1665,7 @@ async fn drain_in_flight(
         model = %turn_context.model_info.slug
     )
 )]
-async fn try_run_sampling_request(
+pub(super) async fn try_run_sampling_request(
     tool_runtime: ToolCallRuntime,
     sess: Arc<Session>,
     turn_context: Arc<TurnContext>,

@@ -10,18 +10,18 @@ use tokio_util::sync::CancellationToken;
 
 use crate::context::ContextualUserFragment;
 use crate::context::ImageGenerationInstructions;
-use crate::function_tool::FunctionCallError;
 use crate::parse_turn_item;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::parallel::ToolCallRuntime;
-use crate::tools::router::ToolRouter;
+use codex_kernel::CompletedResponseItem;
+use codex_kernel::KernelToolExecutor;
+use codex_kernel::execute_tool_call_with_default_output;
+use codex_kernel::response_input_to_response_item;
 use codex_memories_read::citations::parse_memory_citation;
 use codex_memories_read::citations::thread_ids_from_memory_citation;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result;
-use codex_protocol::models::FunctionCallOutputBody;
-use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
@@ -225,9 +225,8 @@ pub(crate) async fn handle_output_item_done(
     let mut output = OutputItemResult::default();
     let plan_mode = ctx.turn_context.collaboration_mode.mode == ModeKind::Plan;
 
-    match ToolRouter::build_tool_call(ctx.sess.as_ref(), item.clone()).await {
-        // The model emitted a tool call; log it, persist the item immediately, and queue the tool execution.
-        Ok(Some(call)) => {
+    match ctx.tool_runtime.classify_response_item(item).await? {
+        CompletedResponseItem::ToolCall { item, call } => {
             ctx.sess
                 .accept_mailbox_delivery_for_current_turn(&ctx.turn_context.sub_id)
                 .await;
@@ -244,17 +243,15 @@ pub(crate) async fn handle_output_item_done(
                 .await;
 
             let cancellation_token = ctx.cancellation_token.child_token();
-            let tool_future: InFlightFuture<'static> = Box::pin(
-                ctx.tool_runtime
-                    .clone()
-                    .handle_tool_call(call, cancellation_token),
-            );
+            let tool_runtime = ctx.tool_runtime.clone();
+            let tool_future: InFlightFuture<'static> = Box::pin(async move {
+                execute_tool_call_with_default_output(&tool_runtime, call, cancellation_token).await
+            });
 
             output.needs_follow_up = true;
             output.tool_future = Some(tool_future);
         }
-        // No tool call: convert messages/reasoning into turn items and mark them as complete.
-        Ok(None) => {
+        CompletedResponseItem::NonTool(item) => {
             if let Some(turn_item) = handle_non_tool_response_item(
                 ctx.sess.as_ref(),
                 ctx.turn_context.as_ref(),
@@ -286,21 +283,7 @@ pub(crate) async fn handle_output_item_done(
 
             output.last_agent_message = last_agent_message;
         }
-        // Guardrail: the model issued a LocalShellCall without an id; surface the error back into history.
-        Err(FunctionCallError::MissingLocalShellCallId) => {
-            let msg = "LocalShellCall without call_id or id";
-            ctx.turn_context
-                .session_telemetry
-                .log_tool_failed("local_shell", msg);
-            tracing::error!(msg);
-
-            let response = ResponseInputItem::FunctionCallOutput {
-                call_id: String::new(),
-                output: FunctionCallOutputPayload {
-                    body: FunctionCallOutputBody::Text(msg.to_string()),
-                    ..Default::default()
-                },
-            };
+        CompletedResponseItem::ImmediateResponse { item, response } => {
             record_completed_response_item(ctx.sess.as_ref(), ctx.turn_context.as_ref(), &item)
                 .await;
             if let Some(response_item) = response_input_to_response_item(&response) {
@@ -313,32 +296,6 @@ pub(crate) async fn handle_output_item_done(
             }
 
             output.needs_follow_up = true;
-        }
-        // The tool request should be answered directly (or was denied); push that response into the transcript.
-        Err(FunctionCallError::RespondToModel(message)) => {
-            let response = ResponseInputItem::FunctionCallOutput {
-                call_id: String::new(),
-                output: FunctionCallOutputPayload {
-                    body: FunctionCallOutputBody::Text(message),
-                    ..Default::default()
-                },
-            };
-            record_completed_response_item(ctx.sess.as_ref(), ctx.turn_context.as_ref(), &item)
-                .await;
-            if let Some(response_item) = response_input_to_response_item(&response) {
-                ctx.sess
-                    .record_conversation_items(
-                        &ctx.turn_context,
-                        std::slice::from_ref(&response_item),
-                    )
-                    .await;
-            }
-
-            output.needs_follow_up = true;
-        }
-        // A fatal error occurred; surface it back into history.
-        Err(FunctionCallError::Fatal(message)) => {
-            return Err(CodexErr::Fatal(message));
         }
     }
 
@@ -462,45 +419,6 @@ fn completed_item_defers_mailbox_delivery_to_next_turn(
         }
         ResponseItem::ImageGenerationCall { .. } => true,
         _ => false,
-    }
-}
-
-pub(crate) fn response_input_to_response_item(input: &ResponseInputItem) -> Option<ResponseItem> {
-    match input {
-        ResponseInputItem::FunctionCallOutput { call_id, output } => {
-            Some(ResponseItem::FunctionCallOutput {
-                call_id: call_id.clone(),
-                output: output.clone(),
-            })
-        }
-        ResponseInputItem::CustomToolCallOutput {
-            call_id,
-            name,
-            output,
-        } => Some(ResponseItem::CustomToolCallOutput {
-            call_id: call_id.clone(),
-            name: name.clone(),
-            output: output.clone(),
-        }),
-        ResponseInputItem::McpToolCallOutput { call_id, output } => {
-            let output = output.as_function_call_output_payload();
-            Some(ResponseItem::FunctionCallOutput {
-                call_id: call_id.clone(),
-                output,
-            })
-        }
-        ResponseInputItem::ToolSearchOutput {
-            call_id,
-            status,
-            execution,
-            tools,
-        } => Some(ResponseItem::ToolSearchOutput {
-            call_id: Some(call_id.clone()),
-            status: status.clone(),
-            execution: execution.clone(),
-            tools: tools.clone(),
-        }),
-        _ => None,
     }
 }
 

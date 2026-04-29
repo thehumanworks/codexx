@@ -188,6 +188,7 @@ mod mcp;
 mod multi_agents;
 mod review;
 mod rollout_reconstruction;
+mod sampling_loop;
 #[allow(clippy::module_inception)]
 pub(crate) mod session;
 pub(crate) mod turn;

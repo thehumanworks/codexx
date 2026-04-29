@@ -20,8 +20,14 @@ use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::router::ToolCall;
 use crate::tools::router::ToolCallSource;
 use crate::tools::router::ToolRouter;
+use codex_kernel::CompletedResponseItem;
+use codex_kernel::KernelToolCall;
+use codex_kernel::KernelToolExecutor;
+use codex_kernel::ToolCallError;
 use codex_protocol::error::CodexErr;
+use codex_protocol::error::Result as CodexResult;
 use codex_protocol::models::ResponseInputItem;
+use codex_protocol::models::ResponseItem;
 use codex_tools::ToolSpec;
 
 #[derive(Clone)]
@@ -58,25 +64,6 @@ impl ToolCallRuntime {
         tool_name: &codex_tools::ToolName,
     ) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
         self.router.create_diff_consumer(tool_name)
-    }
-
-    #[instrument(level = "trace", skip_all)]
-    pub(crate) fn handle_tool_call(
-        self,
-        call: ToolCall,
-        cancellation_token: CancellationToken,
-    ) -> impl std::future::Future<Output = Result<ResponseInputItem, CodexErr>> {
-        let error_call = call.clone();
-        let future =
-            self.handle_tool_call_with_source(call, ToolCallSource::Direct, cancellation_token);
-        async move {
-            match future.await {
-                Ok(response) => Ok(response.into_response()),
-                Err(FunctionCallError::Fatal(message)) => Err(CodexErr::Fatal(message)),
-                Err(other) => Ok(Self::failure_response(error_call, other)),
-            }
-        }
-        .in_current_span()
     }
 
     #[instrument(level = "trace", skip_all)]
@@ -144,33 +131,6 @@ impl ToolCallRuntime {
 }
 
 impl ToolCallRuntime {
-    fn failure_response(call: ToolCall, err: FunctionCallError) -> ResponseInputItem {
-        let message = err.to_string();
-        match call.payload {
-            ToolPayload::ToolSearch { .. } => ResponseInputItem::ToolSearchOutput {
-                call_id: call.call_id,
-                status: "completed".to_string(),
-                execution: "client".to_string(),
-                tools: Vec::new(),
-            },
-            ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
-                call_id: call.call_id,
-                name: None,
-                output: codex_protocol::models::FunctionCallOutputPayload {
-                    body: codex_protocol::models::FunctionCallOutputBody::Text(message),
-                    success: Some(false),
-                },
-            },
-            _ => ResponseInputItem::FunctionCallOutput {
-                call_id: call.call_id,
-                output: codex_protocol::models::FunctionCallOutputPayload {
-                    body: codex_protocol::models::FunctionCallOutputBody::Text(message),
-                    success: Some(false),
-                },
-            },
-        }
-    }
-
     fn aborted_response(call: &ToolCall, secs: f32) -> AnyToolResult {
         AnyToolResult {
             call_id: call.call_id.clone(),
@@ -193,5 +153,89 @@ impl ToolCallRuntime {
         } else {
             format!("aborted by user after {secs:.1}s")
         }
+    }
+}
+
+impl KernelToolCall for ToolCall {
+    fn error_response(&self, message: String) -> ResponseInputItem {
+        failure_response(self, message)
+    }
+}
+
+impl KernelToolExecutor for ToolCallRuntime {
+    type Call = ToolCall;
+
+    async fn classify_response_item(
+        &self,
+        item: ResponseItem,
+    ) -> CodexResult<CompletedResponseItem<Self::Call>> {
+        match ToolRouter::build_tool_call(self.session.as_ref(), item.clone()).await {
+            Ok(Some(call)) => Ok(CompletedResponseItem::ToolCall { item, call }),
+            Ok(None) => Ok(CompletedResponseItem::NonTool(item)),
+            Err(FunctionCallError::MissingLocalShellCallId) => {
+                let response = ResponseInputItem::FunctionCallOutput {
+                    call_id: String::new(),
+                    output: codex_protocol::models::FunctionCallOutputPayload::from_text(
+                        "LocalShellCall without call_id or id".to_string(),
+                    ),
+                };
+                Ok(CompletedResponseItem::ImmediateResponse { item, response })
+            }
+            Err(FunctionCallError::RespondToModel(message)) => {
+                let response = ResponseInputItem::FunctionCallOutput {
+                    call_id: String::new(),
+                    output: codex_protocol::models::FunctionCallOutputPayload::from_text(message),
+                };
+                Ok(CompletedResponseItem::ImmediateResponse { item, response })
+            }
+            Err(FunctionCallError::Fatal(message)) => Err(CodexErr::Fatal(message)),
+        }
+    }
+
+    async fn execute_tool_call(
+        &self,
+        call: Self::Call,
+        cancellation_token: CancellationToken,
+    ) -> Result<ResponseInputItem, ToolCallError> {
+        match self
+            .clone()
+            .handle_tool_call_with_source(call, ToolCallSource::Direct, cancellation_token)
+            .await
+        {
+            Ok(result) => Ok(result.into_response()),
+            Err(FunctionCallError::RespondToModel(message)) => {
+                Err(ToolCallError::RespondToModel(message))
+            }
+            Err(FunctionCallError::MissingLocalShellCallId) => Err(ToolCallError::RespondToModel(
+                "LocalShellCall without call_id or id".to_string(),
+            )),
+            Err(FunctionCallError::Fatal(message)) => Err(ToolCallError::Fatal(message)),
+        }
+    }
+}
+
+fn failure_response(call: &ToolCall, message: String) -> ResponseInputItem {
+    match &call.payload {
+        ToolPayload::ToolSearch { .. } => ResponseInputItem::ToolSearchOutput {
+            call_id: call.call_id.clone(),
+            status: "completed".to_string(),
+            execution: "client".to_string(),
+            tools: Vec::new(),
+        },
+        ToolPayload::Custom { .. } => ResponseInputItem::CustomToolCallOutput {
+            call_id: call.call_id.clone(),
+            name: None,
+            output: codex_protocol::models::FunctionCallOutputPayload {
+                body: codex_protocol::models::FunctionCallOutputBody::Text(message),
+                success: Some(false),
+            },
+        },
+        _ => ResponseInputItem::FunctionCallOutput {
+            call_id: call.call_id.clone(),
+            output: codex_protocol::models::FunctionCallOutputPayload {
+                body: codex_protocol::models::FunctionCallOutputBody::Text(message),
+                success: Some(false),
+            },
+        },
     }
 }

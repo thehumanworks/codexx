@@ -43,6 +43,7 @@ members = [
     "external-agent-migration",
     "external-agent-sessions",
     "keyring-store",
+    "kernel",
     "file-search",
     "linux-sandbox",
     "lmstudio",
@@ -158,6 +159,7 @@ codex-file-search = { path = "file-search" }
 codex-git-utils = { path = "git-utils" }
 codex-hooks = { path = "hooks" }
 codex-keyring-store = { path = "keyring-store" }
+codex-kernel = { path = "kernel" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }

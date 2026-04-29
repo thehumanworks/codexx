@@ -1,0 +1,25 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-kernel"
+version.workspace = true
+
+[lib]
+doctest = false
+name = "codex_kernel"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-protocol = { workspace = true }
+codex-tools = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["time"] }
+tokio-util = { workspace = true, features = ["rt"] }
+
+[dev-dependencies]
+pretty_assertions = { workspace = true }

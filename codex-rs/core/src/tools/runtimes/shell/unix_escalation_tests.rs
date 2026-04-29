@@ -338,23 +338,25 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
     std::fs::write(
         &script_path,
         format!(
-            "#!/bin/sh\ncat > {log_path}\nprintf '%s\\n' '{response}'\n",
-            log_path = shlex::try_quote(log_path.to_string_lossy().as_ref())?,
+            r#"import json
+from pathlib import Path
+import sys
+
+payload = json.load(sys.stdin)
+with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload) + "\n")
+
+print({response:?})
+"#,
+            log_path = log_path.display(),
             response = "{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}",
         ),
     )
     .with_context(|| format!("write hook script to {}", script_path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = std::fs::metadata(&script_path)
-            .with_context(|| format!("read hook script metadata from {}", script_path.display()))?
-            .permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&script_path, permissions)
-            .with_context(|| format!("set hook script permissions on {}", script_path.display()))?;
-    }
+    let script_path_arg = format!(
+        "'{}'",
+        script_path.display().to_string().replace('\'', "'\\''")
+    );
     std::fs::write(
         turn_context.config.codex_home.join("hooks.json"),
         serde_json::json!({
@@ -362,7 +364,7 @@ async fn execve_permission_request_hook_short_circuits_prompt() -> anyhow::Resul
                 "PermissionRequest": [{
                     "hooks": [{
                         "type": "command",
-                        "command": script_path.display().to_string(),
+                        "command": format!("python3 {script_path_arg}"),
                     }]
                 }]
             }
