@@ -290,6 +290,9 @@ impl StreamController {
     }
 
     pub(crate) fn active_tail_cell(&self) -> Option<Box<dyn HistoryCell>> {
+        if self.core.queued_lines() > 0 {
+            return None;
+        }
         let lines = self.core.active_tail_lines();
         if lines.is_empty() {
             return None;
@@ -396,6 +399,9 @@ impl PlanStreamController {
     }
 
     pub(crate) fn active_tail_cell(&self) -> Option<Box<dyn HistoryCell>> {
+        if self.core.queued_lines() > 0 {
+            return None;
+        }
         let lines = self.core.active_tail_lines();
         if lines.is_empty() {
             return None;
@@ -675,10 +681,79 @@ mod tests {
             ctrl.queued_lines() > 0,
             "table should enter stable queue after a later block appears"
         );
+        assert_eq!(
+            active_tail_plain_strings(&ctrl),
+            Vec::<String>::new(),
+            "later block should wait behind the queued stable table",
+        );
+
+        let (_cell, idle) = ctrl.on_commit_tick_batch(/*max_lines*/ usize::MAX);
+        assert!(idle);
         let new_tail = active_tail_plain_strings(&ctrl);
         assert!(
             new_tail.iter().any(|line| line.contains("After table.")),
-            "later block should become new active tail: {new_tail:?}",
+            "later block should become active tail after queued table drains: {new_tail:?}",
+        );
+    }
+
+    #[test]
+    fn active_tail_waits_for_queued_stable_blocks() {
+        let mut ctrl = stream_controller(/*width*/ Some(80));
+
+        assert!(ctrl.push("first\n\nsecond\n"));
+
+        assert_eq!(
+            active_tail_plain_strings(&ctrl),
+            Vec::<String>::new(),
+            "new tail must not render ahead of queued stable content",
+        );
+
+        let (cell, idle) = ctrl.on_commit_tick();
+        let emitted = lines_to_plain_strings(
+            &cell
+                .expect("expected queued stable block to emit first")
+                .transcript_lines(u16::MAX),
+        );
+        assert_eq!(emitted, vec!["• first"]);
+        assert!(idle);
+
+        assert_eq!(active_tail_plain_strings(&ctrl), vec!["  second"]);
+    }
+
+    #[test]
+    fn plan_active_tail_waits_for_queued_stable_blocks() {
+        let mut ctrl = plan_stream_controller(/*width*/ Some(80));
+
+        assert!(ctrl.push("first\n\nsecond\n"));
+
+        assert!(
+            ctrl.active_tail_cell().is_none(),
+            "new plan tail must not render ahead of queued stable content",
+        );
+
+        let (cell, idle) = ctrl.on_commit_tick();
+        let emitted = lines_to_plain_strings(
+            &cell
+                .expect("expected queued stable plan block to emit first")
+                .transcript_lines(u16::MAX),
+        );
+        assert!(
+            emitted.iter().any(|line| line.contains("Proposed Plan"))
+                && emitted.iter().any(|line| line.contains("first")),
+            "first plan block should emit before active tail: {emitted:?}",
+        );
+        assert!(idle);
+
+        let tail = lines_to_plain_strings(
+            &ctrl
+                .active_tail_cell()
+                .expect("expected active tail after queue drains")
+                .transcript_lines(u16::MAX),
+        );
+        assert!(
+            tail.iter().all(|line| !line.contains("Proposed Plan"))
+                && tail.iter().any(|line| line.contains("second")),
+            "tail should continue the existing plan cell without a duplicate header: {tail:?}",
         );
     }
 

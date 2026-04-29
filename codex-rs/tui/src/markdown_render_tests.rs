@@ -128,6 +128,38 @@ fn table_inline_links_and_html_breaks_stay_inside_table() {
 }
 
 #[test]
+fn table_boundary_normalization_does_not_mutate_code_blocks() {
+    let markdown = "```\n| A | B |\n| --- | --- |\n```\nAfter.\n";
+    let rendered = render_markdown_text(markdown);
+
+    assert_eq!(
+        rendered,
+        Text::from_iter([
+            Line::from_iter(["", "| A | B |"]),
+            Line::from_iter(["", "| --- | --- |"]),
+            Line::default(),
+            Line::from("After."),
+        ]),
+    );
+}
+
+#[test]
+fn table_boundary_normalization_does_not_mutate_indented_code_blocks() {
+    let markdown = "    | A | B |\n    | --- | --- |\nAfter.\n";
+    let rendered = render_markdown_text(markdown);
+
+    assert_eq!(
+        rendered,
+        Text::from_iter([
+            Line::from_iter(["    ", "| A | B |"]),
+            Line::from_iter(["    ", "| --- | --- |"]),
+            Line::default(),
+            Line::from("After."),
+        ]),
+    );
+}
+
+#[test]
 fn empty() {
     assert_eq!(render_markdown_text(""), Text::default());
 }

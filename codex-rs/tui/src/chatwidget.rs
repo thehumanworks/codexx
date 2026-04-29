@@ -4289,9 +4289,18 @@ impl ChatWidget {
             scope,
             now,
         );
+        let emitted_cells = !outcome.cells.is_empty();
         for cell in outcome.cells {
             self.bottom_pane.hide_status_indicator();
             self.add_boxed_history(cell);
+        }
+        if emitted_cells {
+            if self.stream_controller.is_some() {
+                self.sync_agent_stream_active_tail();
+            }
+            if self.plan_stream_controller.is_some() {
+                self.sync_plan_stream_active_tail();
+            }
         }
 
         if outcome.has_controller && outcome.all_idle {

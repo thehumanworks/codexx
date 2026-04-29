@@ -106,8 +106,22 @@ pub(super) fn normalize_table_boundaries(input: &str) -> Cow<'_, str> {
     let mut out = String::with_capacity(input.len());
     let mut changed = false;
     let mut index = 0;
+    let mut code_fence: Option<(char, usize)> = None;
     while index < lines.len() {
-        if index + 1 < lines.len()
+        if let Some(fence) = code_fence {
+            out.push_str(lines[index]);
+            if is_closing_code_fence(lines[index], fence) {
+                code_fence = None;
+            }
+            index += 1;
+        } else if let Some(fence) = opening_code_fence(lines[index]) {
+            code_fence = Some(fence);
+            out.push_str(lines[index]);
+            index += 1;
+        } else if is_indented_code_line(lines[index]) {
+            out.push_str(lines[index]);
+            index += 1;
+        } else if index + 1 < lines.len()
             && is_table_row_source(lines[index])
             && is_table_delimiter_source(lines[index + 1])
         {
@@ -135,6 +149,47 @@ pub(super) fn normalize_table_boundaries(input: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(input)
     }
+}
+
+fn opening_code_fence(line: &str) -> Option<(char, usize)> {
+    let trimmed = strip_fence_indent(line)?;
+    let mut chars = trimmed.chars();
+    let marker = chars.next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+
+    let marker_count = 1 + chars.take_while(|ch| *ch == marker).count();
+    (marker_count >= 3).then_some((marker, marker_count))
+}
+
+fn is_closing_code_fence(line: &str, (marker, opening_count): (char, usize)) -> bool {
+    let Some(trimmed) = strip_fence_indent(line) else {
+        return false;
+    };
+    let marker_count = trimmed.chars().take_while(|ch| *ch == marker).count();
+    marker_count >= opening_count
+        && trimmed[marker.len_utf8() * marker_count..]
+            .trim()
+            .is_empty()
+}
+
+fn strip_fence_indent(line: &str) -> Option<&str> {
+    let mut spaces = 0usize;
+    for (index, ch) in line.char_indices() {
+        if ch != ' ' {
+            return (spaces <= 3).then_some(&line[index..]);
+        }
+        spaces += 1;
+        if spaces > 3 {
+            return None;
+        }
+    }
+    Some("")
+}
+
+fn is_indented_code_line(line: &str) -> bool {
+    line.starts_with("    ") || line.starts_with('\t')
 }
 
 fn is_table_row_source(line: &str) -> bool {
