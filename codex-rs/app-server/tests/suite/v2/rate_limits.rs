@@ -5,6 +5,7 @@ use app_test_support::to_response;
 use app_test_support::write_chatgpt_auth;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
+use codex_app_server_protocol::ClientInfo;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
 use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCResponse;
@@ -149,12 +150,21 @@ async fn get_account_rate_limits_returns_snapshot() -> Result<()> {
         .and(path("/api/codex/usage"))
         .and(header("authorization", "Bearer chatgpt-token"))
         .and(header("chatgpt-account-id", "account-123"))
+        .and(header("originator", "codex-tui"))
         .respond_with(ResponseTemplate::new(200).set_body_json(response_body))
         .mount(&server)
         .await;
 
     let mut mcp = McpProcess::new_with_env(codex_home.path(), &[("OPENAI_API_KEY", None)]).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.initialize_with_client_info(ClientInfo {
+            name: "codex-tui".to_string(),
+            title: None,
+            version: "0.1.0".to_string(),
+        }),
+    )
+    .await??;
 
     let request_id = mcp.send_get_account_rate_limits_request().await?;
 

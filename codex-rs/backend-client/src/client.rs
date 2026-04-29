@@ -10,6 +10,7 @@ use codex_client::build_reqwest_client_with_custom_ca;
 use codex_client::with_chatgpt_cloudflare_cookie_store;
 use codex_login::CodexAuth;
 use codex_login::default_client::get_codex_user_agent;
+use codex_login::default_client::originator;
 use codex_protocol::account::PlanType as AccountPlanType;
 use codex_protocol::protocol::CreditsSnapshot;
 use codex_protocol::protocol::RateLimitReachedType;
@@ -204,6 +205,7 @@ impl Client {
 
     fn headers(&self) -> HeaderMap {
         let mut h = HeaderMap::new();
+        h.insert("originator", originator().header_value);
         if let Some(ua) = &self.user_agent {
             h.insert(USER_AGENT, ua.clone());
         } else {
