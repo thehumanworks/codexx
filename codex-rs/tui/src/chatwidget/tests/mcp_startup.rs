@@ -1,17 +1,23 @@
 use super::*;
 use pretty_assertions::assert_eq;
 
-fn notify_mcp_status(
-    chat: &mut ChatWidget,
-    name: &str,
-    status: McpServerStartupState,
-    error: Option<&str>,
-) {
+fn notify_mcp_status(chat: &mut ChatWidget, name: &str, status: McpServerStartupState) {
     chat.handle_server_notification(
         ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
             name: name.to_string(),
             status,
-            error: error.map(str::to_string),
+            error: None,
+        }),
+        /*replay_kind*/ None,
+    );
+}
+
+fn notify_mcp_status_error(chat: &mut ChatWidget, name: &str, error: &str) {
+    chat.handle_server_notification(
+        ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+            name: name.to_string(),
+            status: McpServerStartupState::Failed,
+            error: Some(error.to_string()),
         }),
         /*replay_kind*/ None,
     );
@@ -22,7 +28,7 @@ async fn mcp_startup_header_booting_snapshot() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.show_welcome_banner = false;
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
 
     let height = chat.desired_height(/*width*/ 80);
     let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, height))
@@ -54,18 +60,8 @@ async fn mcp_startup_complete_does_not_clear_running_task() {
     assert!(chat.bottom_pane.status_indicator_visible());
 
     chat.set_mcp_startup_expected_servers(["schaltwerk".to_string()]);
-    notify_mcp_status(
-        &mut chat,
-        "schaltwerk",
-        McpServerStartupState::Starting,
-        /*error*/ None,
-    );
-    notify_mcp_status(
-        &mut chat,
-        "schaltwerk",
-        McpServerStartupState::Ready,
-        /*error*/ None,
-    );
+    notify_mcp_status(&mut chat, "schaltwerk", McpServerStartupState::Starting);
+    notify_mcp_status(&mut chat, "schaltwerk", McpServerStartupState::Ready);
 
     assert!(chat.bottom_pane.is_task_running());
     assert!(chat.bottom_pane.status_indicator_visible());
@@ -77,16 +73,15 @@ async fn app_server_mcp_startup_failure_renders_warning_history() {
     chat.show_welcome_banner = false;
     chat.set_mcp_startup_expected_servers(["alpha".to_string(), "beta".to_string()]);
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
 
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
 
     let failure_cells = drain_insert_history(&mut rx);
@@ -98,12 +93,12 @@ async fn app_server_mcp_startup_failure_renders_warning_history() {
     assert!(!failure_text.contains("MCP startup incomplete"));
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
 
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     let summary_cells = drain_insert_history(&mut rx);
     let summary_text = summary_cells
@@ -144,14 +139,13 @@ async fn app_server_mcp_startup_lag_settles_startup_and_ignores_late_updates() {
     chat.show_welcome_banner = false;
     chat.set_mcp_startup_expected_servers(["alpha".to_string(), "beta".to_string()]);
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
-    notify_mcp_status(
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
 
     let _ = drain_insert_history(&mut rx);
     assert!(chat.bottom_pane.is_task_running());
@@ -167,12 +161,12 @@ async fn app_server_mcp_startup_lag_settles_startup_and_ignores_late_updates() {
     assert!(summary_text.contains("MCP startup incomplete (failed: alpha)"));
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
 
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(!chat.bottom_pane.is_task_running());
@@ -186,11 +180,10 @@ async fn app_server_mcp_startup_after_lag_can_settle_without_starting_updates() 
 
     chat.finish_mcp_startup_after_lag();
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
 
     let failure_text = drain_insert_history(&mut rx)
@@ -200,7 +193,7 @@ async fn app_server_mcp_startup_after_lag_can_settle_without_starting_updates() 
     assert!(failure_text.contains("MCP client for `alpha` failed to start: handshake failed"));
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     let summary_text = drain_insert_history(&mut rx)
         .iter()
@@ -216,25 +209,23 @@ async fn app_server_mcp_startup_after_lag_preserves_partial_terminal_only_round(
     chat.show_welcome_banner = false;
     chat.set_mcp_startup_expected_servers(["alpha".to_string(), "beta".to_string()]);
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
-    notify_mcp_status(
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
     let _ = drain_insert_history(&mut rx);
 
     chat.finish_mcp_startup_after_lag();
     let _ = drain_insert_history(&mut rx);
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
 
     assert!(drain_insert_history(&mut rx).is_empty());
@@ -242,7 +233,7 @@ async fn app_server_mcp_startup_after_lag_preserves_partial_terminal_only_round(
 
     chat.finish_mcp_startup_after_lag();
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     let summary_text = drain_insert_history(&mut rx)
         .iter()
@@ -259,37 +250,35 @@ async fn app_server_mcp_startup_next_round_discards_stale_terminal_updates() {
     chat.show_welcome_banner = false;
     chat.set_mcp_startup_expected_servers(["alpha".to_string(), "beta".to_string()]);
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
-    notify_mcp_status(
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
     let _ = drain_insert_history(&mut rx);
 
     chat.finish_mcp_startup_after_lag();
     let _ = drain_insert_history(&mut rx);
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: stale handshake failed"),
+        "MCP client for `alpha` failed to start: stale handshake failed",
     );
     assert!(drain_insert_history(&mut rx).is_empty());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Ready);
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     let summary_text = drain_insert_history(&mut rx)
         .iter()
@@ -307,14 +296,13 @@ async fn app_server_mcp_startup_next_round_keeps_terminal_statuses_after_startin
 
     chat.finish_mcp_startup_after_lag();
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
     assert!(drain_insert_history(&mut rx).is_empty());
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
 
     let failure_text = drain_insert_history(&mut rx)
@@ -323,11 +311,11 @@ async fn app_server_mcp_startup_next_round_keeps_terminal_statuses_after_startin
         .collect::<String>();
     assert!(failure_text.contains("MCP client for `alpha` failed to start: handshake failed"));
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     let summary_text = drain_insert_history(&mut rx)
         .iter()
@@ -344,20 +332,14 @@ async fn app_server_mcp_startup_next_round_with_empty_expected_servers_reactivat
     chat.set_mcp_startup_expected_servers(std::iter::empty::<String>());
     chat.finish_mcp_startup(Vec::new(), Vec::new());
 
-    notify_mcp_status(
-        &mut chat,
-        "runtime",
-        McpServerStartupState::Starting,
-        /*error*/ None,
-    );
+    notify_mcp_status(&mut chat, "runtime", McpServerStartupState::Starting);
     assert!(drain_insert_history(&mut rx).is_empty());
     assert!(chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "runtime",
-        McpServerStartupState::Failed,
-        Some("MCP client for `runtime` failed to start: handshake failed"),
+        "MCP client for `runtime` failed to start: handshake failed",
     );
 
     let summary_text = drain_insert_history(&mut rx)
@@ -375,11 +357,10 @@ async fn app_server_mcp_startup_after_lag_includes_runtime_servers_with_expected
     chat.show_welcome_banner = false;
     chat.set_mcp_startup_expected_servers(["alpha".to_string()]);
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "runtime",
-        McpServerStartupState::Failed,
-        Some("MCP client for `runtime` failed to start: handshake failed"),
+        "MCP client for `runtime` failed to start: handshake failed",
     );
 
     let warning_text = drain_insert_history(&mut rx)
@@ -405,35 +386,32 @@ async fn app_server_mcp_startup_next_round_after_lag_can_settle_without_starting
     chat.show_welcome_banner = false;
     chat.set_mcp_startup_expected_servers(["alpha".to_string(), "beta".to_string()]);
 
-    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting, /*error*/ None);
-    notify_mcp_status(
+    notify_mcp_status(&mut chat, "alpha", McpServerStartupState::Starting);
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Starting);
     let _ = drain_insert_history(&mut rx);
 
     chat.finish_mcp_startup_after_lag();
     let _ = drain_insert_history(&mut rx);
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: stale handshake failed"),
+        "MCP client for `alpha` failed to start: stale handshake failed",
     );
     assert!(drain_insert_history(&mut rx).is_empty());
 
     chat.finish_mcp_startup_after_lag();
 
-    notify_mcp_status(
+    notify_mcp_status_error(
         &mut chat,
         "alpha",
-        McpServerStartupState::Failed,
-        Some("MCP client for `alpha` failed to start: handshake failed"),
+        "MCP client for `alpha` failed to start: handshake failed",
     );
 
     let failure_text = drain_insert_history(&mut rx)
@@ -443,7 +421,7 @@ async fn app_server_mcp_startup_next_round_after_lag_can_settle_without_starting
     assert!(failure_text.is_empty());
     assert!(!chat.bottom_pane.is_task_running());
 
-    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready, /*error*/ None);
+    notify_mcp_status(&mut chat, "beta", McpServerStartupState::Ready);
 
     let summary_text = drain_insert_history(&mut rx)
         .iter()
