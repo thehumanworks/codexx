@@ -280,10 +280,8 @@ impl SandboxRuntimeConfig {
             permission_profile,
             network,
             managed_network_requirements_enabled: payload.managed_network_requirements_enabled,
-            cwd: AbsolutePathBuf::from_absolute_path(payload.sandbox_cwd)
-                .context("sandbox replay sandboxCwd must be absolute")?,
-            codex_home: AbsolutePathBuf::from_absolute_path(payload.codex_home)
-                .context("sandbox replay codexHome must be absolute")?,
+            cwd: payload.sandbox_cwd,
+            codex_home: payload.codex_home,
             env: payload.env,
             codex_linux_sandbox_exe: payload.codex_linux_sandbox_exe,
             use_legacy_landlock: payload.use_legacy_landlock,
@@ -423,11 +421,10 @@ async fn run_command_under_sandbox(
             .await?
         }
         SandboxType::Landlock => {
-            #[expect(clippy::expect_used)]
             let codex_linux_sandbox_exe = runtime_config
                 .codex_linux_sandbox_exe
                 .clone()
-                .expect("codex-linux-sandbox executable not found");
+                .context("codex-linux-sandbox executable not found")?;
             let use_legacy_landlock = runtime_config.use_legacy_landlock;
             let network_sandbox_policy = runtime_config.network_sandbox_policy();
             let args = create_linux_sandbox_command_args_for_permission_profile(
@@ -894,6 +891,7 @@ fn config_uses_permission_profiles(config: &Config) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_config::NetworkConstraints;
     use tempfile::TempDir;
 
     fn escape_toml_path(path: &std::path::Path) -> String {
@@ -922,19 +920,22 @@ mod tests {
         Ok(())
     }
 
-    fn sample_replay_payload(codex_home: &TempDir, cwd: &TempDir) -> SandboxReplayPayload {
-        SandboxReplayPayload {
+    fn sample_replay_payload(
+        codex_home: &TempDir,
+        cwd: &TempDir,
+    ) -> anyhow::Result<SandboxReplayPayload> {
+        Ok(SandboxReplayPayload {
             permission_profile: PermissionProfile::read_only(),
             network_proxy: None,
             managed_network_requirements_enabled: false,
-            sandbox_cwd: cwd.path().to_path_buf(),
-            codex_home: codex_home.path().to_path_buf(),
+            sandbox_cwd: AbsolutePathBuf::from_absolute_path(cwd.path())?,
+            codex_home: AbsolutePathBuf::from_absolute_path(codex_home.path())?,
             env: HashMap::from([("PATH".to_string(), "/usr/bin".to_string())]),
             codex_linux_sandbox_exe: Some(PathBuf::from("/tmp/codex-linux-sandbox")),
             use_legacy_landlock: true,
             windows_sandbox_level: WindowsSandboxLevel::Disabled,
             windows_sandbox_private_desktop: true,
-        }
+        })
     }
 
     #[tokio::test]
@@ -1118,7 +1119,7 @@ mod tests {
     fn sandbox_replay_payload_round_trips() -> anyhow::Result<()> {
         let codex_home = TempDir::new()?;
         let cwd = TempDir::new()?;
-        let payload = sample_replay_payload(&codex_home, &cwd);
+        let payload = sample_replay_payload(&codex_home, &cwd)?;
 
         let json = serde_json::to_string(&payload)?;
         let reparsed = parse_sandbox_replay_payload(&json)?;
@@ -1131,7 +1132,7 @@ mod tests {
     fn debug_sandbox_loads_replay_json_file() -> anyhow::Result<()> {
         let codex_home = TempDir::new()?;
         let cwd = TempDir::new()?;
-        let payload = sample_replay_payload(&codex_home, &cwd);
+        let payload = sample_replay_payload(&codex_home, &cwd)?;
         let replay_file = codex_home.path().join("replay.json");
         std::fs::write(&replay_file, serde_json::to_vec(&payload)?)?;
 
@@ -1158,7 +1159,7 @@ mod tests {
     fn debug_sandbox_replay_rejects_config_overrides() -> anyhow::Result<()> {
         let codex_home = TempDir::new()?;
         let cwd = TempDir::new()?;
-        let payload = sample_replay_payload(&codex_home, &cwd);
+        let payload = sample_replay_payload(&codex_home, &cwd)?;
 
         let err = DebugSandboxConfigSource::from_flags(
             DebugSandboxConfigOptions {
@@ -1187,7 +1188,7 @@ mod tests {
         let codex_home = TempDir::new()?;
         let cwd = TempDir::new()?;
         std::fs::write(codex_home.path().join("config.toml"), "invalid = [")?;
-        let payload = sample_replay_payload(&codex_home, &cwd);
+        let payload = sample_replay_payload(&codex_home, &cwd)?;
 
         let runtime = load_sandbox_runtime_config(
             DebugSandboxConfigSource::Replay(Box::new(payload.clone())),
@@ -1202,6 +1203,71 @@ mod tests {
             payload.codex_linux_sandbox_exe
         );
         assert_eq!(runtime.env, payload.env);
+
+        Ok(())
+    }
+
+    #[test]
+    fn sandbox_replay_payload_rejects_relative_paths() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        let payload = sample_replay_payload(&codex_home, &cwd)?;
+        let mut json = serde_json::to_value(payload)?;
+        json["sandboxCwd"] = serde_json::Value::String("relative".to_string());
+
+        parse_sandbox_replay_payload(&serde_json::to_string(&json)?)
+            .expect_err("relative sandboxCwd should be rejected");
+
+        Ok(())
+    }
+
+    #[test]
+    fn sandbox_replay_payload_preserves_managed_network_state() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        let mut payload = sample_replay_payload(&codex_home, &cwd)?;
+        let network_config = codex_network_proxy::NetworkProxyConfig::default();
+        let network_requirements = NetworkConstraints::default();
+        payload.network_proxy = Some(replay::SandboxReplayNetworkProxy {
+            config: network_config.clone(),
+            requirements: Some(network_requirements.clone()),
+        });
+        payload.managed_network_requirements_enabled = true;
+
+        let expected_network = NetworkProxySpec::from_config_and_constraints(
+            network_config,
+            Some(network_requirements),
+            &payload.permission_profile,
+        )?;
+        let runtime = SandboxRuntimeConfig::from_replay(payload)?;
+
+        assert_eq!(runtime.network, Some(expected_network));
+        assert!(runtime.managed_network_requirements_enabled);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn debug_sandbox_replay_requires_linux_sandbox_executable() -> anyhow::Result<()> {
+        let codex_home = TempDir::new()?;
+        let cwd = TempDir::new()?;
+        let mut payload = sample_replay_payload(&codex_home, &cwd)?;
+        payload.codex_linux_sandbox_exe = None;
+
+        let err = run_command_under_sandbox(
+            DebugSandboxConfigSource::Replay(Box::new(payload)),
+            vec!["true".to_string()],
+            /*codex_linux_sandbox_exe*/ None,
+            SandboxType::Landlock,
+        )
+        .await
+        .expect_err("missing codex-linux-sandbox should return an error");
+
+        assert!(
+            err.to_string()
+                .contains("codex-linux-sandbox executable not found"),
+            "unexpected error: {err}"
+        );
 
         Ok(())
     }

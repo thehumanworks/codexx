@@ -6,6 +6,7 @@ use codex_config::NetworkConstraints;
 use codex_network_proxy::NetworkProxyConfig;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::PermissionProfile;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -15,8 +16,8 @@ pub(super) struct SandboxReplayPayload {
     pub(super) permission_profile: PermissionProfile,
     pub(super) network_proxy: Option<SandboxReplayNetworkProxy>,
     pub(super) managed_network_requirements_enabled: bool,
-    pub(super) sandbox_cwd: PathBuf,
-    pub(super) codex_home: PathBuf,
+    pub(super) sandbox_cwd: AbsolutePathBuf,
+    pub(super) codex_home: AbsolutePathBuf,
     pub(super) env: HashMap<String, String>,
     pub(super) codex_linux_sandbox_exe: Option<PathBuf>,
     pub(super) use_legacy_landlock: bool,
