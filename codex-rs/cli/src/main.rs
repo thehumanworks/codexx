@@ -1986,18 +1986,22 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_macos_rejects_full_auto() {
-        let err = MultitoolCli::try_parse_from(["codex", "sandbox", "macos", "--full-auto"])
-            .expect_err("parse should fail");
+    fn sandbox_subcommands_reject_full_auto() {
+        for subcommand in ["macos", "linux", "windows"] {
+            let err = MultitoolCli::try_parse_from(["codex", "sandbox", subcommand, "--full-auto"])
+                .expect_err("parse should fail");
 
-        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+            assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 
     #[test]
-    fn sandbox_macos_help_omits_full_auto() {
-        let help = help_from_args(&["codex", "sandbox", "macos", "--help"]);
+    fn sandbox_subcommand_help_omits_full_auto() {
+        for subcommand in ["macos", "linux", "windows"] {
+            let help = help_from_args(&["codex", "sandbox", subcommand, "--help"]);
 
-        assert!(!help.contains("--full-auto"), "{help}");
+            assert!(!help.contains("--full-auto"), "{help}");
+        }
     }
 
     #[test]
