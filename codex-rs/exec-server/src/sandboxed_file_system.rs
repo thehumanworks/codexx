@@ -3,6 +3,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use std::ffi::OsString;
 use tokio::io;
 
 use crate::CopyOptions;
@@ -165,9 +166,14 @@ impl ExecutorFileSystem for SandboxedFileSystem {
             .entries
             .into_iter()
             .map(|entry| ReadDirectoryEntry {
-                file_name: entry.file_name,
-                is_directory: entry.is_directory,
-                is_file: entry.is_file,
+                file_name: OsString::from(entry.file_name),
+                metadata: FileMetadata {
+                    is_directory: entry.is_directory,
+                    is_file: entry.is_file,
+                    is_symlink: entry.is_symlink,
+                    created_at_ms: entry.created_at_ms,
+                    modified_at_ms: entry.modified_at_ms,
+                },
             })
             .collect())
     }

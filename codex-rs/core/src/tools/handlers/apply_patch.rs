@@ -38,13 +38,16 @@ use codex_apply_patch::ApplyPatchFileChange;
 use codex_apply_patch::Hunk;
 use codex_apply_patch::parse_patch_streaming;
 use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server::FileSystemSandboxContext;
 use codex_features::Feature;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileChange;
 use codex_protocol::protocol::PatchApplyUpdatedEvent;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
+use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
 use codex_sandboxing::policy_transforms::merge_permission_profiles;
 use codex_sandboxing::policy_transforms::normalize_additional_permissions;
 use codex_tools::ApplyPatchToolArgs;
@@ -267,6 +270,7 @@ async fn effective_patch_permissions(
     crate::tools::handlers::EffectiveAdditionalPermissions,
     codex_protocol::permissions::FileSystemSandboxPolicy,
 ) {
+    let cwd = &action.cwd;
     let file_paths = file_paths_for_action(action);
     let granted_permissions = merge_permission_profiles(
         session.granted_session_permissions().await.as_ref(),
@@ -279,9 +283,9 @@ async fn effective_patch_permissions(
     );
     let effective_additional_permissions = apply_granted_turn_permissions(
         session,
-        turn.cwd.as_path(),
+        cwd.as_path(),
         crate::sandboxing::SandboxPermissions::UseDefault,
-        write_permissions_for_paths(&file_paths, &file_system_sandbox_policy, &turn.cwd),
+        write_permissions_for_paths(&file_paths, &file_system_sandbox_policy, cwd),
     )
     .await;
 
@@ -290,6 +294,36 @@ async fn effective_patch_permissions(
         effective_additional_permissions,
         file_system_sandbox_policy,
     )
+}
+
+fn file_system_sandbox_context_for_cwd(
+    turn: &TurnContext,
+    cwd: &AbsolutePathBuf,
+    additional_permissions: Option<AdditionalPermissionProfile>,
+) -> FileSystemSandboxContext {
+    let permission_profile = turn.permission_profile();
+    let (base_file_system_sandbox_policy, base_network_sandbox_policy) =
+        permission_profile.to_runtime_permissions();
+    let file_system_sandbox_policy = effective_file_system_sandbox_policy(
+        &base_file_system_sandbox_policy,
+        additional_permissions.as_ref(),
+    );
+    let network_sandbox_policy = effective_network_sandbox_policy(
+        base_network_sandbox_policy,
+        additional_permissions.as_ref(),
+    );
+    let permissions = PermissionProfile::from_runtime_permissions_with_enforcement(
+        permission_profile.enforcement(),
+        &file_system_sandbox_policy,
+        network_sandbox_policy,
+    );
+    FileSystemSandboxContext {
+        permissions,
+        cwd: Some(cwd.clone()),
+        windows_sandbox_level: turn.windows_sandbox_level,
+        windows_sandbox_private_desktop: turn.config.permissions.windows_sandbox_private_desktop,
+        use_legacy_landlock: turn.features.use_legacy_landlock(),
+    }
 }
 
 impl ToolHandler for ApplyPatchHandler {
@@ -364,20 +398,25 @@ impl ToolHandler for ApplyPatchHandler {
 
         // Re-parse and verify the patch so we can compute changes and approval.
         // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
-        let cwd = turn.cwd.clone();
-        let command = vec!["apply_patch".to_string(), patch_input.clone()];
-        let Some(environment) = turn.environment.as_ref() else {
+        let Some(turn_environment) = turn.primary_environment() else {
             return Err(FunctionCallError::RespondToModel(
                 "apply_patch is unavailable in this session".to_string(),
             ));
         };
+        let environment = &turn_environment.environment;
+        let cwd = &turn_environment.cwd;
+        let command = vec!["apply_patch".to_string(), patch_input.clone()];
         let fs = environment.get_filesystem();
-        let sandbox = environment
-            .is_remote()
-            .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
+        let sandbox = environment.is_remote().then(|| {
+            file_system_sandbox_context_for_cwd(
+                turn.as_ref(),
+                cwd,
+                /*additional_permissions*/ None,
+            )
+        });
         match codex_apply_patch::maybe_parse_apply_patch_verified(
             &command,
-            &cwd,
+            cwd,
             fs.as_ref(),
             sandbox.as_ref(),
         )
@@ -476,15 +515,26 @@ pub(crate) async fn intercept_apply_patch(
     call_id: &str,
     tool_name: &str,
 ) -> Result<Option<FunctionToolOutput>, FunctionCallError> {
-    let sandbox = turn
-        .environment
-        .as_ref()
-        .filter(|env| env.is_remote())
-        .map(|_| turn.file_system_sandbox_context(/*additional_permissions*/ None));
+    let has_attached_environment = turn.has_attached_environment();
+    let sandbox = turn.primary_environment().and_then(|turn_environment| {
+        turn_environment.environment.is_remote().then(|| {
+            file_system_sandbox_context_for_cwd(
+                turn.as_ref(),
+                cwd,
+                /*additional_permissions*/ None,
+            )
+        })
+    });
     match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, sandbox.as_ref())
         .await
     {
         codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
+            if !has_attached_environment {
+                return Err(FunctionCallError::RespondToModel(
+                    "apply_patch is unavailable in this session".to_string(),
+                ));
+            }
+
             session
                 .record_model_warning(
                     format!(

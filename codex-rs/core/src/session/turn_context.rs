@@ -59,7 +59,6 @@ pub(crate) struct TurnContext {
     pub(crate) reasoning_effort: Option<ReasoningEffortConfig>,
     pub(crate) reasoning_summary: ReasoningSummaryConfig,
     pub(crate) session_source: SessionSource,
-    pub(crate) environment: Option<Arc<Environment>>,
     pub(crate) environments: Vec<TurnEnvironment>,
     /// The session's absolute working directory. All relative paths provided
     /// by the model as well as sandbox policies are resolved against this path
@@ -94,6 +93,14 @@ pub(crate) struct TurnContext {
     pub(crate) model_verification_emitted: AtomicBool,
 }
 impl TurnContext {
+    pub(crate) fn primary_environment(&self) -> Option<&TurnEnvironment> {
+        self.environments.first()
+    }
+
+    pub(crate) fn has_attached_environment(&self) -> bool {
+        self.primary_environment().is_some()
+    }
+
     pub(crate) fn permission_profile(&self) -> PermissionProfile {
         self.permission_profile.clone()
     }
@@ -194,7 +201,7 @@ impl TurnContext {
         .with_unified_exec_shell_mode(self.tools_config.unified_exec_shell_mode.clone())
         .with_web_search_config(self.tools_config.web_search_config.clone())
         .with_allow_login_shell(self.tools_config.allow_login_shell)
-        .with_has_environment(self.tools_config.has_environment)
+        .with_has_environment(self.has_attached_environment())
         .with_spawn_agent_usage_hint(config.multi_agent_v2.usage_hint_enabled)
         .with_spawn_agent_usage_hint_text(config.multi_agent_v2.usage_hint_text.clone())
         .with_hide_spawn_agent_metadata(config.multi_agent_v2.hide_spawn_agent_metadata)
@@ -230,7 +237,6 @@ impl TurnContext {
             reasoning_effort,
             reasoning_summary: self.reasoning_summary,
             session_source: self.session_source.clone(),
-            environment: self.environment.clone(),
             environments: self.environments.clone(),
             cwd: self.cwd.clone(),
             current_date: self.current_date.clone(),
@@ -432,7 +438,6 @@ impl Session {
         model_info: ModelInfo,
         models_manager: &SharedModelsManager,
         network: Option<NetworkProxy>,
-        environment: Option<Arc<Environment>>,
         environments: Vec<TurnEnvironment>,
         cwd: AbsolutePathBuf,
         sub_id: String,
@@ -450,6 +455,7 @@ impl Session {
         let session_source = session_configuration.session_source.clone();
         let image_generation_tool_auth_allowed =
             image_generation_tool_auth_allowed(auth_manager.as_deref());
+        let has_attached_environment = !environments.is_empty();
         let auth_manager_for_context = auth_manager.clone();
         let provider_for_context = create_model_provider(provider, auth_manager);
         let provider_capabilities = provider_for_context.capabilities();
@@ -474,7 +480,7 @@ impl Session {
         )
         .with_web_search_config(per_turn_config.web_search_config.clone())
         .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
-        .with_has_environment(environment.is_some())
+        .with_has_environment(has_attached_environment)
         .with_spawn_agent_usage_hint(per_turn_config.multi_agent_v2.usage_hint_enabled)
         .with_spawn_agent_usage_hint_text(per_turn_config.multi_agent_v2.usage_hint_text.clone())
         .with_hide_spawn_agent_metadata(per_turn_config.multi_agent_v2.hide_spawn_agent_metadata)
@@ -522,7 +528,6 @@ impl Session {
             reasoning_effort,
             reasoning_summary,
             session_source,
-            environment,
             environments,
             cwd,
             current_date: Some(current_date),
@@ -570,12 +575,21 @@ impl Session {
                         .unwrap_or_else(|| next.environments.clone());
                     let turn_environments =
                         self.resolve_turn_environments(&effective_environments)?;
-                    let previous_cwd = state.session_configuration.cwd.clone();
+                    let previous_cwd = state
+                        .session_configuration
+                        .environments
+                        .first()
+                        .map(|selected_environment| selected_environment.cwd.clone())
+                        .unwrap_or_else(|| state.session_configuration.cwd.clone());
                     let previous_permission_profile =
                         state.session_configuration.permission_profile();
                     let next_permission_profile = next.permission_profile();
                     let permission_profile_changed =
                         previous_permission_profile != next_permission_profile;
+                    let next_cwd = turn_environments
+                        .first()
+                        .map(|turn_environment| turn_environment.cwd.clone())
+                        .unwrap_or_else(|| next.cwd.clone());
                     let codex_home = next.codex_home.clone();
                     let session_source = next.session_source.clone();
                     state.session_configuration = next.clone();
@@ -584,6 +598,7 @@ impl Session {
                         turn_environments,
                         permission_profile_changed,
                         previous_cwd,
+                        next_cwd,
                         codex_home,
                         session_source,
                     ))
@@ -597,6 +612,7 @@ impl Session {
             turn_environments,
             permission_profile_changed,
             previous_cwd,
+            next_cwd,
             codex_home,
             session_source,
         ) = match update_result {
@@ -617,7 +633,7 @@ impl Session {
 
         self.maybe_refresh_shell_snapshot_for_cwd(
             &previous_cwd,
-            &session_configuration.cwd,
+            &next_cwd,
             &codex_home,
             &session_source,
         );
@@ -672,8 +688,6 @@ impl Session {
         turn_environments: Vec<TurnEnvironment>,
     ) -> Arc<TurnContext> {
         let primary_turn_environment = turn_environments.first();
-        let environment = primary_turn_environment
-            .map(|turn_environment| Arc::clone(&turn_environment.environment));
         let cwd = primary_turn_environment
             .map(|turn_environment| turn_environment.cwd.clone())
             .unwrap_or_else(|| session_configuration.cwd.clone());
@@ -700,9 +714,8 @@ impl Session {
             .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
         let skills_input = skills_load_input_from_config(&per_turn_config, effective_skill_roots);
-        let fs = environment
-            .as_ref()
-            .map(|environment| environment.get_filesystem());
+        let fs = primary_turn_environment
+            .map(|turn_environment| turn_environment.environment.get_filesystem());
         let skills_outcome = Arc::new(
             self.services
                 .skills_manager
@@ -731,7 +744,6 @@ impl Session {
                     )
                     .then(|| started_proxy.proxy())
                 }),
-            environment,
             turn_environments,
             cwd,
             sub_id,

@@ -1,6 +1,7 @@
 use codex_protocol::ThreadId;
 use codex_protocol::models::ShellCommandToolCallParams;
 use codex_protocol::models::ShellToolCallParams;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value as JsonValue;
 use std::sync::Arc;
 
@@ -94,10 +95,11 @@ impl ShellHandler {
         params: &ShellToolCallParams,
         turn_context: &TurnContext,
         thread_id: ThreadId,
+        cwd: &AbsolutePathBuf,
     ) -> ExecParams {
         ExecParams {
             command: params.command.clone(),
-            cwd: turn_context.resolve_path(params.workdir.clone()),
+            cwd: cwd.clone(),
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
             env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
@@ -145,6 +147,7 @@ impl ShellCommandHandler {
         turn_context: &TurnContext,
         thread_id: ThreadId,
         allow_login_shell: bool,
+        cwd: &AbsolutePathBuf,
     ) -> Result<ExecParams, FunctionCallError> {
         let shell = session.user_shell();
         let use_login_shell = Self::resolve_use_login_shell(params.login, allow_login_shell)?;
@@ -152,7 +155,7 @@ impl ShellCommandHandler {
 
         Ok(ExecParams {
             command,
-            cwd: turn_context.resolve_path(params.workdir.clone()),
+            cwd: cwd.clone(),
             expiration: params.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
             env: create_env(&turn_context.shell_environment_policy, Some(thread_id)),
@@ -241,11 +244,17 @@ impl ToolHandler for ShellHandler {
 
         match payload {
             ToolPayload::Function { arguments } => {
-                let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+                let Some(turn_environment) = turn.primary_environment() else {
+                    return Err(FunctionCallError::RespondToModel(
+                        "shell is unavailable in this session".to_string(),
+                    ));
+                };
+                let cwd = &turn_environment.cwd;
+                let cwd = resolve_workdir_base_path(&arguments, cwd)?;
                 let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
                 let prefix_rule = params.prefix_rule.clone();
                 let exec_params =
-                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id, &cwd);
                 Self::run_exec_like(RunExecLikeArgs {
                     tool_name: tool_name.display(),
                     exec_params,
@@ -262,8 +271,21 @@ impl ToolHandler for ShellHandler {
                 .await
             }
             ToolPayload::LocalShell { params } => {
+                let Some(turn_environment) = turn.primary_environment() else {
+                    return Err(FunctionCallError::RespondToModel(
+                        "shell is unavailable in this session".to_string(),
+                    ));
+                };
+                let cwd = params
+                    .workdir
+                    .as_deref()
+                    .filter(|workdir| !workdir.is_empty())
+                    .map_or_else(
+                        || turn_environment.cwd.clone(),
+                        |workdir| turn_environment.cwd.join(workdir),
+                    );
                 let exec_params =
-                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+                    Self::to_exec_params(&params, turn.as_ref(), session.conversation_id, &cwd);
                 Self::run_exec_like(RunExecLikeArgs {
                     tool_name: tool_name.display(),
                     exec_params,
@@ -360,14 +382,19 @@ impl ToolHandler for ShellCommandHandler {
             )));
         };
 
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+        let Some(turn_environment) = turn.primary_environment() else {
+            return Err(FunctionCallError::RespondToModel(
+                "shell is unavailable in this session".to_string(),
+            ));
+        };
+        let cwd = &turn_environment.cwd;
+        let cwd = resolve_workdir_base_path(&arguments, cwd)?;
         let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
-        let workdir = turn.resolve_path(params.workdir.clone());
         maybe_emit_implicit_skill_invocation(
             session.as_ref(),
             turn.as_ref(),
             &params.command,
-            &workdir,
+            &cwd,
         )
         .await;
         let prefix_rule = params.prefix_rule.clone();
@@ -377,6 +404,7 @@ impl ToolHandler for ShellCommandHandler {
             turn.as_ref(),
             session.conversation_id,
             turn.tools_config.allow_login_shell,
+            &cwd,
         )?;
         ShellHandler::run_exec_like(RunExecLikeArgs {
             tool_name: tool_name.display(),
@@ -412,11 +440,12 @@ impl ShellHandler {
         } = args;
 
         let mut exec_params = exec_params;
-        let Some(environment) = turn.environment.as_ref() else {
+        let Some(turn_environment) = turn.primary_environment() else {
             return Err(FunctionCallError::RespondToModel(
                 "shell is unavailable in this session".to_string(),
             ));
         };
+        let environment = &turn_environment.environment;
         let fs = environment.get_filesystem();
 
         let dependency_env = session.dependency_env().await;
@@ -436,7 +465,7 @@ impl ShellHandler {
         let requested_additional_permissions = additional_permissions.clone();
         let effective_additional_permissions = apply_granted_turn_permissions(
             session.as_ref(),
-            turn.cwd.as_path(),
+            exec_params.cwd.as_path(),
             exec_params.sandbox_permissions,
             additional_permissions,
         )
@@ -522,7 +551,7 @@ impl ShellHandler {
                 approval_policy: turn.approval_policy.value(),
                 permission_profile: turn.permission_profile(),
                 file_system_sandbox_policy: &file_system_sandbox_policy,
-                sandbox_cwd: turn.cwd.as_path(),
+                sandbox_cwd: exec_params.cwd.as_path(),
                 sandbox_permissions: if effective_additional_permissions.permissions_preapproved {
                     codex_protocol::models::SandboxPermissions::UseDefault
                 } else {

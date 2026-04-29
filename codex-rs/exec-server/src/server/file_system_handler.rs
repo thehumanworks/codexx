@@ -117,9 +117,12 @@ impl FileSystemHandler {
             .map_err(map_fs_error)?
             .into_iter()
             .map(|entry| FsReadDirectoryEntry {
-                file_name: entry.file_name,
-                is_directory: entry.is_directory,
-                is_file: entry.is_file,
+                file_name: entry.file_name.to_string_lossy().into_owned(),
+                is_directory: entry.metadata.is_directory,
+                is_file: entry.metadata.is_file,
+                is_symlink: entry.metadata.is_symlink,
+                created_at_ms: entry.metadata.created_at_ms,
+                modified_at_ms: entry.metadata.modified_at_ms,
             })
             .collect();
         Ok(FsReadDirectoryResponse { entries })

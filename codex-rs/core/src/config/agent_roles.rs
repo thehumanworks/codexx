@@ -530,11 +530,11 @@ async fn collect_agent_role_files(
 
         for entry in entries {
             let path = dir.join(entry.file_name);
-            if entry.is_directory {
+            if entry.metadata.is_directory {
                 dirs.push(path);
                 continue;
             }
-            if entry.is_file
+            if entry.metadata.is_file
                 && path
                     .as_path()
                     .extension()

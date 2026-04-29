@@ -221,6 +221,38 @@ impl Session {
         let mcp_servers = with_codex_apps_mcp(mcp_servers, auth.as_ref(), &mcp_config);
         let auth_statuses =
             compute_auth_statuses(mcp_servers.iter(), store_mode, auth.as_ref()).await;
+        let runtime_environment = match turn_context.primary_environment() {
+            Some(turn_environment) => McpRuntimeEnvironment::new(
+                Arc::clone(&turn_environment.environment),
+                turn_environment.cwd.to_path_buf(),
+            ),
+            None => {
+                let session_configuration = {
+                    let state = self.state.lock().await;
+                    state.session_configuration.clone()
+                };
+                if let Some(selected_environment) = session_configuration.environments.first()
+                    && self
+                        .services
+                        .environment_manager
+                        .get_environment(&selected_environment.environment_id)
+                        .is_none()
+                {
+                    warn!(
+                        "failed to resolve stored MCP environment `{}`; skipping MCP server refresh",
+                        selected_environment.environment_id
+                    );
+                    return;
+                }
+                // No attached environment is the legacy/no-env MCP mode. Only
+                // use local after checking that this is not masking a stale
+                // stored environment selection.
+                McpRuntimeEnvironment::new(
+                    self.services.environment_manager.local_environment(),
+                    turn_context.cwd.to_path_buf(),
+                )
+            }
+        };
         {
             let mut guard = self.services.mcp_startup_cancellation_token.lock().await;
             guard.cancel();
@@ -234,13 +266,7 @@ impl Session {
             turn_context.sub_id.clone(),
             self.get_tx_event(),
             turn_context.permission_profile(),
-            McpRuntimeEnvironment::new(
-                turn_context
-                    .environment
-                    .clone()
-                    .unwrap_or_else(|| self.services.environment_manager.local_environment()),
-                turn_context.cwd.to_path_buf(),
-            ),
+            runtime_environment,
             config.codex_home.to_path_buf(),
             codex_apps_tools_cache_key(auth.as_ref()),
             tool_plugin_provenance,

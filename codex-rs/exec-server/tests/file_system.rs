@@ -2,6 +2,7 @@
 
 mod common;
 
+use std::ffi::OsString;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::fs::symlink;
@@ -17,6 +18,7 @@ use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::Environment;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_exec_server::ExecutorFileSystem;
+use codex_exec_server::FileMetadata;
 use codex_exec_server::FileSystemSandboxContext;
 use codex_exec_server::LocalFileSystem;
 use codex_exec_server::ReadDirectoryEntry;
@@ -405,24 +407,49 @@ async fn file_system_methods_cover_surface_area(use_remote: bool) -> Result<()> 
         source_dir.join("missing-target"),
         source_dir.join("broken-link"),
     )?;
+    symlink(source_dir.join("root.txt"), source_dir.join("root-link"))?;
 
     let mut entries = file_system
         .read_directory(&absolute_path(source_dir), /*sandbox*/ None)
         .await
         .with_context(|| format!("mode={use_remote}"))?;
     entries.sort_by(|left, right| left.file_name.cmp(&right.file_name));
+    for entry in &mut entries {
+        entry.metadata.created_at_ms = 0;
+        entry.metadata.modified_at_ms = 0;
+    }
     assert_eq!(
         entries,
         vec![
             ReadDirectoryEntry {
-                file_name: "nested".to_string(),
-                is_directory: true,
-                is_file: false,
+                file_name: OsString::from("nested"),
+                metadata: FileMetadata {
+                    is_directory: true,
+                    is_file: false,
+                    is_symlink: false,
+                    created_at_ms: 0,
+                    modified_at_ms: 0,
+                },
             },
             ReadDirectoryEntry {
-                file_name: "root.txt".to_string(),
-                is_directory: false,
-                is_file: true,
+                file_name: OsString::from("root-link"),
+                metadata: FileMetadata {
+                    is_directory: false,
+                    is_file: true,
+                    is_symlink: true,
+                    created_at_ms: 0,
+                    modified_at_ms: 0,
+                },
+            },
+            ReadDirectoryEntry {
+                file_name: OsString::from("root.txt"),
+                metadata: FileMetadata {
+                    is_directory: false,
+                    is_file: true,
+                    is_symlink: false,
+                    created_at_ms: 0,
+                    modified_at_ms: 0,
+                },
             },
         ]
     );

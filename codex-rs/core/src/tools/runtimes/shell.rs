@@ -261,9 +261,27 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
         } else {
             command
         };
+        let request_cwd_attempt = SandboxAttempt {
+            sandbox: attempt.sandbox,
+            permissions: attempt.permissions,
+            enforce_managed_network: attempt.enforce_managed_network,
+            manager: attempt.manager,
+            sandbox_cwd: &req.cwd,
+            codex_linux_sandbox_exe: attempt.codex_linux_sandbox_exe,
+            use_legacy_landlock: attempt.use_legacy_landlock,
+            windows_sandbox_level: attempt.windows_sandbox_level,
+            windows_sandbox_private_desktop: attempt.windows_sandbox_private_desktop,
+        };
 
         if self.backend == ShellRuntimeBackend::ShellCommandZshFork {
-            match zsh_fork_backend::maybe_run_shell_command(req, attempt, ctx, &command).await? {
+            match zsh_fork_backend::maybe_run_shell_command(
+                req,
+                &request_cwd_attempt,
+                ctx,
+                &command,
+            )
+            .await?
+            {
                 Some(out) => return Ok(out),
                 None => {
                     tracing::warn!(
@@ -279,7 +297,7 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
             expiration: req.timeout_ms.into(),
             capture_policy: ExecCapturePolicy::ShellTool,
         };
-        let env = attempt
+        let env = request_cwd_attempt
             .env_for(command, options, managed_network)
             .map_err(|err| ToolError::Codex(err.into()))?;
         let out = execute_env(env, Self::stdout_stream(ctx))

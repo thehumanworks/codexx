@@ -6,6 +6,7 @@ use crate::sandboxing::ExecRequest;
 use crate::session::session::Session;
 use crate::session::tests::make_session_and_context;
 use crate::session::turn_context::TurnContext;
+use crate::session::turn_context::TurnEnvironment;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::unified_exec::WriteStdinRequest;
 use crate::unified_exec::process::OutputHandles;
@@ -16,7 +17,6 @@ use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::test_env as remote_test_env;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -31,17 +31,8 @@ async fn exec_command(
     turn: &Arc<TurnContext>,
     cmd: &str,
     yield_time_ms: u64,
-    workdir: Option<PathBuf>,
 ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
-    exec_command_with_tty(
-        session,
-        turn,
-        cmd,
-        yield_time_ms,
-        workdir,
-        /*tty*/ true,
-    )
-    .await
+    exec_command_with_tty(session, turn, cmd, yield_time_ms, /*tty*/ true).await
 }
 
 fn shell_env() -> HashMap<String, String> {
@@ -78,28 +69,32 @@ async fn exec_command_with_tty(
     turn: &Arc<TurnContext>,
     cmd: &str,
     yield_time_ms: u64,
-    workdir: Option<PathBuf>,
     tty: bool,
 ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
     let manager = &session.services.unified_exec_manager;
     let process_id = manager.allocate_process_id().await;
-    let cwd = workdir
-        .as_ref()
-        .map_or_else(|| turn.cwd.clone(), |workdir| turn.cwd.join(workdir));
+    let turn_environment = turn.primary_environment().expect("turn environment");
+    let cwd = turn_environment.cwd.clone();
+    let environment = Arc::clone(&turn_environment.environment);
     let command = vec!["bash".to_string(), "-lc".to_string(), cmd.to_string()];
     let request = test_exec_request(turn, command.clone(), cwd.clone(), shell_env());
 
-    let process = Arc::new(
-        manager
-            .open_session_with_exec_env(
-                process_id,
-                &request,
-                tty,
-                Box::new(NoopSpawnLifecycle),
-                turn.environment.as_ref().expect("turn environment"),
-            )
-            .await?,
-    );
+    let process = match manager
+        .open_session_with_exec_env(
+            process_id,
+            &request,
+            tty,
+            Box::new(NoopSpawnLifecycle),
+            environment.as_ref(),
+        )
+        .await
+    {
+        Ok(process) => Arc::new(process),
+        Err(err) => {
+            manager.release_process_id(process_id).await;
+            return Err(err);
+        }
+    };
     let context =
         UnifiedExecContext::new(Arc::clone(session), Arc::clone(turn), "call".to_string());
     let started_at = Instant::now();
@@ -233,10 +228,7 @@ async fn unified_exec_persists_across_requests() -> anyhow::Result<()> {
 
     let (session, turn) = test_session_and_turn().await;
 
-    let open_shell = exec_command(
-        &session, &turn, "bash -i", /*yield_time_ms*/ 2_500, /*workdir*/ None,
-    )
-    .await?;
+    let open_shell = exec_command(&session, &turn, "bash -i", /*yield_time_ms*/ 2_500).await?;
     let process_id = open_shell.process_id.expect("expected process_id");
 
     write_stdin(
@@ -268,10 +260,7 @@ async fn multi_unified_exec_sessions() -> anyhow::Result<()> {
 
     let (session, turn) = test_session_and_turn().await;
 
-    let shell_a = exec_command(
-        &session, &turn, "bash -i", /*yield_time_ms*/ 2_500, /*workdir*/ None,
-    )
-    .await?;
+    let shell_a = exec_command(&session, &turn, "bash -i", /*yield_time_ms*/ 2_500).await?;
     let session_a = shell_a.process_id.expect("expected process id");
 
     write_stdin(
@@ -287,7 +276,6 @@ async fn multi_unified_exec_sessions() -> anyhow::Result<()> {
         &turn,
         "echo $CODEX_INTERACTIVE_SHELL_VAR",
         /*yield_time_ms*/ 2_500,
-        /*workdir*/ None,
     )
     .await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -323,10 +311,7 @@ async fn unified_exec_timeouts() -> anyhow::Result<()> {
 
     let (session, turn) = test_session_and_turn().await;
 
-    let open_shell = exec_command(
-        &session, &turn, "bash -i", /*yield_time_ms*/ 2_500, /*workdir*/ None,
-    )
-    .await?;
+    let open_shell = exec_command(&session, &turn, "bash -i", /*yield_time_ms*/ 2_500).await?;
     let process_id = open_shell.process_id.expect("expected process id");
 
     write_stdin(
@@ -380,7 +365,6 @@ async fn unified_exec_pause_blocks_yield_timeout() -> anyhow::Result<()> {
         &turn,
         "sleep 1 && echo unified-exec-done",
         /*yield_time_ms*/ 250,
-        /*workdir*/ None,
     )
     .await?;
 
@@ -410,7 +394,6 @@ async fn requests_with_large_timeout_are_capped() -> anyhow::Result<()> {
         &turn,
         "echo codex",
         /*yield_time_ms*/ 120_000,
-        /*workdir*/ None,
     )
     .await?;
 
@@ -424,14 +407,7 @@ async fn requests_with_large_timeout_are_capped() -> anyhow::Result<()> {
 #[ignore] // Ignored while we have a better way to test this.
 async fn completed_commands_do_not_persist_sessions() -> anyhow::Result<()> {
     let (session, turn) = test_session_and_turn().await;
-    let result = exec_command(
-        &session,
-        &turn,
-        "echo codex",
-        /*yield_time_ms*/ 2_500,
-        /*workdir*/ None,
-    )
-    .await?;
+    let result = exec_command(&session, &turn, "echo codex", /*yield_time_ms*/ 2_500).await?;
 
     assert!(
         result.process_id.is_some(),
@@ -459,10 +435,7 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
 
     let (session, turn) = test_session_and_turn().await;
 
-    let open_shell = exec_command(
-        &session, &turn, "bash -i", /*yield_time_ms*/ 2_500, /*workdir*/ None,
-    )
-    .await?;
+    let open_shell = exec_command(&session, &turn, "bash -i", /*yield_time_ms*/ 2_500).await?;
     let process_id = open_shell.process_id.expect("expected process id");
 
     write_stdin(&session, process_id, "exit\n", /*yield_time_ms*/ 2_500).await?;
@@ -497,10 +470,15 @@ async fn reusing_completed_process_returns_unknown_process() -> anyhow::Result<(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn completed_pipe_commands_preserve_exit_code() -> anyhow::Result<()> {
     let (_, turn) = make_session_and_context().await;
+    let cwd = turn
+        .primary_environment()
+        .expect("turn environment")
+        .cwd
+        .clone();
     let request = test_exec_request(
         &turn,
         vec!["bash".to_string(), "-lc".to_string(), "exit 17".to_string()],
-        turn.cwd.clone(),
+        cwd,
         shell_env(),
     );
 
@@ -591,13 +569,22 @@ async fn remote_exec_server_rejects_inherited_fd_launches() -> anyhow::Result<()
 
     let remote_test_env = remote_test_env().await?;
     let (_, mut turn) = make_session_and_context().await;
-    turn.environment = Some(Arc::new(remote_test_env.environment().clone()));
+    let remote_cwd = remote_test_env.cwd().clone();
+    turn.environments = vec![TurnEnvironment {
+        environment_id: "remote-test".to_string(),
+        environment: Arc::new(remote_test_env.environment().clone()),
+        cwd: remote_cwd.clone(),
+    }];
 
     let request = test_exec_request(
         &turn,
         vec!["bash".to_string(), "-lc".to_string(), "echo ok".to_string()],
-        turn.cwd.clone(),
+        remote_cwd.clone(),
         shell_env(),
+    );
+    assert_eq!(
+        turn.primary_environment().expect("turn environment").cwd,
+        remote_cwd
     );
 
     let manager = UnifiedExecProcessManager::default();
@@ -609,7 +596,10 @@ async fn remote_exec_server_rejects_inherited_fd_launches() -> anyhow::Result<()
             Box::new(TestSpawnLifecycle {
                 inherited_fds: vec![42],
             }),
-            turn.environment.as_ref().expect("turn environment"),
+            turn.primary_environment()
+                .expect("turn environment")
+                .environment
+                .as_ref(),
         )
         .await
         .expect_err("expected inherited fd rejection");

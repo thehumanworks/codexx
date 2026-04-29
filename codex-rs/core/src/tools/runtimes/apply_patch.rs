@@ -81,7 +81,7 @@ impl ApplyPatchRuntime {
             effective_permission_profile(attempt.permissions, req.additional_permissions.as_ref());
         Some(FileSystemSandboxContext {
             permissions,
-            cwd: Some(attempt.sandbox_cwd.clone()),
+            cwd: Some(req.action.cwd.clone()),
             windows_sandbox_level: attempt.windows_sandbox_level,
             windows_sandbox_private_desktop: attempt.windows_sandbox_private_desktop,
             use_legacy_landlock: attempt.use_legacy_landlock,
@@ -211,9 +211,10 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         attempt: &SandboxAttempt<'_>,
         ctx: &ToolCtx,
     ) -> Result<ExecToolCallOutput, ToolError> {
-        let environment = ctx.turn.environment.as_ref().ok_or_else(|| {
+        let turn_environment = ctx.turn.primary_environment().ok_or_else(|| {
             ToolError::Rejected("apply_patch is unavailable in this session".to_string())
         })?;
+        let environment = &turn_environment.environment;
         let started_at = Instant::now();
         let fs = environment.get_filesystem();
         let sandbox = Self::file_system_sandbox_context_for_attempt(req, attempt);

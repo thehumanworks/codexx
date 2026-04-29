@@ -1,10 +1,21 @@
 use super::*;
+use async_trait::async_trait;
+use codex_exec_server::CopyOptions;
+use codex_exec_server::CreateDirectoryOptions;
+use codex_exec_server::FileMetadata;
+use codex_exec_server::FileSystemResult;
+use codex_exec_server::LOCAL_FS;
+use codex_exec_server::ReadDirectoryEntry;
+use codex_exec_server::RemoveOptions;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::ReadDenyMatcher;
 use pretty_assertions::assert_eq;
+use std::ffi::OsString;
+use std::io;
+use std::sync::Mutex;
 use tempfile::tempdir;
 
 async fn list_dir_slice(
@@ -13,7 +24,291 @@ async fn list_dir_slice(
     limit: usize,
     depth: usize,
 ) -> Result<Vec<String>, FunctionCallError> {
-    list_dir_slice_with_policy(path, offset, limit, depth, /*read_deny_matcher*/ None).await
+    let path = AbsolutePathBuf::from_absolute_path(path)
+        .map_err(|err| FunctionCallError::RespondToModel(err.to_string()))?;
+    list_dir_slice_with_policy(
+        LOCAL_FS.as_ref(),
+        /*sandbox*/ None,
+        &path,
+        offset,
+        limit,
+        depth,
+        /*read_deny_matcher*/ None,
+    )
+    .await
+}
+
+#[derive(Default)]
+struct RecordingFileSystem {
+    read_directories: Mutex<Vec<AbsolutePathBuf>>,
+    inspected_paths: Mutex<Vec<AbsolutePathBuf>>,
+    directory_entries: Mutex<Vec<(AbsolutePathBuf, Vec<ReadDirectoryEntry>)>>,
+}
+
+impl RecordingFileSystem {
+    fn add_directory(&self, path: &AbsolutePathBuf, entries: &[TestEntry]) {
+        self.directory_entries
+            .lock()
+            .expect("lock directory entries")
+            .push((
+                path.clone(),
+                entries
+                    .iter()
+                    .map(|entry| ReadDirectoryEntry {
+                        file_name: OsString::from(entry.name),
+                        metadata: FileMetadata::from(entry.kind),
+                    })
+                    .collect(),
+            ));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TestEntryKind {
+    Directory,
+    File,
+    Symlink,
+}
+
+impl From<TestEntryKind> for FileMetadata {
+    fn from(kind: TestEntryKind) -> Self {
+        Self {
+            is_directory: kind == TestEntryKind::Directory,
+            is_file: kind == TestEntryKind::File || kind == TestEntryKind::Symlink,
+            is_symlink: kind == TestEntryKind::Symlink,
+            created_at_ms: 0,
+            modified_at_ms: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TestEntry {
+    name: &'static str,
+    kind: TestEntryKind,
+}
+
+impl TestEntry {
+    fn directory(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: TestEntryKind::Directory,
+        }
+    }
+
+    fn file(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: TestEntryKind::File,
+        }
+    }
+
+    fn symlink(name: &'static str) -> Self {
+        Self {
+            name,
+            kind: TestEntryKind::Symlink,
+        }
+    }
+}
+
+#[async_trait]
+impl ExecutorFileSystem for RecordingFileSystem {
+    async fn read_file(
+        &self,
+        _path: &AbsolutePathBuf,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<Vec<u8>> {
+        Err(io::Error::other("read_file is not implemented"))
+    }
+
+    async fn write_file(
+        &self,
+        _path: &AbsolutePathBuf,
+        _contents: Vec<u8>,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        Err(io::Error::other("write_file is not implemented"))
+    }
+
+    async fn create_directory(
+        &self,
+        _path: &AbsolutePathBuf,
+        _create_directory_options: CreateDirectoryOptions,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        Err(io::Error::other("create_directory is not implemented"))
+    }
+
+    async fn get_metadata(
+        &self,
+        path: &AbsolutePathBuf,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<FileMetadata> {
+        self.inspected_paths
+            .lock()
+            .expect("lock inspected paths")
+            .push(path.clone());
+        Err(io::Error::other("get_metadata is not implemented"))
+    }
+
+    async fn read_directory(
+        &self,
+        path: &AbsolutePathBuf,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<Vec<ReadDirectoryEntry>> {
+        self.read_directories
+            .lock()
+            .expect("lock read directories")
+            .push(path.clone());
+        self.directory_entries
+            .lock()
+            .expect("lock directory entries")
+            .iter()
+            .find_map(|(directory_path, entries)| (directory_path == path).then(|| entries.clone()))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "directory not found"))
+    }
+
+    async fn remove(
+        &self,
+        _path: &AbsolutePathBuf,
+        _remove_options: RemoveOptions,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        Err(io::Error::other("remove is not implemented"))
+    }
+
+    async fn copy(
+        &self,
+        _source_path: &AbsolutePathBuf,
+        _destination_path: &AbsolutePathBuf,
+        _copy_options: CopyOptions,
+        _sandbox: Option<&codex_exec_server::FileSystemSandboxContext>,
+    ) -> FileSystemResult<()> {
+        Err(io::Error::other("copy is not implemented"))
+    }
+}
+
+#[tokio::test]
+async fn lists_entries_from_provided_environment_filesystem() {
+    let fs = RecordingFileSystem::default();
+    let temp = tempdir().expect("create tempdir");
+    let path = AbsolutePathBuf::from_absolute_path(temp.path()).expect("absolute path");
+    fs.add_directory(&path, &[TestEntry::file("from-environment-fs.txt")]);
+
+    let entries = list_dir_slice_with_policy(
+        &fs, /*sandbox*/ None, &path, /*offset*/ 1, /*limit*/ 20, /*depth*/ 1,
+        /*read_deny_matcher*/ None,
+    )
+    .await
+    .expect("list directory through provided filesystem");
+
+    assert_eq!(entries, vec!["from-environment-fs.txt".to_string()]);
+    assert_eq!(
+        *fs.read_directories.lock().expect("lock read directories"),
+        vec![path.clone()]
+    );
+    assert_eq!(
+        *fs.inspected_paths.lock().expect("lock inspected paths"),
+        Vec::<AbsolutePathBuf>::new()
+    );
+}
+
+#[tokio::test]
+async fn provided_environment_filesystem_preserves_symlink_suffixes() {
+    let fs = RecordingFileSystem::default();
+    let temp = tempdir().expect("create tempdir");
+    let path = AbsolutePathBuf::from_absolute_path(temp.path()).expect("absolute path");
+    fs.add_directory(
+        &path,
+        &[
+            TestEntry::file("entry.txt"),
+            TestEntry::symlink("link"),
+            TestEntry::directory("nested"),
+        ],
+    );
+    fs.add_directory(&path.join("nested"), &[TestEntry::file("child.txt")]);
+
+    let entries = list_dir_slice_with_policy(
+        &fs, /*sandbox*/ None, &path, /*offset*/ 1, /*limit*/ 20, /*depth*/ 2,
+        /*read_deny_matcher*/ None,
+    )
+    .await
+    .expect("list directory through provided filesystem");
+
+    assert_eq!(
+        entries,
+        vec![
+            "entry.txt".to_string(),
+            "link@".to_string(),
+            "nested/".to_string(),
+            "  child.txt".to_string(),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn provided_environment_filesystem_paginates_after_pruning_denied_entries() {
+    let fs = RecordingFileSystem::default();
+    let temp = tempdir().expect("create tempdir");
+    let path = AbsolutePathBuf::from_absolute_path(temp.path()).expect("absolute path");
+    let visible_dir = path.join("visible");
+    let denied_dir = path.join("private");
+    fs.add_directory(
+        &path,
+        &[
+            TestEntry::directory("private"),
+            TestEntry::file("secret.txt"),
+            TestEntry::directory("visible"),
+            TestEntry::file("z.txt"),
+        ],
+    );
+    fs.add_directory(&visible_dir, &[TestEntry::file("ok.txt")]);
+    fs.add_directory(&denied_dir, &[TestEntry::file("hidden.txt")]);
+
+    let policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: denied_dir.clone(),
+            },
+            access: FileSystemAccessMode::None,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: path.join("secret.txt"),
+            },
+            access: FileSystemAccessMode::None,
+        },
+    ]);
+    let read_deny_matcher = ReadDenyMatcher::new(&policy, &path);
+
+    let entries = list_dir_slice_with_policy(
+        &fs,
+        /*sandbox*/ None,
+        &path,
+        /*offset*/ 1,
+        /*limit*/ 2,
+        /*depth*/ 2,
+        read_deny_matcher.as_ref(),
+    )
+    .await
+    .expect("list directory through provided filesystem");
+
+    assert_eq!(
+        entries,
+        vec![
+            "visible/".to_string(),
+            "  ok.txt".to_string(),
+            "More than 2 entries found".to_string(),
+        ]
+    );
+    assert_eq!(
+        *fs.read_directories.lock().expect("lock read directories"),
+        vec![path.clone(), visible_dir.clone()]
+    );
+    assert_eq!(
+        *fs.inspected_paths.lock().expect("lock inspected paths"),
+        Vec::<AbsolutePathBuf>::new()
+    );
 }
 
 #[tokio::test]
@@ -74,6 +369,36 @@ async fn lists_directory_entries() {
     ];
 
     assert_eq!(entries, expected);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn recurses_into_non_utf8_local_directory_names() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let temp = tempdir().expect("create tempdir");
+    let dir_path = temp.path();
+    let directory_name_bytes = b"bad-\xFF-dir".to_vec();
+    let directory_name = OsString::from_vec(directory_name_bytes.clone());
+    let non_utf8_dir = dir_path.join(&directory_name);
+    tokio::fs::create_dir(&non_utf8_dir)
+        .await
+        .expect("create non-utf8 dir");
+    tokio::fs::write(non_utf8_dir.join("child.txt"), b"child")
+        .await
+        .expect("write child");
+
+    let entries = list_dir_slice(
+        dir_path, /*offset*/ 1, /*limit*/ 20, /*depth*/ 2,
+    )
+    .await
+    .expect("list directory");
+
+    let display_name = String::from_utf8_lossy(&directory_name_bytes);
+    assert_eq!(
+        entries,
+        vec![format!("{display_name}/"), "  child.txt".to_string()]
+    );
 }
 
 #[tokio::test]
@@ -315,7 +640,9 @@ async fn hides_denied_entries_and_prunes_denied_subtrees() {
 
     let read_deny_matcher = ReadDenyMatcher::new(&policy, dir_path);
     let entries = list_dir_slice_with_policy(
-        dir_path,
+        LOCAL_FS.as_ref(),
+        /*sandbox*/ None,
+        &AbsolutePathBuf::from_absolute_path(dir_path).expect("absolute dir"),
         /*offset*/ 1,
         /*limit*/ 20,
         /*depth*/ 3,

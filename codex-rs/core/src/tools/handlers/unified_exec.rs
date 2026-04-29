@@ -196,11 +196,13 @@ impl ToolHandler for UnifiedExecHandler {
             }
         };
 
-        let Some(environment) = turn.environment.as_ref() else {
+        let Some(turn_environment) = turn.primary_environment() else {
             return Err(FunctionCallError::RespondToModel(
                 "unified exec is unavailable in this session".to_string(),
             ));
         };
+        let environment = &turn_environment.environment;
+        let turn_environment_cwd = &turn_environment.cwd;
         let fs = environment.get_filesystem();
 
         let manager: &UnifiedExecProcessManager = &session.services.unified_exec_manager;
@@ -208,18 +210,16 @@ impl ToolHandler for UnifiedExecHandler {
 
         let response = match tool_name.name.as_str() {
             "exec_command" => {
-                let cwd = resolve_workdir_base_path(&arguments, &context.turn.cwd)?;
-                let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &cwd)?;
+                let exec_cwd = resolve_workdir_base_path(&arguments, turn_environment_cwd)?;
+                let args: ExecCommandArgs = parse_arguments_with_base_path(&arguments, &exec_cwd)?;
                 let hook_command = args.cmd.clone();
-                let workdir = context.turn.resolve_path(args.workdir.clone());
                 maybe_emit_implicit_skill_invocation(
                     session.as_ref(),
                     context.turn.as_ref(),
                     &hook_command,
-                    &workdir,
+                    &exec_cwd,
                 )
                 .await;
-                let process_id = manager.allocate_process_id().await;
                 let command = get_command(
                     &args,
                     session.user_shell(),
@@ -230,7 +230,7 @@ impl ToolHandler for UnifiedExecHandler {
                 let command_for_display = codex_shell_command::parse_command::shlex_join(&command);
 
                 let ExecCommandArgs {
-                    workdir,
+                    workdir: _,
                     tty,
                     yield_time_ms,
                     max_output_tokens,
@@ -248,7 +248,7 @@ impl ToolHandler for UnifiedExecHandler {
                 let requested_additional_permissions = additional_permissions.clone();
                 let effective_additional_permissions = apply_granted_turn_permissions(
                     context.session.as_ref(),
-                    context.turn.cwd.as_path(),
+                    exec_cwd.as_path(),
                     sandbox_permissions,
                     additional_permissions,
                 )
@@ -269,16 +269,11 @@ impl ToolHandler for UnifiedExecHandler {
                     )
                 {
                     let approval_policy = context.turn.approval_policy.value();
-                    manager.release_process_id(process_id).await;
                     return Err(FunctionCallError::RespondToModel(format!(
                         "approval policy is {approval_policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {approval_policy:?}"
                     )));
                 }
 
-                let workdir = workdir.filter(|value| !value.is_empty());
-
-                let workdir = workdir.map(|dir| context.turn.resolve_path(Some(dir)));
-                let cwd = workdir.clone().unwrap_or(cwd);
                 let normalized_additional_permissions = match implicit_granted_permissions(
                     sandbox_permissions,
                     requested_additional_permissions.as_ref(),
@@ -292,21 +287,20 @@ impl ToolHandler for UnifiedExecHandler {
                             effective_additional_permissions.sandbox_permissions,
                             effective_additional_permissions.additional_permissions,
                             effective_additional_permissions.permissions_preapproved,
-                            &cwd,
+                            &exec_cwd,
                         )
                     },
                     |permissions| Ok(Some(permissions)),
                 ) {
                     Ok(normalized) => normalized,
                     Err(err) => {
-                        manager.release_process_id(process_id).await;
                         return Err(FunctionCallError::RespondToModel(err));
                     }
                 };
 
                 if let Some(output) = intercept_apply_patch(
                     &command,
-                    &cwd,
+                    &exec_cwd,
                     fs.as_ref(),
                     context.session.clone(),
                     context.turn.clone(),
@@ -316,7 +310,6 @@ impl ToolHandler for UnifiedExecHandler {
                 )
                 .await?
                 {
-                    manager.release_process_id(process_id).await;
                     return Ok(ExecCommandToolOutput {
                         event_call_id: String::new(),
                         chunk_id: String::new(),
@@ -331,6 +324,7 @@ impl ToolHandler for UnifiedExecHandler {
                 }
 
                 emit_unified_exec_tty_metric(&turn.session_telemetry, tty);
+                let process_id = manager.allocate_process_id().await;
                 match manager
                     .exec_command(
                         ExecCommandRequest {
@@ -339,7 +333,7 @@ impl ToolHandler for UnifiedExecHandler {
                             process_id,
                             yield_time_ms,
                             max_output_tokens: Some(max_output_tokens),
-                            workdir,
+                            cwd: exec_cwd,
                             network: context.turn.network.clone(),
                             tty,
                             sandbox_permissions: effective_additional_permissions

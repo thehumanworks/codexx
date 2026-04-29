@@ -183,18 +183,15 @@ impl SessionConfiguration {
             next_configuration.windows_sandbox_level = windows_sandbox_level;
         }
 
+        let cwd_base = self
+            .environments
+            .first()
+            .map(|selected_environment| selected_environment.cwd.clone())
+            .unwrap_or_else(|| self.cwd.clone());
         let absolute_cwd = updates
             .cwd
             .as_ref()
-            .map(|cwd| {
-                AbsolutePathBuf::relative_to_current_dir(normalize_for_native_workdir(
-                    cwd.as_path(),
-                ))
-                .unwrap_or_else(|e| {
-                    warn!("failed to normalize update cwd: {cwd:?}: {e}");
-                    self.cwd.clone()
-                })
-            })
+            .map(|cwd| cwd_base.join(normalize_for_native_workdir(cwd.as_path())))
             .unwrap_or_else(|| self.cwd.clone());
 
         let cwd_changed = absolute_cwd.as_path() != self.cwd.as_path();
@@ -305,6 +302,44 @@ pub(crate) struct AppServerClientMetadata {
 }
 
 impl Session {
+    pub(super) fn mcp_environment_and_cwd_for_configuration(
+        &self,
+        session_configuration: &SessionConfiguration,
+    ) -> CodexResult<(Arc<Environment>, PathBuf)> {
+        match session_configuration.environments.first() {
+            Some(selected_environment) => {
+                let environment_id = &selected_environment.environment_id;
+                let environment = self
+                    .services
+                    .environment_manager
+                    .get_environment(environment_id)
+                    .ok_or_else(|| {
+                        CodexErr::InvalidRequest(format!(
+                            "unknown stored MCP environment id `{environment_id}`"
+                        ))
+                    })?;
+                Ok((environment, selected_environment.cwd.to_path_buf()))
+            }
+            None => {
+                // MCP predates attached environments; no stored selection keeps
+                // the legacy local runtime with the session cwd.
+                Ok((
+                    self.services.environment_manager.local_environment(),
+                    session_configuration.cwd.to_path_buf(),
+                ))
+            }
+        }
+    }
+
+    fn mcp_runtime_environment_for_configuration(
+        &self,
+        session_configuration: &SessionConfiguration,
+    ) -> CodexResult<McpRuntimeEnvironment> {
+        let (environment, cwd) =
+            self.mcp_environment_and_cwd_for_configuration(session_configuration)?;
+        Ok(McpRuntimeEnvironment::new(environment, cwd))
+    }
+
     #[instrument(name = "session_init", level = "info", skip_all)]
     #[allow(clippy::too_many_arguments)]
     #[expect(
@@ -929,13 +964,7 @@ impl Session {
                 INITIAL_SUBMIT_ID.to_owned(),
                 tx_event.clone(),
                 session_configuration.permission_profile(),
-                McpRuntimeEnvironment::new(
-                    sess.services
-                        .environment_manager
-                        .default_environment()
-                        .unwrap_or_else(|| sess.services.environment_manager.local_environment()),
-                    session_configuration.cwd.to_path_buf(),
-                ),
+                sess.mcp_runtime_environment_for_configuration(&session_configuration)?,
                 config.codex_home.to_path_buf(),
                 codex_apps_tools_cache_key(auth),
                 tool_plugin_provenance,

@@ -25,7 +25,6 @@ use codex_exec_server::Environment;
 use codex_exec_server::ExecutorFileSystem;
 use codex_features::Feature;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use dunce::canonicalize as normalize_path;
 use std::io;
 use toml::Value as TomlValue;
 use tracing::error;
@@ -82,16 +81,18 @@ impl<'a> AgentsMdManager<'a> {
     pub(crate) async fn user_instructions(
         &self,
         environment: Option<&Environment>,
+        cwd: &AbsolutePathBuf,
     ) -> Option<String> {
         let fs = environment?.get_filesystem();
-        self.user_instructions_with_fs(fs.as_ref()).await
+        self.user_instructions_with_fs(fs.as_ref(), cwd).await
     }
 
     pub(crate) async fn user_instructions_with_fs(
         &self,
         fs: &dyn ExecutorFileSystem,
+        cwd: &AbsolutePathBuf,
     ) -> Option<String> {
-        let agents_md_docs = self.read_agents_md(fs).await;
+        let agents_md_docs = self.read_agents_md(fs, cwd).await;
 
         let mut output = String::new();
 
@@ -131,7 +132,7 @@ impl<'a> AgentsMdManager<'a> {
         let mut paths = Self::load_global_instructions(Some(&self.config.codex_home))
             .map(|loaded| vec![loaded.path])
             .unwrap_or_default();
-        match self.agents_md_paths(fs).await {
+        match self.agents_md_paths(fs, &self.config.cwd).await {
             Ok(agents_md_paths) => paths.extend(agents_md_paths),
             Err(err) => {
                 tracing::warn!(error = %err, "failed to discover AGENTS.md docs for instruction sources");
@@ -146,14 +147,18 @@ impl<'a> AgentsMdManager<'a> {
     /// concatenation of all discovered docs. If no documentation file is found
     /// the function returns `Ok(None)`. Unexpected I/O failures bubble up as
     /// `Err` so callers can decide how to handle them.
-    async fn read_agents_md(&self, fs: &dyn ExecutorFileSystem) -> io::Result<Option<String>> {
+    async fn read_agents_md(
+        &self,
+        fs: &dyn ExecutorFileSystem,
+        cwd: &AbsolutePathBuf,
+    ) -> io::Result<Option<String>> {
         let max_total = self.config.project_doc_max_bytes;
 
         if max_total == 0 {
             return Ok(None);
         }
 
-        let paths = self.agents_md_paths(fs).await?;
+        let paths = self.agents_md_paths(fs, cwd).await?;
         if paths.is_empty() {
             return Ok(None);
         }
@@ -213,15 +218,13 @@ impl<'a> AgentsMdManager<'a> {
     async fn agents_md_paths(
         &self,
         fs: &dyn ExecutorFileSystem,
+        cwd: &AbsolutePathBuf,
     ) -> io::Result<Vec<AbsolutePathBuf>> {
         if self.config.project_doc_max_bytes == 0 {
             return Ok(Vec::new());
         }
 
-        let mut dir = self.config.cwd.clone();
-        if let Ok(canon) = normalize_path(&dir) {
-            dir = AbsolutePathBuf::try_from(canon)?;
-        }
+        let dir = cwd.clone();
 
         let mut merged = TomlValue::Table(toml::map::Map::new());
         for layer in self.config.config_layer_stack.get_layers(

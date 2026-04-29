@@ -471,12 +471,21 @@ impl Codex {
         validate_environment_selections(environment_manager.as_ref(), &environments)?;
         let environment =
             selected_primary_environment(environment_manager.as_ref(), &environments)?;
+        let environment_cwd = environments
+            .first()
+            .map(|selected_environment| selected_environment.cwd.clone())
+            .unwrap_or_else(|| config.cwd.clone());
+        let mut environment_config = config.clone();
+        environment_config.cwd = environment_cwd.clone();
         let fs = environment
             .as_ref()
             .map(|environment| environment.get_filesystem());
-        let plugin_outcome = plugins_manager.plugins_for_config(&config).await;
+        let plugin_outcome = plugins_manager
+            .plugins_for_config(&environment_config)
+            .await;
         let effective_skill_roots = plugin_outcome.effective_skill_roots();
-        let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
+        let skills_input =
+            skills_load_input_from_config(&environment_config, effective_skill_roots);
         let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
 
         for err in &loaded_skills.errors {
@@ -494,8 +503,8 @@ impl Codex {
             let _ = config.features.disable(Feature::Collab);
         }
 
-        let user_instructions = AgentsMdManager::new(&config)
-            .user_instructions(environment.as_deref())
+        let user_instructions = AgentsMdManager::new(&environment_config)
+            .user_instructions(environment.as_deref(), &environment_cwd)
             .await;
 
         let exec_policy = if crate::guardian::is_guardian_reviewer_source(&session_source) {

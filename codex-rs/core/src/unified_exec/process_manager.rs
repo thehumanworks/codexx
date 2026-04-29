@@ -233,13 +233,8 @@ impl UnifiedExecProcessManager {
         request: ExecCommandRequest,
         context: &UnifiedExecContext,
     ) -> Result<ExecCommandToolOutput, UnifiedExecError> {
-        let cwd = request
-            .workdir
-            .clone()
-            .unwrap_or_else(|| context.turn.cwd.clone());
-        let process = self
-            .open_session_with_sandbox(&request, cwd.clone(), context)
-            .await;
+        let cwd = request.cwd.clone();
+        let process = self.open_session_with_sandbox(&request, context).await;
 
         let (process, mut deferred_network_approval) = match process {
             Ok((process, deferred_network_approval)) => {
@@ -767,9 +762,9 @@ impl UnifiedExecProcessManager {
     pub(super) async fn open_session_with_sandbox(
         &self,
         request: &ExecCommandRequest,
-        cwd: AbsolutePathBuf,
         context: &UnifiedExecContext,
     ) -> Result<(UnifiedExecProcess, Option<DeferredNetworkApproval>), UnifiedExecError> {
+        let cwd = request.cwd.clone();
         let local_policy_env = create_env(
             &context.turn.shell_environment_policy,
             /*thread_id*/ None,
@@ -799,7 +794,7 @@ impl UnifiedExecProcessManager {
                 approval_policy: context.turn.approval_policy.value(),
                 permission_profile: context.turn.permission_profile(),
                 file_system_sandbox_policy: &file_system_sandbox_policy,
-                sandbox_cwd: context.turn.cwd.as_path(),
+                sandbox_cwd: request.cwd.as_path(),
                 sandbox_permissions: if request.additional_permissions_preapproved {
                     crate::sandboxing::SandboxPermissions::UseDefault
                 } else {

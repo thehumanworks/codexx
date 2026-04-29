@@ -12,13 +12,13 @@ use tempfile::TempDir;
 
 async fn get_user_instructions(config: &Config) -> Option<String> {
     AgentsMdManager::new(config)
-        .user_instructions_with_fs(LOCAL_FS.as_ref())
+        .user_instructions_with_fs(LOCAL_FS.as_ref(), &config.cwd)
         .await
 }
 
 async fn agents_md_paths(config: &Config) -> std::io::Result<Vec<AbsolutePathBuf>> {
     AgentsMdManager::new(config)
-        .agents_md_paths(LOCAL_FS.as_ref())
+        .agents_md_paths(LOCAL_FS.as_ref(), &config.cwd)
         .await
 }
 
@@ -106,10 +106,28 @@ async fn no_environment_returns_none() {
     let config = make_config(&tmp, /*limit*/ 4096, Some("user instructions")).await;
 
     let res = AgentsMdManager::new(&config)
-        .user_instructions(/*environment*/ None)
+        .user_instructions(/*environment*/ None, &config.cwd)
         .await;
 
     assert_eq!(res, None);
+}
+
+#[tokio::test]
+async fn user_instructions_with_fs_uses_explicit_cwd() {
+    let config_cwd = tempfile::tempdir().expect("tempdir");
+    let environment_cwd = tempfile::tempdir().expect("tempdir");
+    fs::write(config_cwd.path().join("AGENTS.md"), "config doc").unwrap();
+    fs::write(environment_cwd.path().join("AGENTS.md"), "environment doc").unwrap();
+
+    let config = make_config(&config_cwd, /*limit*/ 4096, /*instructions*/ None).await;
+    let environment_cwd = environment_cwd.abs();
+
+    let res = AgentsMdManager::new(&config)
+        .user_instructions_with_fs(LOCAL_FS.as_ref(), &environment_cwd)
+        .await
+        .expect("doc expected");
+
+    assert_eq!(res, "environment doc");
 }
 
 /// Small file within the byte-limit is returned unmodified.
@@ -279,14 +297,8 @@ async fn project_root_markers_are_honored_for_agents_discovery() {
     cfg.cwd = nested.abs();
 
     let discovery = agents_md_paths(&cfg).await.expect("discover paths");
-    let expected_parent = AbsolutePathBuf::try_from(
-        dunce::canonicalize(root.path().join("AGENTS.md")).expect("canonical parent doc path"),
-    )
-    .expect("absolute parent doc path");
-    let expected_child = AbsolutePathBuf::try_from(
-        dunce::canonicalize(cfg.cwd.join("AGENTS.md")).expect("canonical child doc path"),
-    )
-    .expect("absolute child doc path");
+    let expected_parent = root.abs().join("AGENTS.md");
+    let expected_child = cfg.cwd.join("AGENTS.md");
     assert_eq!(discovery.len(), 2);
     assert_eq!(discovery[0], expected_parent);
     assert_eq!(discovery[1], expected_child);
@@ -308,10 +320,7 @@ async fn instruction_sources_include_global_before_agents_md_docs() {
     let sources = AgentsMdManager::new(&cfg)
         .instruction_sources(LOCAL_FS.as_ref())
         .await;
-    let project_agents = AbsolutePathBuf::try_from(
-        dunce::canonicalize(cfg.cwd.join("AGENTS.md")).expect("canonical project doc path"),
-    )
-    .expect("absolute project doc path");
+    let project_agents = cfg.cwd.join("AGENTS.md");
 
     assert_eq!(sources, vec![global_agents, project_agents]);
 }

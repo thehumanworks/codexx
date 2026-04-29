@@ -114,10 +114,12 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
 }
 
 #[test]
-fn file_system_sandbox_context_uses_active_attempt() {
+fn file_system_sandbox_context_uses_apply_patch_action_cwd() {
     let path = std::env::temp_dir()
         .join("apply-patch-runtime-attempt.txt")
         .abs();
+    let action = ApplyPatchAction::new_add_for_test(&path, "hello".to_string());
+    let expected_cwd = action.cwd.clone();
     let additional_permissions = AdditionalPermissionProfile {
         network: None,
         file_system: Some(FileSystemPermissions::from_read_write_roots(
@@ -126,7 +128,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
         )),
     };
     let req = ApplyPatchRequest {
-        action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
+        action,
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::Skip {
@@ -167,7 +169,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
     let expected_permissions =
         PermissionProfile::from_runtime_permissions(&file_system_policy, network_policy);
     assert_eq!(sandbox.permissions, expected_permissions);
-    assert_eq!(sandbox.cwd, Some(path.clone()));
+    assert_eq!(sandbox.cwd, Some(expected_cwd));
     assert_eq!(
         sandbox.windows_sandbox_level,
         WindowsSandboxLevel::RestrictedToken

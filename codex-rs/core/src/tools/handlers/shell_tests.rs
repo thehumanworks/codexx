@@ -77,10 +77,10 @@ fn assert_safe(shell: &Shell, command: &str) {
 
 #[tokio::test]
 async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_context() {
-    let (session, turn_context) = make_session_and_context().await;
+    let (session, mut turn_context) = make_session_and_context().await;
 
     let command = "echo hello".to_string();
-    let workdir = Some("subdir".to_string());
+    let workdir = "subdir".to_string();
     let login = None;
     let timeout_ms = Some(1234);
     let sandbox_permissions = SandboxPermissions::RequireEscalated;
@@ -89,7 +89,13 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
     let expected_command = session
         .user_shell()
         .derive_exec_args(&command, /*use_login_shell*/ true);
-    let expected_cwd = turn_context.resolve_path(workdir.clone());
+    let primary_environment_cwd = turn_context
+        .primary_environment()
+        .expect("default test context should attach an environment")
+        .cwd
+        .clone();
+    let expected_cwd = primary_environment_cwd.join(&workdir);
+    turn_context.cwd = primary_environment_cwd.join("stale-turn-cwd");
     let expected_env = create_env(
         &turn_context.shell_environment_policy,
         Some(session.conversation_id),
@@ -97,7 +103,7 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
 
     let params = ShellCommandToolCallParams {
         command,
-        workdir,
+        workdir: Some(workdir),
         login,
         timeout_ms,
         sandbox_permissions: Some(sandbox_permissions),
@@ -112,12 +118,14 @@ async fn shell_command_handler_to_exec_params_uses_session_shell_and_turn_contex
         &turn_context,
         session.conversation_id,
         /*allow_login_shell*/ true,
+        &expected_cwd,
     )
     .expect("login shells should be allowed");
 
     // ExecParams cannot derive Eq due to the CancellationToken field, so we manually compare the fields.
     assert_eq!(exec_params.command, expected_command);
     assert_eq!(exec_params.cwd, expected_cwd);
+    assert_ne!(exec_params.cwd, turn_context.cwd);
     assert_eq!(exec_params.env, expected_env);
     assert_eq!(exec_params.network, turn_context.network);
     assert_eq!(exec_params.expiration.timeout_ms(), timeout_ms);
@@ -161,7 +169,13 @@ fn shell_command_handler_respects_explicit_login_flag() {
 
 #[tokio::test]
 async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
-    let (session, turn_context) = make_session_and_context().await;
+    let (session, mut turn_context) = make_session_and_context().await;
+    let expected_cwd = turn_context
+        .primary_environment()
+        .expect("default test context should attach an environment")
+        .cwd
+        .clone();
+    turn_context.cwd = expected_cwd.join("stale-turn-cwd");
     let params = ShellCommandToolCallParams {
         command: "echo hello".to_string(),
         workdir: None,
@@ -179,6 +193,7 @@ async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
         &turn_context,
         session.conversation_id,
         /*allow_login_shell*/ false,
+        &expected_cwd,
     )
     .expect("non-login shells should still be allowed");
 
@@ -188,6 +203,8 @@ async fn shell_command_handler_defaults_to_non_login_when_disallowed() {
             .user_shell()
             .derive_exec_args("echo hello", /*use_login_shell*/ false)
     );
+    assert_eq!(exec_params.cwd, expected_cwd);
+    assert_ne!(exec_params.cwd, turn_context.cwd);
 }
 
 #[test]

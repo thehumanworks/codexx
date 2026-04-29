@@ -224,6 +224,12 @@ pub struct FsReadDirectoryEntry {
     pub file_name: String,
     pub is_directory: bool,
     pub is_file: bool,
+    #[serde(default)]
+    pub is_symlink: bool,
+    #[serde(default)]
+    pub created_at_ms: i64,
+    #[serde(default)]
+    pub modified_at_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -87,12 +87,14 @@ impl ToolHandler for ViewImageHandler {
             }
         };
 
-        let abs_path = turn.resolve_path(Some(args.path));
-        let Some(environment) = turn.environment.as_ref() else {
+        let Some(turn_environment) = turn.primary_environment() else {
             return Err(FunctionCallError::RespondToModel(
                 "view_image is unavailable in this session".to_string(),
             ));
         };
+        let environment = &turn_environment.environment;
+        let cwd = &turn_environment.cwd;
+        let abs_path = cwd.join(args.path);
         let sandbox = environment
             .is_remote()
             .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));

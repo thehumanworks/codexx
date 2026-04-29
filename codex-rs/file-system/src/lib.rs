@@ -9,6 +9,7 @@ use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use std::ffi::OsString;
 use std::io;
 use std::path::Path;
 
@@ -39,9 +40,8 @@ pub struct FileMetadata {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReadDirectoryEntry {
-    pub file_name: String,
-    pub is_directory: bool,
-    pub is_file: bool,
+    pub file_name: OsString,
+    pub metadata: FileMetadata,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]

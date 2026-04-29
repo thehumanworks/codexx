@@ -113,9 +113,9 @@ impl FsApi {
             entries: entries
                 .into_iter()
                 .map(|entry| FsReadDirectoryEntry {
-                    file_name: entry.file_name,
-                    is_directory: entry.is_directory,
-                    is_file: entry.is_file,
+                    file_name: entry.file_name.to_string_lossy().into_owned(),
+                    is_directory: entry.metadata.is_directory,
+                    is_file: entry.metadata.is_file,
                 })
                 .collect(),
         })

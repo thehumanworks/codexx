@@ -11,6 +11,7 @@ use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
+use crate::sandboxing::ExecRequest;
 use crate::sandboxing::ExecServerEnvConfig;
 use crate::sandboxing::SandboxPermissions;
 use crate::shell::ShellType;
@@ -42,6 +43,8 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::protocol::ReviewDecision;
+use codex_sandboxing::SandboxCommand;
+use codex_sandboxing::SandboxTransformRequest;
 use codex_sandboxing::SandboxablePreference;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_tools::UnifiedExecShellMode;
@@ -79,6 +82,33 @@ pub struct UnifiedExecApprovalKey {
     pub tty: bool,
     pub sandbox_permissions: SandboxPermissions,
     pub additional_permissions: Option<AdditionalPermissionProfile>,
+}
+
+fn exec_env_for_request_cwd(
+    attempt: &SandboxAttempt<'_>,
+    command: SandboxCommand,
+    options: ExecOptions,
+    managed_network: Option<&NetworkProxy>,
+    cwd: &AbsolutePathBuf,
+) -> Result<ExecRequest, ToolError> {
+    attempt
+        .manager
+        .transform(SandboxTransformRequest {
+            command,
+            permissions: attempt.permissions,
+            sandbox: attempt.sandbox,
+            enforce_managed_network: attempt.enforce_managed_network,
+            network: managed_network,
+            sandbox_policy_cwd: cwd.as_path(),
+            codex_linux_sandbox_exe: attempt
+                .codex_linux_sandbox_exe
+                .map(std::path::PathBuf::as_path),
+            use_legacy_landlock: attempt.use_legacy_landlock,
+            windows_sandbox_level: attempt.windows_sandbox_level,
+            windows_sandbox_private_desktop: attempt.windows_sandbox_private_desktop,
+        })
+        .map(|request| ExecRequest::from_sandbox_exec_request(request, options, cwd.clone()))
+        .map_err(|err| ToolError::Codex(err.into()))
 }
 
 /// Runtime adapter that keeps policy and sandbox orchestration on the
@@ -232,17 +262,19 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
     ) -> Result<UnifiedExecProcess, ToolError> {
         let base_command = &req.command;
         let session_shell = ctx.session.user_shell();
+        let Some(turn_environment) = ctx.turn.primary_environment() else {
+            return Err(ToolError::Rejected(
+                "exec_command is unavailable in this session".to_string(),
+            ));
+        };
+        let environment = &turn_environment.environment;
         let managed_network =
             managed_network_for_sandbox_permissions(req.network.as_ref(), req.sandbox_permissions);
         let mut env = exec_env_for_sandbox_permissions(&req.env, req.sandbox_permissions);
         if let Some(network) = managed_network {
             network.apply_to_env(&mut env);
         }
-        let environment_is_remote = ctx
-            .turn
-            .environment
-            .as_ref()
-            .is_some_and(|environment| environment.is_remote());
+        let environment_is_remote = environment.is_remote();
         let command = if environment_is_remote {
             base_command.to_vec()
         } else {
@@ -261,6 +293,12 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
         };
 
         if let UnifiedExecShellMode::ZshFork(zsh_fork_config) = &self.shell_mode {
+            if environment_is_remote {
+                return Err(ToolError::Rejected(
+                    "unified_exec zsh-fork is not supported when exec_server_url is configured"
+                        .to_string(),
+                ));
+            }
             let command =
                 build_sandbox_command(&command, &req.cwd, &env, req.additional_permissions.clone())
                     .map_err(|_| ToolError::Rejected("missing command line for PTY".to_string()))?;
@@ -268,9 +306,8 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 expiration: ExecExpiration::DefaultTimeout,
                 capture_policy: ExecCapturePolicy::ShellTool,
             };
-            let mut exec_env = attempt
-                .env_for(command, options, managed_network)
-                .map_err(|err| ToolError::Codex(err.into()))?;
+            let mut exec_env =
+                exec_env_for_request_cwd(attempt, command, options, managed_network, &req.cwd)?;
             exec_env.exec_server_env_config = req.exec_server_env_config.clone();
             match zsh_fork_backend::maybe_prepare_unified_exec(
                 req,
@@ -282,16 +319,6 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             .await?
             {
                 Some(prepared) => {
-                    let Some(environment) = ctx.turn.environment.as_ref() else {
-                        return Err(ToolError::Rejected(
-                            "exec_command is unavailable in this session".to_string(),
-                        ));
-                    };
-                    if environment.is_remote() {
-                        return Err(ToolError::Rejected(
-                            "unified_exec zsh-fork is not supported when exec_server_url is configured".to_string(),
-                        ));
-                    }
                     return self
                         .manager
                         .open_session_with_exec_env(
@@ -326,15 +353,9 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
             expiration: ExecExpiration::DefaultTimeout,
             capture_policy: ExecCapturePolicy::ShellTool,
         };
-        let mut exec_env = attempt
-            .env_for(command, options, managed_network)
-            .map_err(|err| ToolError::Codex(err.into()))?;
+        let mut exec_env =
+            exec_env_for_request_cwd(attempt, command, options, managed_network, &req.cwd)?;
         exec_env.exec_server_env_config = req.exec_server_env_config.clone();
-        let Some(environment) = ctx.turn.environment.as_ref() else {
-            return Err(ToolError::Rejected(
-                "exec_command is unavailable in this session".to_string(),
-            ));
-        };
         self.manager
             .open_session_with_exec_env(
                 req.process_id,

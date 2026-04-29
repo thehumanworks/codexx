@@ -497,7 +497,7 @@ async fn discover_skills_under_root(
 
         for entry in entries {
             let file_name = entry.file_name;
-            if file_name.starts_with('.') {
+            if file_name.as_encoded_bytes().starts_with(b".") {
                 continue;
             }
 
