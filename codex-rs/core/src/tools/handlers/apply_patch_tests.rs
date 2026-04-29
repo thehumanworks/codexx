@@ -18,6 +18,7 @@ use crate::session::tests::make_session_and_context;
 use crate::session::turn_context::TurnContext;
 use crate::session::turn_context::TurnEnvironment;
 use crate::tools::context::ToolInvocation;
+use crate::tools::handlers::env_path::format_oai_env_uri;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
@@ -131,10 +132,7 @@ async fn apply_patch_input_rewrites_env_qualified_paths() {
     let temp = TempDir::new().expect("tmp");
     let secondary_cwd = temp.path().abs();
     add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
-    let qualified_path = format!(
-        "oai_env://secondary{}",
-        secondary_cwd.join("hello.txt").display()
-    );
+    let qualified_path = format_oai_env_uri("secondary", &secondary_cwd.join("hello.txt"));
     let patch = format!("*** Begin Patch\n*** Add File: {qualified_path}\n+hello\n*** End Patch");
 
     let resolved = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
@@ -156,10 +154,8 @@ async fn apply_patch_input_rewrites_padded_env_qualified_hunk_headers() {
     let temp = TempDir::new().expect("tmp");
     let secondary_cwd = temp.path().abs();
     add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
-    let patch = format!(
-        "*** Begin Patch\n  *** Add File: oai_env://secondary{}\n+hello\n*** End Patch",
-        secondary_cwd.join("hello.txt").display()
-    );
+    let qualified_path = format_oai_env_uri("secondary", &secondary_cwd.join("hello.txt"));
+    let patch = format!("*** Begin Patch\n  *** Add File: {qualified_path}\n+hello\n*** End Patch");
 
     let resolved = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
         .expect("resolve patch target");
@@ -180,9 +176,9 @@ async fn apply_patch_input_does_not_rewrite_marker_text_inside_patch_content() {
     let temp = TempDir::new().expect("tmp");
     let secondary_cwd = temp.path().abs();
     add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
+    let qualified_path = format_oai_env_uri("secondary", &secondary_cwd.join("hello.txt"));
     let patch = format!(
-        "*** Begin Patch\n*** Update File: hello.txt\n@@\n *** Add File: oai_env://secondary{}\n*** End Patch",
-        secondary_cwd.join("hello.txt").display()
+        "*** Begin Patch\n*** Update File: hello.txt\n@@\n *** Add File: {qualified_path}\n*** End Patch",
     );
 
     let resolved = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
@@ -202,11 +198,13 @@ async fn apply_patch_input_rejects_mixed_environment_paths() {
     let secondary_cwd = temp.path().abs();
     add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
     let primary_cwd = turn.primary_environment().expect("primary env").cwd.clone();
-    let patch = format!(
-        "*** Begin Patch\n*** Add File: oai_env://secondary{}\n+hello\n*** Delete File: oai_env://{}{}\n*** End Patch",
-        secondary_cwd.join("hello.txt").display(),
+    let secondary_file = format_oai_env_uri("secondary", &secondary_cwd.join("hello.txt"));
+    let local_file = format_oai_env_uri(
         codex_exec_server::LOCAL_ENVIRONMENT_ID,
-        primary_cwd.join("world.txt").display(),
+        &primary_cwd.join("world.txt"),
+    );
+    let patch = format!(
+        "*** Begin Patch\n*** Add File: {secondary_file}\n+hello\n*** Delete File: {local_file}\n*** End Patch",
     );
 
     let err = resolve_apply_patch_input(&turn, /*explicit_environment_id*/ None, &patch)
@@ -227,10 +225,8 @@ async fn apply_patch_input_rejects_explicit_environment_mismatch() {
     let temp = TempDir::new().expect("tmp");
     let secondary_cwd = temp.path().abs();
     add_secondary_environment(&mut turn, "secondary", secondary_cwd.clone());
-    let patch = format!(
-        "*** Begin Patch\n*** Add File: oai_env://secondary{}\n+hello\n*** End Patch",
-        secondary_cwd.join("hello.txt").display(),
-    );
+    let qualified_path = format_oai_env_uri("secondary", &secondary_cwd.join("hello.txt"));
+    let patch = format!("*** Begin Patch\n*** Add File: {qualified_path}\n+hello\n*** End Patch");
 
     let err =
         resolve_apply_patch_input(&turn, Some(codex_exec_server::LOCAL_ENVIRONMENT_ID), &patch)

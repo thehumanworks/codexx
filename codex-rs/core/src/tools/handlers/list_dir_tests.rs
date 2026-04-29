@@ -28,6 +28,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::env_path::format_oai_env_uri;
 use crate::turn_diff_tracker::TurnDiffTracker;
 
 async fn list_dir_slice(
@@ -425,8 +426,8 @@ async fn handler_routes_to_explicit_environment_and_uses_env_qualified_display()
     assert_eq!(
         output,
         format!(
-            "Environment path: oai_env://secondary{}\nsecondary.txt",
-            secondary_temp.path().join("nested").display()
+            "Environment path: {}\nsecondary.txt",
+            format_oai_env_uri("secondary", &secondary_temp.path().join("nested").abs())
         )
     );
 }
@@ -442,9 +443,9 @@ async fn handler_rejects_mismatched_explicit_and_path_environment() {
 
     let err = invoke_list_dir_with_turn(
         json!({
-            "dir_path": format!(
-                "oai_env://secondary{}",
-                secondary_temp.path().join("nested").display(),
+            "dir_path": format_oai_env_uri(
+                "secondary",
+                &secondary_temp.path().join("nested").abs(),
             ),
             "environment_id": codex_exec_server::LOCAL_ENVIRONMENT_ID,
         }),
