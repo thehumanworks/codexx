@@ -118,7 +118,11 @@ mod tests {
     #[tokio::test]
     async fn validate_environment_selections_rejects_duplicate_environment_ids() {
         let cwd = AbsolutePathBuf::current_dir().expect("cwd");
-        let manager = EnvironmentManager::create_for_tests(None, test_runtime_paths()).await;
+        let manager = EnvironmentManager::create_for_tests(
+            /*exec_server_url*/ None,
+            test_runtime_paths(),
+        )
+        .await;
 
         let err = validate_environment_selections(
             &manager,

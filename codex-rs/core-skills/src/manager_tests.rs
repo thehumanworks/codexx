@@ -255,7 +255,9 @@ async fn cached_skills_outcome_applies_path_display_per_request() {
         .await;
     let qualified = skills_manager
         .skills_for_cwd(
-            &base_input.clone().with_qualified_paths(true),
+            &base_input
+                .clone()
+                .with_qualified_paths(/*qualify_paths_with_environment_id*/ true),
             /*force_reload*/ false,
             Some(Arc::clone(&LOCAL_FS)),
         )

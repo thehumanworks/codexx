@@ -538,7 +538,7 @@ fn multiple_environments_add_environment_id_to_process_creation_tools_only() {
         permission_profile: &PermissionProfile::Disabled,
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     })
-    .with_has_multiple_environments(true);
+    .with_has_multiple_environments(/*has_multiple_environments*/ true);
     let (tools, _) = build_specs(
         &tools_config,
         /*mcp_tools*/ None,
