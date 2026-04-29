@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 import sys
 import tomllib
@@ -56,6 +57,13 @@ GROUPED_ITEM_ALIAS_PATTERN = re.compile(
     rf"{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
     rf"({IDENTIFIER})\b"
 )
+
+
+@dataclass(frozen=True)
+class UseStatement:
+    start: int
+    tree_start: int
+    tree: str
 
 
 def main() -> int:
@@ -127,18 +135,18 @@ def source_failures() -> list[str]:
                     failures.append(source_failure(path, text, match.start(), message))
                     seen_locations.add((match.start(), message))
 
-        for match in protocol_reference_matches(match_text, codex_protocol_names):
-            key = (match.start(), CODEX_PROTOCOL_MESSAGE)
+        for offset in protocol_reference_offsets(match_text, codex_protocol_names):
+            key = (offset, CODEX_PROTOCOL_MESSAGE)
             if key in seen_locations:
                 continue
-            failures.append(source_failure(path, text, match.start(), CODEX_PROTOCOL_MESSAGE))
+            failures.append(source_failure(path, text, offset, CODEX_PROTOCOL_MESSAGE))
             seen_locations.add(key)
-        for match in protocol_glob_import_matches(match_text, codex_protocol_names):
-            key = (match.start(), CODEX_PROTOCOL_GLOB_MESSAGE)
+        for offset in protocol_glob_import_offsets(match_text, codex_protocol_names):
+            key = (offset, CODEX_PROTOCOL_GLOB_MESSAGE)
             if key in seen_locations:
                 continue
             failures.append(
-                source_failure(path, text, match.start(), CODEX_PROTOCOL_GLOB_MESSAGE)
+                source_failure(path, text, offset, CODEX_PROTOCOL_GLOB_MESSAGE)
             )
             seen_locations.add(key)
     return failures
@@ -322,48 +330,41 @@ def rust_crate_name(package_or_dependency_name: str) -> str:
     return package_or_dependency_name.replace("-", "_")
 
 
-def protocol_reference_matches(
+def protocol_reference_offsets(
     text: str, codex_protocol_names: set[str]
-) -> list[re.Match[str]]:
-    matches = []
+) -> list[int]:
+    offsets = []
     for crate_name in expanded_crate_aliases(text, codex_protocol_names):
         crate_name_pattern = rf"(?:r#)?{re.escape(normalize_identifier(crate_name))}"
-        patterns = (
-            re.compile(
-                rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
-                rf"{PROTOCOL_IDENTIFIER}\b"
-            ),
-            re.compile(
-                rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
-                rf"\{{[^;]*\b{PROTOCOL_IDENTIFIER}\b"
-            ),
+        pattern = re.compile(
+            rf"\b{crate_name_pattern}{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}"
+            rf"{PROTOCOL_IDENTIFIER}\b"
         )
-        for pattern in patterns:
-            matches.extend(pattern.finditer(text))
-    return matches
+        offsets.extend(match.start() for match in pattern.finditer(text))
+    offsets.extend(protocol_grouped_import_offsets(text, codex_protocol_names))
+    return offsets
 
 
-def protocol_glob_import_matches(
+def protocol_glob_import_offsets(
     text: str, codex_protocol_names: set[str]
-) -> list[re.Match[str]]:
-    matches = []
-    for crate_name in expanded_crate_aliases(text, codex_protocol_names):
-        crate_name_pattern = rf"(?:r#)?{re.escape(normalize_identifier(crate_name))}"
-        patterns = (
-            re.compile(
-                rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
-                rf"(?:::{TOKEN_SEPARATOR})?{crate_name_pattern}"
-                rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\*{TOKEN_SEPARATOR};"
-            ),
-            re.compile(
-                rf"\buse{REQUIRED_TOKEN_SEPARATOR}"
-                rf"(?:::{TOKEN_SEPARATOR})?{crate_name_pattern}"
-                rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\{{[^;]*\*"
-            ),
-        )
-        for pattern in patterns:
-            matches.extend(pattern.finditer(text))
-    return matches
+) -> list[int]:
+    aliases = expanded_crate_aliases(text, codex_protocol_names)
+    offsets = []
+    for statement in use_statements(text):
+        if use_tree_imports_root_glob(statement.tree, aliases):
+            offsets.append(statement.start)
+    return offsets
+
+
+def protocol_grouped_import_offsets(
+    text: str, codex_protocol_names: set[str]
+) -> list[int]:
+    aliases = expanded_crate_aliases(text, codex_protocol_names)
+    offsets = []
+    for statement in use_statements(text):
+        if use_tree_imports_protocol_at_root(statement.tree, aliases):
+            offsets.append(statement.start)
+    return offsets
 
 
 def expanded_crate_aliases(text: str, crate_names: set[str]) -> set[str]:
@@ -383,18 +384,22 @@ def crate_alias_pairs(text: str) -> list[tuple[str, str]]:
         for match in pattern.finditer(text):
             pairs.append(
                 (
-                    normalize_identifier(path_tail(match.group(1))),
+                    normalize_path(match.group(1)),
                     normalize_identifier(match.group(2)),
                 )
             )
     for match in GROUPED_USE_PATTERN.finditer(text):
-        group_source = normalize_identifier(path_tail(match.group(1)))
+        group_source = normalize_path(match.group(1))
         body = match.group(2)
         for alias_match in GROUPED_ITEM_ALIAS_PATTERN.finditer(body):
-            source = normalize_identifier(path_tail(alias_match.group(1)))
+            source = normalize_path(alias_match.group(1))
             if source == "self":
                 source = group_source
+            else:
+                source = f"{group_source}::{source}"
             pairs.append((source, normalize_identifier(alias_match.group(2))))
+    for statement in use_statements(text):
+        pairs.extend(use_tree_alias_pairs(statement.tree))
     return pairs
 
 
@@ -402,8 +407,219 @@ def normalize_identifier(identifier: str) -> str:
     return identifier.removeprefix("r#")
 
 
-def path_tail(path: str) -> str:
-    return re.split(rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}", path)[-1]
+def normalize_path(path: str) -> str:
+    parts = [
+        normalize_identifier(part)
+        for part in re.split(rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}", path.strip())
+        if part
+    ]
+    return "::".join(parts)
+
+
+def use_statements(text: str) -> list[UseStatement]:
+    statements = []
+    for match in re.finditer(r"\buse\b", text):
+        index = match.end()
+        while index < len(text) and text[index].isspace():
+            index += 1
+        tree_start = index
+        depth = 0
+        while index < len(text):
+            char = text[index]
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+            elif char == ";" and depth == 0:
+                statements.append(UseStatement(match.start(), tree_start, text[tree_start:index]))
+                break
+            index += 1
+    return statements
+
+
+def use_tree_alias_pairs(tree: str) -> list[tuple[str, str]]:
+    tree = tree.strip()
+    root_body = root_braced_body(tree)
+    if root_body is not None:
+        body, _body_offset = root_body
+        pairs = []
+        for item, _offset in split_root_items(body):
+            pairs.extend(use_tree_alias_pairs(item))
+        return pairs
+
+    alias_match = re.fullmatch(
+        rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER})"
+        rf"{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
+        rf"({IDENTIFIER})",
+        tree,
+    )
+    if alias_match:
+        return [
+            (
+                normalize_path(alias_match.group(1)),
+                normalize_identifier(alias_match.group(2)),
+            )
+        ]
+
+    grouped = grouped_use_tree(tree)
+    if grouped is None:
+        return []
+    group_source, body, _body_offset = grouped
+    pairs = []
+    for item, _offset in split_root_items(body):
+        source, alias = item_alias(item)
+        if alias is None:
+            continue
+        if source == "self":
+            pairs.append((group_source, alias))
+        else:
+            pairs.append((f"{group_source}::{source}", alias))
+    return pairs
+
+
+def use_tree_imports_root_glob(tree: str, aliases: set[str]) -> bool:
+    tree = tree.strip()
+    root_body = root_braced_body(tree)
+    if root_body is not None:
+        body, _body_offset = root_body
+        return any(use_tree_imports_root_glob(item, aliases) for item, _ in split_root_items(body))
+
+    direct_glob_match = re.fullmatch(
+        rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER})"
+        rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\*",
+        tree,
+    )
+    if direct_glob_match:
+        return normalize_path(direct_glob_match.group(1)) in aliases
+
+    grouped = grouped_use_tree(tree)
+    if grouped is None:
+        return False
+    group_source, body, _body_offset = grouped
+    return group_source in aliases and any(
+        item_without_alias(item).strip() == "*" for item, _ in split_root_items(body)
+    )
+
+
+def use_tree_imports_protocol_at_root(tree: str, aliases: set[str]) -> bool:
+    tree = tree.strip()
+    root_body = root_braced_body(tree)
+    if root_body is not None:
+        body, _body_offset = root_body
+        return any(
+            use_tree_imports_protocol_at_root(item, aliases)
+            for item, _ in split_root_items(body)
+        )
+
+    grouped = grouped_use_tree(tree)
+    if grouped is None:
+        return False
+    group_source, body, _body_offset = grouped
+    return group_source in aliases and any(
+        first_path_segment(item_without_alias(item)) == "protocol"
+        for item, _ in split_root_items(body)
+    )
+
+
+def grouped_use_tree(tree: str) -> tuple[str, str, int] | None:
+    brace_index = first_top_level_brace_index(tree)
+    if brace_index is None:
+        return None
+    prefix = tree[:brace_index].strip()
+    if not re.search(rf"::{TOKEN_SEPARATOR}$", prefix):
+        return None
+    close_index = matching_brace_index(tree, brace_index)
+    if close_index is None or tree[close_index + 1 :].strip():
+        return None
+    group_source = normalize_path(
+        re.sub(rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}$", "", prefix)
+    )
+    return group_source, tree[brace_index + 1 : close_index], brace_index + 1
+
+
+def root_braced_body(tree: str) -> tuple[str, int] | None:
+    tree = tree.strip()
+    if not tree.startswith("{"):
+        return None
+    close_index = matching_brace_index(tree, 0)
+    if close_index is None or tree[close_index + 1 :].strip():
+        return None
+    return tree[1:close_index], 1
+
+
+def first_top_level_brace_index(text: str) -> int | None:
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "{":
+            if depth == 0:
+                return index
+            depth += 1
+        elif char == "}":
+            depth -= 1
+    return None
+
+
+def matching_brace_index(text: str, open_index: int) -> int | None:
+    depth = 0
+    for index in range(open_index, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def split_root_items(body: str) -> list[tuple[str, int]]:
+    items = []
+    depth = 0
+    item_start = 0
+    for index, char in enumerate(body):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+        elif char == "," and depth == 0:
+            append_root_item(items, body, item_start, index)
+            item_start = index + 1
+    append_root_item(items, body, item_start, len(body))
+    return items
+
+
+def append_root_item(
+    items: list[tuple[str, int]], body: str, start: int, end: int
+) -> None:
+    item = body[start:end]
+    leading = len(item) - len(item.lstrip())
+    item = item.strip()
+    if item:
+        items.append((item, start + leading))
+
+
+def item_alias(item: str) -> tuple[str, str | None]:
+    match = re.fullmatch(
+        rf"({PATH_PREFIX}{IDENTIFIER}|self)"
+        rf"{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
+        rf"({IDENTIFIER})",
+        item.strip(),
+    )
+    if match is None:
+        return "", None
+    return normalize_path(match.group(1)), normalize_identifier(match.group(2))
+
+
+def item_without_alias(item: str) -> str:
+    return re.split(rf"\b{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}\b", item, 1)[
+        0
+    ].strip()
+
+
+def first_path_segment(path: str) -> str:
+    return normalize_identifier(
+        re.split(rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}", path.strip(), maxsplit=1)[0]
+    )
 
 
 def source_failure(path: Path, text: str, offset: int, message: str) -> str:
