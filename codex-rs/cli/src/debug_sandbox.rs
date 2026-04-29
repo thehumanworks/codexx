@@ -297,6 +297,7 @@ impl SandboxRuntimeConfig {
         self.permission_profile.network_sandbox_policy()
     }
 
+    #[cfg(target_os = "windows")]
     fn legacy_sandbox_policy(
         &self,
         sandbox_policy_cwd: &AbsolutePathBuf,
