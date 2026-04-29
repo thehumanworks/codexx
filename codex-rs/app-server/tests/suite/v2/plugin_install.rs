@@ -23,6 +23,7 @@ use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::AppSummary;
 use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigEdit;
+use codex_app_server_protocol::ConfigValueWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::JSONRPCResponse;
 use codex_app_server_protocol::MergeStrategy;
@@ -255,6 +256,58 @@ async fn plugin_install_writes_remote_plugin_to_cloud_and_cache() -> Result<()> 
             ))
             .exists()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_value_write_enables_remote_plugin_via_remote_enable_without_config_write()
+-> Result<()> {
+    let codex_home = TempDir::new()?;
+    let server = MockServer::start().await;
+    let installed_path = codex_home
+        .path()
+        .join("plugins/cache/chatgpt-global/linear/1.2.3");
+    std::fs::create_dir_all(installed_path.join(".codex-plugin"))?;
+    std::fs::write(
+        installed_path.join(".codex-plugin/plugin.json"),
+        r#"{"name":"linear"}"#,
+    )?;
+    configure_remote_plugin_test(codex_home.path(), &server)?;
+    mount_remote_plugin_enablement(&server, REMOTE_PLUGIN_ID, /*enabled*/ true).await;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = send_remote_plugin_enabled_config_value_write(
+        &mut mcp,
+        REMOTE_PLUGIN_ID,
+        /*enabled*/ true,
+    )
+    .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let response: ConfigWriteResponse = to_response(response)?;
+
+    assert_eq!(response.status, WriteStatus::Ok);
+    wait_for_remote_plugin_request_count(
+        &server,
+        "POST",
+        &format!("/backend-api/plugins/{REMOTE_PLUGIN_ID}/enable"),
+        /*expected_count*/ 1,
+    )
+    .await?;
+    wait_for_remote_plugin_request_count(
+        &server,
+        "POST",
+        &format!("/backend-api/ps/plugins/{REMOTE_PLUGIN_ID}/install"),
+        /*expected_count*/ 0,
+    )
+    .await?;
+    assert!(installed_path.join(".codex-plugin/plugin.json").is_file());
+    assert_config_does_not_contain_remote_plugin_id(codex_home.path(), REMOTE_PLUGIN_ID)?;
     Ok(())
 }
 
@@ -1455,6 +1508,21 @@ async fn send_remote_plugin_enabled_config_write(
         file_path: None,
         expected_version: None,
         reload_user_config: true,
+    })
+    .await
+}
+
+async fn send_remote_plugin_enabled_config_value_write(
+    mcp: &mut McpProcess,
+    remote_plugin_id: &str,
+    enabled: bool,
+) -> Result<i64> {
+    mcp.send_config_value_write_request(ConfigValueWriteParams {
+        key_path: format!("plugins.{remote_plugin_id}.enabled"),
+        value: json!(enabled),
+        merge_strategy: MergeStrategy::Upsert,
+        file_path: None,
+        expected_version: None,
     })
     .await
 }
