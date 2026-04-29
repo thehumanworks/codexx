@@ -18,6 +18,10 @@ mod feature_configs;
 mod legacy;
 pub use feature_configs::AppsMcpPathOverrideConfigToml;
 pub use feature_configs::MultiAgentV2ConfigToml;
+pub use feature_configs::NetworkProxyConfigToml;
+pub use feature_configs::NetworkProxyDomainPermissionToml;
+pub use feature_configs::NetworkProxyModeToml;
+pub use feature_configs::NetworkProxyUnixSocketPermissionToml;
 use legacy::LegacyFeatureToggles;
 pub use legacy::legacy_feature_keys;
 
@@ -142,6 +146,8 @@ pub enum Feature {
     ChildAgentsMd,
     /// Compress request bodies (zstd) when sending streaming requests to codex-backend.
     EnableRequestCompression,
+    /// Start the managed network proxy for sandboxed sessions.
+    NetworkProxy,
     /// Enable collab tools.
     Collab,
     /// Enable task-path-based multi-agent routing.
@@ -250,6 +256,13 @@ impl Feature {
 
     pub fn default_enabled(self) -> bool {
         self.info().default_enabled
+    }
+
+    pub fn uses_config_table(self) -> bool {
+        matches!(
+            self,
+            Feature::MultiAgentV2 | Feature::AppsMcpPathOverride | Feature::NetworkProxy
+        )
     }
 
     fn info(self) -> &'static FeatureSpec {
@@ -567,6 +580,15 @@ pub fn is_known_feature_key(key: &str) -> bool {
     feature_for_key(key).is_some()
 }
 
+pub fn feature_toggle_override_key(key: &str) -> Option<String> {
+    let feature = feature_for_key(key)?;
+    if feature.uses_config_table() {
+        Some(format!("features.{}.enabled", feature.key()))
+    } else {
+        Some(format!("features.{key}"))
+    }
+}
+
 /// Deserializable features table for TOML.
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 pub struct FeaturesToml {
@@ -574,6 +596,7 @@ pub struct FeaturesToml {
     pub multi_agent_v2: Option<FeatureToml<MultiAgentV2ConfigToml>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apps_mcp_path_override: Option<FeatureToml<AppsMcpPathOverrideConfigToml>>,
+    pub network_proxy: Option<FeatureToml<NetworkProxyConfigToml>>,
     /// Boolean feature toggles keyed by canonical or legacy feature name.
     #[serde(flatten)]
     entries: BTreeMap<String, bool>,
@@ -598,6 +621,9 @@ impl FeaturesToml {
             .and_then(FeatureToml::enabled)
         {
             entries.insert(Feature::AppsMcpPathOverride.key().to_string(), enabled);
+        }
+        if let Some(enabled) = self.network_proxy.as_ref().and_then(FeatureToml::enabled) {
+            entries.insert(Feature::NetworkProxy.key().to_string(), enabled);
         }
         entries
     }
@@ -886,6 +912,16 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "enable_request_compression",
         stage: Stage::Stable,
         default_enabled: true,
+    },
+    FeatureSpec {
+        id: Feature::NetworkProxy,
+        key: "network_proxy",
+        stage: Stage::Experimental {
+            name: "Network proxy",
+            menu_description: "Start Codex's managed network proxy for sandboxed sessions. The active permissions profile still controls direct network access.",
+            announcement: "NEW: Network proxy can now be enabled from /experimental. Restart Codex after enabling it.",
+        },
+        default_enabled: false,
     },
     FeatureSpec {
         id: Feature::Collab,
