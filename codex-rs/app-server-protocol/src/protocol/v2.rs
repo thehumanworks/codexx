@@ -5750,7 +5750,7 @@ pub enum ThreadItem {
     ImageView {
         id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        #[ts(optional = nullable)]
+        #[ts(optional)]
         environment_id: Option<String>,
         path: AbsolutePathBuf,
     },

@@ -6277,7 +6277,9 @@ impl CodexMessageProcessor {
             environment_id.as_deref(),
             "skills/list",
         )?;
-        let fs = Some(environment.get_filesystem());
+        let environment_enabled =
+            environment_id.is_some() || environment_manager.default_environment_id().is_some();
+        let fs = environment_enabled.then(|| environment.get_filesystem());
         let mut data = Vec::new();
         for cwd in cwds {
             let extra_roots = extra_roots_by_cwd
