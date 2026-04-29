@@ -3,7 +3,7 @@
 //! App-server turn items and queued TUI submissions describe user input in
 //! slightly different shapes. This module keeps the display-only representation
 //! and comparison keys together so chat rendering can avoid duplicate user rows
-//! without depending on core protocol event wrappers.
+//! while preserving local-only attachment metadata.
 
 use std::path::PathBuf;
 

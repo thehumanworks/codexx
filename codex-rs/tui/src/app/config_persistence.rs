@@ -547,9 +547,6 @@ mod tests {
     use super::*;
     use crate::app::test_support::app_enabled_in_effective_config;
     use crate::app::test_support::make_test_app;
-    use crate::chatwidget::test_events::Event;
-    use crate::chatwidget::test_events::EventMsg;
-    use crate::chatwidget::test_events::SessionConfiguredEvent;
     use crate::test_support::PathBufExt;
     use codex_protocol::models::PermissionProfile;
     use pretty_assertions::assert_eq;
@@ -635,11 +632,11 @@ mod tests {
         let next_cwd_tmp = tempdir()?;
         let next_cwd = next_cwd_tmp.path().to_path_buf();
 
-        app.chat_widget.handle_codex_event(Event {
-            id: String::new(),
-            msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-                session_id: ThreadId::new(),
+        app.chat_widget
+            .handle_thread_session(crate::session_state::ThreadSessionState {
+                thread_id: ThreadId::new(),
                 forked_from_id: None,
+                fork_parent_title: None,
                 thread_name: None,
                 model: "gpt-test".to_string(),
                 model_provider_id: "test-provider".to_string(),
@@ -648,14 +645,13 @@ mod tests {
                 approvals_reviewer: ApprovalsReviewer::User,
                 permission_profile: PermissionProfile::read_only(),
                 cwd: next_cwd.clone().abs(),
+                instruction_source_paths: Vec::new(),
                 reasoning_effort: None,
                 history_log_id: 0,
                 history_entry_count: 0,
-                initial_messages: None,
                 network_proxy: None,
                 rollout_path: Some(PathBuf::new()),
-            }),
-        });
+            });
 
         assert_eq!(app.chat_widget.config_ref().cwd.to_path_buf(), next_cwd);
         assert_eq!(app.config.cwd, original_cwd);

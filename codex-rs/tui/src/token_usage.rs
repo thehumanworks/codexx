@@ -57,13 +57,6 @@ pub(crate) struct TokenUsageInfo {
     pub(crate) model_context_window: Option<i64>,
 }
 
-#[cfg(test)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct TokenCountEvent {
-    pub(crate) info: Option<TokenUsageInfo>,
-    pub(crate) rate_limits: Option<codex_app_server_protocol::RateLimitSnapshot>,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FinalOutput {
     pub token_usage: TokenUsage,

@@ -25,10 +25,7 @@ async fn exec_approval_emits_proposed_command_and_decision_history() {
         available_decisions: None,
         parsed_cmd: vec![],
     };
-    chat.handle_codex_event(Event {
-        id: "sub-short".into(),
-        msg: EventMsg::ExecApprovalRequest(ev),
-    });
+    handle_exec_approval_request(&mut chat, "sub-short", ev);
 
     let proposed_cells = drain_insert_history(&mut rx);
     assert!(
@@ -192,9 +189,10 @@ fn app_server_request_permissions_preserves_file_system_permissions() {
 async fn exec_approval_uses_approval_id_when_present() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
-    chat.handle_codex_event(Event {
-        id: "sub-short".into(),
-        msg: EventMsg::ExecApprovalRequest(ExecApprovalRequestEvent {
+    handle_exec_approval_request(
+        &mut chat,
+        "sub-short",
+        ExecApprovalRequestEvent {
             call_id: "call-parent".into(),
             approval_id: Some("approval-subcommand".into()),
             turn_id: "turn-short".into(),
@@ -209,8 +207,8 @@ async fn exec_approval_uses_approval_id_when_present() {
             additional_permissions: None,
             available_decisions: None,
             parsed_cmd: vec![],
-        }),
-    });
+        },
+    );
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
 
@@ -253,10 +251,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         available_decisions: None,
         parsed_cmd: vec![],
     };
-    chat.handle_codex_event(Event {
-        id: "sub-multi".into(),
-        msg: EventMsg::ExecApprovalRequest(ev_multi),
-    });
+    handle_exec_approval_request(&mut chat, "sub-multi", ev_multi);
     let proposed_multi = drain_insert_history(&mut rx);
     assert!(
         proposed_multi.is_empty(),
@@ -306,10 +301,7 @@ async fn exec_approval_decision_truncates_multiline_and_long_commands() {
         available_decisions: None,
         parsed_cmd: vec![],
     };
-    chat.handle_codex_event(Event {
-        id: "sub-long".into(),
-        msg: EventMsg::ExecApprovalRequest(ev_long),
-    });
+    handle_exec_approval_request(&mut chat, "sub-long", ev_long);
     let proposed_long = drain_insert_history(&mut rx);
     assert!(
         proposed_long.is_empty(),

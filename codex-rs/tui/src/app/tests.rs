@@ -22,9 +22,6 @@ use crate::multi_agents::AgentPickerThreadEntry;
 use assert_matches::assert_matches;
 
 use crate::app_command::AppCommand as Op;
-use crate::chatwidget::test_events::Event;
-use crate::chatwidget::test_events::EventMsg;
-use crate::chatwidget::test_events::SessionConfiguredEvent;
 use crate::diff_model::FileChange;
 use crate::legacy_core::config::ConfigBuilder;
 use crate::legacy_core::config::ConfigOverrides;
@@ -3176,6 +3173,7 @@ async fn side_thread_snapshot_hides_forked_parent_transcript() {
     let mut store = ThreadEventStore::new(/*capacity*/ 4);
     let session = ThreadSessionState {
         forked_from_id: Some(parent_thread_id),
+        fork_parent_title: None,
         ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
     };
     let parent_turn = test_turn(
@@ -3238,6 +3236,7 @@ async fn side_thread_snapshot_skips_session_header_preamble() {
     let snapshot = ThreadEventSnapshot {
         session: Some(ThreadSessionState {
             forked_from_id: Some(parent_thread_id),
+            fork_parent_title: None,
             ..test_thread_session(side_thread_id, test_path_buf("/tmp/side"))
         }),
         turns: Vec::new(),
@@ -4350,11 +4349,11 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
     assert_eq!(user_count(&app.transcript_cells), 2);
 
     let base_id = ThreadId::new();
-    app.chat_widget.handle_codex_event(Event {
-        id: String::new(),
-        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: base_id,
+    app.chat_widget
+        .handle_thread_session(crate::session_state::ThreadSessionState {
+            thread_id: base_id,
             forked_from_id: None,
+            fork_parent_title: None,
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
@@ -4363,14 +4362,13 @@ async fn backtrack_selection_with_duplicate_history_targets_unique_turn() {
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
             cwd: test_path_buf("/home/user/project").abs(),
+            instruction_source_paths: Vec::new(),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
-            initial_messages: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
-        }),
-    });
+        });
 
     app.backtrack.base_id = Some(base_id);
     app.backtrack.primed = true;
@@ -4443,11 +4441,11 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
     let (mut app, _app_event_rx, mut op_rx) = make_test_app_with_channels().await;
 
     let thread_id = ThreadId::new();
-    app.chat_widget.handle_codex_event(Event {
-        id: String::new(),
-        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: thread_id,
+    app.chat_widget
+        .handle_thread_session(crate::session_state::ThreadSessionState {
+            thread_id,
             forked_from_id: None,
+            fork_parent_title: None,
             thread_name: None,
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
@@ -4456,14 +4454,13 @@ async fn backtrack_resubmit_preserves_data_image_urls_in_user_turn() {
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
             cwd: test_path_buf("/home/user/project").abs(),
+            instruction_source_paths: Vec::new(),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
-            initial_messages: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
-        }),
-    });
+        });
 
     let data_image_url = "data:image/png;base64,abc123".to_string();
     app.transcript_cells = vec![Arc::new(UserHistoryCell {
@@ -4684,6 +4681,7 @@ async fn refreshed_snapshot_session_persists_resumed_turns() {
     )];
     let resumed_session = ThreadSessionState {
         cwd: test_path_buf("/tmp/refreshed").abs(),
+        instruction_source_paths: Vec::new(),
         ..initial_session.clone()
     };
     let mut snapshot = ThreadEventSnapshot {
@@ -4831,9 +4829,10 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
     let (mut app, mut app_event_rx, mut op_rx) = make_test_app_with_channels().await;
 
     let thread_id = ThreadId::new();
-    let event = SessionConfiguredEvent {
-        session_id: thread_id,
+    let event = crate::session_state::ThreadSessionState {
+        thread_id,
         forked_from_id: None,
+        fork_parent_title: None,
         thread_name: None,
         model: "gpt-test".to_string(),
         model_provider_id: "test-provider".to_string(),
@@ -4842,18 +4841,15 @@ async fn new_session_requests_shutdown_for_previous_conversation() {
         approvals_reviewer: ApprovalsReviewer::User,
         permission_profile: PermissionProfile::read_only(),
         cwd: test_path_buf("/home/user/project").abs(),
+        instruction_source_paths: Vec::new(),
         reasoning_effort: None,
         history_log_id: 0,
         history_entry_count: 0,
-        initial_messages: None,
         network_proxy: None,
         rollout_path: Some(PathBuf::new()),
     };
 
-    app.chat_widget.handle_codex_event(Event {
-        id: String::new(),
-        msg: EventMsg::SessionConfigured(event),
-    });
+    app.chat_widget.handle_thread_session(event);
 
     while app_event_rx.try_recv().is_ok() {}
     while op_rx.try_recv().is_ok() {}
@@ -4941,11 +4937,11 @@ async fn interrupt_without_active_turn_is_treated_as_handled() {
 async fn clear_only_ui_reset_preserves_chat_session_state() {
     let mut app = make_test_app().await;
     let thread_id = ThreadId::new();
-    app.chat_widget.handle_codex_event(Event {
-        id: String::new(),
-        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: thread_id,
+    app.chat_widget
+        .handle_thread_session(crate::session_state::ThreadSessionState {
+            thread_id,
             forked_from_id: None,
+            fork_parent_title: None,
             thread_name: Some("keep me".to_string()),
             model: "gpt-test".to_string(),
             model_provider_id: "test-provider".to_string(),
@@ -4954,14 +4950,13 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
             approvals_reviewer: ApprovalsReviewer::User,
             permission_profile: PermissionProfile::read_only(),
             cwd: test_path_buf("/tmp/project").abs(),
+            instruction_source_paths: Vec::new(),
             reasoning_effort: None,
             history_log_id: 0,
             history_entry_count: 0,
-            initial_messages: None,
             network_proxy: None,
             rollout_path: Some(PathBuf::new()),
-        }),
-    });
+        });
     app.chat_widget
         .apply_external_edit("draft prompt".to_string());
     app.transcript_cells = vec![Arc::new(UserHistoryCell {

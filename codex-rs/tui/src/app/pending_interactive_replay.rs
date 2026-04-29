@@ -32,9 +32,9 @@ impl ElicitationRequestKey {
 // - buffer eviction (`note_evicted_event`)
 //
 // We keep both fast lookup sets (for snapshot filtering by call_id/request key) and
-// turn-indexed queues/vectors so `TurnComplete`/`TurnAborted` can clear stale prompts tied
-// to a turn. `request_user_input` removal is FIFO because the overlay answers queued prompts
-// in FIFO order for a shared `turn_id`.
+// turn-indexed queues/vectors so turn completion or interruption can clear
+// stale prompts tied to a turn. `request_user_input` removal is FIFO because
+// the overlay answers queued prompts in FIFO order for a shared `turn_id`.
 pub(super) struct PendingInteractiveReplayState {
     exec_approval_call_ids: HashSet<String>,
     exec_approval_call_ids_by_turn_id: HashMap<String, Vec<String>>,

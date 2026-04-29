@@ -42,44 +42,6 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::time::Instant;
 
-#[cfg(test)]
-use self::test_events::AgentMessageDeltaEvent;
-#[cfg(test)]
-use self::test_events::AgentMessageEvent;
-#[cfg(test)]
-use self::test_events::AgentReasoningDeltaEvent;
-#[cfg(test)]
-use self::test_events::AgentReasoningEvent;
-#[cfg(test)]
-use self::test_events::AgentReasoningRawContentDeltaEvent;
-#[cfg(test)]
-use self::test_events::AgentReasoningRawContentEvent;
-#[cfg(test)]
-use self::test_events::BackgroundEventEvent;
-#[cfg(test)]
-use self::test_events::ErrorEvent;
-#[cfg(test)]
-use self::test_events::Event;
-#[cfg(test)]
-use self::test_events::EventMsg;
-#[cfg(test)]
-use self::test_events::ExitedReviewModeEvent;
-#[cfg(test)]
-use self::test_events::McpListToolsResponseEvent;
-#[cfg(test)]
-use self::test_events::SessionConfiguredEvent;
-#[cfg(test)]
-use self::test_events::StreamErrorEvent;
-#[cfg(test)]
-use self::test_events::TurnCompleteEvent;
-#[cfg(test)]
-use self::test_events::TurnDiffEvent;
-#[cfg(test)]
-use self::test_events::UndoCompletedEvent;
-#[cfg(test)]
-use self::test_events::UndoStartedEvent;
-#[cfg(test)]
-use self::test_events::WarningEvent;
 use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::app_command::AppCommand;
 use crate::app_event::HistoryLookupResponse;
@@ -143,8 +105,6 @@ use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
 use codex_app_server_protocol::AppSummary;
-#[cfg(test)]
-use codex_app_server_protocol::CodexErrorInfo as CoreCodexErrorInfo;
 use codex_app_server_protocol::CodexErrorInfo as AppServerCodexErrorInfo;
 use codex_app_server_protocol::CollabAgentTool;
 use codex_app_server_protocol::CollabAgentToolCallStatus;
@@ -158,8 +118,6 @@ use codex_app_server_protocol::GuardianApprovalReviewAction;
 use codex_app_server_protocol::ItemCompletedNotification;
 use codex_app_server_protocol::ItemStartedNotification;
 use codex_app_server_protocol::McpServerStatusDetail;
-#[cfg(test)]
-use codex_app_server_protocol::ModelVerification as CoreModelVerification;
 use codex_app_server_protocol::ModelVerification as AppServerModelVerification;
 use codex_app_server_protocol::RateLimitReachedType;
 use codex_app_server_protocol::RateLimitSnapshot;
@@ -649,18 +607,6 @@ enum RateLimitErrorKind {
     Generic,
 }
 
-#[cfg(test)]
-fn core_rate_limit_error_kind(info: &CoreCodexErrorInfo) -> Option<RateLimitErrorKind> {
-    match info {
-        CoreCodexErrorInfo::ServerOverloaded => Some(RateLimitErrorKind::ServerOverloaded),
-        CoreCodexErrorInfo::UsageLimitExceeded => Some(RateLimitErrorKind::UsageLimit),
-        CoreCodexErrorInfo::ResponseTooManyFailedAttempts {
-            http_status_code: Some(429),
-        } => Some(RateLimitErrorKind::Generic),
-        _ => None,
-    }
-}
-
 fn app_server_rate_limit_error_kind(info: &AppServerCodexErrorInfo) -> Option<RateLimitErrorKind> {
     match info {
         AppServerCodexErrorInfo::ServerOverloaded => Some(RateLimitErrorKind::ServerOverloaded),
@@ -670,11 +616,6 @@ fn app_server_rate_limit_error_kind(info: &AppServerCodexErrorInfo) -> Option<Ra
         } => Some(RateLimitErrorKind::Generic),
         _ => None,
     }
-}
-
-#[cfg(test)]
-fn is_core_cyber_policy_error(info: &CoreCodexErrorInfo) -> bool {
-    matches!(info, CoreCodexErrorInfo::CyberPolicy)
 }
 
 fn is_app_server_cyber_policy_error(info: &AppServerCodexErrorInfo) -> bool {
@@ -2013,15 +1954,7 @@ impl ChatWidget {
                     .iter()
                     .any(|item| item == "run-state" || item == "status")
             });
-        let title_uses_activity = self.config.tui_terminal_title.as_ref().is_none_or(|items| {
-            items
-                .iter()
-                .any(|item| item == "activity" || item == "spinner")
-        });
-        if title_uses_status
-            || (title_uses_activity
-                && self.terminal_title_status_kind == TerminalTitleStatusKind::Undoing)
-        {
+        if title_uses_status {
             self.refresh_status_surfaces();
         }
     }
@@ -2199,23 +2132,11 @@ impl ChatWidget {
     }
 
     // --- Small event handlers ---
-    #[cfg(test)]
-    fn on_session_configured(&mut self, event: SessionConfiguredEvent) {
-        let (session, initial_messages) = event.into_session();
-        self.on_session_configured_with_display_and_fork_parent_title(
-            session,
-            SessionConfiguredDisplay::Normal,
-            /*fork_parent_title*/ None,
-            initial_messages,
-        );
-    }
-
     fn on_session_configured_with_display_and_fork_parent_title(
         &mut self,
         session: ThreadSessionState,
         display: SessionConfiguredDisplay,
         fork_parent_title: Option<String>,
-        #[cfg(test)] initial_messages: Option<Vec<EventMsg>>,
     ) {
         self.last_agent_markdown = None;
         self.agent_turn_markdowns.clear();
@@ -2300,11 +2221,6 @@ impl ChatWidget {
                 show_fast_status,
             );
             self.apply_session_info_cell(session_info_cell);
-
-            #[cfg(test)]
-            if let Some(messages) = initial_messages {
-                self.replay_initial_messages(messages);
-            }
         } else if self
             .active_cell
             .as_ref()
@@ -2352,9 +2268,6 @@ impl ChatWidget {
             session,
             SessionConfiguredDisplay::Normal,
             fork_parent_title,
-            #[cfg(test)]
-            /*initial_messages*/
-            None,
         );
     }
 
@@ -2364,9 +2277,6 @@ impl ChatWidget {
             session,
             SessionConfiguredDisplay::Quiet,
             /*fork_parent_title*/ None,
-            #[cfg(test)]
-            /*initial_messages*/
-            None,
         );
     }
 
@@ -2377,9 +2287,6 @@ impl ChatWidget {
             session,
             SessionConfiguredDisplay::SideConversation,
             fork_parent_title,
-            #[cfg(test)]
-            /*initial_messages*/
-            None,
         );
     }
 
@@ -2494,11 +2401,6 @@ impl ChatWidget {
         self.flush_answer_stream_with_separator();
         self.handle_stream_finished();
         self.request_redraw();
-    }
-
-    #[cfg(test)]
-    fn on_agent_message(&mut self, message: String) {
-        self.finalize_completed_assistant_message(Some(&message));
     }
 
     fn on_agent_message_delta(&mut self, delta: String) {
@@ -2917,14 +2819,6 @@ impl ChatWidget {
         true
     }
 
-    #[cfg(test)]
-    fn handle_steer_rejected_error(&mut self, codex_error_info: &CoreCodexErrorInfo) -> bool {
-        matches!(
-            codex_error_info,
-            CoreCodexErrorInfo::ActiveTurnNotSteerable { .. }
-        ) && self.enqueue_rejected_steer()
-    }
-
     fn handle_app_server_steer_rejected_error(
         &mut self,
         codex_error_info: &AppServerCodexErrorInfo,
@@ -3034,28 +2928,6 @@ impl ChatWidget {
                 self.token_info = None;
             }
         }
-    }
-
-    #[cfg(test)]
-    fn apply_turn_started_context_window(&mut self, model_context_window: Option<i64>) {
-        let info = match self.token_info.take() {
-            Some(mut info) => {
-                info.model_context_window = model_context_window;
-                info
-            }
-            None => {
-                let Some(model_context_window) = model_context_window else {
-                    return;
-                };
-                TokenUsageInfo {
-                    total_token_usage: TokenUsage::default(),
-                    last_token_usage: TokenUsage::default(),
-                    model_context_window: Some(model_context_window),
-                }
-            }
-        };
-
-        self.apply_token_info(info);
     }
 
     fn apply_token_info(&mut self, info: TokenUsageInfo) {
@@ -3344,13 +3216,6 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    #[cfg(test)]
-    fn on_core_model_verification(&mut self, verifications: &[CoreModelVerification]) {
-        if verifications.contains(&CoreModelVerification::TrustedAccessForCyber) {
-            self.on_warning(TRUSTED_ACCESS_FOR_CYBER_VERIFICATION_WARNING);
-        }
-    }
-
     fn on_app_server_model_verification(&mut self, verifications: &[AppServerModelVerification]) {
         if verifications.contains(&AppServerModelVerification::TrustedAccessForCyber) {
             self.on_warning(TRUSTED_ACCESS_FOR_CYBER_VERIFICATION_WARNING);
@@ -3366,9 +3231,7 @@ impl ChatWidget {
         self.finalize_turn();
         let send_pending_steers_immediately = self.submit_pending_steers_after_interrupt;
         self.submit_pending_steers_after_interrupt = false;
-        if reason != TurnAbortReason::ReviewEnded
-            && self.interrupted_turn_notice_mode != InterruptedTurnNoticeMode::Suppress
-        {
+        if self.interrupted_turn_notice_mode != InterruptedTurnNoticeMode::Suppress {
             if send_pending_steers_immediately {
                 self.add_to_history(history_cell::new_info_event(
                     "Model interrupted to submit steer instructions.".to_owned(),
@@ -3381,8 +3244,9 @@ impl ChatWidget {
             }
         }
 
-        // Core clears pending_input before emitting TurnAborted, so any unacknowledged steers
-        // still tracked here must be restored locally instead of waiting for a later commit.
+        // The server has already discarded pending input by the time the
+        // interrupted turn reaches the UI, so any unacknowledged steers still
+        // tracked here must be restored locally instead of waiting for a later commit.
         if send_pending_steers_immediately {
             let pending_steers = self
                 .pending_steers
@@ -4226,16 +4090,6 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    #[cfg(test)]
-    fn on_background_event(&mut self, message: String) {
-        debug!("BackgroundEvent: {message}");
-        self.bottom_pane.ensure_status_indicator();
-        self.bottom_pane
-            .set_interrupt_hint_visible(/*visible*/ true);
-        self.terminal_title_status_kind = TerminalTitleStatusKind::Thinking;
-        self.set_status_header(message);
-    }
-
     fn on_hook_started(&mut self, event: HookStartedEvent) {
         self.flush_answer_stream_with_separator();
         self.flush_completed_hook_output();
@@ -4356,38 +4210,6 @@ impl ChatWidget {
         };
         let delay = deadline.saturating_duration_since(Instant::now());
         self.frame_requester.schedule_frame_in(delay);
-    }
-
-    #[cfg(test)]
-    fn on_undo_started(&mut self, event: UndoStartedEvent) {
-        self.bottom_pane.ensure_status_indicator();
-        self.bottom_pane
-            .set_interrupt_hint_visible(/*visible*/ false);
-        let message = event
-            .message
-            .unwrap_or_else(|| "Undo in progress...".to_string());
-        self.terminal_title_status_kind = TerminalTitleStatusKind::Undoing;
-        self.set_status_header(message);
-    }
-
-    #[cfg(test)]
-    fn on_undo_completed(&mut self, event: UndoCompletedEvent) {
-        let UndoCompletedEvent { success, message } = event;
-        self.bottom_pane.hide_status_indicator();
-        self.terminal_title_status_kind = TerminalTitleStatusKind::Working;
-        self.refresh_terminal_title();
-        let message = message.unwrap_or_else(|| {
-            if success {
-                "Undo completed successfully.".to_string()
-            } else {
-                "Undo failed.".to_string()
-            }
-        });
-        if success {
-            self.add_info_message(message, /*hint*/ None);
-        } else {
-            self.add_error_message(message);
-        }
     }
 
     fn on_stream_error(&mut self, message: String, additional_details: Option<String>) {
@@ -6965,289 +6787,6 @@ impl ChatWidget {
         });
     }
 
-    #[cfg(test)]
-    fn replay_initial_messages(&mut self, events: Vec<EventMsg>) {
-        for msg in events {
-            if matches!(
-                msg,
-                EventMsg::SessionConfigured(_) | EventMsg::ThreadNameUpdated(_)
-            ) {
-                continue;
-            }
-            // `id: None` indicates a synthetic/fake id coming from replay.
-            self.dispatch_event_msg(
-                /*id*/ None,
-                msg,
-                Some(ReplayKind::ResumeInitialMessages),
-            );
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn handle_codex_event(&mut self, event: Event) {
-        let Event { id, msg } = event;
-        self.dispatch_event_msg(Some(id), msg, /*replay_kind*/ None);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn handle_codex_event_replay(&mut self, event: Event) {
-        let Event { msg, .. } = event;
-        if matches!(msg, EventMsg::ShutdownComplete) {
-            return;
-        }
-        self.dispatch_event_msg(/*id*/ None, msg, Some(ReplayKind::ThreadSnapshot));
-    }
-
-    /// Dispatch a test-only event message to the appropriate handler.
-    ///
-    /// `id` is `Some` for live events and `None` for replayed events from
-    /// `replay_initial_messages()`. Callers should treat `None` as a "fake" id
-    /// that must not be used to correlate follow-up actions.
-    #[cfg(test)]
-    fn dispatch_event_msg(
-        &mut self,
-        id: Option<String>,
-        msg: EventMsg,
-        replay_kind: Option<ReplayKind>,
-    ) {
-        let from_replay = replay_kind.is_some();
-        let is_resume_initial_replay =
-            matches!(replay_kind, Some(ReplayKind::ResumeInitialMessages));
-        let is_stream_error = matches!(&msg, EventMsg::StreamError(_));
-        if !is_resume_initial_replay && !is_stream_error {
-            self.restore_retry_status_header_if_present();
-        }
-
-        match msg {
-            EventMsg::AgentMessageDelta(_)
-            | EventMsg::PlanDelta(_)
-            | EventMsg::AgentReasoningDelta(_)
-            | EventMsg::TerminalInteraction(_)
-            | EventMsg::ExecCommandOutputDelta(_) => {}
-            _ => {
-                tracing::trace!("handle_codex_event: {:?}", msg);
-            }
-        }
-
-        match msg {
-            EventMsg::SessionConfigured(e) => self.on_session_configured(e),
-            EventMsg::ThreadNameUpdated(e) => {
-                self.on_thread_name_updated(e.thread_id, e.thread_name)
-            }
-            // NOTE: All three AgentMessage arms feed `record_agent_markdown` even
-            // when the message is otherwise not rendered (thread-snapshot replay,
-            // non-review live messages). This ensures the copy source stays
-            // populated across replay, resume, and live paths.
-            EventMsg::AgentMessage(AgentMessageEvent { message, .. })
-                if matches!(replay_kind, Some(ReplayKind::ThreadSnapshot))
-                    && !self.is_review_mode =>
-            {
-                if !message.is_empty() {
-                    self.record_agent_markdown(&message);
-                }
-            }
-            EventMsg::AgentMessage(AgentMessageEvent { message, .. })
-                if from_replay || self.is_review_mode =>
-            {
-                if !message.is_empty() {
-                    self.record_agent_markdown(&message);
-                }
-                // TODO(ccunningham): stop relying on legacy AgentMessage in review mode,
-                // including thread-snapshot replay, and forward
-                // ItemCompleted(TurnItem::AgentMessage(_)) instead.
-                self.on_agent_message(message)
-            }
-            EventMsg::AgentMessage(AgentMessageEvent { message, .. }) => {
-                if !message.is_empty() {
-                    self.record_agent_markdown(&message);
-                }
-            }
-            EventMsg::AgentMessageDelta(AgentMessageDeltaEvent { delta }) => {
-                self.on_agent_message_delta(delta)
-            }
-            EventMsg::PlanDelta(event) => self.on_plan_delta(event.delta),
-            EventMsg::AgentReasoningDelta(AgentReasoningDeltaEvent { delta })
-            | EventMsg::AgentReasoningRawContentDelta(AgentReasoningRawContentDeltaEvent {
-                delta,
-            }) => self.on_agent_reasoning_delta(delta),
-            EventMsg::AgentReasoning(AgentReasoningEvent { .. }) => self.on_agent_reasoning_final(),
-            EventMsg::AgentReasoningRawContent(AgentReasoningRawContentEvent { text }) => {
-                self.on_agent_reasoning_delta(text);
-                self.on_agent_reasoning_final();
-            }
-            EventMsg::TurnStarted(event) => {
-                let turn_id = event.turn_id;
-                let model_context_window = event.model_context_window;
-                self.last_turn_id = Some(turn_id);
-                if !is_resume_initial_replay {
-                    self.apply_turn_started_context_window(model_context_window);
-                    self.on_task_started();
-                }
-            }
-            EventMsg::TurnComplete(TurnCompleteEvent {
-                last_agent_message,
-                duration_ms,
-                ..
-            }) => {
-                self.on_task_complete(last_agent_message, duration_ms, from_replay);
-            }
-            EventMsg::TokenCount(ev) => {
-                self.set_token_info(ev.info);
-                self.on_rate_limit_snapshot(ev.rate_limits);
-            }
-            EventMsg::Warning(WarningEvent { message })
-            | EventMsg::GuardianWarning(WarningEvent { message }) => self.on_warning(message),
-            EventMsg::GuardianAssessment(ev) => self.on_guardian_assessment(ev),
-            EventMsg::ModelVerification(event) => {
-                self.on_core_model_verification(&event.verifications)
-            }
-            EventMsg::Error(ErrorEvent {
-                message,
-                codex_error_info,
-            }) => {
-                if codex_error_info
-                    .as_ref()
-                    .is_some_and(|info| self.handle_steer_rejected_error(info))
-                {
-                } else if codex_error_info
-                    .as_ref()
-                    .is_some_and(is_core_cyber_policy_error)
-                {
-                    self.on_cyber_policy_error();
-                } else if let Some(kind) = codex_error_info
-                    .as_ref()
-                    .and_then(core_rate_limit_error_kind)
-                {
-                    match kind {
-                        RateLimitErrorKind::ServerOverloaded => {
-                            self.on_server_overloaded_error(message)
-                        }
-                        RateLimitErrorKind::UsageLimit | RateLimitErrorKind::Generic => {
-                            self.on_rate_limit_error(kind, message)
-                        }
-                    }
-                } else {
-                    self.on_error(message);
-                }
-            }
-            EventMsg::TurnAborted(ev) => match ev.reason {
-                TurnAbortReason::Interrupted => {
-                    let reason = if ev
-                        .turn_id
-                        .as_deref()
-                        .is_some_and(|turn_id| self.budget_limited_turn_ids.remove(turn_id))
-                    {
-                        TurnAbortReason::BudgetLimited
-                    } else {
-                        ev.reason
-                    };
-                    self.on_interrupted_turn(reason);
-                }
-                TurnAbortReason::Replaced => {
-                    self.submit_pending_steers_after_interrupt = false;
-                    self.pending_steers.clear();
-                    self.refresh_pending_input_preview();
-                    self.on_error("Turn aborted: replaced by a new task".to_owned())
-                }
-                TurnAbortReason::ReviewEnded => {
-                    self.on_interrupted_turn(ev.reason);
-                }
-                TurnAbortReason::BudgetLimited => {
-                    if let Some(turn_id) = ev.turn_id.as_deref() {
-                        self.budget_limited_turn_ids.remove(turn_id);
-                    }
-                    self.on_interrupted_turn(ev.reason);
-                }
-            },
-            EventMsg::PlanUpdate(update) => self.on_plan_update(update),
-            EventMsg::ExecApprovalRequest(ev) => {
-                // For replayed events, synthesize an empty id (these should not occur).
-                self.on_exec_approval_request(id.unwrap_or_default(), ev)
-            }
-            EventMsg::ApplyPatchApprovalRequest(ev) => {
-                self.on_apply_patch_approval_request(id.unwrap_or_default(), ev)
-            }
-            EventMsg::ElicitationRequest(ev) => {
-                self.on_elicitation_request(ev);
-            }
-            EventMsg::RequestUserInput(ev) => {
-                self.on_request_user_input(ev);
-            }
-            EventMsg::RequestPermissions(ev) => {
-                self.on_request_permissions(ev);
-            }
-            EventMsg::ExecCommandBegin(ev) => self.on_exec_command_begin(ev),
-            EventMsg::TerminalInteraction(delta) => self.on_terminal_interaction(delta),
-            EventMsg::ExecCommandOutputDelta(delta) => self.on_exec_command_output_delta(delta),
-            EventMsg::PatchApplyBegin(ev) => self.on_patch_apply_begin(ev),
-            EventMsg::PatchApplyEnd(ev) => self.on_patch_apply_end(ev),
-            EventMsg::ExecCommandEnd(ev) => self.on_exec_command_end(ev),
-            EventMsg::ViewImageToolCall(ev) => self.on_view_image_tool_call(ev),
-            EventMsg::ImageGenerationBegin(ev) => self.on_image_generation_begin(ev),
-            EventMsg::ImageGenerationEnd(ev) => self.on_image_generation_end(ev),
-            EventMsg::McpToolCallBegin(ev) => self.on_mcp_tool_call_begin(ev),
-            EventMsg::McpToolCallEnd(ev) => self.on_mcp_tool_call_end(ev),
-            EventMsg::WebSearchBegin(ev) => self.on_web_search_begin(ev),
-            EventMsg::WebSearchEnd(ev) => self.on_web_search_end(ev),
-            EventMsg::McpListToolsResponse(ev) => self.on_list_mcp_tools(ev),
-            EventMsg::ListSkillsResponse(ev) => self.on_list_skills(ev),
-            EventMsg::SkillsUpdateAvailable => {
-                self.refresh_skills_for_current_cwd(/*force_reload*/ true);
-            }
-            EventMsg::ShutdownComplete => self.on_shutdown_complete(),
-            EventMsg::TurnDiff(TurnDiffEvent { unified_diff }) => self.on_turn_diff(unified_diff),
-            EventMsg::DeprecationNotice(ev) => self.on_deprecation_notice(ev.summary, ev.details),
-            EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
-                self.on_background_event(message)
-            }
-            EventMsg::UndoStarted(ev) => self.on_undo_started(ev),
-            EventMsg::UndoCompleted(ev) => self.on_undo_completed(ev),
-            EventMsg::StreamError(StreamErrorEvent {
-                message,
-                additional_details,
-                ..
-            }) => {
-                if !is_resume_initial_replay {
-                    self.on_stream_error(message, additional_details);
-                }
-            }
-            EventMsg::UserMessage(ev) => {
-                if from_replay || self.should_render_realtime_user_message_event(&ev) {
-                    self.on_user_message_event(ev);
-                }
-            }
-            EventMsg::EnteredReviewMode(hint) => {
-                self.enter_review_mode_with_hint(hint, from_replay)
-            }
-            EventMsg::ExitedReviewMode(review) => self.on_exited_review_mode(review),
-            EventMsg::ThreadRolledBack(rollback) => {
-                if from_replay {
-                    self.app_event_tx.send(AppEvent::ApplyThreadRollback {
-                        num_turns: rollback.num_turns,
-                    });
-                }
-            }
-            EventMsg::HookStarted(event) => self.on_hook_started(event),
-            EventMsg::HookCompleted(event) => self.on_hook_completed(event),
-            EventMsg::ItemCompleted(event) => {
-                let item = event.item;
-                if !from_replay && let codex_protocol::items::TurnItem::UserMessage(item) = &item {
-                    self.on_committed_user_message(item, from_replay);
-                }
-                if let codex_protocol::items::TurnItem::Plan(plan_item) = &item {
-                    self.on_plan_item_completed(plan_item.text.clone());
-                }
-                if let codex_protocol::items::TurnItem::AgentMessage(item) = item {
-                    self.on_agent_message_item_completed(item);
-                }
-            }
-        }
-
-        if !from_replay && self.agent_turn_running {
-            self.refresh_runtime_metrics();
-        }
-    }
-
     fn enter_review_mode_with_hint(&mut self, hint: String, from_replay: bool) {
         if self.pre_review_token_info.is_none() {
             self.pre_review_token_info = Some(self.token_info.clone());
@@ -7271,11 +6810,6 @@ impl ChatWidget {
             "<< Code review finished >>".to_string(),
         ));
         self.request_redraw();
-    }
-
-    #[cfg(test)]
-    fn on_exited_review_mode(&mut self, _review: ExitedReviewModeEvent) {
-        self.exit_review_mode_after_item();
     }
 
     fn on_committed_user_message(&mut self, item: &UserMessageItem, from_replay: bool) {
@@ -11115,17 +10649,6 @@ impl ChatWidget {
         }
     }
 
-    #[cfg(test)]
-    fn on_list_mcp_tools(&mut self, ev: McpListToolsResponseEvent) {
-        self.add_to_history(history_cell::new_mcp_tools_output(
-            &self.config,
-            ev.tools,
-            ev.resources,
-            ev.resource_templates,
-            &ev.auth_statuses,
-        ));
-    }
-
     fn on_list_skills(&mut self, ev: SkillsListResponse) {
         self.set_skills_from_response(&ev);
         self.refresh_plugin_mentions();
@@ -11743,9 +11266,6 @@ pub(crate) fn show_review_commit_picker_with_entries(
         ..Default::default()
     });
 }
-
-#[cfg(test)]
-pub(crate) mod test_events;
 
 #[cfg(test)]
 pub(crate) mod tests;

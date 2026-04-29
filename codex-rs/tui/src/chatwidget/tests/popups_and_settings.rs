@@ -2204,13 +2204,11 @@ async fn server_overloaded_error_does_not_switch_models() {
     while rx.try_recv().is_ok() {}
     while op_rx.try_recv().is_ok() {}
 
-    chat.handle_codex_event(Event {
-        id: "err-1".to_string(),
-        msg: EventMsg::Error(ErrorEvent {
-            message: "server overloaded".to_string(),
-            codex_error_info: Some(CodexErrorInfo::ServerOverloaded),
-        }),
-    });
+    handle_error(
+        &mut chat,
+        "server overloaded",
+        Some(CodexErrorInfo::ServerOverloaded),
+    );
 
     while let Ok(event) = rx.try_recv() {
         if let AppEvent::UpdateModel(model) = event {

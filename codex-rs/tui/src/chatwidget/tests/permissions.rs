@@ -571,26 +571,24 @@ async fn permissions_selection_marks_auto_review_current_after_session_configure
         .features
         .set_enabled(Feature::GuardianApproval, /*enabled*/ true);
 
-    chat.handle_codex_event(Event {
-        id: "session-configured".to_string(),
-        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
-            forked_from_id: None,
-            thread_name: None,
-            model: "gpt-test".to_string(),
-            model_provider_id: "test-provider".to_string(),
-            service_tier: None,
-            approval_policy: AskForApproval::OnRequest,
-            approvals_reviewer: ApprovalsReviewer::AutoReview,
-            permission_profile: PermissionProfile::workspace_write(),
-            cwd: test_project_path().abs(),
-            reasoning_effort: None,
-            history_log_id: 0,
-            history_entry_count: 0,
-            initial_messages: None,
-            network_proxy: None,
-            rollout_path: Some(PathBuf::new()),
-        }),
+    chat.handle_thread_session(crate::session_state::ThreadSessionState {
+        thread_id: ThreadId::new(),
+        forked_from_id: None,
+        fork_parent_title: None,
+        thread_name: None,
+        model: "gpt-test".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::OnRequest,
+        approvals_reviewer: ApprovalsReviewer::AutoReview,
+        permission_profile: PermissionProfile::workspace_write(),
+        cwd: test_project_path().abs(),
+        instruction_source_paths: Vec::new(),
+        reasoning_effort: None,
+        history_log_id: 0,
+        history_entry_count: 0,
+        network_proxy: None,
+        rollout_path: Some(PathBuf::new()),
     });
 
     chat.open_permissions_popup();
@@ -620,26 +618,24 @@ async fn permissions_selection_marks_auto_review_current_with_custom_workspace_w
     let cwd = test_project_path().abs();
     let permission_profile = app_server_workspace_write_profile(extra_root);
 
-    chat.handle_codex_event(Event {
-        id: "session-configured-custom-workspace".to_string(),
-        msg: EventMsg::SessionConfigured(SessionConfiguredEvent {
-            session_id: ThreadId::new(),
-            forked_from_id: None,
-            thread_name: None,
-            model: "gpt-test".to_string(),
-            model_provider_id: "test-provider".to_string(),
-            service_tier: None,
-            approval_policy: AskForApproval::OnRequest,
-            approvals_reviewer: ApprovalsReviewer::AutoReview,
-            permission_profile,
-            cwd,
-            reasoning_effort: None,
-            history_log_id: 0,
-            history_entry_count: 0,
-            initial_messages: None,
-            network_proxy: None,
-            rollout_path: Some(PathBuf::new()),
-        }),
+    chat.handle_thread_session(crate::session_state::ThreadSessionState {
+        thread_id: ThreadId::new(),
+        forked_from_id: None,
+        fork_parent_title: None,
+        thread_name: None,
+        model: "gpt-test".to_string(),
+        model_provider_id: "test-provider".to_string(),
+        service_tier: None,
+        approval_policy: AskForApproval::OnRequest,
+        approvals_reviewer: ApprovalsReviewer::AutoReview,
+        permission_profile,
+        cwd,
+        instruction_source_paths: Vec::new(),
+        reasoning_effort: None,
+        history_log_id: 0,
+        history_entry_count: 0,
+        network_proxy: None,
+        rollout_path: Some(PathBuf::new()),
     });
 
     chat.open_permissions_popup();

@@ -497,8 +497,8 @@ impl App {
         self.backtrack.pending_rollback = None;
     }
 
-    /// Apply rollback semantics for `ThreadRolledBack` events where this TUI does not have an
-    /// in-flight backtrack request (`pending_rollback` is `None`).
+    /// Apply rollback semantics for a confirmed rollback where this TUI does
+    /// not have an in-flight backtrack request (`pending_rollback` is `None`).
     ///
     /// Returns `true` when local transcript state changed.
     pub(crate) fn apply_non_pending_thread_rollback(&mut self, num_turns: u32) -> bool {

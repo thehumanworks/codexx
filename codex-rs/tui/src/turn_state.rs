@@ -7,7 +7,5 @@ use serde::Serialize;
 #[serde(rename_all = "snake_case")]
 pub(crate) enum TurnAbortReason {
     Interrupted,
-    Replaced,
-    ReviewEnded,
     BudgetLimited,
 }
