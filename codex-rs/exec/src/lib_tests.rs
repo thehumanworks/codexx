@@ -426,12 +426,7 @@ fn session_configured_from_thread_response_uses_review_policy_from_response() {
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
         },
-        permission_profile: Some(
-            codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
-                &codex_protocol::protocol::SandboxPolicy::new_workspace_write_policy(),
-            )
-            .into(),
-        ),
+        active_permission_profile: None,
         reasoning_effort: None,
     };
 
