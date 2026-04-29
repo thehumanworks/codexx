@@ -751,14 +751,19 @@ fn file_update_changes_from_tui(changes: HashMap<PathBuf, FileChange>) -> Vec<Fi
         .collect()
 }
 
-pub(super) fn handle_patch_apply_begin(chat: &mut ChatWidget, event: PatchApplyBeginEvent) {
+pub(super) fn handle_patch_apply_begin(
+    chat: &mut ChatWidget,
+    call_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    changes: HashMap<PathBuf, FileChange>,
+) {
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
             thread_id: thread_id(chat),
-            turn_id: event.turn_id.clone(),
+            turn_id: turn_id.into(),
             item: AppServerThreadItem::FileChange {
-                id: event.call_id,
-                changes: file_update_changes_from_tui(event.changes),
+                id: call_id.into(),
+                changes: file_update_changes_from_tui(changes),
                 status: AppServerPatchApplyStatus::InProgress,
             },
         }),
@@ -766,46 +771,61 @@ pub(super) fn handle_patch_apply_begin(chat: &mut ChatWidget, event: PatchApplyB
     );
 }
 
-pub(super) fn handle_patch_apply_end(chat: &mut ChatWidget, event: PatchApplyEndEvent) {
+pub(super) fn handle_patch_apply_end(
+    chat: &mut ChatWidget,
+    call_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    changes: HashMap<PathBuf, FileChange>,
+    status: AppServerPatchApplyStatus,
+) {
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
-            turn_id: event.turn_id.clone(),
+            turn_id: turn_id.into(),
             item: AppServerThreadItem::FileChange {
-                id: event.call_id,
-                changes: file_update_changes_from_tui(event.changes),
-                status: event.status,
+                id: call_id.into(),
+                changes: file_update_changes_from_tui(changes),
+                status,
             },
         }),
         /*replay_kind*/ None,
     );
 }
 
-pub(super) fn handle_view_image_tool_call(chat: &mut ChatWidget, event: ViewImageToolCallEvent) {
+pub(super) fn handle_view_image_tool_call(
+    chat: &mut ChatWidget,
+    call_id: impl Into<String>,
+    path: AbsolutePathBuf,
+) {
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
             turn_id: "turn-1".to_string(),
             item: AppServerThreadItem::ImageView {
-                id: event.call_id,
-                path: event.path,
+                id: call_id.into(),
+                path,
             },
         }),
         /*replay_kind*/ None,
     );
 }
 
-pub(super) fn handle_image_generation_end(chat: &mut ChatWidget, event: ImageGenerationEndEvent) {
+pub(super) fn handle_image_generation_end(
+    chat: &mut ChatWidget,
+    call_id: impl Into<String>,
+    revised_prompt: Option<String>,
+    saved_path: Option<AbsolutePathBuf>,
+) {
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
             turn_id: "turn-1".to_string(),
             item: AppServerThreadItem::ImageGeneration {
-                id: event.call_id,
-                status: event.status,
-                revised_prompt: event.revised_prompt,
-                result: event.result,
-                saved_path: event.saved_path,
+                id: call_id.into(),
+                status: "completed".to_string(),
+                revised_prompt,
+                result: String::new(),
+                saved_path,
             },
         }),
         /*replay_kind*/ None,
@@ -908,14 +928,11 @@ pub(super) fn begin_exec_with_source(
     let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
     let parsed_cmd: Vec<ParsedCommand> =
         codex_shell_command::parse_command::parse_command(&command);
-    let cwd = AbsolutePathBuf::current_dir().expect("current dir");
     let interaction_input = None;
     let event = ExecCommandBeginEvent {
         call_id: call_id.to_string(),
         process_id: None,
-        turn_id: "turn-1".to_string(),
         command,
-        cwd,
         parsed_cmd,
         source,
         interaction_input,
@@ -931,13 +948,10 @@ pub(super) fn begin_unified_exec_startup(
     raw_cmd: &str,
 ) -> ExecCommandBeginEvent {
     let command = vec!["bash".to_string(), "-lc".to_string(), raw_cmd.to_string()];
-    let cwd = AbsolutePathBuf::current_dir().expect("current dir");
     let event = ExecCommandBeginEvent {
         call_id: call_id.to_string(),
         process_id: Some(process_id.to_string()),
-        turn_id: "turn-1".to_string(),
         command,
-        cwd,
         parsed_cmd: Vec::new(),
         source: ExecCommandSource::UnifiedExecStartup,
         interaction_input: None,
@@ -947,20 +961,24 @@ pub(super) fn begin_unified_exec_startup(
 }
 
 pub(super) fn handle_exec_begin(chat: &mut ChatWidget, event: ExecCommandBeginEvent) {
+    let cwd = chat.config.cwd.clone();
     let command_actions = event
         .parsed_cmd
         .iter()
         .cloned()
-        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &event.cwd))
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &cwd))
         .collect();
     chat.handle_server_notification(
         ServerNotification::ItemStarted(ItemStartedNotification {
             thread_id: thread_id(chat),
-            turn_id: event.turn_id.clone(),
+            turn_id: chat
+                .last_turn_id
+                .clone()
+                .unwrap_or_else(|| "turn-1".to_string()),
             item: AppServerThreadItem::CommandExecution {
                 id: event.call_id,
                 command: codex_shell_command::parse_command::shlex_join(&event.command),
-                cwd: event.cwd,
+                cwd,
                 process_id: event.process_id,
                 source: event.source,
                 status: AppServerCommandExecutionStatus::InProgress,
@@ -995,36 +1013,6 @@ pub(super) fn terminal_interaction(
         ),
         /*replay_kind*/ None,
     );
-}
-
-pub(super) fn handle_terminal_interaction(chat: &mut ChatWidget, event: TerminalInteractionEvent) {
-    chat.handle_server_notification(
-        ServerNotification::TerminalInteraction(
-            codex_app_server_protocol::TerminalInteractionNotification {
-                thread_id: thread_id(chat),
-                turn_id: chat
-                    .last_turn_id
-                    .clone()
-                    .unwrap_or_else(|| "turn-1".to_string()),
-                item_id: event.call_id,
-                process_id: event.process_id,
-                stdin: event.stdin,
-            },
-        ),
-        /*replay_kind*/ None,
-    );
-}
-
-pub(super) fn terminal_interaction_event(
-    call_id: &str,
-    process_id: &str,
-    stdin: &str,
-) -> TerminalInteractionEvent {
-    TerminalInteractionEvent {
-        call_id: call_id.to_string(),
-        process_id: process_id.to_string(),
-        stdin: stdin.to_string(),
-    }
 }
 
 pub(super) fn complete_assistant_message(
@@ -1181,9 +1169,7 @@ pub(super) fn end_exec(
     };
     let ExecCommandBeginEvent {
         call_id,
-        turn_id,
         command,
-        cwd,
         parsed_cmd,
         source,
         interaction_input,
@@ -1194,46 +1180,46 @@ pub(super) fn end_exec(
         ExecCommandEndEvent {
             call_id,
             process_id,
-            turn_id,
             command,
-            cwd,
             parsed_cmd,
             source,
             interaction_input,
-            stdout: stdout.to_string(),
-            stderr: stderr.to_string(),
             aggregated_output: aggregated.clone(),
             exit_code,
             duration: std::time::Duration::from_millis(5),
             formatted_output: aggregated,
-            status: if exit_code == 0 {
-                AppServerCommandExecutionStatus::Completed
-            } else {
-                AppServerCommandExecutionStatus::Failed
-            },
         },
     );
 }
 
 pub(super) fn handle_exec_end(chat: &mut ChatWidget, event: ExecCommandEndEvent) {
+    let cwd = chat.config.cwd.clone();
     let duration_ms = i64::try_from(event.duration.as_millis()).unwrap_or(i64::MAX);
     let command_actions = event
         .parsed_cmd
         .iter()
         .cloned()
-        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &event.cwd))
+        .map(|parsed| AppServerCommandAction::from_core_with_cwd(parsed, &cwd))
         .collect();
+    let status = if event.exit_code == 0 {
+        AppServerCommandExecutionStatus::Completed
+    } else {
+        AppServerCommandExecutionStatus::Failed
+    };
     chat.handle_server_notification(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
-            turn_id: event.turn_id.clone(),
+            turn_id: chat
+                .last_turn_id
+                .clone()
+                .unwrap_or_else(|| "turn-1".to_string()),
             item: AppServerThreadItem::CommandExecution {
                 id: event.call_id,
                 command: codex_shell_command::parse_command::shlex_join(&event.command),
-                cwd: event.cwd,
+                cwd,
                 process_id: event.process_id,
                 source: event.source,
-                status: event.status,
+                status,
                 command_actions,
                 aggregated_output: (!event.aggregated_output.is_empty())
                     .then_some(event.aggregated_output),

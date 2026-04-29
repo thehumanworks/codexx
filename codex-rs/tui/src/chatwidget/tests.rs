@@ -4,6 +4,8 @@
 //! snapshot-based so that layout regressions and status/header changes show up as stable,
 //! reviewable diffs.
 
+pub(super) use super::interrupts::ExecCommandBeginEvent;
+pub(super) use super::interrupts::ExecCommandEndEvent;
 pub(super) use super::*;
 pub(super) use crate::app_command::AppCommand as Op;
 pub(super) use crate::app_event::AppEvent;
@@ -30,13 +32,6 @@ pub(super) use crate::test_support::test_path_buf;
 pub(super) use crate::test_support::test_path_display;
 pub(super) use crate::token_usage::TokenUsage;
 pub(super) use crate::token_usage::TokenUsageInfo;
-pub(super) use crate::tool_activity::ExecCommandBeginEvent;
-pub(super) use crate::tool_activity::ExecCommandEndEvent;
-pub(super) use crate::tool_activity::ImageGenerationEndEvent;
-pub(super) use crate::tool_activity::PatchApplyBeginEvent;
-pub(super) use crate::tool_activity::PatchApplyEndEvent;
-pub(super) use crate::tool_activity::TerminalInteractionEvent;
-pub(super) use crate::tool_activity::ViewImageToolCallEvent;
 pub(super) use crate::tui::FrameRequester;
 pub(super) use assert_matches::assert_matches;
 pub(super) use codex_app_server_protocol::AddCreditsNudgeCreditType;

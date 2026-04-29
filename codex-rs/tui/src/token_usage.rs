@@ -1,7 +1,8 @@
-//! TUI token usage and final-output formatting models.
+//! TUI token usage models and display formatting.
 
 use std::fmt;
 
+use codex_protocol::num_format::format_with_separators;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -57,56 +58,30 @@ pub(crate) struct TokenUsageInfo {
     pub(crate) model_context_window: Option<i64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FinalOutput {
-    pub token_usage: TokenUsage,
-}
-
-impl From<TokenUsage> for FinalOutput {
-    fn from(token_usage: TokenUsage) -> Self {
-        Self { token_usage }
-    }
-}
-
-impl fmt::Display for FinalOutput {
+impl fmt::Display for TokenUsage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let token_usage = &self.token_usage;
         write!(
             f,
             "Token usage: total={} input={}{} output={}{}",
-            format_with_separators(token_usage.blended_total()),
-            format_with_separators(token_usage.non_cached_input()),
-            if token_usage.cached_input() > 0 {
+            format_with_separators(self.blended_total()),
+            format_with_separators(self.non_cached_input()),
+            if self.cached_input() > 0 {
                 format!(
                     " (+ {} cached)",
-                    format_with_separators(token_usage.cached_input())
+                    format_with_separators(self.cached_input())
                 )
             } else {
                 String::new()
             },
-            format_with_separators(token_usage.output_tokens),
-            if token_usage.reasoning_output_tokens > 0 {
+            format_with_separators(self.output_tokens),
+            if self.reasoning_output_tokens > 0 {
                 format!(
                     " (reasoning {})",
-                    format_with_separators(token_usage.reasoning_output_tokens)
+                    format_with_separators(self.reasoning_output_tokens)
                 )
             } else {
                 String::new()
             }
         )
     }
-}
-
-fn format_with_separators(value: i64) -> String {
-    let sign = if value < 0 { "-" } else { "" };
-    let digits = value.abs().to_string();
-    let mut out = String::new();
-    for (i, ch) in digits.chars().rev().enumerate() {
-        if i > 0 && i % 3 == 0 {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    let grouped: String = out.chars().rev().collect();
-    format!("{sign}{grouped}")
 }

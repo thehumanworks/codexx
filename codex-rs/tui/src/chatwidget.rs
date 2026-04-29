@@ -57,6 +57,7 @@ use crate::bottom_pane::StatusSurfacePreviewData;
 use crate::bottom_pane::StatusSurfacePreviewItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
+use crate::diff_model::FileChange;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
@@ -82,23 +83,6 @@ use crate::terminal_title::set_terminal_title;
 use crate::text_formatting::proper_join;
 use crate::token_usage::TokenUsage;
 use crate::token_usage::TokenUsageInfo;
-use crate::tool_activity::ExecCommandBeginEvent;
-use crate::tool_activity::ExecCommandEndEvent;
-use crate::tool_activity::ExecCommandOutputDeltaEvent;
-use crate::tool_activity::HookCompletedEvent;
-use crate::tool_activity::HookStartedEvent;
-use crate::tool_activity::ImageGenerationBeginEvent;
-use crate::tool_activity::ImageGenerationEndEvent;
-use crate::tool_activity::McpInvocation;
-use crate::tool_activity::McpToolCallBeginEvent;
-use crate::tool_activity::McpToolCallEndEvent;
-use crate::tool_activity::PatchApplyBeginEvent;
-use crate::tool_activity::PatchApplyEndEvent;
-use crate::tool_activity::TerminalInteractionEvent;
-use crate::tool_activity::ViewImageToolCallEvent;
-use crate::tool_activity::WebSearchBeginEvent;
-use crate::tool_activity::WebSearchEndEvent;
-use crate::turn_state::TurnAbortReason;
 use crate::version::CODEX_CLI_VERSION;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
@@ -310,6 +294,7 @@ use crate::get_git_diff::get_git_diff;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HookCell;
+use crate::history_cell::McpInvocation;
 use crate::history_cell::McpToolCallCell;
 use crate::history_cell::PlainHistoryCell;
 use crate::history_cell::WebSearchCell;
@@ -336,7 +321,12 @@ use self::goal_status::GoalStatusState;
 use self::goal_status::goal_status_indicator_from_app_goal;
 mod goal_menu;
 mod interrupts;
+use self::interrupts::ExecCommandBeginEvent;
+use self::interrupts::ExecCommandEndEvent;
 use self::interrupts::InterruptManager;
+use self::interrupts::McpToolCallBeginEvent;
+use self::interrupts::McpToolCallEndEvent;
+use self::interrupts::PatchApplyEndEvent;
 mod keymap_picker;
 mod mcp_startup;
 use self::mcp_startup::McpStartupStatus;
@@ -1532,6 +1522,12 @@ enum PlanModeNudgeScope {
     Thread(ThreadId),
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum TurnAbortReason {
+    Interrupted,
+    BudgetLimited,
+}
+
 /// Returns whether `text` contains the standalone word `plan`.
 ///
 /// This intentionally mirrors the App suggestion heuristic instead of trying to infer broader
@@ -1558,58 +1554,6 @@ impl ThreadItemRenderSource {
             Self::Live => None,
             Self::Replay(replay_kind) => Some(replay_kind),
         }
-    }
-}
-
-fn hook_output_entry_from_notification(
-    entry: codex_app_server_protocol::HookOutputEntry,
-) -> codex_app_server_protocol::HookOutputEntry {
-    codex_app_server_protocol::HookOutputEntry {
-        kind: entry.kind,
-        text: entry.text,
-    }
-}
-
-fn hook_run_summary_from_notification(
-    run: codex_app_server_protocol::HookRunSummary,
-) -> codex_app_server_protocol::HookRunSummary {
-    codex_app_server_protocol::HookRunSummary {
-        id: run.id,
-        event_name: run.event_name,
-        handler_type: run.handler_type,
-        execution_mode: run.execution_mode,
-        scope: run.scope,
-        source_path: run.source_path,
-        source: run.source,
-        display_order: run.display_order,
-        status: run.status,
-        status_message: run.status_message,
-        started_at: run.started_at,
-        completed_at: run.completed_at,
-        duration_ms: run.duration_ms,
-        entries: run
-            .entries
-            .into_iter()
-            .map(hook_output_entry_from_notification)
-            .collect(),
-    }
-}
-
-fn hook_started_event_from_notification(
-    notification: codex_app_server_protocol::HookStartedNotification,
-) -> HookStartedEvent {
-    HookStartedEvent {
-        turn_id: notification.turn_id,
-        run: hook_run_summary_from_notification(notification.run),
-    }
-}
-
-fn hook_completed_event_from_notification(
-    notification: codex_app_server_protocol::HookCompletedNotification,
-) -> HookCompletedEvent {
-    HookCompletedEvent {
-        turn_id: notification.turn_id,
-        run: hook_run_summary_from_notification(notification.run),
     }
 }
 
@@ -3728,8 +3672,8 @@ impl ChatWidget {
         self.defer_or_handle(|q| q.push_exec_begin(ev), |s| s.handle_exec_begin_now(ev2));
     }
 
-    fn on_exec_command_output_delta(&mut self, ev: ExecCommandOutputDeltaEvent) {
-        self.track_unified_exec_output_chunk(&ev.call_id, &ev.chunk);
+    fn on_exec_command_output_delta(&mut self, call_id: &str, delta: &str) {
+        self.track_unified_exec_output_chunk(call_id, delta.as_bytes());
         if !self.bottom_pane.is_task_running() {
             return;
         }
@@ -3742,13 +3686,13 @@ impl ChatWidget {
             return;
         };
 
-        if cell.append_output(&ev.call_id, std::str::from_utf8(&ev.chunk).unwrap_or("")) {
+        if cell.append_output(call_id, delta) {
             self.bump_active_cell_revision();
             self.request_redraw();
         }
     }
 
-    fn on_terminal_interaction(&mut self, ev: TerminalInteractionEvent) {
+    fn on_terminal_interaction(&mut self, process_id: String, stdin: String) {
         if !self.bottom_pane.is_task_running() {
             return;
         }
@@ -3756,9 +3700,9 @@ impl ChatWidget {
         let command_display = self
             .unified_exec_processes
             .iter()
-            .find(|process| process.key == ev.process_id)
+            .find(|process| process.key == process_id)
             .map(|process| process.command_display.clone());
-        if ev.stdin.is_empty() {
+        if stdin.is_empty() {
             // Empty stdin means we are polling for background output.
             // Surface this in the status indicator (single "waiting" surface) instead of
             // the transcript. Keep the header short so the interrupt hint remains visible.
@@ -3773,17 +3717,17 @@ impl ChatWidget {
                 /*details_max_lines*/ 1,
             );
             match &mut self.unified_exec_wait_streak {
-                Some(wait) if wait.process_id == ev.process_id => {
+                Some(wait) if wait.process_id == process_id => {
                     wait.update_command_display(command_display);
                 }
                 Some(_) => {
                     self.flush_unified_exec_wait_streak();
                     self.unified_exec_wait_streak =
-                        Some(UnifiedExecWaitStreak::new(ev.process_id, command_display));
+                        Some(UnifiedExecWaitStreak::new(process_id, command_display));
                 }
                 None => {
                     self.unified_exec_wait_streak =
-                        Some(UnifiedExecWaitStreak::new(ev.process_id, command_display));
+                        Some(UnifiedExecWaitStreak::new(process_id, command_display));
                 }
             }
             self.request_redraw();
@@ -3791,43 +3735,45 @@ impl ChatWidget {
             if self
                 .unified_exec_wait_streak
                 .as_ref()
-                .is_some_and(|wait| wait.process_id == ev.process_id)
+                .is_some_and(|wait| wait.process_id == process_id)
             {
                 self.flush_unified_exec_wait_streak();
             }
             self.add_to_history(history_cell::new_unified_exec_interaction(
                 command_display,
-                ev.stdin,
+                stdin,
             ));
         }
     }
 
-    fn on_patch_apply_begin(&mut self, event: PatchApplyBeginEvent) {
-        self.add_to_history(history_cell::new_patch_event(
-            event.changes,
-            &self.config.cwd,
-        ));
+    fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
+        self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
-    fn on_view_image_tool_call(&mut self, event: ViewImageToolCallEvent) {
+    fn on_view_image_tool_call(&mut self, path: AbsolutePathBuf) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(history_cell::new_view_image_tool_call(
-            event.path,
+            path,
             &self.config.cwd,
         ));
         self.request_redraw();
     }
 
-    fn on_image_generation_begin(&mut self, _event: ImageGenerationBeginEvent) {
+    fn on_image_generation_begin(&mut self) {
         self.flush_answer_stream_with_separator();
     }
 
-    fn on_image_generation_end(&mut self, event: ImageGenerationEndEvent) {
+    fn on_image_generation_end(
+        &mut self,
+        call_id: String,
+        revised_prompt: Option<String>,
+        saved_path: Option<AbsolutePathBuf>,
+    ) {
         self.flush_answer_stream_with_separator();
         self.add_to_history(history_cell::new_image_generation_call(
-            event.call_id,
-            event.revised_prompt,
-            event.saved_path,
+            call_id,
+            revised_prompt,
+            saved_path,
         ));
         self.request_redraw();
     }
@@ -3939,11 +3885,11 @@ impl ChatWidget {
         self.defer_or_handle(|q| q.push_mcp_end(ev), |s| s.handle_mcp_end_now(ev2));
     }
 
-    fn on_web_search_begin(&mut self, ev: WebSearchBeginEvent) {
+    fn on_web_search_begin(&mut self, call_id: String) {
         self.flush_answer_stream_with_separator();
         self.flush_active_cell();
         self.active_cell = Some(Box::new(history_cell::new_active_web_search_call(
-            ev.call_id,
+            call_id,
             String::new(),
             self.config.animations,
         )));
@@ -3951,13 +3897,13 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_web_search_end(&mut self, ev: WebSearchEndEvent) {
+    fn on_web_search_end(
+        &mut self,
+        call_id: String,
+        query: String,
+        action: codex_protocol::models::WebSearchAction,
+    ) {
         self.flush_answer_stream_with_separator();
-        let WebSearchEndEvent {
-            call_id,
-            query,
-            action,
-        } = ev;
         let mut handled = false;
         if let Some(cell) = self
             .active_cell
@@ -4047,17 +3993,17 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_hook_started(&mut self, event: HookStartedEvent) {
+    fn on_hook_started(&mut self, run: codex_app_server_protocol::HookRunSummary) {
         self.flush_answer_stream_with_separator();
         self.flush_completed_hook_output();
         match self.active_hook_cell.as_mut() {
             Some(cell) => {
-                cell.start_run(event.run);
+                cell.start_run(run);
                 self.bump_active_cell_revision();
             }
             None => {
                 self.active_hook_cell = Some(history_cell::new_active_hook_cell(
-                    event.run,
+                    run,
                     self.config.animations,
                 ));
                 self.bump_active_cell_revision();
@@ -4066,8 +4012,7 @@ impl ChatWidget {
         self.request_redraw();
     }
 
-    fn on_hook_completed(&mut self, event: HookCompletedEvent) {
-        let completed = event.run;
+    fn on_hook_completed(&mut self, completed: codex_app_server_protocol::HookRunSummary) {
         let completed_existing_run = self
             .active_hook_cell
             .as_mut()
@@ -4667,7 +4612,6 @@ impl ChatWidget {
             invocation,
             duration,
             result,
-            ..
         } = ev;
 
         let extra_cell = match self
@@ -5981,7 +5925,7 @@ impl ChatWidget {
             ThreadItem::CommandExecution {
                 id,
                 command,
-                cwd,
+                cwd: _,
                 process_id,
                 source,
                 status,
@@ -5997,9 +5941,7 @@ impl ChatWidget {
                     self.on_exec_command_begin(ExecCommandBeginEvent {
                         call_id: id,
                         process_id,
-                        turn_id: turn_id.clone(),
                         command: split_command_string(&command),
-                        cwd,
                         parsed_cmd: command_actions
                             .into_iter()
                             .map(codex_app_server_protocol::CommandAction::into_core)
@@ -6012,43 +5954,25 @@ impl ChatWidget {
                     self.on_exec_command_end(ExecCommandEndEvent {
                         call_id: id,
                         process_id,
-                        turn_id: turn_id.clone(),
                         command: split_command_string(&command),
-                        cwd,
                         parsed_cmd: command_actions
                             .into_iter()
                             .map(codex_app_server_protocol::CommandAction::into_core)
                             .collect(),
                         source,
                         interaction_input: None,
-                        stdout: String::new(),
-                        stderr: String::new(),
                         aggregated_output: aggregated_output.clone(),
                         exit_code: exit_code.unwrap_or_default(),
                         duration: Duration::from_millis(
                             duration_ms.unwrap_or_default().max(0) as u64
                         ),
                         formatted_output: aggregated_output,
-                        status: match status {
-                            codex_app_server_protocol::CommandExecutionStatus::Completed => {
-                                codex_app_server_protocol::CommandExecutionStatus::Completed
-                            }
-                            codex_app_server_protocol::CommandExecutionStatus::Failed => {
-                                codex_app_server_protocol::CommandExecutionStatus::Failed
-                            }
-                            codex_app_server_protocol::CommandExecutionStatus::Declined => {
-                                codex_app_server_protocol::CommandExecutionStatus::Declined
-                            }
-                            codex_app_server_protocol::CommandExecutionStatus::InProgress => {
-                                codex_app_server_protocol::CommandExecutionStatus::Failed
-                            }
-                        },
                     });
                 }
             }
             ThreadItem::FileChange {
-                id,
-                changes,
+                id: _,
+                changes: _,
                 status,
             } => {
                 if !matches!(
@@ -6056,29 +5980,11 @@ impl ChatWidget {
                     codex_app_server_protocol::PatchApplyStatus::InProgress
                 ) {
                     self.on_patch_apply_end(PatchApplyEndEvent {
-                        call_id: id,
-                        turn_id: turn_id.clone(),
-                        stdout: String::new(),
                         stderr: String::new(),
                         success: !matches!(
                             status,
                             codex_app_server_protocol::PatchApplyStatus::Failed
                         ),
-                        changes: file_update_changes_to_display(changes),
-                        status: match status {
-                            codex_app_server_protocol::PatchApplyStatus::Completed => {
-                                codex_app_server_protocol::PatchApplyStatus::Completed
-                            }
-                            codex_app_server_protocol::PatchApplyStatus::Failed => {
-                                codex_app_server_protocol::PatchApplyStatus::Failed
-                            }
-                            codex_app_server_protocol::PatchApplyStatus::Declined => {
-                                codex_app_server_protocol::PatchApplyStatus::Declined
-                            }
-                            codex_app_server_protocol::PatchApplyStatus::InProgress => {
-                                codex_app_server_protocol::PatchApplyStatus::Failed
-                            }
-                        },
                     });
                 }
             }
@@ -6087,7 +5993,6 @@ impl ChatWidget {
                 server,
                 tool,
                 arguments,
-                mcp_app_resource_uri,
                 result,
                 error,
                 duration_ms,
@@ -6100,7 +6005,6 @@ impl ChatWidget {
                         tool,
                         arguments: Some(arguments),
                     },
-                    mcp_app_resource_uri,
                     duration: Duration::from_millis(duration_ms.unwrap_or_default().max(0) as u64),
                     result: match (result, error) {
                         (_, Some(error)) => Err(error.message),
@@ -6118,34 +6022,25 @@ impl ChatWidget {
                 });
             }
             ThreadItem::WebSearch { id, query, action } => {
-                self.on_web_search_begin(WebSearchBeginEvent {
-                    call_id: id.clone(),
-                });
-                self.on_web_search_end(WebSearchEndEvent {
-                    call_id: id,
+                self.on_web_search_begin(id.clone());
+                self.on_web_search_end(
+                    id,
                     query,
-                    action: action
+                    action
                         .map(web_search_action_to_core)
                         .unwrap_or(codex_protocol::models::WebSearchAction::Other),
-                });
+                );
             }
-            ThreadItem::ImageView { id, path } => {
-                self.on_view_image_tool_call(ViewImageToolCallEvent { call_id: id, path });
+            ThreadItem::ImageView { id: _, path } => {
+                self.on_view_image_tool_call(path);
             }
             ThreadItem::ImageGeneration {
                 id,
-                status,
                 revised_prompt,
-                result,
                 saved_path,
+                ..
             } => {
-                self.on_image_generation_end(ImageGenerationEndEvent {
-                    call_id: id,
-                    result,
-                    revised_prompt,
-                    status,
-                    saved_path,
-                });
+                self.on_image_generation_end(id, revised_prompt, saved_path);
             }
             ThreadItem::EnteredReviewMode { review, .. } => {
                 if from_replay {
@@ -6311,18 +6206,10 @@ impl ChatWidget {
             }
             ServerNotification::ReasoningSummaryPartAdded(_) => self.on_reasoning_section_break(),
             ServerNotification::TerminalInteraction(notification) => {
-                self.on_terminal_interaction(TerminalInteractionEvent {
-                    call_id: notification.item_id,
-                    process_id: notification.process_id,
-                    stdin: notification.stdin,
-                })
+                self.on_terminal_interaction(notification.process_id, notification.stdin)
             }
             ServerNotification::CommandExecutionOutputDelta(notification) => {
-                self.on_exec_command_output_delta(ExecCommandOutputDeltaEvent {
-                    call_id: notification.item_id,
-                    stream: codex_app_server_protocol::CommandExecOutputStream::Stdout,
-                    chunk: notification.delta.into_bytes(),
-                });
+                self.on_exec_command_output_delta(&notification.item_id, &notification.delta);
             }
             ServerNotification::FileChangeOutputDelta(notification) => {
                 self.on_patch_apply_output_delta(notification.item_id, notification.delta);
@@ -6348,10 +6235,10 @@ impl ChatWidget {
                 })
             }
             ServerNotification::HookStarted(notification) => {
-                self.on_hook_started(hook_started_event_from_notification(notification));
+                self.on_hook_started(notification.run);
             }
             ServerNotification::HookCompleted(notification) => {
-                self.on_hook_completed(hook_completed_event_from_notification(notification));
+                self.on_hook_completed(notification.run);
             }
             ServerNotification::Error(notification) => {
                 if notification.will_retry {
@@ -6568,7 +6455,7 @@ impl ChatWidget {
             ThreadItem::CommandExecution {
                 id,
                 command,
-                cwd,
+                cwd: _,
                 process_id,
                 source,
                 command_actions,
@@ -6577,9 +6464,7 @@ impl ChatWidget {
                 self.on_exec_command_begin(ExecCommandBeginEvent {
                     call_id: id,
                     process_id,
-                    turn_id: notification.turn_id,
                     command: split_command_string(&command),
-                    cwd,
                     parsed_cmd: command_actions
                         .into_iter()
                         .map(codex_app_server_protocol::CommandAction::into_core)
@@ -6588,20 +6473,14 @@ impl ChatWidget {
                     interaction_input: None,
                 });
             }
-            ThreadItem::FileChange { id, changes, .. } => {
-                self.on_patch_apply_begin(PatchApplyBeginEvent {
-                    call_id: id,
-                    turn_id: notification.turn_id,
-                    auto_approved: false,
-                    changes: file_update_changes_to_display(changes),
-                });
+            ThreadItem::FileChange { id: _, changes, .. } => {
+                self.on_patch_apply_begin(file_update_changes_to_display(changes));
             }
             ThreadItem::McpToolCall {
                 id,
                 server,
                 tool,
                 arguments,
-                mcp_app_resource_uri,
                 ..
             } => {
                 self.on_mcp_tool_call_begin(McpToolCallBeginEvent {
@@ -6611,14 +6490,13 @@ impl ChatWidget {
                         tool,
                         arguments: Some(arguments),
                     },
-                    mcp_app_resource_uri,
                 });
             }
             ThreadItem::WebSearch { id, .. } => {
-                self.on_web_search_begin(WebSearchBeginEvent { call_id: id });
+                self.on_web_search_begin(id);
             }
-            ThreadItem::ImageGeneration { id, .. } => {
-                self.on_image_generation_begin(ImageGenerationBeginEvent { call_id: id });
+            ThreadItem::ImageGeneration { .. } => {
+                self.on_image_generation_begin();
             }
             ThreadItem::CollabAgentToolCall {
                 id,

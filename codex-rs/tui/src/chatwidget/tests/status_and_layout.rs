@@ -2671,15 +2671,12 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
             path: "diff_render.rs".into(),
         },
     ];
-    let cwd = AbsolutePathBuf::current_dir().expect("current dir");
     handle_exec_begin(
         &mut chat,
         ExecCommandBeginEvent {
             call_id: "c1".into(),
             process_id: None,
-            turn_id: "turn-1".into(),
             command: command.clone(),
-            cwd: cwd.clone(),
             parsed_cmd: parsed_cmd.clone(),
             source: ExecCommandSource::Agent,
             interaction_input: None,
@@ -2690,19 +2687,14 @@ async fn chatwidget_exec_and_status_layout_vt100_snapshot() {
         ExecCommandEndEvent {
             call_id: "c1".into(),
             process_id: None,
-            turn_id: "turn-1".into(),
             command,
-            cwd,
             parsed_cmd,
             source: ExecCommandSource::Agent,
             interaction_input: None,
-            stdout: String::new(),
-            stderr: String::new(),
             aggregated_output: String::new(),
             exit_code: 0,
             duration: std::time::Duration::from_millis(16000),
             formatted_output: String::new(),
-            status: AppServerCommandExecutionStatus::Completed,
         },
     );
     handle_turn_started(&mut chat, "turn-1");

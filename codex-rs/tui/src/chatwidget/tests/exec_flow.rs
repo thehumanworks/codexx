@@ -348,25 +348,19 @@ async fn exec_end_without_begin_uses_event_command() {
         "echo orphaned".to_string(),
     ];
     let parsed_cmd = codex_shell_command::parse_command::parse_command(&command);
-    let cwd = AbsolutePathBuf::current_dir().expect("current dir");
     handle_exec_end(
         &mut chat,
         ExecCommandEndEvent {
             call_id: "call-orphan".to_string(),
             process_id: None,
-            turn_id: "turn-1".to_string(),
             command,
-            cwd,
             parsed_cmd,
             source: ExecCommandSource::Agent,
             interaction_input: None,
-            stdout: "done".to_string(),
-            stderr: String::new(),
             aggregated_output: "done".to_string(),
             exit_code: 0,
             duration: std::time::Duration::from_millis(5),
             formatted_output: "done".to_string(),
-            status: AppServerCommandExecutionStatus::Completed,
         },
     );
 
@@ -609,10 +603,7 @@ async fn unified_exec_interaction_after_task_complete_is_suppressed() {
         /*last_agent_message*/ None, /*duration_ms*/ None, /*from_replay*/ false,
     );
 
-    handle_terminal_interaction(
-        &mut chat,
-        terminal_interaction_event("call-1", "proc-1", "ls\n"),
-    );
+    terminal_interaction(&mut chat, "call-1", "proc-1", "ls\n");
 
     let cells = drain_insert_history(&mut rx);
     assert!(
@@ -708,11 +699,7 @@ async fn unified_exec_wait_status_header_updates_on_late_command_display() {
         recent_chunks: Vec::new(),
     });
 
-    chat.on_terminal_interaction(TerminalInteractionEvent {
-        call_id: "call-1".to_string(),
-        process_id: "proc-1".to_string(),
-        stdin: String::new(),
-    });
+    terminal_interaction(&mut chat, "call-1", "proc-1", "");
 
     assert!(chat.active_cell.is_none());
     assert_eq!(
@@ -841,13 +828,7 @@ async fn view_image_tool_call_adds_history_cell() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let image_path = chat.config.cwd.join("example.png");
 
-    handle_view_image_tool_call(
-        &mut chat,
-        ViewImageToolCallEvent {
-            call_id: "call-image".into(),
-            path: image_path,
-        },
-    );
+    handle_view_image_tool_call(&mut chat, "call-image", image_path);
 
     let cells = drain_insert_history(&mut rx);
     assert_eq!(cells.len(), 1, "expected a single history cell");
@@ -861,13 +842,9 @@ async fn image_generation_call_adds_history_cell() {
 
     handle_image_generation_end(
         &mut chat,
-        ImageGenerationEndEvent {
-            call_id: "call-image-generation".into(),
-            status: "completed".into(),
-            revised_prompt: Some("A tiny blue square".into()),
-            result: "Zm9v".into(),
-            saved_path: Some(test_path_buf("/tmp/ig-1.png").abs()),
-        },
+        "call-image-generation",
+        Some("A tiny blue square".into()),
+        Some(test_path_buf("/tmp/ig-1.png").abs()),
     );
 
     let cells = drain_insert_history(&mut rx);
@@ -1371,13 +1348,7 @@ async fn apply_patch_events_emit_history_cells() {
             content: "hello\n".to_string(),
         },
     );
-    let begin = PatchApplyBeginEvent {
-        call_id: "c1".into(),
-        turn_id: "turn-c1".into(),
-        auto_approved: true,
-        changes: changes2,
-    };
-    handle_patch_apply_begin(&mut chat, begin);
+    handle_patch_apply_begin(&mut chat, "c1", "turn-c1", changes2);
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected apply block cell to be sent");
     let blob = lines_to_single_string(cells.last().unwrap());
@@ -1394,16 +1365,13 @@ async fn apply_patch_events_emit_history_cells() {
             content: "hello\n".to_string(),
         },
     );
-    let end = PatchApplyEndEvent {
-        call_id: "c1".into(),
-        turn_id: "turn-c1".into(),
-        stdout: "ok\n".into(),
-        stderr: String::new(),
-        success: true,
-        changes: end_changes,
-        status: AppServerPatchApplyStatus::Completed,
-    };
-    handle_patch_apply_end(&mut chat, end);
+    handle_patch_apply_end(
+        &mut chat,
+        "c1",
+        "turn-c1",
+        end_changes,
+        AppServerPatchApplyStatus::Completed,
+    );
     let cells = drain_insert_history(&mut rx);
     assert!(
         cells.is_empty(),
@@ -1442,15 +1410,7 @@ async fn apply_patch_manual_approval_adjusts_header() {
             content: "hello\n".to_string(),
         },
     );
-    handle_patch_apply_begin(
-        &mut chat,
-        PatchApplyBeginEvent {
-            call_id: "c1".into(),
-            turn_id: "turn-c1".into(),
-            auto_approved: false,
-            changes: apply_changes,
-        },
-    );
+    handle_patch_apply_begin(&mut chat, "c1", "turn-c1", apply_changes);
 
     let cells = drain_insert_history(&mut rx);
     assert!(!cells.is_empty(), "expected apply block cell to be sent");
@@ -1496,15 +1456,7 @@ async fn apply_patch_manual_flow_snapshot() {
             content: "hello\n".to_string(),
         },
     );
-    handle_patch_apply_begin(
-        &mut chat,
-        PatchApplyBeginEvent {
-            call_id: "c1".into(),
-            turn_id: "turn-c1".into(),
-            auto_approved: false,
-            changes: apply_changes,
-        },
-    );
+    handle_patch_apply_begin(&mut chat, "c1", "turn-c1", apply_changes);
     let approved_lines = drain_insert_history(&mut rx)
         .pop()
         .expect("approved patch cell");
@@ -1613,15 +1565,7 @@ async fn apply_patch_full_flow_integration_like() {
         PathBuf::from("pkg.rs"),
         FileChange::Add { content: "".into() },
     );
-    handle_patch_apply_begin(
-        &mut chat,
-        PatchApplyBeginEvent {
-            call_id: "call-1".into(),
-            turn_id: "turn-call-1".into(),
-            auto_approved: false,
-            changes: changes2,
-        },
-    );
+    handle_patch_apply_begin(&mut chat, "call-1", "turn-call-1", changes2);
     let mut end_changes = HashMap::new();
     end_changes.insert(
         PathBuf::from("pkg.rs"),
@@ -1629,15 +1573,10 @@ async fn apply_patch_full_flow_integration_like() {
     );
     handle_patch_apply_end(
         &mut chat,
-        PatchApplyEndEvent {
-            call_id: "call-1".into(),
-            turn_id: "turn-call-1".into(),
-            stdout: String::from("ok"),
-            stderr: String::new(),
-            success: true,
-            changes: end_changes,
-            status: AppServerPatchApplyStatus::Completed,
-        },
+        "call-1",
+        "turn-call-1",
+        end_changes,
+        AppServerPatchApplyStatus::Completed,
     );
 }
 

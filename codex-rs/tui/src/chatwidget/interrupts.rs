@@ -1,18 +1,64 @@
+//! Queue prompt overlays and deferred tool activity while another interrupt is visible.
+
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use crate::app::app_server_requests::ResolvedAppServerRequest;
 use crate::approval_events::ApplyPatchApprovalRequestEvent;
 use crate::approval_events::ExecApprovalRequestEvent;
-use crate::tool_activity::ExecCommandBeginEvent;
-use crate::tool_activity::ExecCommandEndEvent;
-use crate::tool_activity::McpToolCallBeginEvent;
-use crate::tool_activity::McpToolCallEndEvent;
-use crate::tool_activity::PatchApplyEndEvent;
+use crate::history_cell::McpInvocation;
+use codex_app_server_protocol::CommandExecutionSource;
 use codex_protocol::approvals::ElicitationRequestEvent;
+use codex_protocol::mcp::CallToolResult;
+use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::request_permissions::RequestPermissionsEvent;
 use codex_protocol::request_user_input::RequestUserInputEvent;
 
 use super::ChatWidget;
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExecCommandBeginEvent {
+    pub(crate) call_id: String,
+    pub(crate) process_id: Option<String>,
+    pub(crate) command: Vec<String>,
+    pub(crate) parsed_cmd: Vec<ParsedCommand>,
+    pub(crate) source: CommandExecutionSource,
+    pub(crate) interaction_input: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ExecCommandEndEvent {
+    pub(crate) call_id: String,
+    pub(crate) process_id: Option<String>,
+    pub(crate) command: Vec<String>,
+    pub(crate) parsed_cmd: Vec<ParsedCommand>,
+    pub(crate) source: CommandExecutionSource,
+    pub(crate) interaction_input: Option<String>,
+    pub(crate) aggregated_output: String,
+    pub(crate) exit_code: i32,
+    pub(crate) duration: Duration,
+    pub(crate) formatted_output: String,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct McpToolCallBeginEvent {
+    pub(crate) call_id: String,
+    pub(crate) invocation: McpInvocation,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct McpToolCallEndEvent {
+    pub(crate) call_id: String,
+    pub(crate) invocation: McpInvocation,
+    pub(crate) duration: Duration,
+    pub(crate) result: Result<CallToolResult, String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PatchApplyEndEvent {
+    pub(crate) success: bool,
+    pub(crate) stderr: String,
+}
 
 #[derive(Debug)]
 pub(crate) enum QueuedInterrupt {
@@ -149,7 +195,6 @@ impl QueuedInterrupt {
 #[cfg(test)]
 mod tests {
     use crate::approval_events::ExecApprovalRequestEvent;
-    use crate::tool_activity::ExecCommandBeginEvent;
     use codex_app_server_protocol::CommandExecutionSource as ExecCommandSource;
     use codex_protocol::request_user_input::RequestUserInputEvent;
     use codex_utils_absolute_path::AbsolutePathBuf;
@@ -185,9 +230,7 @@ mod tests {
         ExecCommandBeginEvent {
             call_id: call_id.to_string(),
             process_id: None,
-            turn_id: "turn".to_string(),
             command: vec!["true".to_string()],
-            cwd: AbsolutePathBuf::current_dir().expect("current dir"),
             parsed_cmd: Vec::new(),
             source: ExecCommandSource::Agent,
             interaction_input: None,

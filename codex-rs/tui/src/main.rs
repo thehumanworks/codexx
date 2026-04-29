@@ -6,7 +6,6 @@ use codex_config::LoaderOverrides;
 use codex_tui::AppExitInfo;
 use codex_tui::Cli;
 use codex_tui::ExitReason;
-use codex_tui::FinalOutput;
 use codex_tui::run_main;
 use codex_utils_cli::CliConfigOverrides;
 use supports_color::Stream;
@@ -20,7 +19,7 @@ fn format_exit_messages(exit_info: AppExitInfo, color_enabled: bool) -> Vec<Stri
 
     let mut lines = Vec::new();
     if !token_usage.is_zero() {
-        lines.push(FinalOutput::from(token_usage).to_string());
+        lines.push(token_usage.to_string());
     }
 
     if let Some(resume_cmd) =
