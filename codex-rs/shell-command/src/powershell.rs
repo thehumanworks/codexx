@@ -91,7 +91,8 @@ pub fn try_parse_powershell_command_sequence(
 ) -> Option<Vec<Vec<String>>> {
     let (executable, args) = command.split_first()?;
     if is_powershell_executable(executable) {
-        parse_powershell_invocation(executable, args, mode)
+        let parser_executable = trusted_powershell_parser_executable(executable)?;
+        parse_powershell_invocation(&parser_executable, args, mode)
     } else {
         None
     }
@@ -149,8 +150,13 @@ fn parse_powershell_invocation(
             {
                 return None;
             }
-            _ if lower.starts_with('-') => {
-                return None;
+            _ if looks_like_powershell_flag(&lower) => {
+                if mode == PowershellCommandSequenceParseMode::SafeCommand {
+                    return None;
+                }
+
+                idx += powershell_wrapper_flag_length(args, idx);
+                continue;
             }
             _ => {
                 if mode == PowershellCommandSequenceParseMode::ExecPolicy {
@@ -171,6 +177,22 @@ pub(crate) fn parse_powershell_script_to_commands(
     script: &str,
 ) -> Option<Vec<Vec<String>>> {
     try_parse_powershell_ast_commands(executable, script)
+}
+
+fn trusted_powershell_parser_executable(exe: &str) -> Option<String> {
+    let executable_name = std::path::Path::new(exe)
+        .file_name()
+        .and_then(|osstr| osstr.to_str())
+        .unwrap_or(exe)
+        .to_ascii_lowercase();
+
+    let parser_executable = match executable_name.as_str() {
+        "powershell" | "powershell.exe" => try_find_powershell_executable_blocking()?,
+        "pwsh" | "pwsh.exe" => try_find_pwsh_executable_blocking()?,
+        _ => return None,
+    };
+
+    Some(parser_executable.as_path().to_string_lossy().into_owned())
 }
 
 pub(crate) fn is_powershell_executable(exe: &str) -> bool {
@@ -207,6 +229,10 @@ fn quote_argument(arg: &str) -> String {
     }
 
     format!("'{}'", arg.replace('\'', "''"))
+}
+
+fn looks_like_powershell_flag(lower: &str) -> bool {
+    lower.starts_with('-') || lower.starts_with('/')
 }
 
 fn is_powershell_no_arg_parse_flag(lower: &str) -> bool {
@@ -249,6 +275,18 @@ fn has_unsupported_powershell_parse_flag_inline_value(lower: &str) -> bool {
 
 fn split_flag_inline_value(lower: &str) -> Option<(&str, &str)> {
     lower.split_once(':')
+}
+
+fn powershell_wrapper_flag_length(args: &[String], idx: usize) -> usize {
+    let Some(next_arg) = args.get(idx + 1) else {
+        return 1;
+    };
+
+    if looks_like_powershell_flag(&next_arg.to_ascii_lowercase()) {
+        1
+    } else {
+        2
+    }
 }
 
 /// This function attempts to find a powershell.exe executable on the system.
@@ -321,7 +359,10 @@ fn is_powershellish_executable_available(powershell_or_pwsh_exe: &std::path::Pat
 
 #[cfg(test)]
 mod tests {
+    use super::PowershellCommandSequenceParseMode;
     use super::extract_powershell_command;
+    use super::try_parse_powershell_command_sequence;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn extracts_basic_powershell_command() {
@@ -368,5 +409,50 @@ mod tests {
         ];
         let (_shell, script) = extract_powershell_command(&cmd).expect("extract");
         assert_eq!(script, "Get-ChildItem | Select-String foo");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn exec_policy_parsing_ignores_ordinary_wrapper_flags() {
+        let command = vec![
+            "powershell.exe".to_string(),
+            "-Version".to_string(),
+            "5.1".to_string(),
+            "-NoExit".to_string(),
+            "-Command".to_string(),
+            "Get-Content 'foo bar'".to_string(),
+        ];
+
+        assert_eq!(
+            try_parse_powershell_command_sequence(
+                &command,
+                PowershellCommandSequenceParseMode::ExecPolicy,
+            ),
+            Some(vec![
+                vec!["Get-Content".to_string(), "foo bar".to_string(),]
+            ]),
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn uses_trusted_system_powershell_for_ast_parsing() {
+        let command = vec![
+            r"C:\repo\powershell.exe".to_string(),
+            "-NoExit".to_string(),
+            "-Command".to_string(),
+            "Get-Content Cargo.toml".to_string(),
+        ];
+
+        assert_eq!(
+            try_parse_powershell_command_sequence(
+                &command,
+                PowershellCommandSequenceParseMode::ExecPolicy,
+            ),
+            Some(vec![vec![
+                "Get-Content".to_string(),
+                "Cargo.toml".to_string(),
+            ]]),
+        );
     }
 }

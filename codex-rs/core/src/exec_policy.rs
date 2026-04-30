@@ -250,13 +250,17 @@ impl ExecPolicyManager {
             prefix_rule,
         } = req;
         let exec_policy = self.current();
-        let (commands, used_complex_parsing) = commands_for_exec_policy(original_command);
         #[cfg(windows)]
         let powershell_commands = try_parse_powershell_command_sequence(
             original_command,
             PowershellCommandSequenceParseMode::ExecPolicy,
         )
         .filter(|commands| !commands.is_empty());
+        let (commands, used_complex_parsing) = if let Some(commands) = powershell_commands.clone() {
+            (commands, false)
+        } else {
+            commands_for_exec_policy(original_command)
+        };
         // Keep heredoc prefix parsing for rule evaluation so existing
         // allow/prompt/forbidden rules still apply, but avoid auto-derived
         // amendments when only the heredoc fallback parser matched.
@@ -291,14 +295,30 @@ impl ExecPolicyManager {
 
         #[cfg(windows)]
         if powershell_commands.is_some() {
-            for rule_match in &mut evaluation.matched_rules {
-                if let RuleMatch::HeuristicsRuleMatch {
-                    command: matched_command,
-                    ..
-                } = rule_match
-                {
-                    *matched_command = original_command.to_vec();
+            let outer_policy_matches = exec_policy.matches_for_command_with_options(
+                original_command,
+                /*heuristics_fallback*/ None,
+                &match_options,
+            );
+            if outer_policy_matches.is_empty() {
+                for rule_match in &mut evaluation.matched_rules {
+                    if let RuleMatch::HeuristicsRuleMatch {
+                        command: matched_command,
+                        ..
+                    } = rule_match
+                    {
+                        *matched_command = original_command.to_vec();
+                    }
                 }
+            } else {
+                evaluation.matched_rules.retain(is_policy_match);
+                evaluation.matched_rules.extend(outer_policy_matches);
+                evaluation.decision = evaluation
+                    .matched_rules
+                    .iter()
+                    .map(RuleMatch::decision)
+                    .max()
+                    .expect("invariant failed: matched_rules must be non-empty");
             }
         }
 
@@ -338,19 +358,10 @@ impl ExecPolicyManager {
                 }
             }
             Decision::Allow => ExecApprovalRequirement::Skip {
-                // Bypass sandbox only when every parsed command segment is
-                // explicitly allowed by execpolicy.
-                bypass_sandbox: commands.iter().all(|command| {
-                    exec_policy
-                        .matches_for_command_with_options(
-                            command,
-                            /*heuristics_fallback*/ None,
-                            &match_options,
-                        )
-                        .iter()
-                        .any(|rule_match| {
-                            is_policy_match(rule_match) && rule_match.decision() == Decision::Allow
-                        })
+                // Bypass sandbox only when the allow decision came entirely
+                // from explicit execpolicy allow rules.
+                bypass_sandbox: evaluation.matched_rules.iter().all(|rule_match| {
+                    is_policy_match(rule_match) && rule_match.decision() == Decision::Allow
                 }),
                 proposed_execpolicy_amendment: if auto_amendment_allowed {
                     try_derive_execpolicy_amendment_for_allow_rules(&evaluation.matched_rules)
@@ -732,15 +743,6 @@ fn default_policy_path(codex_home: &Path) -> PathBuf {
 fn commands_for_exec_policy(command: &[String]) -> (Vec<Vec<String>>, bool) {
     if let Some(commands) = parse_shell_lc_plain_commands(command)
         && !commands.is_empty()
-    {
-        return (commands, false);
-    }
-
-    #[cfg(windows)]
-    if let Some(commands) = try_parse_powershell_command_sequence(
-        command,
-        PowershellCommandSequenceParseMode::ExecPolicy,
-    ) && !commands.is_empty()
     {
         return (commands, false);
     }

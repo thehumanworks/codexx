@@ -698,6 +698,18 @@ async fn evaluates_powershell_wrapped_inner_commands_against_prefix_rules() {
             ]),
             vec_str(&["Remove-Item"]),
         ),
+        (
+            r#"prefix_rule(pattern=["git", "push"], decision="forbidden")"#.to_string(),
+            vec_str(&[
+                "powershell.exe",
+                "-Version",
+                "5.1",
+                "-NoExit",
+                "-Command",
+                "git push origin main",
+            ]),
+            vec_str(&["git", "push"]),
+        ),
     ];
 
     for (policy_src, command, matched_prefix) in cases {
@@ -722,6 +734,33 @@ async fn evaluates_powershell_wrapped_inner_commands_against_prefix_rules() {
         )
         .await;
     }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn powershell_wrapper_rules_still_apply_when_inner_commands_are_parsed() {
+    assert_exec_approval_requirement_for_command(
+        ExecApprovalRequirementScenario {
+            policy_src: Some(
+                concat!(
+                    r#"prefix_rule(pattern=["powershell.exe"], decision="forbidden")"#,
+                    "\n",
+                    r#"prefix_rule(pattern=["Get-Content"], decision="allow")"#,
+                )
+                .to_string(),
+            ),
+            command: vec_str(&["powershell.exe", "-Command", "Get-Content Cargo.toml"]),
+            approval_policy: AskForApproval::OnRequest,
+            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            file_system_sandbox_policy: read_only_file_system_sandbox_policy(),
+            sandbox_permissions: SandboxPermissions::UseDefault,
+            prefix_rule: None,
+        },
+        ExecApprovalRequirement::Forbidden {
+            reason: "`powershell.exe -Command 'Get-Content Cargo.toml'` rejected: policy forbids commands starting with `powershell.exe`".to_string(),
+        },
+    )
+    .await;
 }
 
 #[cfg(windows)]
