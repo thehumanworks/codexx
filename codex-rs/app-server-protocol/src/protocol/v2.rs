@@ -413,6 +413,32 @@ impl From<CoreSandboxMode> for SandboxMode {
     }
 }
 
+/// Projects a runtime permission profile into the legacy thread `sandbox`
+/// override field. This is intentionally lossy and should only be used when a
+/// client cannot send the newer permissions selection API.
+pub fn thread_sandbox_override_for_permission_profile(
+    permission_profile: &codex_protocol::models::PermissionProfile,
+    cwd: &std::path::Path,
+) -> Option<SandboxMode> {
+    match permission_profile {
+        codex_protocol::models::PermissionProfile::Disabled => Some(SandboxMode::DangerFullAccess),
+        codex_protocol::models::PermissionProfile::External { .. } => None,
+        codex_protocol::models::PermissionProfile::Managed { .. } => {
+            let file_system_policy = permission_profile.file_system_sandbox_policy();
+            if file_system_policy.has_full_disk_write_access() {
+                permission_profile
+                    .network_sandbox_policy()
+                    .is_enabled()
+                    .then_some(SandboxMode::DangerFullAccess)
+            } else if file_system_policy.can_write_path_with_cwd(cwd, cwd) {
+                Some(SandboxMode::WorkspaceWrite)
+            } else {
+                Some(SandboxMode::ReadOnly)
+            }
+        }
+    }
+}
+
 v2_enum_from_core!(
     pub enum ReviewDelivery from codex_protocol::protocol::ReviewDelivery {
         Inline, Detached
@@ -7993,6 +8019,8 @@ mod tests {
     use codex_protocol::items::TurnItem;
     use codex_protocol::items::UserMessageItem;
     use codex_protocol::items::WebSearchItem;
+    use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissionsForTest;
+    use codex_protocol::models::PermissionProfile as CorePermissionProfileForTest;
     use codex_protocol::models::WebSearchAction as CoreWebSearchAction;
     use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
     use codex_protocol::user_input::UserInput as CoreUserInput;
@@ -8039,6 +8067,75 @@ mod tests {
             };
             assert_eq!(expected, reviewer);
         }
+    }
+
+    #[test]
+    fn thread_sandbox_override_preserves_legacy_remote_projection() {
+        let cwd = test_path_buf("/workspace/project").abs();
+        let extra_root = test_path_buf("/workspace/cache").abs();
+        let non_cwd_write_profile = CorePermissionProfileForTest::Managed {
+            file_system: CoreManagedFileSystemPermissionsForTest::Restricted {
+                entries: vec![
+                    CoreFileSystemSandboxEntry {
+                        path: CoreFileSystemPath::Special {
+                            value: CoreFileSystemSpecialPath::Root,
+                        },
+                        access: CoreFileSystemAccessMode::Read,
+                    },
+                    CoreFileSystemSandboxEntry {
+                        path: CoreFileSystemPath::Path { path: extra_root },
+                        access: CoreFileSystemAccessMode::Write,
+                    },
+                ],
+                glob_scan_max_depth: None,
+            },
+            network: CoreNetworkSandboxPolicy::Restricted,
+        };
+        let cwd_write_profile = CorePermissionProfileForTest::Managed {
+            file_system: CoreManagedFileSystemPermissionsForTest::Restricted {
+                entries: vec![
+                    CoreFileSystemSandboxEntry {
+                        path: CoreFileSystemPath::Special {
+                            value: CoreFileSystemSpecialPath::Root,
+                        },
+                        access: CoreFileSystemAccessMode::Read,
+                    },
+                    CoreFileSystemSandboxEntry {
+                        path: CoreFileSystemPath::Special {
+                            value: CoreFileSystemSpecialPath::ProjectRoots { subpath: None },
+                        },
+                        access: CoreFileSystemAccessMode::Write,
+                    },
+                ],
+                glob_scan_max_depth: None,
+            },
+            network: CoreNetworkSandboxPolicy::Restricted,
+        };
+
+        assert_eq!(
+            thread_sandbox_override_for_permission_profile(
+                &CorePermissionProfileForTest::Disabled,
+                cwd.as_path()
+            ),
+            Some(SandboxMode::DangerFullAccess)
+        );
+        assert_eq!(
+            thread_sandbox_override_for_permission_profile(
+                &CorePermissionProfileForTest::External {
+                    network: CoreNetworkSandboxPolicy::Restricted,
+                },
+                cwd.as_path(),
+            ),
+            None
+        );
+        assert_eq!(
+            thread_sandbox_override_for_permission_profile(&non_cwd_write_profile, cwd.as_path()),
+            Some(SandboxMode::ReadOnly)
+        );
+        assert_eq!(
+            thread_sandbox_override_for_permission_profile(&cwd_write_profile, cwd.as_path()),
+            Some(SandboxMode::WorkspaceWrite)
+        );
     }
 
     #[test]

@@ -1103,31 +1103,6 @@ fn config_request_overrides_from_config(
     })
 }
 
-fn sandbox_mode_from_permission_profile(
-    permission_profile: &PermissionProfile,
-    cwd: &std::path::Path,
-) -> Option<codex_app_server_protocol::SandboxMode> {
-    match permission_profile {
-        PermissionProfile::Disabled => {
-            Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
-        }
-        PermissionProfile::External { .. } => None,
-        PermissionProfile::Managed { .. } => {
-            let file_system_policy = permission_profile.file_system_sandbox_policy();
-            if file_system_policy.has_full_disk_write_access() {
-                permission_profile
-                    .network_sandbox_policy()
-                    .is_enabled()
-                    .then_some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
-            } else if file_system_policy.can_write_path_with_cwd(cwd, cwd) {
-                Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
-            } else {
-                Some(codex_app_server_protocol::SandboxMode::ReadOnly)
-            }
-        }
-    }
-}
-
 fn permissions_selection_from_active_profile(
     active: ActivePermissionProfile,
 ) -> PermissionProfileSelectionParams {
@@ -1195,15 +1170,14 @@ fn thread_start_params_from_config(
     session_start_source: Option<ThreadStartSource>,
 ) -> ThreadStartParams {
     let permissions = permissions_selection_from_config(config, thread_params_mode);
-    let sandbox = permissions
-        .is_none()
-        .then(|| {
-            sandbox_mode_from_permission_profile(
-                &config.permissions.permission_profile(),
-                config.cwd.as_path(),
-            )
-        })
-        .flatten();
+    let sandbox = if permissions.is_none() {
+        codex_app_server_protocol::thread_sandbox_override_for_permission_profile(
+            &config.permissions.permission_profile(),
+            config.cwd.as_path(),
+        )
+    } else {
+        None
+    };
     ThreadStartParams {
         model: config.model.clone(),
         model_provider: thread_params_mode.model_provider_from_config(config),
@@ -1227,15 +1201,14 @@ fn thread_resume_params_from_config(
     remote_cwd_override: Option<&std::path::Path>,
 ) -> ThreadResumeParams {
     let permissions = permissions_selection_from_config(&config, thread_params_mode);
-    let sandbox = permissions
-        .is_none()
-        .then(|| {
-            sandbox_mode_from_permission_profile(
-                &config.permissions.permission_profile(),
-                config.cwd.as_path(),
-            )
-        })
-        .flatten();
+    let sandbox = if permissions.is_none() {
+        codex_app_server_protocol::thread_sandbox_override_for_permission_profile(
+            &config.permissions.permission_profile(),
+            config.cwd.as_path(),
+        )
+    } else {
+        None
+    };
     ThreadResumeParams {
         thread_id: thread_id.to_string(),
         model: config.model.clone(),
@@ -1258,15 +1231,14 @@ fn thread_fork_params_from_config(
     remote_cwd_override: Option<&std::path::Path>,
 ) -> ThreadForkParams {
     let permissions = permissions_selection_from_config(&config, thread_params_mode);
-    let sandbox = permissions
-        .is_none()
-        .then(|| {
-            sandbox_mode_from_permission_profile(
-                &config.permissions.permission_profile(),
-                config.cwd.as_path(),
-            )
-        })
-        .flatten();
+    let sandbox = if permissions.is_none() {
+        codex_app_server_protocol::thread_sandbox_override_for_permission_profile(
+            &config.permissions.permission_profile(),
+            config.cwd.as_path(),
+        )
+    } else {
+        None
+    };
     ThreadForkParams {
         thread_id: thread_id.to_string(),
         model: config.model.clone(),
@@ -1714,10 +1686,11 @@ mod tests {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
         let thread_id = ThreadId::new();
-        let expected_sandbox = sandbox_mode_from_permission_profile(
-            &config.permissions.permission_profile(),
-            config.cwd.as_path(),
-        );
+        let expected_sandbox =
+            codex_app_server_protocol::thread_sandbox_override_for_permission_profile(
+                &config.permissions.permission_profile(),
+                config.cwd.as_path(),
+            );
 
         let start = thread_start_params_from_config(
             &config,
@@ -1752,75 +1725,17 @@ mod tests {
         assert_eq!(fork.permissions, None);
     }
 
-    #[test]
-    fn sandbox_mode_does_not_project_non_cwd_write_roots_for_remote_sessions() {
-        let cwd = test_path_buf("/workspace/project").abs();
-        let extra_root = test_path_buf("/workspace/cache").abs();
-        let permission_profile = PermissionProfile::Managed {
-            file_system: ManagedFileSystemPermissions::Restricted {
-                entries: vec![
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::Root,
-                        },
-                        access: FileSystemAccessMode::Read,
-                    },
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Path { path: extra_root },
-                        access: FileSystemAccessMode::Write,
-                    },
-                ],
-                glob_scan_max_depth: None,
-            },
-            network: NetworkSandboxPolicy::Restricted,
-        };
-
-        assert_eq!(
-            sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
-            Some(codex_app_server_protocol::SandboxMode::ReadOnly)
-        );
-    }
-
-    #[test]
-    fn sandbox_mode_projects_cwd_write_for_remote_sessions() {
-        let cwd = test_path_buf("/workspace/project").abs();
-        let permission_profile = PermissionProfile::Managed {
-            file_system: ManagedFileSystemPermissions::Restricted {
-                entries: vec![
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::Root,
-                        },
-                        access: FileSystemAccessMode::Read,
-                    },
-                    FileSystemSandboxEntry {
-                        path: FileSystemPath::Special {
-                            value: FileSystemSpecialPath::ProjectRoots { subpath: None },
-                        },
-                        access: FileSystemAccessMode::Write,
-                    },
-                ],
-                glob_scan_max_depth: None,
-            },
-            network: NetworkSandboxPolicy::Restricted,
-        };
-
-        assert_eq!(
-            sandbox_mode_from_permission_profile(&permission_profile, cwd.as_path()),
-            Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
-        );
-    }
-
     #[tokio::test]
     async fn thread_lifecycle_params_forward_explicit_remote_cwd_override_for_remote_sessions() {
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let config = build_config(&temp_dir).await;
         let thread_id = ThreadId::new();
         let remote_cwd = PathBuf::from("repo/on/server");
-        let expected_sandbox = sandbox_mode_from_permission_profile(
-            &config.permissions.permission_profile(),
-            config.cwd.as_path(),
-        );
+        let expected_sandbox =
+            codex_app_server_protocol::thread_sandbox_override_for_permission_profile(
+                &config.permissions.permission_profile(),
+                config.cwd.as_path(),
+            );
 
         let start = thread_start_params_from_config(
             &config,
