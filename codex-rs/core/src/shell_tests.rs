@@ -168,15 +168,16 @@ async fn test_current_shell_detects_zsh() {
 }
 
 #[tokio::test]
-async fn detects_powershell_as_default() {
+async fn detects_cmd_as_default() {
     if !cfg!(windows) {
         return;
     }
 
-    let powershell_shell = default_user_shell();
-    let shell_path = powershell_shell.shell_path;
+    let shell = default_user_shell();
+    let shell_path = shell.shell_path;
 
-    assert!(shell_path.ends_with("pwsh.exe") || shell_path.ends_with("powershell.exe"));
+    assert_eq!(shell.shell_type, ShellType::Cmd);
+    assert!(shell_path.ends_with("cmd.exe"));
 }
 
 #[test]

@@ -249,6 +249,11 @@ const POWERSHELL_FALLBACK_PATHS: &[&str] =
 #[cfg(not(windows))]
 const POWERSHELL_FALLBACK_PATHS: &[&str] = &[];
 
+#[cfg(windows)]
+const CMD_FALLBACK_PATHS: &[&str] = &[r#"C:\Windows\System32\cmd.exe"#];
+#[cfg(not(windows))]
+const CMD_FALLBACK_PATHS: &[&str] = &[];
+
 fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
     let shell_path = get_shell_path(ShellType::PowerShell, path, "pwsh", PWSH_FALLBACK_PATHS)
         .or_else(|| {
@@ -268,7 +273,7 @@ fn get_powershell_shell(path: Option<&PathBuf>) -> Option<Shell> {
 }
 
 fn get_cmd_shell(path: Option<&PathBuf>) -> Option<Shell> {
-    let shell_path = get_shell_path(ShellType::Cmd, path, "cmd", &[]);
+    let shell_path = get_shell_path(ShellType::Cmd, path, "cmd", CMD_FALLBACK_PATHS);
 
     shell_path.map(|shell_path| Shell {
         shell_type: ShellType::Cmd,
@@ -315,7 +320,11 @@ pub fn default_user_shell() -> Shell {
 
 fn default_user_shell_from_path(user_shell_path: Option<PathBuf>) -> Shell {
     if cfg!(windows) {
-        get_shell(ShellType::PowerShell, /*path*/ None).unwrap_or(ultimate_fallback_shell())
+        // Prefer cmd.exe on Windows because sandboxed PowerShell startup can fail
+        // before the user command runs, which breaks all shell_command invocations.
+        get_shell(ShellType::Cmd, /*path*/ None)
+            .or_else(|| get_shell(ShellType::PowerShell, /*path*/ None))
+            .unwrap_or(ultimate_fallback_shell())
     } else {
         let user_default_shell = user_shell_path
             .and_then(|shell| detect_shell_type(&shell))
