@@ -78,6 +78,7 @@ use codex_protocol::protocol::HookRunStatus as CoreHookRunStatus;
 use codex_protocol::protocol::HookRunSummary as CoreHookRunSummary;
 use codex_protocol::protocol::HookScope as CoreHookScope;
 use codex_protocol::protocol::HookSource as CoreHookSource;
+use codex_protocol::protocol::HookTrustStatus as CoreHookTrustStatus;
 use codex_protocol::protocol::ModelRerouteReason as CoreModelRerouteReason;
 use codex_protocol::protocol::ModelVerification as CoreModelVerification;
 use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
@@ -477,6 +478,12 @@ v2_enum_from_core!(
         LegacyManagedConfigFile,
         LegacyManagedConfigMdm,
         Unknown,
+    }
+);
+
+v2_enum_from_core!(
+    pub enum HookTrustStatus from CoreHookTrustStatus {
+        Managed, Untrusted, Trusted, Changed
     }
 );
 
@@ -4799,6 +4806,9 @@ pub struct HookMetadata {
     pub display_order: i64,
     pub enabled: bool,
     pub is_managed: bool,
+    pub current_hash: String,
+    pub trusted_hash: Option<String>,
+    pub trust_status: HookTrustStatus,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
