@@ -234,14 +234,26 @@ impl CodexThread {
                 .await
                 .with_updates(model, effort, /*developer_instructions*/ None)
         };
+        let clear_active_permission_profile =
+            permission_profile.is_none() && sandbox_policy.is_some();
+        let permission_profile = match (permission_profile, sandbox_policy.as_ref()) {
+            (Some(permission_profile), _) => Some(permission_profile),
+            (None, Some(sandbox_policy)) => Some(
+                self.codex
+                    .session
+                    .permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd.as_deref())
+                    .await,
+            ),
+            (None, None) => None,
+        };
 
         let updates = SessionSettingsUpdate {
             cwd,
             approval_policy,
             approvals_reviewer,
-            sandbox_policy,
             permission_profile,
             active_permission_profile,
+            clear_active_permission_profile,
             windows_sandbox_level,
             collaboration_mode: Some(collaboration_mode),
             reasoning_summary: summary,

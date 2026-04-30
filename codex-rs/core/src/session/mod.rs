@@ -1354,6 +1354,17 @@ impl Session {
         state.session_configuration.apply(updates).map(|_| ())
     }
 
+    pub(crate) async fn permission_profile_from_legacy_sandbox_update(
+        &self,
+        sandbox_policy: &SandboxPolicy,
+        cwd: Option<&Path>,
+    ) -> PermissionProfile {
+        let state = self.state.lock().await;
+        state
+            .session_configuration
+            .permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd)
+    }
+
     pub(crate) async fn set_session_startup_prewarm(
         &self,
         startup_prewarm: SessionStartupPrewarmHandle,

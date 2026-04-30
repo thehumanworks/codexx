@@ -126,6 +126,24 @@ impl SessionConfiguration {
         self.permission_profile.get().network_sandbox_policy()
     }
 
+    pub(super) fn permission_profile_from_legacy_sandbox_update(
+        &self,
+        sandbox_policy: &SandboxPolicy,
+        cwd: Option<&Path>,
+    ) -> PermissionProfile {
+        let file_system_sandbox_policy =
+            FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
+                sandbox_policy,
+                self.resolved_update_cwd(cwd).as_path(),
+                &self.file_system_sandbox_policy(),
+            );
+        PermissionProfile::from_runtime_permissions_with_enforcement(
+            SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
+            &file_system_sandbox_policy,
+            NetworkSandboxPolicy::from(sandbox_policy),
+        )
+    }
+
     pub(super) fn thread_config_snapshot(&self) -> ThreadConfigSnapshot {
         ThreadConfigSnapshot {
             model: self.collaboration_mode.model().to_string(),
@@ -191,19 +209,7 @@ impl SessionConfiguration {
             next_configuration.windows_sandbox_level = windows_sandbox_level;
         }
 
-        let absolute_cwd = updates
-            .cwd
-            .as_ref()
-            .map(|cwd| {
-                AbsolutePathBuf::relative_to_current_dir(normalize_for_native_workdir(
-                    cwd.as_path(),
-                ))
-                .unwrap_or_else(|e| {
-                    warn!("failed to normalize update cwd: {cwd:?}: {e}");
-                    self.cwd.clone()
-                })
-            })
-            .unwrap_or_else(|| self.cwd.clone());
+        let absolute_cwd = self.resolved_update_cwd(updates.cwd.as_deref());
 
         let cwd_changed = absolute_cwd.as_path() != self.cwd.as_path();
         next_configuration.cwd = absolute_cwd.clone();
@@ -214,35 +220,22 @@ impl SessionConfiguration {
         }
 
         if let Some(permission_profile) = updates.permission_profile.clone() {
-            let active_permission_profile =
+            let active_permission_profile = if updates.clear_active_permission_profile {
+                None
+            } else {
                 updates.active_permission_profile.clone().or_else(|| {
                     if permission_profile == self.permission_profile() {
                         self.active_permission_profile.clone()
                     } else {
                         None
                     }
-                });
+                })
+            };
             next_configuration.set_permission_profile_projection(
                 permission_profile,
                 Some(&current_file_system_sandbox_policy),
             )?;
             next_configuration.active_permission_profile = active_permission_profile;
-        } else if let Some(sandbox_policy) = updates.sandbox_policy.clone() {
-            let file_system_sandbox_policy =
-                FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
-                    &sandbox_policy,
-                    &next_configuration.cwd,
-                    &current_file_system_sandbox_policy,
-                );
-            let network_sandbox_policy = NetworkSandboxPolicy::from(&sandbox_policy);
-            next_configuration.permission_profile.set(
-                PermissionProfile::from_runtime_permissions_with_enforcement(
-                    SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
-                    &file_system_sandbox_policy,
-                    network_sandbox_policy,
-                ),
-            )?;
-            next_configuration.active_permission_profile = None;
         } else if cwd_changed
             && file_system_policy_matches_legacy
             && file_system_policy_has_rebindable_project_root_write
@@ -273,6 +266,17 @@ impl SessionConfiguration {
         Ok(next_configuration)
     }
 
+    fn resolved_update_cwd(&self, cwd: Option<&Path>) -> AbsolutePathBuf {
+        cwd.map(|cwd| {
+            AbsolutePathBuf::relative_to_current_dir(normalize_for_native_workdir(cwd))
+                .unwrap_or_else(|e| {
+                    warn!("failed to normalize update cwd: {cwd:?}: {e}");
+                    self.cwd.clone()
+                })
+        })
+        .unwrap_or_else(|| self.cwd.clone())
+    }
+
     fn set_permission_profile_projection(
         &mut self,
         permission_profile: PermissionProfile,
@@ -301,9 +305,11 @@ pub(crate) struct SessionSettingsUpdate {
     pub(crate) cwd: Option<PathBuf>,
     pub(crate) approval_policy: Option<AskForApproval>,
     pub(crate) approvals_reviewer: Option<ApprovalsReviewer>,
-    pub(crate) sandbox_policy: Option<SandboxPolicy>,
     pub(crate) permission_profile: Option<PermissionProfile>,
     pub(crate) active_permission_profile: Option<ActivePermissionProfile>,
+    /// Legacy sandbox updates are represented as permission profiles before
+    /// reaching this layer, but they should still clear any named profile.
+    pub(crate) clear_active_permission_profile: bool,
     pub(crate) windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub(crate) collaboration_mode: Option<CollaborationMode>,
     pub(crate) reasoning_summary: Option<ReasoningSummaryConfig>,
