@@ -83,6 +83,27 @@ fn write_plugin_mcp_plugin(home: &TempDir, command: &str) {
     .expect("write plugin mcp config");
 }
 
+fn copy_stdio_server_for_plugin_test(home: &TempDir) -> Result<Option<String>> {
+    let rmcp_test_server_bin = match stdio_server_bin() {
+        Ok(bin) => bin,
+        Err(err) => {
+            eprintln!("test_stdio_server binary not available, skipping test: {err}");
+            return Ok(None);
+        }
+    };
+    let target = home.path().join("test_stdio_server");
+    std::fs::copy(std::path::Path::new(&rmcp_test_server_bin), &target)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let mut permissions = std::fs::metadata(&target)?.permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&target, permissions)?;
+    }
+    Ok(Some(target.to_string_lossy().to_string()))
+}
+
 fn write_plugin_app_plugin(home: &TempDir) {
     let plugin_root = write_sample_plugin_manifest_and_config(home);
     std::fs::write(
@@ -293,12 +314,8 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     .await;
 
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = match stdio_server_bin() {
-        Ok(bin) => bin,
-        Err(err) => {
-            eprintln!("test_stdio_server binary not available, skipping test: {err}");
-            return Ok(());
-        }
+    let Some(rmcp_test_server_bin) = copy_stdio_server_for_plugin_test(codex_home.as_ref())? else {
+        return Ok(());
     };
     write_plugin_skill_plugin(codex_home.as_ref());
     write_plugin_mcp_plugin(codex_home.as_ref(), &rmcp_test_server_bin);
@@ -453,7 +470,9 @@ async fn plugin_mcp_tools_are_listed() -> Result<()> {
     skip_if_no_network!(Ok(()));
     let server = start_mock_server().await;
     let codex_home = Arc::new(TempDir::new()?);
-    let rmcp_test_server_bin = stdio_server_bin()?;
+    let Some(rmcp_test_server_bin) = copy_stdio_server_for_plugin_test(codex_home.as_ref())? else {
+        return Ok(());
+    };
     write_plugin_mcp_plugin(codex_home.as_ref(), &rmcp_test_server_bin);
     let codex = build_plugin_test_codex(&server, codex_home).await?;
     wait_for_sample_mcp_ready(&codex).await?;
