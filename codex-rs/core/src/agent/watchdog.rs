@@ -123,7 +123,7 @@ impl WatchdogManager {
             generation,
         };
 
-        let (superseded, helper_ids_to_unsuppress) = {
+        let (superseded, suppressed_helpers) = {
             let mut registrations = self.registrations.lock().await;
             let superseded_targets = registrations
                 .iter()
@@ -135,11 +135,11 @@ impl WatchdogManager {
                 })
                 .collect::<Vec<_>>();
             let mut superseded = Vec::new();
-            let mut helper_ids_to_unsuppress = Vec::new();
+            let mut suppressed_helpers = Vec::new();
             for superseded_target in superseded_targets {
                 if let Some(removed) = registrations.remove(&superseded_target) {
                     if let Some(helper_id) = removed.active_helper_id {
-                        helper_ids_to_unsuppress.push(helper_id);
+                        suppressed_helpers.push(helper_id);
                     }
                     superseded.push(RemovedWatchdog {
                         target_thread_id: superseded_target,
@@ -148,12 +148,12 @@ impl WatchdogManager {
                 }
             }
             registrations.insert(entry.registration.target_thread_id, entry);
-            (superseded, helper_ids_to_unsuppress)
+            (superseded, suppressed_helpers)
         };
-        if !helper_ids_to_unsuppress.is_empty() {
-            let mut suppressed_helpers = self.suppressed_helpers.lock().await;
-            for helper_id in helper_ids_to_unsuppress {
-                suppressed_helpers.remove(&helper_id);
+        if !suppressed_helpers.is_empty() {
+            let mut suppressed = self.suppressed_helpers.lock().await;
+            for helper_id in suppressed_helpers {
+                suppressed.remove(&helper_id);
             }
         }
         Ok(superseded)
@@ -306,40 +306,9 @@ impl WatchdogManager {
             if !is_final(&helper_status) {
                 return;
             }
-            let helper_suppressed = self.take_suppressed_helper(helper_id).await;
-            let mut close_watchdog_handle = false;
-            if let AgentStatus::Completed(Some(message)) = helper_status
-                && !helper_suppressed
-            {
-                close_watchdog_handle = final_message_requests_watchdog_close(&message);
-                if let Err(err) = control_for_spawn
-                    .send_watchdog_wakeup(snapshot.owner_thread_id, message)
-                    .await
-                {
-                    warn!(
-                        helper_id = %helper_id,
-                        owner_thread_id = %snapshot.owner_thread_id,
-                        "watchdog helper forward failed: {err}"
-                    );
-                }
-            }
-            let _ = control_for_spawn.shutdown_live_agent(helper_id).await;
-            if close_watchdog_handle {
-                let _ = control_for_spawn
-                    .unregister_watchdog_handle(target_thread_id)
-                    .await;
-                let _ = control_for_spawn
-                    .shutdown_live_agent(target_thread_id)
-                    .await;
-                return;
-            }
-            self.update_after_spawn(
-                target_thread_id,
-                generation,
-                now,
-                /*active_helper_id*/ None,
-            )
-            .await;
+            let _ = control_for_spawn
+                .finalize_watchdog_helper(helper_id, helper_status)
+                .await;
             return;
         }
 
@@ -403,6 +372,7 @@ impl WatchdogManager {
                     fork_parent_spawn_call_id: None,
                     fork_mode: Some(SpawnAgentForkMode::FullHistory),
                     environments: None,
+                    initial_task_message: None,
                 },
             )
             .await;
@@ -614,7 +584,7 @@ fn is_watchdog_terminated(status: &AgentStatus) -> bool {
     matches!(status, AgentStatus::Shutdown | AgentStatus::NotFound)
 }
 
-fn final_message_requests_watchdog_close(message: &str) -> bool {
+pub(crate) fn final_message_requests_watchdog_close(message: &str) -> bool {
     message.trim().eq_ignore_ascii_case("goodbye")
 }
 
