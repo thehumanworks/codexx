@@ -339,25 +339,39 @@ impl LocalProcessTerminator {
 
     #[cfg(windows)]
     fn terminate(&self) -> io::Result<()> {
-        let status = std::process::Command::new("taskkill")
+        let output = std::process::Command::new("taskkill")
             .arg("/PID")
             .arg(self.pid.to_string())
             .arg("/T")
             .arg("/F")
-            .status()?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(io::Error::other(format!(
-                "taskkill exited with status {status}"
-            )))
+            .output()?;
+        if output.status.success() || taskkill_output_reports_missing_process(&output) {
+            return Ok(());
         }
+
+        Err(io::Error::other(format!(
+            "taskkill exited with status {}",
+            output.status
+        )))
     }
 
     #[cfg(not(any(unix, windows)))]
     fn terminate(&self) -> io::Result<()> {
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn taskkill_output_reports_missing_process(output: &std::process::Output) -> bool {
+    taskkill_text_reports_missing_process(&output.stdout)
+        || taskkill_text_reports_missing_process(&output.stderr)
+}
+
+#[cfg(any(windows, test))]
+fn taskkill_text_reports_missing_process(bytes: &[u8]) -> bool {
+    String::from_utf8_lossy(bytes)
+        .to_ascii_lowercase()
+        .contains("not found")
 }
 
 impl StdioServerProcessHandle {
@@ -670,5 +684,19 @@ mod tests {
             Some("remote-secret")
         );
         assert!(!env.contains_key("UNREQUESTED_SECRET"));
+    }
+
+    #[test]
+    fn taskkill_missing_process_output_is_treated_as_already_terminated() {
+        assert!(taskkill_text_reports_missing_process(
+            br#"ERROR: The process "1234" not found."#
+        ));
+    }
+
+    #[test]
+    fn taskkill_other_failure_output_is_not_treated_as_missing_process() {
+        assert!(!taskkill_text_reports_missing_process(
+            b"ERROR: Access is denied."
+        ));
     }
 }
