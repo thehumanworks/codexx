@@ -9,8 +9,6 @@ use codex_protocol::openai_models::ReasoningEffort;
 #[cfg(test)]
 use codex_protocol::protocol::AskForApproval;
 #[cfg(test)]
-use codex_protocol::protocol::SandboxPolicy;
-#[cfg(test)]
 use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
@@ -57,7 +55,7 @@ pub(super) fn test_thread_metadata(
         cwd,
         cli_version: "0.0.0".to_string(),
         title: String::new(),
-        sandbox_policy: crate::extract::enum_to_string(&SandboxPolicy::new_read_only_policy()),
+        sandbox_policy: r#"{"type":"read-only"}"#.to_string(),
         approval_mode: crate::extract::enum_to_string(&AskForApproval::OnRequest),
         tokens_used: 0,
         first_user_message: Some("hello".to_string()),

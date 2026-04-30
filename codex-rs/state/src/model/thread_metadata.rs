@@ -2,9 +2,9 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_protocol::ThreadId;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use sqlx::Row;
 use sqlx::sqlite::SqliteRow;
@@ -129,8 +129,9 @@ pub struct ThreadMetadataBuilder {
     pub cwd: PathBuf,
     /// Version of the CLI that created the thread.
     pub cli_version: Option<String>,
-    /// The sandbox policy.
-    pub sandbox_policy: SandboxPolicy,
+    /// Runtime permissions, projected to the legacy `sandbox_policy` string
+    /// stored in the state DB when metadata is built.
+    pub permission_profile: PermissionProfile,
     /// The approval mode.
     pub approval_mode: AskForApproval,
     /// The archive timestamp, if the thread is archived.
@@ -163,7 +164,7 @@ impl ThreadMetadataBuilder {
             model_provider: None,
             cwd: PathBuf::new(),
             cli_version: None,
-            sandbox_policy: SandboxPolicy::new_read_only_policy(),
+            permission_profile: PermissionProfile::read_only(),
             approval_mode: AskForApproval::OnRequest,
             archived_at: None,
             git_sha: None,
@@ -175,7 +176,11 @@ impl ThreadMetadataBuilder {
     /// Build canonical thread metadata, filling missing values from defaults.
     pub fn build(&self, default_provider: &str) -> ThreadMetadata {
         let source = crate::extract::enum_to_string(&self.source);
-        let sandbox_policy = crate::extract::enum_to_string(&self.sandbox_policy);
+        let sandbox_policy = self
+            .permission_profile
+            .to_legacy_sandbox_policy(self.cwd.as_path())
+            .map(|policy| crate::extract::enum_to_string(&policy))
+            .unwrap_or_else(|_| "custom".to_string());
         let approval_mode = crate::extract::enum_to_string(&self.approval_mode);
         let created_at = canonicalize_datetime(self.created_at);
         let updated_at = self
@@ -465,13 +470,25 @@ pub struct BackfillStats {
 #[cfg(test)]
 mod tests {
     use super::ThreadMetadata;
+    use super::ThreadMetadataBuilder;
     use super::ThreadRow;
     use chrono::DateTime;
     use chrono::Utc;
     use codex_protocol::ThreadId;
+    use codex_protocol::models::PermissionProfile;
     use codex_protocol::openai_models::ReasoningEffort;
+    use codex_protocol::protocol::SessionSource;
     use pretty_assertions::assert_eq;
     use std::path::PathBuf;
+
+    fn metadata_builder() -> ThreadMetadataBuilder {
+        ThreadMetadataBuilder::new(
+            ThreadId::from_string("00000000-0000-0000-0000-000000000123").expect("valid thread id"),
+            PathBuf::from("/tmp/rollout-123.jsonl"),
+            DateTime::<Utc>::from_timestamp(1_700_000_000, 0).expect("timestamp"),
+            SessionSource::Cli,
+        )
+    }
 
     fn thread_row(reasoning_effort: Option<&str>) -> ThreadRow {
         ThreadRow {
@@ -548,5 +565,29 @@ mod tests {
             metadata,
             expected_thread_metadata(/*reasoning_effort*/ None)
         );
+    }
+
+    #[test]
+    fn thread_metadata_builder_projects_permission_profile_to_legacy_sandbox_string() {
+        let mut builder = metadata_builder();
+        builder.cwd = PathBuf::from("/tmp/workspace");
+        builder.permission_profile = PermissionProfile::workspace_write();
+
+        let metadata = builder.build("openai");
+
+        assert_eq!(
+            metadata.sandbox_policy,
+            r#"{"exclude_slash_tmp":false,"exclude_tmpdir_env_var":false,"network_access":false,"type":"workspace-write"}"#
+        );
+    }
+
+    #[test]
+    fn thread_metadata_builder_projects_disabled_profile_to_legacy_sandbox_string() {
+        let mut builder = metadata_builder();
+        builder.permission_profile = PermissionProfile::Disabled;
+
+        let metadata = builder.build("openai");
+
+        assert_eq!(metadata.sandbox_policy, r#"{"type":"danger-full-access"}"#);
     }
 }
