@@ -9,7 +9,6 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::ThreadMemoryMode as MemoryMode;
 use codex_protocol::protocol::TokenUsage;
@@ -204,8 +203,6 @@ pub struct StoredThread {
     pub git_info: Option<GitInfo>,
     /// Approval mode captured for the thread.
     pub approval_mode: AskForApproval,
-    /// Sandbox policy captured for the thread.
-    pub sandbox_policy: SandboxPolicy,
     /// Last observed token usage.
     pub token_usage: Option<TokenUsage>,
     /// First user message observed for this thread, if any.

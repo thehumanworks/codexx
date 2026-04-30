@@ -13,7 +13,6 @@ use chrono::Utc;
 use codex_git_utils::GitSha;
 use codex_protocol::ThreadId;
 use codex_protocol::models::ContentItem;
-use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GitInfo;
@@ -28,8 +27,6 @@ use std::process::Command;
 use tempfile::TempDir;
 
 fn stored_thread(cwd: &str, title: &str, first_user_message: &str) -> StoredThread {
-    let permission_profile = PermissionProfile::read_only();
-
     StoredThread {
         thread_id: ThreadId::new(),
         rollout_path: Some(PathBuf::from("/tmp/rollout.jsonl")),
@@ -60,9 +57,6 @@ fn stored_thread(cwd: &str, title: &str, first_user_message: &str) -> StoredThre
             repository_url: None,
         }),
         approval_mode: AskForApproval::Never,
-        sandbox_policy: permission_profile
-            .to_legacy_sandbox_policy(std::path::Path::new(cwd))
-            .expect("read-only permission profile should have a legacy projection"),
         token_usage: None,
         first_user_message: Some(first_user_message.to_string()),
         history: None,

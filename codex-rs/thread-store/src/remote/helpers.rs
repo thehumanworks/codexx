@@ -12,7 +12,6 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GitInfo;
 use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::ThreadMemoryMode;
@@ -299,12 +298,6 @@ pub(super) fn stored_thread_from_proto(
             .map(|json| deserialize_json(json, "approval_mode"))
             .transpose()?
             .unwrap_or(AskForApproval::OnRequest),
-        sandbox_policy: thread
-            .sandbox_policy_json
-            .as_deref()
-            .map(|json| deserialize_json(json, "sandbox_policy"))
-            .transpose()?
-            .unwrap_or_else(SandboxPolicy::new_read_only_policy),
         token_usage: thread
             .token_usage_json
             .as_deref()
@@ -343,9 +336,7 @@ pub(super) fn stored_thread_to_proto(thread: StoredThread) -> proto::StoredThrea
             .rollout_path
             .map(|path| path.to_string_lossy().into_owned()),
         approval_mode_json: Some(serialize_json(&thread.approval_mode, "approval_mode").unwrap()),
-        sandbox_policy_json: Some(
-            serialize_json(&thread.sandbox_policy, "sandbox_policy").unwrap(),
-        ),
+        sandbox_policy_json: None,
         token_usage_json: thread
             .token_usage
             .as_ref()

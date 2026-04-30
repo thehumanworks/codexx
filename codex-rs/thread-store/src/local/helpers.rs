@@ -11,7 +11,6 @@ use codex_git_utils::GitSha;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::GitInfo;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_rollout::ThreadItem;
 
@@ -126,7 +125,6 @@ pub(super) fn stored_thread_from_rollout_item(
         agent_path: None,
         git_info,
         approval_mode: AskForApproval::OnRequest,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: item.first_user_message,
         history: None,

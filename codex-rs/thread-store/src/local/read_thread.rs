@@ -1,7 +1,6 @@
 use chrono::DateTime;
 use chrono::Utc;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
 use codex_rollout::RolloutRecorder;
@@ -261,10 +260,6 @@ async fn stored_thread_from_sqlite_metadata(
             metadata.git_origin_url,
         ),
         approval_mode: parse_or_default(&metadata.approval_mode, AskForApproval::OnRequest),
-        sandbox_policy: parse_or_default(
-            &metadata.sandbox_policy,
-            SandboxPolicy::new_read_only_policy(),
-        ),
         token_usage: None,
         first_user_message: metadata.first_user_message,
         history: None,
@@ -327,7 +322,6 @@ fn stored_thread_from_meta_line(
         agent_path: meta_line.meta.agent_path,
         git_info: meta_line.git,
         approval_mode: AskForApproval::OnRequest,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: None,
         history: None,

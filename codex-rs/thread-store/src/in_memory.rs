@@ -10,7 +10,6 @@ use chrono::Utc;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::RolloutItem;
-use codex_protocol::protocol::SandboxPolicy;
 
 use crate::AppendThreadItemsParams;
 use crate::ArchiveThreadParams;
@@ -277,7 +276,6 @@ fn stored_thread_from_state(
         agent_path: None,
         git_info: None,
         approval_mode: AskForApproval::Never,
-        sandbox_policy: SandboxPolicy::new_read_only_policy(),
         token_usage: None,
         first_user_message: None,
         history,
