@@ -11,6 +11,7 @@ use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::PatchApplyStatus;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
@@ -151,7 +152,7 @@ async fn submit_turn(
             final_output_json_schema: None,
             cwd: test.cwd.path().to_path_buf(),
             approval_policy,
-            approvals_reviewer,
+            approvals_reviewer: approvals_reviewer.or(Some(ApprovalsReviewer::User)),
             sandbox_policy,
             permission_profile,
             model: session_model,
@@ -179,17 +180,13 @@ async fn expect_request_permissions_event(
     let event = wait_for_event(&test.codex, |event| {
         matches!(
             event,
-            EventMsg::RequestPermissions(_) | EventMsg::TurnComplete(_)
+            EventMsg::RequestPermissions(request) if request.call_id == expected_call_id
         )
     })
     .await;
 
     match event {
-        EventMsg::RequestPermissions(request) => {
-            assert_eq!(request.call_id, expected_call_id);
-            request.permissions
-        }
-        EventMsg::TurnComplete(_) => panic!("expected request_permissions before completion"),
+        EventMsg::RequestPermissions(request) => request.permissions,
         other => panic!("unexpected event: {other:?}"),
     }
 }
@@ -372,7 +369,6 @@ async fn apply_patch_after_request_permissions(strict_auto_review: bool) -> Resu
     let normalized_requested_permissions =
         normalized_directory_write_permissions(requested_dir.path())?;
     let patch = build_add_file_patch(&requested_file, patch_content);
-
     let response_prefix = if strict_auto_review {
         "resp-strict-request-permissions-patch"
     } else {
@@ -395,20 +391,22 @@ async fn apply_patch_after_request_permissions(strict_auto_review: bool) -> Resu
         ]),
     ];
     if strict_auto_review {
-        sse_sequence.push(sse(vec![
-            ev_response_created(&format!("{response_prefix}-guardian")),
-            ev_assistant_message(
-                "msg-strict-request-permissions-patch-guardian",
-                &serde_json::json!({
-                    "risk_level": "low",
-                    "user_authorization": "high",
-                    "outcome": "allow",
-                    "rationale": "The patch stays within the strict turn grant.",
-                })
-                .to_string(),
-            ),
-            ev_completed(&format!("{response_prefix}-guardian")),
-        ]));
+        for review_index in 1..=2 {
+            sse_sequence.push(sse(vec![
+                ev_response_created(&format!("{response_prefix}-guardian-{review_index}")),
+                ev_assistant_message(
+                    &format!("msg-strict-request-permissions-patch-guardian-{review_index}"),
+                    &serde_json::json!({
+                        "risk_level": "low",
+                        "user_authorization": "high",
+                        "outcome": "allow",
+                        "rationale": "The patch stays within the strict turn grant.",
+                    })
+                    .to_string(),
+                ),
+                ev_completed(&format!("{response_prefix}-guardian-{review_index}")),
+            ]));
+        }
     }
     sse_sequence.push(sse(vec![
         ev_response_created(&format!("{response_prefix}-3")),
@@ -442,8 +440,28 @@ async fn apply_patch_after_request_permissions(strict_auto_review: bool) -> Resu
         })
         .await?;
 
+    let event = wait_for_event(&test.codex, |event| match event {
+        EventMsg::PatchApplyEnd(end) => end.call_id == "apply-patch-call",
+        EventMsg::ApplyPatchApprovalRequest(approval) => approval.call_id == "apply-patch-call",
+        _ => false,
+    })
+    .await;
+    match event {
+        EventMsg::PatchApplyEnd(end) => {
+            assert_eq!(end.status, PatchApplyStatus::Completed);
+            assert!(end.success, "apply_patch should complete successfully");
+        }
+        EventMsg::ApplyPatchApprovalRequest(approval) => {
+            panic!(
+                "unexpected apply_patch approval request after granted permissions: {:?}",
+                approval.call_id
+            )
+        }
+        other => panic!("unexpected event: {other:?}"),
+    }
+    wait_for_completion(&test).await;
+
     if strict_auto_review {
-        wait_for_completion(&test).await;
         let guardian_request = responses
             .requests()
             .into_iter()
@@ -451,24 +469,6 @@ async fn apply_patch_after_request_permissions(strict_auto_review: bool) -> Resu
             .expect("expected guardian request for strict apply_patch");
         assert!(guardian_request.body_contains_text(requested_file_name));
         assert!(guardian_request.body_contains_text(patch_content));
-    } else {
-        let event = wait_for_event(&test.codex, |event| {
-            matches!(
-                event,
-                EventMsg::ApplyPatchApprovalRequest(_) | EventMsg::TurnComplete(_)
-            )
-        })
-        .await;
-        match event {
-            EventMsg::TurnComplete(_) => {}
-            EventMsg::ApplyPatchApprovalRequest(approval) => {
-                panic!(
-                    "unexpected apply_patch approval request after granted permissions: {:?}",
-                    approval.call_id
-                )
-            }
-            other => panic!("unexpected event: {other:?}"),
-        }
     }
 
     let patch_output = responses
