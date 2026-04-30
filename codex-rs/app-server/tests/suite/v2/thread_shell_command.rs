@@ -133,6 +133,7 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id.clone(),
+            large_content: None,
             include_turns: true,
         })
         .await?;
@@ -148,6 +149,7 @@ async fn thread_shell_command_history_responses_exclude_persisted_command_execut
     let turns_list_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: thread.id.clone(),
+            large_content: None,
             cursor: None,
             limit: None,
             sort_direction: Some(SortDirection::Asc),
@@ -321,6 +323,7 @@ async fn thread_shell_command_uses_existing_active_turn() -> Result<()> {
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id,
+            large_content: None,
             include_turns: true,
         })
         .await?;

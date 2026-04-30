@@ -1930,6 +1930,115 @@
       ],
       "type": "object"
     },
+    "ImageGenerationContent": {
+      "oneOf": [
+        {
+          "description": "Image bytes are embedded directly in the item.",
+          "properties": {
+            "byteLength": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "dataBase64": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "inline"
+              ],
+              "title": "InlineImageGenerationContentType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "dataBase64",
+            "type"
+          ],
+          "title": "InlineImageGenerationContent",
+          "type": "object"
+        },
+        {
+          "description": "Image bytes are available through `thread/item/content/read`.",
+          "properties": {
+            "byteLength": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "contentId": {
+              "type": "string"
+            },
+            "height": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "deferred"
+              ],
+              "title": "DeferredImageGenerationContentType",
+              "type": "string"
+            },
+            "width": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "contentId",
+            "type"
+          ],
+          "title": "DeferredImageGenerationContent",
+          "type": "object"
+        },
+        {
+          "description": "Image content is not available yet, or is no longer available.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "unavailable"
+              ],
+              "title": "UnavailableImageGenerationContentType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "type"
+          ],
+          "title": "UnavailableImageGenerationContent",
+          "type": "object"
+        }
+      ]
+    },
     "ItemCompletedNotification": {
       "properties": {
         "completedAtMs": {
@@ -3783,10 +3892,19 @@
         },
         {
           "properties": {
+            "content": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageGenerationContent"
+                }
+              ],
+              "description": "Structured image content metadata. New clients should render from this field instead of reading the legacy `result` field directly."
+            },
             "id": {
               "type": "string"
             },
             "result": {
+              "description": "Legacy base64-encoded image result.\n\nThis is populated in `largeContent: \"inline\"` mode for compatibility. In `largeContent: \"deferred\"` mode, clients should expect this to be empty and use `content` plus `thread/item/content/read` instead.",
               "type": "string"
             },
             "revisedPrompt": {
@@ -3817,6 +3935,7 @@
             }
           },
           "required": [
+            "content",
             "id",
             "result",
             "status",
@@ -4312,7 +4431,7 @@
           "type": "string"
         },
         "items": {
-          "description": "Thread items currently included in this turn payload.",
+          "description": "Turn items at the level of detail described by `itemsView`.",
           "items": {
             "$ref": "#/definitions/ThreadItem"
           },
@@ -4325,7 +4444,7 @@
             }
           ],
           "default": "full",
-          "description": "Describes how much of `items` has been loaded for this turn."
+          "description": "Indicates how much of this Turn's item history is present in `items`."
         },
         "startedAt": {
           "description": "Unix timestamp (in seconds) when the turn started.",
@@ -4412,21 +4531,21 @@
     "TurnItemsView": {
       "oneOf": [
         {
-          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
+          "description": "`items` was not loaded for this Turn. The field is intentionally empty.",
           "enum": [
             "notLoaded"
           ],
           "type": "string"
         },
         {
-          "description": "`items` contains only a display summary for this turn.",
+          "description": "`items` contains only a display summary for this Turn.\n\nFor `thread/turns/list`, this currently means the first user message and the final assistant message when those items are available.",
           "enum": [
             "summary"
           ],
           "type": "string"
         },
         {
-          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
+          "description": "`items` contains every ThreadItem available from persisted app-server history for this Turn.",
           "enum": [
             "full"
           ],

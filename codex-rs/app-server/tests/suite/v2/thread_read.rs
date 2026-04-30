@@ -107,6 +107,7 @@ async fn thread_read_returns_summary_without_turns() -> Result<()> {
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;
@@ -162,6 +163,7 @@ async fn thread_read_can_include_turns() -> Result<()> {
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             include_turns: true,
         })
         .await?;
@@ -220,6 +222,7 @@ async fn thread_turns_list_can_page_backward_and_forward() -> Result<()> {
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             cursor: None,
             limit: Some(2),
             sort_direction: Some(SortDirection::Desc),
@@ -246,6 +249,7 @@ async fn thread_turns_list_can_page_backward_and_forward() -> Result<()> {
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             cursor: Some(next_cursor),
             limit: Some(10),
             sort_direction: Some(SortDirection::Desc),
@@ -264,6 +268,7 @@ async fn thread_turns_list_can_page_backward_and_forward() -> Result<()> {
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: conversation_id,
+            large_content: None,
             cursor: Some(backwards_cursor),
             limit: Some(10),
             sort_direction: Some(SortDirection::Asc),
@@ -331,6 +336,7 @@ async fn thread_turns_list_reads_store_history_without_rollout_path() -> Result<
             request_id: RequestId::Integer(1),
             params: ThreadTurnsListParams {
                 thread_id: thread_id.to_string(),
+                large_content: None,
                 cursor: None,
                 limit: Some(10),
                 sort_direction: Some(SortDirection::Asc),
@@ -416,6 +422,7 @@ async fn thread_read_loaded_include_turns_reads_store_history_without_rollout_pa
             request_id: RequestId::Integer(2),
             params: ThreadReadParams {
                 thread_id: thread.id,
+                large_content: None,
                 include_turns: true,
             },
         })
@@ -536,6 +543,7 @@ async fn thread_read_can_return_archived_threads_by_id() -> Result<()> {
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;
@@ -580,6 +588,7 @@ async fn thread_turns_list_rejects_cursor_when_anchor_turn_is_rolled_back() -> R
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             cursor: None,
             limit: Some(2),
             sort_direction: Some(SortDirection::Desc),
@@ -604,6 +613,7 @@ async fn thread_turns_list_rejects_cursor_when_anchor_turn_is_rolled_back() -> R
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: conversation_id,
+            large_content: None,
             cursor: Some(backwards_cursor),
             limit: Some(10),
             sort_direction: Some(SortDirection::Asc),
@@ -658,6 +668,7 @@ async fn thread_read_returns_forked_from_id_for_forked_threads() -> Result<()> {
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: forked.id,
+            large_content: None,
             include_turns: false,
         })
         .await?;
@@ -703,6 +714,7 @@ async fn thread_read_loaded_thread_returns_precomputed_path_before_materializati
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;
@@ -770,6 +782,7 @@ async fn thread_name_set_is_reflected_in_read_list_and_resume() -> Result<()> {
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: conversation_id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;
@@ -909,6 +922,7 @@ async fn thread_read_include_turns_rejects_unmaterialized_loaded_thread() -> Res
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id.clone(),
+            large_content: None,
             include_turns: true,
         })
         .await?;
@@ -960,6 +974,7 @@ async fn thread_turns_list_rejects_unmaterialized_loaded_thread() -> Result<()> 
     let read_id = mcp
         .send_thread_turns_list_request(ThreadTurnsListParams {
             thread_id: thread.id,
+            large_content: None,
             cursor: None,
             limit: None,
             sort_direction: None,
@@ -1035,6 +1050,7 @@ async fn thread_read_reports_system_error_idle_flag_after_failed_turn() -> Resul
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id,
+            large_content: None,
             include_turns: false,
         })
         .await?;

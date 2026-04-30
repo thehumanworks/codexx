@@ -1839,6 +1839,7 @@ impl ThreadRequestProcessor {
     ) -> Result<ThreadReadResponse, JSONRPCErrorError> {
         let ThreadReadParams {
             thread_id,
+            large_content: _,
             include_turns,
         } = params;
 
@@ -2022,6 +2023,7 @@ impl ThreadRequestProcessor {
     ) -> Result<ThreadTurnsListResponse, JSONRPCErrorError> {
         let ThreadTurnsListParams {
             thread_id,
+            large_content: _,
             cursor,
             limit,
             sort_direction,
@@ -2268,6 +2270,7 @@ impl ThreadRequestProcessor {
             base_instructions,
             developer_instructions,
             personality,
+            large_content: _,
             exclude_turns,
             persist_extended_history: _persist_extended_history,
         } = params;
@@ -2879,6 +2882,7 @@ impl ThreadRequestProcessor {
             config: cli_overrides,
             base_instructions,
             developer_instructions,
+            large_content: _,
             ephemeral,
             exclude_turns,
             persist_extended_history,

@@ -1044,6 +1044,12 @@ impl MessageProcessor {
             ClientRequest::ThreadTurnsList { params, .. } => {
                 self.thread_processor.thread_turns_list(params).await
             }
+            ClientRequest::ThreadItemsList { .. } => Err(invalid_request(
+                "thread/items/list is not implemented".to_string(),
+            )),
+            ClientRequest::ThreadItemContentRead { .. } => Err(invalid_request(
+                "thread/item/content/read is not implemented".to_string(),
+            )),
             ClientRequest::ThreadShellCommand { params, .. } => {
                 self.thread_processor
                     .thread_shell_command(&request_id, params)

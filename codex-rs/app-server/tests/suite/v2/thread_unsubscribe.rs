@@ -282,6 +282,7 @@ async fn thread_unsubscribe_preserves_cached_status_before_idle_unload() -> Resu
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread_id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;

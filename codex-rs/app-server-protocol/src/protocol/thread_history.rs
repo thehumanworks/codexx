@@ -10,6 +10,7 @@ use crate::protocol::v2::CollabAgentToolCallStatus;
 use crate::protocol::v2::CommandExecutionStatus;
 use crate::protocol::v2::DynamicToolCallOutputContentItem;
 use crate::protocol::v2::DynamicToolCallStatus;
+use crate::protocol::v2::ImageGenerationContent;
 use crate::protocol::v2::McpToolCallError;
 use crate::protocol::v2::McpToolCallResult;
 use crate::protocol::v2::McpToolCallStatus;
@@ -586,6 +587,9 @@ impl ThreadHistoryBuilder {
             id: payload.call_id.clone(),
             status: String::new(),
             revised_prompt: None,
+            content: ImageGenerationContent::Unavailable {
+                reason: "image generation has not completed".to_string(),
+            },
             result: String::new(),
             saved_path: None,
         };
@@ -597,6 +601,11 @@ impl ThreadHistoryBuilder {
             id: payload.call_id.clone(),
             status: payload.status.clone(),
             revised_prompt: payload.revised_prompt.clone(),
+            content: ImageGenerationContent::Inline {
+                data_base64: payload.result.clone(),
+                mime_type: None,
+                byte_length: None,
+            },
             result: payload.result.clone(),
             saved_path: payload.saved_path.clone(),
         };
@@ -1469,6 +1478,11 @@ mod tests {
                         id: "ig_123".into(),
                         status: "completed".into(),
                         revised_prompt: Some("final prompt".into()),
+                        content: ImageGenerationContent::Inline {
+                            data_base64: "Zm9v".into(),
+                            mime_type: None,
+                            byte_length: None,
+                        },
                         result: "Zm9v".into(),
                         saved_path: Some(test_path_buf("/tmp/ig_123.png").abs()),
                     },

@@ -577,6 +577,18 @@ client_request_definitions! {
         serialization: None,
         response: v2::ThreadTurnsListResponse,
     },
+    ThreadItemsList => "thread/items/list" {
+        params: v2::ThreadItemsListParams,
+        // Explicitly concurrent: this primarily reads append-only rollout storage.
+        serialization: None,
+        response: v2::ThreadItemsListResponse,
+    },
+    ThreadItemContentRead => "thread/item/content/read" {
+        params: v2::ThreadItemContentReadParams,
+        // Explicitly concurrent: this reads deferred item content without mutating the thread.
+        serialization: None,
+        response: v2::ThreadItemContentReadResponse,
+    },
     /// Append raw Responses API items to the thread history without starting a user turn.
     ThreadInjectItems => "thread/inject_items" {
         params: v2::ThreadInjectItemsParams,
@@ -1834,6 +1846,7 @@ mod tests {
             request_id: request_id(),
             params: v2::ThreadTurnsListParams {
                 thread_id: "thread-1".to_string(),
+                large_content: None,
                 cursor: None,
                 limit: None,
                 sort_direction: None,

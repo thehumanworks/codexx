@@ -1,10 +1,41 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "LargeContentMode": {
+      "oneOf": [
+        {
+          "description": "Preserve legacy behavior and embed large payloads directly in returned ThreadItems.",
+          "enum": [
+            "inline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Return metadata placeholders for large payloads and fetch bytes through `thread/item/content/read`.",
+          "enum": [
+            "deferred"
+          ],
+          "type": "string"
+        }
+      ]
+    }
+  },
   "properties": {
     "includeTurns": {
       "default": false,
-      "description": "When true, include turns and their items from rollout history.",
+      "description": "When true, include the traditional fully hydrated thread history: `thread.turns` is populated and each returned Turn has `itemsView: \"full\"`.\n\nWhen false, `thread/read` returns metadata only. Clients can page history separately with `thread/turns/list`, then hydrate individual summary turns with `thread/items/list`.",
       "type": "boolean"
+    },
+    "largeContent": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/LargeContentMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients that may load large histories should prefer `deferred` and fetch bytes on demand with `thread/item/content/read`."
     },
     "threadId": {
       "type": "string"

@@ -64,6 +64,24 @@
         }
       ]
     },
+    "LargeContentMode": {
+      "oneOf": [
+        {
+          "description": "Preserve legacy behavior and embed large payloads directly in returned ThreadItems.",
+          "enum": [
+            "inline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Return metadata placeholders for large payloads and fetch bytes through `thread/item/content/read`.",
+          "enum": [
+            "deferred"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "PermissionProfileModificationParams": {
       "oneOf": [
         {
@@ -189,6 +207,17 @@
     },
     "ephemeral": {
       "type": "boolean"
+    },
+    "largeContent": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/LargeContentMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients that may load large histories should prefer `deferred` and fetch bytes on demand with `thread/item/content/read`."
     },
     "model": {
       "description": "Configuration overrides for the forked thread, if any.",

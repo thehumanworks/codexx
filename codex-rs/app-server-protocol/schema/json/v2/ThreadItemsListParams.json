@@ -1,0 +1,83 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "definitions": {
+    "LargeContentMode": {
+      "oneOf": [
+        {
+          "description": "Preserve legacy behavior and embed large payloads directly in returned ThreadItems.",
+          "enum": [
+            "inline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Return metadata placeholders for large payloads and fetch bytes through `thread/item/content/read`.",
+          "enum": [
+            "deferred"
+          ],
+          "type": "string"
+        }
+      ]
+    },
+    "SortDirection": {
+      "enum": [
+        "asc",
+        "desc"
+      ],
+      "type": "string"
+    }
+  },
+  "properties": {
+    "cursor": {
+      "description": "Opaque cursor to pass to the next call to continue after the last item.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "largeContent": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/LargeContentMode"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients should prefer `deferred`."
+    },
+    "limit": {
+      "description": "Optional item page size.",
+      "format": "uint32",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "sortDirection": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/SortDirection"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Optional item pagination direction; defaults to ascending."
+    },
+    "threadId": {
+      "type": "string"
+    },
+    "turnId": {
+      "description": "Turn to hydrate after receiving a summary Turn from `thread/turns/list`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "threadId",
+    "turnId"
+  ],
+  "title": "ThreadItemsListParams",
+  "type": "object"
+}

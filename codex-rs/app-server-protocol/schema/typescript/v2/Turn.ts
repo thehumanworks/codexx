@@ -8,11 +8,11 @@ import type { TurnStatus } from "./TurnStatus";
 
 export type Turn = { id: string,
 /**
- * Thread items currently included in this turn payload.
+ * Turn items at the level of detail described by `itemsView`.
  */
 items: Array<ThreadItem>,
 /**
- * Describes how much of `items` has been loaded for this turn.
+ * Indicates how much of this Turn's item history is present in `items`.
  */
 itemsView: TurnItemsView, status: TurnStatus,
 /**

@@ -524,6 +524,7 @@ mod thread_processor_behavior_tests {
             base_instructions: None,
             developer_instructions: None,
             personality: None,
+            large_content: None,
             exclude_turns: false,
             persist_extended_history: false,
         };

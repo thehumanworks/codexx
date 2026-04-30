@@ -1329,6 +1329,54 @@
           "type": "object"
         },
         {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/items/list"
+              ],
+              "title": "Thread/items/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadItemsListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/items/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/item/content/read"
+              ],
+              "title": "Thread/item/content/readRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadItemContentReadParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/item/content/readRequest",
+          "type": "object"
+        },
+        {
           "description": "Append raw Responses API items to the thread history without starting a user turn.",
           "properties": {
             "id": {
@@ -6736,6 +6784,115 @@
       ],
       "type": "string"
     },
+    "ImageGenerationContent": {
+      "oneOf": [
+        {
+          "description": "Image bytes are embedded directly in the item.",
+          "properties": {
+            "byteLength": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "dataBase64": {
+              "type": "string"
+            },
+            "mimeType": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "inline"
+              ],
+              "title": "InlineImageGenerationContentType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "dataBase64",
+            "type"
+          ],
+          "title": "InlineImageGenerationContent",
+          "type": "object"
+        },
+        {
+          "description": "Image bytes are available through `thread/item/content/read`.",
+          "properties": {
+            "byteLength": {
+              "format": "int64",
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "contentId": {
+              "type": "string"
+            },
+            "height": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "mimeType": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "enum": [
+                "deferred"
+              ],
+              "title": "DeferredImageGenerationContentType",
+              "type": "string"
+            },
+            "width": {
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "contentId",
+            "type"
+          ],
+          "title": "DeferredImageGenerationContent",
+          "type": "object"
+        },
+        {
+          "description": "Image content is not available yet, or is no longer available.",
+          "properties": {
+            "reason": {
+              "type": "string"
+            },
+            "type": {
+              "enum": [
+                "unavailable"
+              ],
+              "title": "UnavailableImageGenerationContentType",
+              "type": "string"
+            }
+          },
+          "required": [
+            "reason",
+            "type"
+          ],
+          "title": "UnavailableImageGenerationContent",
+          "type": "object"
+        }
+      ]
+    },
     "InitializeCapabilities": {
       "description": "Client-declared capabilities negotiated during initialize.",
       "properties": {
@@ -6932,6 +7089,24 @@
       ],
       "title": "ItemStartedNotification",
       "type": "object"
+    },
+    "LargeContentMode": {
+      "oneOf": [
+        {
+          "description": "Preserve legacy behavior and embed large payloads directly in returned ThreadItems.",
+          "enum": [
+            "inline"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Return metadata placeholders for large payloads and fetch bytes through `thread/item/content/read`.",
+          "enum": [
+            "deferred"
+          ],
+          "type": "string"
+        }
+      ]
     },
     "ListMcpServerStatusParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -13283,6 +13458,17 @@
         "ephemeral": {
           "type": "boolean"
         },
+        "largeContent": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LargeContentMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients that may load large histories should prefer `deferred` and fetch bytes on demand with `thread/item/content/read`."
+        },
         "model": {
           "description": "Configuration overrides for the forked thread, if any.",
           "type": [
@@ -14074,10 +14260,19 @@
         },
         {
           "properties": {
+            "content": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageGenerationContent"
+                }
+              ],
+              "description": "Structured image content metadata. New clients should render from this field instead of reading the legacy `result` field directly."
+            },
             "id": {
               "type": "string"
             },
             "result": {
+              "description": "Legacy base64-encoded image result.\n\nThis is populated in `largeContent: \"inline\"` mode for compatibility. In `largeContent: \"deferred\"` mode, clients should expect this to be empty and use `content` plus `thread/item/content/read` instead.",
               "type": "string"
             },
             "revisedPrompt": {
@@ -14108,6 +14303,7 @@
             }
           },
           "required": [
+            "content",
             "id",
             "result",
             "status",
@@ -14185,6 +14381,148 @@
           "type": "object"
         }
       ]
+    },
+    "ThreadItemContentReadParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "contentId": {
+          "description": "Opaque content identifier returned from a deferred item content placeholder.",
+          "type": "string"
+        },
+        "itemId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "contentId",
+        "itemId",
+        "threadId",
+        "turnId"
+      ],
+      "title": "ThreadItemContentReadParams",
+      "type": "object"
+    },
+    "ThreadItemContentReadResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "byteLength": {
+          "description": "Decoded byte length when known.",
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "dataBase64": {
+          "description": "Base64-encoded content bytes.",
+          "type": "string"
+        },
+        "mimeType": {
+          "description": "Media type of the returned content when known.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "dataBase64"
+      ],
+      "title": "ThreadItemContentReadResponse",
+      "type": "object"
+    },
+    "ThreadItemsListParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "cursor": {
+          "description": "Opaque cursor to pass to the next call to continue after the last item.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "largeContent": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LargeContentMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients should prefer `deferred`."
+        },
+        "limit": {
+          "description": "Optional item page size.",
+          "format": "uint32",
+          "minimum": 0.0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sortDirection": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/SortDirection"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional item pagination direction; defaults to ascending."
+        },
+        "threadId": {
+          "type": "string"
+        },
+        "turnId": {
+          "description": "Turn to hydrate after receiving a summary Turn from `thread/turns/list`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnId"
+      ],
+      "title": "ThreadItemsListParams",
+      "type": "object"
+    },
+    "ThreadItemsListResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "backwardsCursor": {
+          "description": "Opaque cursor to pass as `cursor` when reversing `sortDirection`. This is only populated when the page contains at least one item. Use it with the opposite `sortDirection` to include the anchor item again and catch updates to that item.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "data": {
+          "description": "Full ThreadItems for the requested turn page. Accumulate pages until `nextCursor` is null to hydrate the client-side Turn representation.",
+          "items": {
+            "$ref": "#/definitions/ThreadItem"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Opaque cursor to pass to the next call to continue after the last item. if None, there are no more items to return.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "data"
+      ],
+      "title": "ThreadItemsListResponse",
+      "type": "object"
     },
     "ThreadListCwdFilter": {
       "anyOf": [
@@ -14464,8 +14802,19 @@
       "properties": {
         "includeTurns": {
           "default": false,
-          "description": "When true, include turns and their items from rollout history.",
+          "description": "When true, include the traditional fully hydrated thread history: `thread.turns` is populated and each returned Turn has `itemsView: \"full\"`.\n\nWhen false, `thread/read` returns metadata only. Clients can page history separately with `thread/turns/list`, then hydrate individual summary turns with `thread/items/list`.",
           "type": "boolean"
+        },
+        "largeContent": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LargeContentMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients that may load large histories should prefer `deferred` and fetch bytes on demand with `thread/item/content/read`."
         },
         "threadId": {
           "type": "string"
@@ -14779,6 +15128,17 @@
             "string",
             "null"
           ]
+        },
+        "largeContent": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LargeContentMode"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Controls whether large item payloads, such as generated image bytes, are embedded in returned ThreadItems or replaced with deferred content references.\n\nDefaults to `inline` for compatibility. New clients that may load large histories should prefer `deferred` and fetch bytes on demand with `thread/item/content/read`."
         },
         "model": {
           "description": "Configuration overrides for the resumed thread, if any.",
@@ -15569,7 +15929,7 @@
           "type": "string"
         },
         "items": {
-          "description": "Thread items currently included in this turn payload.",
+          "description": "Turn items at the level of detail described by `itemsView`.",
           "items": {
             "$ref": "#/definitions/ThreadItem"
           },
@@ -15582,7 +15942,7 @@
             }
           ],
           "default": "full",
-          "description": "Describes how much of `items` has been loaded for this turn."
+          "description": "Indicates how much of this Turn's item history is present in `items`."
         },
         "startedAt": {
           "description": "Unix timestamp (in seconds) when the turn started.",
@@ -15710,21 +16070,21 @@
     "TurnItemsView": {
       "oneOf": [
         {
-          "description": "`items` was not loaded for this turn. The field is intentionally empty.",
+          "description": "`items` was not loaded for this Turn. The field is intentionally empty.",
           "enum": [
             "notLoaded"
           ],
           "type": "string"
         },
         {
-          "description": "`items` contains only a display summary for this turn.",
+          "description": "`items` contains only a display summary for this Turn.\n\nFor `thread/turns/list`, this currently means the first user message and the final assistant message when those items are available.",
           "enum": [
             "summary"
           ],
           "type": "string"
         },
         {
-          "description": "`items` contains every ThreadItem available from persisted app-server history for this turn.",
+          "description": "`items` contains every ThreadItem available from persisted app-server history for this Turn.",
           "enum": [
             "full"
           ],

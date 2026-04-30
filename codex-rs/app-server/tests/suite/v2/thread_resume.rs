@@ -1368,6 +1368,7 @@ async fn thread_resume_and_read_interrupt_incomplete_rollout_turn_when_thread_is
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: resumed_again.id,
+            large_content: None,
             include_turns: true,
         })
         .await?;
@@ -1402,6 +1403,7 @@ async fn thread_resume_without_overrides_does_not_change_updated_at_or_mtime() -
     let read_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread_id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;
@@ -2722,6 +2724,7 @@ async fn start_materialized_thread_and_restart(
     let read_id = first_mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id.clone(),
+            large_content: None,
             include_turns: false,
         })
         .await?;

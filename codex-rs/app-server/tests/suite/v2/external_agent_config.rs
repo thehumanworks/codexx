@@ -350,6 +350,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
     let request_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id.clone(),
+            large_content: None,
             include_turns: true,
         })
         .await?;
@@ -409,6 +410,7 @@ async fn external_agent_config_import_creates_session_rollouts() -> Result<()> {
     let request_id = mcp
         .send_thread_read_request(ThreadReadParams {
             thread_id: thread.id,
+            large_content: None,
             include_turns: true,
         })
         .await?;

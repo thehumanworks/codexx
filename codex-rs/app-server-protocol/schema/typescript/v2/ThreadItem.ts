@@ -15,6 +15,7 @@ import type { DynamicToolCallOutputContentItem } from "./DynamicToolCallOutputCo
 import type { DynamicToolCallStatus } from "./DynamicToolCallStatus";
 import type { FileUpdateChange } from "./FileUpdateChange";
 import type { HookPromptFragment } from "./HookPromptFragment";
+import type { ImageGenerationContent } from "./ImageGenerationContent";
 import type { McpToolCallError } from "./McpToolCallError";
 import type { McpToolCallResult } from "./McpToolCallResult";
 import type { McpToolCallStatus } from "./McpToolCallStatus";
@@ -98,4 +99,17 @@ reasoningEffort: ReasoningEffort | null,
 /**
  * Last known status of the target agents, when available.
  */
-agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null, result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
+agentsStates: { [key in string]?: CollabAgentState }, } | { "type": "webSearch", id: string, query: string, action: WebSearchAction | null, } | { "type": "imageView", id: string, path: AbsolutePathBuf, } | { "type": "imageGeneration", id: string, status: string, revisedPrompt: string | null,
+/**
+ * Structured image content metadata. New clients should render from this field instead
+ * of reading the legacy `result` field directly.
+ */
+content: ImageGenerationContent,
+/**
+ * Legacy base64-encoded image result.
+ *
+ * This is populated in `largeContent: "inline"` mode for compatibility. In
+ * `largeContent: "deferred"` mode, clients should expect this to be empty and use
+ * `content` plus `thread/item/content/read` instead.
+ */
+result: string, savedPath?: AbsolutePathBuf, } | { "type": "enteredReviewMode", id: string, review: string, } | { "type": "exitedReviewMode", id: string, review: string, } | { "type": "contextCompaction", id: string, };
