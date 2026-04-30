@@ -4,10 +4,8 @@ use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::GranularApprovalConfig;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing::SandboxManager;
 use codex_sandboxing::SandboxType;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
@@ -136,8 +134,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
         additional_permissions: Some(additional_permissions.clone()),
         permissions_preapproved: false,
     };
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    let file_system_policy = FileSystemSandboxPolicy::from(&sandbox_policy);
+    let file_system_policy = PermissionProfile::read_only().file_system_sandbox_policy();
     let permissions = PermissionProfile::from_runtime_permissions(
         &file_system_policy,
         NetworkSandboxPolicy::Restricted,

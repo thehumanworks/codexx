@@ -1,8 +1,9 @@
 use super::*;
 use crate::sandboxing::SandboxPermissions;
 use crate::tools::hook_names::HookToolName;
+use codex_protocol::models::PermissionProfile;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::GranularApprovalConfig;
-use codex_protocol::protocol::NetworkAccess;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 
@@ -36,13 +37,10 @@ fn bash_permission_request_payload_includes_description_when_present() {
 
 #[test]
 fn external_sandbox_skips_exec_approval_on_request() {
-    let sandbox_policy = SandboxPolicy::ExternalSandbox {
-        network_access: NetworkAccess::Restricted,
-    };
     assert_eq!(
         default_exec_approval_requirement(
             AskForApproval::OnRequest,
-            &FileSystemSandboxPolicy::from(&sandbox_policy),
+            &FileSystemSandboxPolicy::external_sandbox(),
         ),
         ExecApprovalRequirement::Skip {
             bypass_sandbox: false,
@@ -53,11 +51,10 @@ fn external_sandbox_skips_exec_approval_on_request() {
 
 #[test]
 fn restricted_sandbox_requires_exec_approval_on_request() {
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
     assert_eq!(
         default_exec_approval_requirement(
             AskForApproval::OnRequest,
-            &FileSystemSandboxPolicy::from(&sandbox_policy)
+            &PermissionProfile::read_only().file_system_sandbox_policy()
         ),
         ExecApprovalRequirement::NeedsApproval {
             reason: None,
@@ -76,9 +73,10 @@ fn default_exec_approval_requirement_rejects_sandbox_prompt_when_granular_disabl
         mcp_elicitations: true,
     });
 
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    let requirement =
-        default_exec_approval_requirement(policy, &FileSystemSandboxPolicy::from(&sandbox_policy));
+    let requirement = default_exec_approval_requirement(
+        policy,
+        &PermissionProfile::read_only().file_system_sandbox_policy(),
+    );
 
     assert_eq!(
         requirement,
@@ -98,9 +96,10 @@ fn default_exec_approval_requirement_keeps_prompt_when_granular_allows_sandbox_a
         mcp_elicitations: false,
     });
 
-    let sandbox_policy = SandboxPolicy::new_read_only_policy();
-    let requirement =
-        default_exec_approval_requirement(policy, &FileSystemSandboxPolicy::from(&sandbox_policy));
+    let requirement = default_exec_approval_requirement(
+        policy,
+        &PermissionProfile::read_only().file_system_sandbox_policy(),
+    );
 
     assert_eq!(
         requirement,
