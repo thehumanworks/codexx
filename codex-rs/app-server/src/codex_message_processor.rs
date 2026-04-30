@@ -2319,8 +2319,7 @@ impl CodexMessageProcessor {
         };
 
         let effective_permission_profile = if let Some(permission_profile) = permission_profile {
-            let permission_profile =
-                codex_protocol::models::PermissionProfile::from(permission_profile);
+            let permission_profile = PermissionProfile::from(permission_profile);
             let (mut file_system_sandbox_policy, network_sandbox_policy) =
                 permission_profile.to_runtime_permissions();
             let configured_file_system_sandbox_policy =
@@ -2342,19 +2341,11 @@ impl CodexMessageProcessor {
                 .map_err(|err| invalid_request(format!("invalid permission profile: {err}")))?;
             effective_permission_profile
         } else if let Some(policy) = sandbox_policy.map(|policy| policy.to_core()) {
-            self.config
-                .permissions
-                .can_set_legacy_sandbox_policy(&policy, &sandbox_cwd)
-                .map_err(|err| invalid_request(format!("invalid sandbox policy: {err}")))?;
-            let file_system_sandbox_policy =
-                codex_protocol::permissions::FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&policy, &sandbox_cwd);
-            let network_sandbox_policy =
-                codex_protocol::permissions::NetworkSandboxPolicy::from(&policy);
             let permission_profile =
-                codex_protocol::models::PermissionProfile::from_runtime_permissions_with_enforcement(
-                    codex_protocol::models::SandboxEnforcement::from_legacy_sandbox_policy(&policy),
-                    &file_system_sandbox_policy,
-                    network_sandbox_policy,
+                permission_profile_from_legacy_sandbox_policy_preserving_configured_denies(
+                    &policy,
+                    &sandbox_cwd,
+                    &self.config.permissions.file_system_sandbox_policy(),
                 );
             self.config
                 .permissions
@@ -9593,11 +9584,23 @@ fn permission_profile_from_legacy_turn_sandbox_policy(
     let sandbox_cwd = cwd.unwrap_or(snapshot.cwd.as_path());
     let configured_file_system_sandbox_policy =
         snapshot.permission_profile.file_system_sandbox_policy();
+    permission_profile_from_legacy_sandbox_policy_preserving_configured_denies(
+        sandbox_policy,
+        sandbox_cwd,
+        &configured_file_system_sandbox_policy,
+    )
+}
+
+fn permission_profile_from_legacy_sandbox_policy_preserving_configured_denies(
+    sandbox_policy: &CoreSandboxPolicy,
+    sandbox_cwd: &Path,
+    configured_file_system_sandbox_policy: &FileSystemSandboxPolicy,
+) -> PermissionProfile {
     let file_system_sandbox_policy =
         FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
             sandbox_policy,
             sandbox_cwd,
-            &configured_file_system_sandbox_policy,
+            configured_file_system_sandbox_policy,
         );
     PermissionProfile::from_runtime_permissions_with_enforcement(
         SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
