@@ -64,18 +64,6 @@ impl From<SessionId> for ThreadId {
     }
 }
 
-impl PartialEq<ThreadId> for SessionId {
-    fn eq(&self, other: &ThreadId) -> bool {
-        self.to_string() == other.to_string()
-    }
-}
-
-impl PartialEq<SessionId> for ThreadId {
-    fn eq(&self, other: &SessionId) -> bool {
-        self.to_string() == other.to_string()
-    }
-}
-
 impl Default for SessionId {
     fn default() -> Self {
         Self::new()
