@@ -34,12 +34,10 @@ use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RealtimeConversationVersion as RealtimeWsVersion;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_protocol::user_input::UserInput;
-use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
 use serde_json::Value;
@@ -208,16 +206,12 @@ pub enum ShellModelOutput {
 /// construct the op directly.
 pub fn turn_permission_fields(
     permission_profile: PermissionProfile,
-    cwd: &Path,
-) -> (SandboxPolicy, Option<PermissionProfile>) {
-    let file_system_sandbox_policy = permission_profile.file_system_sandbox_policy();
-    let sandbox_policy = compatibility_sandbox_policy_for_permission_profile(
-        &permission_profile,
-        &file_system_sandbox_policy,
-        permission_profile.network_sandbox_policy(),
-        cwd,
-    );
-    (sandbox_policy, Some(permission_profile))
+    _cwd: &Path,
+) -> (
+    Option<codex_protocol::protocol::SandboxPolicy>,
+    Option<PermissionProfile>,
+) {
+    (None, Some(permission_profile))
 }
 
 pub struct TestCodexBuilder {
