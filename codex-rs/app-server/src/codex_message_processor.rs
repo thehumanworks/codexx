@@ -3604,7 +3604,7 @@ impl CodexMessageProcessor {
 
         let (thread_id, thread) = self.load_thread(&thread_id).await?;
 
-        let request = request_id.clone();
+        let request = request_id;
 
         let rollback_already_in_progress = {
             let thread_state = self.thread_state_manager.thread_state(thread_id).await;
@@ -5599,18 +5599,16 @@ impl CodexMessageProcessor {
             ),
         };
 
-        tokio::spawn(async move {
-            Self::list_mcp_server_status_task(
-                outgoing,
-                request,
-                params,
-                config,
-                mcp_config,
-                auth,
-                runtime_environment,
-            )
-            .await;
-        });
+        Self::list_mcp_server_status_task(
+            outgoing,
+            request,
+            params,
+            config,
+            mcp_config,
+            auth,
+            runtime_environment,
+        )
+        .await;
     }
 
     async fn list_mcp_server_status_task(
@@ -5743,10 +5741,8 @@ impl CodexMessageProcessor {
                 }
             };
 
-            tokio::spawn(async move {
-                let result = thread.read_mcp_resource(&server, &uri).await;
-                Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
-            });
+            let result = thread.read_mcp_resource(&server, &uri).await;
+            Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
             return;
         }
 
@@ -5771,21 +5767,19 @@ impl CodexMessageProcessor {
             McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf())
         };
 
-        tokio::spawn(async move {
-            let result = match read_mcp_resource_without_thread(
-                &mcp_config,
-                auth.as_ref(),
-                runtime_environment,
-                &server,
-                &uri,
-            )
-            .await
-            {
-                Ok(result) => serde_json::to_value(result).map_err(anyhow::Error::from),
-                Err(error) => Err(error),
-            };
-            Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
-        });
+        let result = match read_mcp_resource_without_thread(
+            &mcp_config,
+            auth.as_ref(),
+            runtime_environment,
+            &server,
+            &uri,
+        )
+        .await
+        {
+            Ok(result) => serde_json::to_value(result).map_err(anyhow::Error::from),
+            Err(error) => Err(error),
+        };
+        Self::send_mcp_resource_read_response(outgoing, request_id, result).await;
     }
 
     async fn send_mcp_resource_read_response(
@@ -5821,14 +5815,12 @@ impl CodexMessageProcessor {
         };
         let meta = with_mcp_tool_call_thread_id_meta(params.meta, &thread_id);
 
-        tokio::spawn(async move {
-            let result = thread
-                .call_mcp_tool(&params.server, &params.tool, params.arguments, meta)
-                .await
-                .map(McpServerToolCallResponse::from)
-                .map_err(|error| internal_error(format!("{error:#}")));
-            outgoing.send_result(request_id, result).await;
-        });
+        let result = thread
+            .call_mcp_tool(&params.server, &params.tool, params.arguments, meta)
+            .await
+            .map(McpServerToolCallResponse::from)
+            .map_err(|error| internal_error(format!("{error:#}")));
+        outgoing.send_result(request_id, result).await;
     }
 
     async fn send_optional_result<T>(

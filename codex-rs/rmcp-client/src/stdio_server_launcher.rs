@@ -315,13 +315,15 @@ impl LocalProcessTerminator {
     }
 
     #[cfg(unix)]
-    fn terminate(&self) {
+    fn terminate(&self) -> io::Result<()> {
         let process_group_id = self.process_group_id;
         let should_escalate = match terminate_process_group(process_group_id) {
             Ok(exists) => exists,
             Err(error) => {
-                warn!("Failed to terminate MCP process group {process_group_id}: {error}");
-                false
+                return Err(io::Error::new(
+                    error.kind(),
+                    format!("terminating MCP process group {process_group_id}: {error}"),
+                ));
             }
         };
         if should_escalate {
@@ -332,20 +334,30 @@ impl LocalProcessTerminator {
                 }
             });
         }
+        Ok(())
     }
 
     #[cfg(windows)]
-    fn terminate(&self) {
-        let _ = std::process::Command::new("taskkill")
+    fn terminate(&self) -> io::Result<()> {
+        let status = std::process::Command::new("taskkill")
             .arg("/PID")
             .arg(self.pid.to_string())
             .arg("/T")
             .arg("/F")
-            .status();
+            .status()?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(format!(
+                "taskkill exited with status {status}"
+            )))
+        }
     }
 
     #[cfg(not(any(unix, windows)))]
-    fn terminate(&self) {}
+    fn terminate(&self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl StdioServerProcessHandle {
@@ -375,10 +387,13 @@ impl StdioServerProcessHandle {
         }
 
         match &self.inner.kind {
-            StdioServerProcessKind::Local(Some(terminator)) => {
-                terminator.terminate();
-                Ok(())
-            }
+            StdioServerProcessKind::Local(Some(terminator)) => match terminator.terminate() {
+                Ok(()) => Ok(()),
+                Err(error) => {
+                    self.inner.terminated.store(false, Ordering::Release);
+                    Err(error)
+                }
+            },
             StdioServerProcessKind::Local(None) => Ok(()),
             StdioServerProcessKind::Executor(process) => match process.terminate().await {
                 Ok(()) => Ok(()),
@@ -399,7 +414,12 @@ impl Drop for StdioServerProcessHandleInner {
 
         match &self.kind {
             StdioServerProcessKind::Local(Some(terminator)) => {
-                terminator.terminate();
+                if let Err(error) = terminator.terminate() {
+                    warn!(
+                        "Failed to terminate MCP process group on drop ({}): {error}",
+                        self.program_name
+                    );
+                }
             }
             StdioServerProcessKind::Local(None) => {}
             StdioServerProcessKind::Executor(process) => {

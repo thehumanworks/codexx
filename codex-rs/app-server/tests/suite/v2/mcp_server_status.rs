@@ -2,9 +2,13 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use anyhow::Result;
+use anyhow::bail;
 use app_test_support::McpProcess;
 use app_test_support::create_mock_responses_server_sequence_unchecked;
 use app_test_support::to_response;
@@ -145,6 +149,20 @@ struct SlowInventoryServer {
     tool_name: Arc<String>,
 }
 
+#[derive(Default)]
+struct InventoryConcurrencyTracker {
+    active_resource_calls: AtomicUsize,
+    max_resource_calls: AtomicUsize,
+    release_resource_calls: AtomicBool,
+    started_resource_calls: AtomicUsize,
+}
+
+#[derive(Clone)]
+struct BlockingInventoryServer {
+    tool_name: Arc<String>,
+    tracker: Arc<InventoryConcurrencyTracker>,
+}
+
 impl ServerHandler for SlowInventoryServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo {
@@ -208,6 +226,74 @@ impl ServerHandler for SlowInventoryServer {
     }
 }
 
+impl ServerHandler for BlockingInventoryServer {
+    fn get_info(&self) -> ServerInfo {
+        ServerInfo {
+            capabilities: ServerCapabilities::builder()
+                .enable_tools()
+                .enable_resources()
+                .build(),
+            ..ServerInfo::default()
+        }
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        let input_schema: JsonObject = serde_json::from_value(json!({
+            "type": "object",
+            "additionalProperties": false
+        }))
+        .map_err(|err| rmcp::ErrorData::internal_error(err.to_string(), None))?;
+
+        let mut tool = Tool::new(
+            Cow::Owned(self.tool_name.as_ref().clone()),
+            Cow::Borrowed("Look up test data."),
+            Arc::new(input_schema),
+        );
+        tool.annotations = Some(ToolAnnotations::new().read_only(true));
+
+        Ok(ListToolsResult {
+            tools: vec![tool],
+            next_cursor: None,
+            meta: None,
+        })
+    }
+
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<rmcp::service::RoleServer>,
+    ) -> Result<ListResourcesResult, rmcp::ErrorData> {
+        let active = self
+            .tracker
+            .active_resource_calls
+            .fetch_add(1, Ordering::AcqRel)
+            + 1;
+        self.tracker
+            .started_resource_calls
+            .fetch_add(1, Ordering::AcqRel);
+        self.tracker
+            .max_resource_calls
+            .fetch_max(active, Ordering::AcqRel);
+
+        while !self.tracker.release_resource_calls.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        self.tracker
+            .active_resource_calls
+            .fetch_sub(1, Ordering::AcqRel);
+        Ok(ListResourcesResult {
+            resources: Vec::new(),
+            next_cursor: None,
+            meta: None,
+        })
+    }
+}
+
 #[tokio::test]
 async fn mcp_server_status_list_tools_and_auth_only_skips_slow_inventory_calls() -> Result<()> {
     let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
@@ -260,6 +346,87 @@ url = "{mcp_server_url}/mcp"
     );
     assert_eq!(status.resources, Vec::new());
     assert_eq!(status.resource_templates, Vec::new());
+
+    mcp_server_handle.abort();
+    let _ = mcp_server_handle.await;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn mcp_server_status_list_serializes_inventory_work() -> Result<()> {
+    let server = create_mock_responses_server_sequence_unchecked(Vec::new()).await;
+    let tracker = Arc::new(InventoryConcurrencyTracker::default());
+    let (mcp_server_url, mcp_server_handle) =
+        start_blocking_inventory_mcp_server("lookup", Arc::clone(&tracker)).await?;
+    let codex_home = TempDir::new()?;
+    write_mock_responses_config_toml(
+        codex_home.path(),
+        &server.uri(),
+        &BTreeMap::new(),
+        /*auto_compact_limit*/ 1024,
+        /*requires_openai_auth*/ None,
+        "mock_provider",
+        "compact",
+    )?;
+
+    let config_path = codex_home.path().join("config.toml");
+    let mut config_toml = std::fs::read_to_string(&config_path)?;
+    config_toml.push_str(&format!(
+        r#"
+[mcp_servers.some-server]
+url = "{mcp_server_url}/mcp"
+"#
+    ));
+    std::fs::write(config_path, config_toml)?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let first_request_id = mcp
+        .send_list_mcp_server_status_request(ListMcpServerStatusParams {
+            cursor: None,
+            limit: None,
+            detail: None,
+        })
+        .await?;
+    wait_for_resource_call_count(&tracker, 1).await?;
+
+    let second_request_id = mcp
+        .send_list_mcp_server_status_request(ListMcpServerStatusParams {
+            cursor: None,
+            limit: None,
+            detail: None,
+        })
+        .await?;
+    assert!(
+        timeout(
+            Duration::from_millis(750),
+            wait_for_resource_call_count(&tracker, 2)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(tracker.max_resource_calls.load(Ordering::Acquire), 1);
+
+    tracker
+        .release_resource_calls
+        .store(true, Ordering::Release);
+
+    let response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(first_request_id)),
+    )
+    .await??;
+    let _: ListMcpServerStatusResponse = to_response(response)?;
+
+    let response = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(second_request_id)),
+    )
+    .await??;
+    let _: ListMcpServerStatusResponse = to_response(response)?;
+    assert_eq!(tracker.max_resource_calls.load(Ordering::Acquire), 1);
 
     mcp_server_handle.abort();
     let _ = mcp_server_handle.await;
@@ -387,4 +554,44 @@ async fn start_slow_inventory_mcp_server(tool_name: &str) -> Result<(String, Joi
     });
 
     Ok((format!("http://{addr}"), handle))
+}
+
+async fn start_blocking_inventory_mcp_server(
+    tool_name: &str,
+    tracker: Arc<InventoryConcurrencyTracker>,
+) -> Result<(String, JoinHandle<()>)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
+    let tool_name = Arc::new(tool_name.to_string());
+    let mcp_service = StreamableHttpService::new(
+        move || {
+            Ok(BlockingInventoryServer {
+                tool_name: Arc::clone(&tool_name),
+                tracker: Arc::clone(&tracker),
+            })
+        },
+        Arc::new(LocalSessionManager::default()),
+        StreamableHttpServerConfig::default(),
+    );
+    let router = Router::new().nest_service("/mcp", mcp_service);
+
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    Ok((format!("http://{addr}"), handle))
+}
+
+async fn wait_for_resource_call_count(
+    tracker: &InventoryConcurrencyTracker,
+    expected: usize,
+) -> Result<()> {
+    for _ in 0..100 {
+        if tracker.started_resource_calls.load(Ordering::Acquire) >= expected {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    bail!("timed out waiting for {expected} resource/list call(s)");
 }
