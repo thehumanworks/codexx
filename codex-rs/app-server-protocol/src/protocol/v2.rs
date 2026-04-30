@@ -5267,7 +5267,9 @@ pub struct TurnEnvironmentParams {
 #[serde(rename_all = "snake_case")]
 #[ts(rename_all = "snake_case", export_to = "v2/")]
 pub enum ThreadExecutionEnvironment {
-    Remote,
+    Local,
+    Ssh,
+    RemoteControl,
 }
 
 #[derive(

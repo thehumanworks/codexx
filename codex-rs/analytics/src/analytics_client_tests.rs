@@ -821,7 +821,7 @@ fn thread_initialized_event_serializes_expected_shape() {
             initialization_mode: ThreadInitializationMode::New,
             subagent_source: None,
             parent_thread_id: None,
-            execution_environment: Some(ThreadExecutionEnvironment::Remote),
+            execution_environment: Some(ThreadExecutionEnvironment::Ssh),
             created_at: 1,
         },
     });
@@ -853,7 +853,7 @@ fn thread_initialized_event_serializes_expected_shape() {
                 "initialization_mode": "new",
                 "subagent_source": null,
                 "parent_thread_id": null,
-                "execution_environment": "remote",
+                "execution_environment": "ssh",
                 "created_at": 1
             }
         })
@@ -1755,7 +1755,7 @@ fn turn_event_serializes_expected_shape() {
             initialization_mode: ThreadInitializationMode::New,
             subagent_source: None,
             parent_thread_id: None,
-            execution_environment: Some(ThreadExecutionEnvironment::Remote),
+            execution_environment: Some(ThreadExecutionEnvironment::Ssh),
             model: Some("gpt-5".to_string()),
             model_provider: "openai".to_string(),
             sandbox_policy: Some("read_only"),
@@ -1817,7 +1817,7 @@ fn turn_event_serializes_expected_shape() {
                 "initialization_mode": "new",
                 "subagent_source": null,
                 "parent_thread_id": null,
-                "execution_environment": "remote",
+                "execution_environment": "ssh",
                 "model": "gpt-5",
                 "model_provider": "openai",
                 "sandbox_policy": "read_only",
@@ -2166,7 +2166,7 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
                 request: Box::new(ClientRequest::ThreadStart {
                     request_id: RequestId::Integer(1),
                     params: ThreadStartParams {
-                        execution_environment: Some(ThreadExecutionEnvironment::Remote),
+                        execution_environment: Some(ThreadExecutionEnvironment::Ssh),
                         ..Default::default()
                     },
                 }),
@@ -2189,7 +2189,7 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     let thread_payload = serde_json::to_value(&out[0]).expect("serialize thread event");
     assert_eq!(
         thread_payload["event_params"]["execution_environment"],
-        json!("remote")
+        json!("ssh")
     );
     out.clear();
 
@@ -2224,7 +2224,7 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     let resume_payload = serde_json::to_value(&out[0]).expect("serialize resume thread event");
     assert_eq!(
         resume_payload["event_params"]["execution_environment"],
-        json!("remote")
+        json!("ssh")
     );
     out.clear();
 
@@ -2278,7 +2278,7 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
         serde_json::to_value(turn_steer_event).expect("serialize turn steer event");
     assert_eq!(
         turn_steer_payload["event_params"]["execution_environment"],
-        json!("remote")
+        json!("ssh")
     );
 
     let turn_event = out
@@ -2288,7 +2288,7 @@ async fn thread_execution_environment_flows_to_thread_turn_and_steer_events() {
     let turn_payload = serde_json::to_value(turn_event).expect("serialize turn event");
     assert_eq!(
         turn_payload["event_params"]["execution_environment"],
-        json!("remote")
+        json!("ssh")
     );
 }
 

@@ -1264,7 +1264,9 @@
     },
     "ThreadExecutionEnvironment": {
       "enum": [
-        "remote"
+        "local",
+        "ssh",
+        "remote_control"
       ],
       "type": "string"
     }
