@@ -1105,7 +1105,7 @@ async fn resume_candidate_matches_cwd_reads_latest_turn_context() -> std::io::Re
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,
-            sandbox_policy: permission_profile.to_legacy_sandbox_policy(latest_cwd.as_path())?,
+            sandbox_policy: None,
             permission_profile: Some(permission_profile),
             network: None,
             file_system_sandbox_policy: None,
