@@ -757,9 +757,8 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
 }
 
 #[tokio::test]
-async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow::Result<()> {
+async fn new_turn_refreshes_managed_network_proxy_for_permission_change() -> anyhow::Result<()> {
     let (mut session, _turn_context) = make_session_and_context().await;
-    let initial_policy = SandboxPolicy::new_workspace_write_policy();
     let initial_permission_profile = PermissionProfile::workspace_write();
 
     let mut network_config = NetworkProxyConfig::default();
@@ -804,11 +803,10 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
         let mut state = session.state.lock().await;
         let mut config = (*state.session_configuration.original_config_do_not_use).clone();
         config.permissions.network = Some(spec);
-        let cwd = config.cwd.clone();
         config
             .permissions
-            .set_legacy_sandbox_policy(initial_policy.clone(), cwd.as_path())
-            .expect("test setup should allow sandbox policy");
+            .set_permission_profile(initial_permission_profile.clone())
+            .expect("test setup should allow permission profile");
         state.session_configuration.original_config_do_not_use = Arc::new(config);
         state
             .session_configuration
@@ -820,9 +818,9 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
 
     session
         .new_turn_with_sub_id(
-            "sandbox-policy-change".to_string(),
+            "permission-profile-change".to_string(),
             SessionSettingsUpdate {
-                sandbox_policy: Some(SandboxPolicy::DangerFullAccess),
+                permission_profile: Some(PermissionProfile::Disabled),
                 ..Default::default()
             },
         )
@@ -858,11 +856,10 @@ async fn danger_full_access_turns_do_not_expose_managed_network_proxy() -> anyho
     )?;
 
     let session = make_session_with_config(move |config| {
-        let cwd = config.cwd.clone();
         config
             .permissions
-            .set_legacy_sandbox_policy(SandboxPolicy::DangerFullAccess, cwd.as_path())
-            .expect("test setup should allow sandbox policy");
+            .set_permission_profile(PermissionProfile::Disabled)
+            .expect("test setup should allow permission profile");
         config.permissions.network = Some(network_spec);
     })
     .await?;
@@ -924,11 +921,10 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     )?;
 
     let session = make_session_with_config(move |config| {
-        let cwd = config.cwd.clone();
         config
             .permissions
-            .set_legacy_sandbox_policy(SandboxPolicy::DangerFullAccess, cwd.as_path())
-            .expect("test setup should allow sandbox policy");
+            .set_permission_profile(PermissionProfile::Disabled)
+            .expect("test setup should allow permission profile");
         config.permissions.network = Some(network_spec);
 
         let layers = config
@@ -988,7 +984,6 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
 
 #[tokio::test]
 async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> anyhow::Result<()> {
-    let sandbox_policy = SandboxPolicy::new_workspace_write_policy();
     let network_spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         NetworkProxyConfig::default(),
         Some(NetworkConstraints {
@@ -999,11 +994,10 @@ async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> any
     )?;
 
     let session = make_session_with_config(move |config| {
-        let cwd = config.cwd.clone();
         config
             .permissions
-            .set_legacy_sandbox_policy(sandbox_policy, cwd.as_path())
-            .expect("test setup should allow sandbox policy");
+            .set_permission_profile(PermissionProfile::workspace_write())
+            .expect("test setup should allow permission profile");
         config.permissions.network = Some(network_spec);
     })
     .await?;
@@ -1015,7 +1009,6 @@ async fn workspace_write_turns_continue_to_expose_managed_network_proxy() -> any
 
 #[tokio::test]
 async fn user_shell_commands_do_not_inherit_managed_network_proxy() -> anyhow::Result<()> {
-    let sandbox_policy = SandboxPolicy::new_workspace_write_policy();
     let network_spec = crate::config::NetworkProxySpec::from_config_and_constraints(
         NetworkProxyConfig::default(),
         Some(NetworkConstraints {
@@ -1026,11 +1019,10 @@ async fn user_shell_commands_do_not_inherit_managed_network_proxy() -> anyhow::R
     )?;
 
     let (session, rx) = make_session_with_config_and_rx(move |config| {
-        let cwd = config.cwd.clone();
         config
             .permissions
-            .set_legacy_sandbox_policy(sandbox_policy, cwd.as_path())
-            .expect("test setup should allow sandbox policy");
+            .set_permission_profile(PermissionProfile::workspace_write())
+            .expect("test setup should allow permission profile");
         config.permissions.network = Some(network_spec);
     })
     .await?;
@@ -2949,12 +2941,6 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
     let docs_dir = docs_dir.abs();
 
     session_configuration.cwd = original_cwd.abs();
-    let sandbox_policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: Vec::new(),
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
@@ -2967,14 +2953,11 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
             access: FileSystemAccessMode::Read,
         },
     ]);
-    let network_sandbox_policy = NetworkSandboxPolicy::from(&sandbox_policy);
-    session_configuration.permission_profile = codex_config::Constrained::allow_any(
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
+    session_configuration.permission_profile =
+        codex_config::Constrained::allow_any(PermissionProfile::from_runtime_permissions(
             &file_system_sandbox_policy,
-            network_sandbox_policy,
-        ),
-    );
+            NetworkSandboxPolicy::Restricted,
+        ));
 
     let updated = session_configuration
         .apply(&SessionSettingsUpdate {
@@ -2995,7 +2978,6 @@ async fn session_configuration_apply_permission_profile_preserves_existing_deny_
     let cwd = tempfile::tempdir().expect("create temp dir");
     session_configuration.cwd = cwd.path().abs();
 
-    let workspace_policy = SandboxPolicy::new_workspace_write_policy();
     let deny_entry = FileSystemSandboxEntry {
         path: FileSystemPath::GlobPattern {
             pattern: "**/*.env".to_string(),
@@ -3003,24 +2985,17 @@ async fn session_configuration_apply_permission_profile_preserves_existing_deny_
         access: FileSystemAccessMode::None,
     };
     let mut existing_file_system_policy =
-        FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-            &workspace_policy,
-            session_configuration.cwd.as_path(),
-        );
+        PermissionProfile::workspace_write().file_system_sandbox_policy();
     existing_file_system_policy.glob_scan_max_depth = Some(2);
     existing_file_system_policy.entries.push(deny_entry.clone());
-    session_configuration.permission_profile = codex_config::Constrained::allow_any(
-        PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(&workspace_policy),
+    session_configuration.permission_profile =
+        codex_config::Constrained::allow_any(PermissionProfile::from_runtime_permissions(
             &existing_file_system_policy,
             NetworkSandboxPolicy::Restricted,
-        ),
-    );
+        ));
 
-    let requested_file_system_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-        &workspace_policy,
-        session_configuration.cwd.as_path(),
-    );
+    let requested_file_system_policy =
+        PermissionProfile::workspace_write().file_system_sandbox_policy();
     let permission_profile = codex_protocol::models::PermissionProfile::from_runtime_permissions(
         &requested_file_system_policy,
         NetworkSandboxPolicy::Restricted,
@@ -5938,10 +5913,7 @@ async fn build_initial_context_restates_realtime_start_when_reference_context_is
 }
 
 fn file_system_policy_with_unreadable_glob(turn_context: &TurnContext) -> FileSystemSandboxPolicy {
-    let mut policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-        &turn_context.sandbox_policy(),
-        &turn_context.cwd,
-    );
+    let mut policy = turn_context.file_system_sandbox_policy();
     policy.entries.push(FileSystemSandboxEntry {
         path: FileSystemPath::GlobPattern {
             pattern: format!("{}/**/*.env", turn_context.cwd.as_path().display()),
