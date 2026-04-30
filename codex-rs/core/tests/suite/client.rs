@@ -63,6 +63,7 @@ use core_test_support::responses::sse_failed;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
+use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
 use dunce::canonicalize as normalize_path;
 use futures::StreamExt;
@@ -1725,6 +1726,10 @@ async fn user_turn_collaboration_mode_overrides_model_and_effort() -> anyhow::Re
         session_configured,
         ..
     } = test_codex().with_model("gpt-5.4").build(&server).await?;
+    let (sandbox_policy, permission_profile) = turn_permission_fields(
+        config.permissions.permission_profile(),
+        config.cwd.as_path(),
+    );
 
     let collaboration_mode = CollaborationMode {
         mode: ModeKind::Default,
@@ -1745,8 +1750,8 @@ async fn user_turn_collaboration_mode_overrides_model_and_effort() -> anyhow::Re
             cwd: config.cwd.to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_configured.model.clone(),
             effort: Some(ReasoningEffort::Low),
             summary: Some(
@@ -1856,6 +1861,10 @@ async fn user_turn_explicit_reasoning_summary_overrides_model_catalog_default() 
         })
         .build(&server)
         .await?;
+    let (sandbox_policy, permission_profile) = turn_permission_fields(
+        config.permissions.permission_profile(),
+        config.cwd.as_path(),
+    );
 
     codex
         .submit(Op::UserTurn {
@@ -1867,8 +1876,8 @@ async fn user_turn_explicit_reasoning_summary_overrides_model_catalog_default() 
             cwd: config.cwd.to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: session_configured.model,
             effort: None,
             summary: Some(ReasoningSummary::Concise),

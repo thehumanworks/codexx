@@ -439,16 +439,15 @@ async fn overrides_turn_context_but_keeps_cached_prefix_and_key_constant() -> an
         /*exclude_tmpdir_env_var*/ true,
         /*exclude_slash_tmp*/ true,
     );
-    let sandbox_policy = permission_profile
-        .to_legacy_sandbox_policy(config.cwd.as_path())
-        .expect("workspace profile should have legacy projection");
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(permission_profile, config.cwd.as_path());
     codex
         .submit(Op::OverrideTurnContext {
             cwd: None,
             approval_policy: Some(AskForApproval::Never),
             approvals_reviewer: None,
             sandbox_policy: Some(sandbox_policy),
-            permission_profile: Some(permission_profile),
+            permission_profile,
             windows_sandbox_level: None,
             model: None,
             effort: Some(Some(ReasoningEffort::High)),
@@ -832,7 +831,10 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() -> a
 
     let default_cwd = config.cwd.clone();
     let default_approval_policy = config.permissions.approval_policy.value();
-    let default_sandbox_policy = &config.legacy_sandbox_policy();
+    let (default_sandbox_policy, default_permission_profile) = turn_permission_fields(
+        config.permissions.permission_profile(),
+        default_cwd.as_path(),
+    );
     let default_model = session_configured.model;
     let default_effort = config.model_reasoning_effort;
     let default_summary = config.model_reasoning_summary;
@@ -848,7 +850,7 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() -> a
             approval_policy: default_approval_policy,
             approvals_reviewer: None,
             sandbox_policy: default_sandbox_policy.clone(),
-            permission_profile: None,
+            permission_profile: default_permission_profile.clone(),
             model: default_model.clone(),
             effort: default_effort,
             summary: Some(default_summary.unwrap_or(ReasoningSummary::Auto)),
@@ -871,7 +873,7 @@ async fn send_user_turn_with_no_changes_does_not_send_environment_context() -> a
             approval_policy: default_approval_policy,
             approvals_reviewer: None,
             sandbox_policy: default_sandbox_policy.clone(),
-            permission_profile: None,
+            permission_profile: default_permission_profile.clone(),
             model: default_model.clone(),
             effort: default_effort,
             summary: Some(default_summary.unwrap_or(ReasoningSummary::Auto)),
@@ -962,7 +964,10 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
 
     let default_cwd = config.cwd.clone();
     let default_approval_policy = config.permissions.approval_policy.value();
-    let default_sandbox_policy = &config.legacy_sandbox_policy();
+    let (default_sandbox_policy, default_permission_profile) = turn_permission_fields(
+        config.permissions.permission_profile(),
+        default_cwd.as_path(),
+    );
     let default_model = session_configured.model;
     let default_effort = config.model_reasoning_effort;
     let default_summary = config.model_reasoning_summary;
@@ -978,7 +983,7 @@ async fn send_user_turn_with_changes_sends_environment_context() -> anyhow::Resu
             approval_policy: default_approval_policy,
             approvals_reviewer: None,
             sandbox_policy: default_sandbox_policy.clone(),
-            permission_profile: None,
+            permission_profile: default_permission_profile.clone(),
             model: default_model,
             effort: default_effort,
             summary: Some(default_summary.unwrap_or(ReasoningSummary::Auto)),
