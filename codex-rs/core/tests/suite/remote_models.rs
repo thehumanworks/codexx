@@ -152,6 +152,8 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
         })
         .build(&server)
         .await?;
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -163,13 +165,13 @@ async fn remote_models_config_context_window_override_clamps_to_max_context_wind
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
+            sandbox_policy,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
             service_tier: None,
             collaboration_mode: None,
-            permission_profile: None,
+            permission_profile,
             personality: None,
             environments: None,
         })
@@ -230,6 +232,8 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
         })
         .build(&server)
         .await?;
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -241,13 +245,13 @@ async fn remote_models_config_override_above_max_uses_max_context_window() -> Re
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
+            sandbox_policy,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
             service_tier: None,
             collaboration_mode: None,
-            permission_profile: None,
+            permission_profile,
             personality: None,
             environments: None,
         })
@@ -307,6 +311,8 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
         })
         .build(&server)
         .await?;
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -318,13 +324,13 @@ async fn remote_models_use_context_window_when_config_override_is_absent() -> Re
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
+            sandbox_policy,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
             service_tier: None,
             collaboration_mode: None,
-            permission_profile: None,
+            permission_profile,
             personality: None,
             environments: None,
         })
@@ -397,6 +403,8 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
         })
         .build(&server)
         .await?;
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -408,8 +416,8 @@ async fn remote_models_long_model_slug_is_sent_with_high_reasoning() -> Result<(
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: requested_model.to_string(),
             effort: None,
             summary: None,
@@ -458,6 +466,8 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
         .with_model(requested_model)
         .build(&server)
         .await?;
+    let (sandbox_policy, permission_profile) =
+        turn_permission_fields(config.permissions.permission_profile(), cwd.path());
 
     codex
         .submit(Op::UserTurn {
@@ -469,8 +479,8 @@ async fn namespaced_model_slug_uses_catalog_metadata_without_fallback_warning() 
             cwd: cwd.path().to_path_buf(),
             approval_policy: config.permissions.approval_policy.value(),
             approvals_reviewer: None,
-            sandbox_policy: config.legacy_sandbox_policy(),
-            permission_profile: None,
+            sandbox_policy,
+            permission_profile,
             model: requested_model.to_string(),
             effort: None,
             summary: Some(
