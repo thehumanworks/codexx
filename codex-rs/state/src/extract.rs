@@ -303,9 +303,7 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::Never,
-                sandbox_policy: PermissionProfile::read_only()
-                    .to_legacy_sandbox_policy(Path::new("/"))
-                    .expect("read-only profile should project to legacy sandbox"),
+                sandbox_policy: None,
                 permission_profile: Some(PermissionProfile::Disabled),
                 network: None,
                 file_system_sandbox_policy: None,
@@ -342,9 +340,11 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                sandbox_policy: PermissionProfile::read_only()
-                    .to_legacy_sandbox_policy(Path::new("/"))
-                    .expect("read-only profile should project to legacy sandbox"),
+                sandbox_policy: Some(
+                    PermissionProfile::read_only()
+                        .to_legacy_sandbox_policy(Path::new("/"))
+                        .expect("read-only profile should project to legacy sandbox"),
+                ),
                 permission_profile: None,
                 network: None,
                 file_system_sandbox_policy: None,
@@ -378,9 +378,11 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::OnRequest,
-                sandbox_policy: PermissionProfile::read_only()
-                    .to_legacy_sandbox_policy(Path::new("/"))
-                    .expect("read-only profile should project to legacy sandbox"),
+                sandbox_policy: Some(
+                    PermissionProfile::read_only()
+                        .to_legacy_sandbox_policy(Path::new("/"))
+                        .expect("read-only profile should project to legacy sandbox"),
+                ),
                 permission_profile: None,
                 network: None,
                 file_system_sandbox_policy: None,
