@@ -19,6 +19,7 @@ FORBIDDEN_PACKAGE = "codex-core"
 CODEX_PROTOCOL_PACKAGE = "codex-protocol"
 CODEX_PROTOCOL_MESSAGE = "references `codex_protocol::protocol`"
 CODEX_PROTOCOL_GLOB_MESSAGE = "glob-imports `codex_protocol`, which exposes `protocol`"
+GLOB_IMPORT_ALIAS = "*"
 IDENTIFIER = r"(?:r#)?[^\W\d]\w*"
 PROTOCOL_IDENTIFIER = r"(?:r#)?protocol"
 TOKEN_SEPARATOR = r"\s*"
@@ -34,10 +35,11 @@ FORBIDDEN_SOURCE_RULES = (
         ),
     ),
 )
-EXTERN_CRATE_ALIAS_PATTERN = re.compile(
+EXTERN_CRATE_PATTERN = re.compile(
     rf"\bextern{REQUIRED_TOKEN_SEPARATOR}crate{REQUIRED_TOKEN_SEPARATOR}"
-    rf"({IDENTIFIER}){REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}"
-    rf"({IDENTIFIER}){TOKEN_SEPARATOR};"
+    rf"({IDENTIFIER}|self)"
+    rf"(?:{REQUIRED_TOKEN_SEPARATOR}as{REQUIRED_TOKEN_SEPARATOR}({IDENTIFIER}))?"
+    rf"{TOKEN_SEPARATOR};"
 )
 
 
@@ -421,15 +423,22 @@ def all_import_aliases(source_texts: list[tuple[Path, str]]) -> list[ImportAlias
     for path, text in source_texts:
         base_module_path = source_module_path(path)
         module_blocks = module_block_spans(text, base_module_path)
-        for match in EXTERN_CRATE_ALIAS_PATTERN.finditer(text):
+        for match in EXTERN_CRATE_PATTERN.finditer(text):
             module_path = module_path_at_offset(
                 base_module_path, module_blocks, match.start()
+            )
+            source = normalize_identifier(match.group(1))
+            explicit_alias = match.group(2)
+            alias = (
+                normalize_identifier(explicit_alias)
+                if explicit_alias is not None
+                else source
             )
             aliases.append(
                 ImportAlias(
                     module_path,
-                    normalize_identifier(match.group(1)),
-                    normalize_identifier(match.group(2)),
+                    source,
+                    alias,
                 )
             )
         for statement in use_statements(text):
@@ -445,14 +454,34 @@ def derived_protocol_aliases(import_alias: ImportAlias, aliases: set[str]) -> se
     derived = set()
     alias_path = join_paths(import_alias.module_path, import_alias.alias)
     for source in path_candidates(import_alias.source, import_alias.module_path):
+        if import_alias.alias == GLOB_IMPORT_ALIAS:
+            for suffix in protocol_aliases_under_source(source, aliases):
+                derived.add(join_paths(import_alias.module_path, suffix))
+            continue
+        if not source:
+            for known_alias in root_protocol_aliases(aliases):
+                derived.add(join_paths(alias_path, known_alias))
+            continue
         if source in aliases:
             derived.add(alias_path)
-        source_prefix = f"{source}::"
-        for known_alias in aliases:
-            if known_alias.startswith(source_prefix):
-                suffix = known_alias.removeprefix(source_prefix)
-                derived.add(join_paths(alias_path, suffix))
+        for suffix in protocol_aliases_under_source(source, aliases):
+            derived.add(join_paths(alias_path, suffix))
     return derived
+
+
+def protocol_aliases_under_source(source: str, aliases: set[str]) -> set[str]:
+    if not source:
+        return root_protocol_aliases(aliases)
+    source_prefix = f"{source}::"
+    return {
+        known_alias.removeprefix(source_prefix)
+        for known_alias in aliases
+        if known_alias.startswith(source_prefix)
+    }
+
+
+def root_protocol_aliases(aliases: set[str]) -> set[str]:
+    return {alias for alias in aliases if "::" not in alias}
 
 
 def source_module_path(path: Path) -> str:
@@ -543,6 +572,10 @@ def use_tree_import_aliases(tree: str) -> list[tuple[str, str]]:
             pairs.extend(use_tree_import_aliases(item))
         return pairs
 
+    glob_source = glob_import_source(tree)
+    if glob_source is not None:
+        return [(glob_source, GLOB_IMPORT_ALIAS)]
+
     grouped = grouped_use_tree(tree)
     if grouped is not None:
         group_source, body, _body_offset = grouped
@@ -564,6 +597,17 @@ def use_tree_import_aliases(tree: str) -> list[tuple[str, str]]:
     if alias is None:
         return []
     return [(source, alias)]
+
+
+def glob_import_source(tree: str) -> str | None:
+    match = re.fullmatch(
+        rf"(?:::{TOKEN_SEPARATOR})?({PATH_PREFIX}{IDENTIFIER}|self)"
+        rf"{TOKEN_SEPARATOR}::{TOKEN_SEPARATOR}\*",
+        tree.strip(),
+    )
+    if match is None:
+        return None
+    return normalize_path(match.group(1))
 
 
 def import_alias(item: str) -> tuple[str, str | None]:
