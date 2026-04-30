@@ -75,7 +75,10 @@ fn apply_turn_context(metadata: &mut ThreadMetadata, turn_ctx: &TurnContextItem)
     }
     metadata.model = Some(turn_ctx.model.clone());
     metadata.reasoning_effort = turn_ctx.effort;
-    metadata.sandbox_policy = enum_to_string(&turn_ctx.sandbox_policy);
+    metadata.sandbox_policy = crate::model::legacy_sandbox_policy_string(
+        &turn_ctx.permission_profile(),
+        turn_ctx.cwd.as_path(),
+    );
     metadata.approval_mode = enum_to_string(&turn_ctx.approval_policy);
 }
 
@@ -150,6 +153,7 @@ mod tests {
     use codex_protocol::ThreadId;
     use codex_protocol::config_types::ReasoningSummary;
     use codex_protocol::models::ContentItem;
+    use codex_protocol::models::PermissionProfile;
     use codex_protocol::models::ResponseItem;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::protocol::AskForApproval;
@@ -299,8 +303,8 @@ mod tests {
                 current_date: None,
                 timezone: None,
                 approval_policy: AskForApproval::Never,
-                sandbox_policy: SandboxPolicy::DangerFullAccess,
-                permission_profile: None,
+                sandbox_policy: SandboxPolicy::new_read_only_policy(),
+                permission_profile: Some(PermissionProfile::Disabled),
                 network: None,
                 file_system_sandbox_policy: None,
                 model: "gpt-5".to_string(),
