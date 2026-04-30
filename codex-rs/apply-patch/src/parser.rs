@@ -444,6 +444,117 @@ fn parse_update_file_chunk(
 }
 
 #[test]
+fn test_parse_one_hunk() {
+    assert_eq!(
+        parse_one_hunk(&["bad"], /*line_number*/ 234),
+        Err(InvalidHunkError {
+            message: "'bad' is not a valid hunk header. \
+            Valid hunk headers: '*** Add File: {path}', '*** Delete File: {path}', '*** Update File: {path}'".to_string(),
+            line_number: 234
+        })
+    );
+}
+
+#[test]
+fn test_update_file_chunk() {
+    assert_eq!(
+        parse_update_file_chunk(
+            &["bad"],
+            /*line_number*/ 123,
+            /*allow_missing_context*/ false,
+        ),
+        Err(InvalidHunkError {
+            message: "Expected update hunk to start with a @@ context marker, got: 'bad'"
+                .to_string(),
+            line_number: 123
+        })
+    );
+    assert_eq!(
+        parse_update_file_chunk(
+            &["@@"],
+            /*line_number*/ 123,
+            /*allow_missing_context*/ false,
+        ),
+        Err(InvalidHunkError {
+            message: "Update hunk does not contain any lines".to_string(),
+            line_number: 124
+        })
+    );
+    assert_eq!(
+        parse_update_file_chunk(
+            &["@@", "bad"],
+            /*line_number*/ 123,
+            /*allow_missing_context*/ false,
+        ),
+        Err(InvalidHunkError {
+            message: "Unexpected line found in update hunk: 'bad'. Every line should start with ' ' (context line), '+' (added line), or '-' (removed line)".to_string(),
+            line_number: 124
+        })
+    );
+    assert_eq!(
+        parse_update_file_chunk(
+            &["@@", "*** End of File"],
+            /*line_number*/ 123,
+            /*allow_missing_context*/ false,
+        ),
+        Err(InvalidHunkError {
+            message: "Update hunk does not contain any lines".to_string(),
+            line_number: 124
+        })
+    );
+    assert_eq!(
+        parse_update_file_chunk(
+            &[
+                "@@ change_context",
+                "",
+                " context",
+                "-remove",
+                "+add",
+                " context2",
+                "*** End Patch",
+            ],
+            /*line_number*/ 123,
+            /*allow_missing_context*/ false,
+        ),
+        Ok((
+            UpdateFileChunk {
+                change_context: Some("change_context".to_string()),
+                old_lines: vec![
+                    String::new(),
+                    "context".to_string(),
+                    "remove".to_string(),
+                    "context2".to_string(),
+                ],
+                new_lines: vec![
+                    String::new(),
+                    "context".to_string(),
+                    "add".to_string(),
+                    "context2".to_string(),
+                ],
+                is_end_of_file: false,
+            },
+            6,
+        ))
+    );
+    assert_eq!(
+        parse_update_file_chunk(
+            &["@@", "+line", "*** End of File"],
+            /*line_number*/ 123,
+            /*allow_missing_context*/ false,
+        ),
+        Ok((
+            UpdateFileChunk {
+                change_context: None,
+                old_lines: Vec::new(),
+                new_lines: vec!["line".to_string()],
+                is_end_of_file: true,
+            },
+            3,
+        ))
+    );
+}
+
+#[test]
 fn test_parse_patch() {
     assert_eq!(
         parse_patch_text("bad", ParseMode::Strict),
