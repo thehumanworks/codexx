@@ -14,7 +14,10 @@ fn user_config_path(file_name: &str) -> AbsolutePathBuf {
 
 fn user_layer(path: AbsolutePathBuf, config: &str) -> ConfigLayerEntry {
     ConfigLayerEntry::new(
-        ConfigLayerSource::User { file: path },
+        ConfigLayerSource::User {
+            file: path,
+            profile: None,
+        },
         toml::from_str(config).expect("user config toml"),
     )
 }

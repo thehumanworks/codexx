@@ -4510,7 +4510,8 @@ async fn for_config_writes_selected_user_config_file() -> anyhow::Result<()> {
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.path().to_path_buf())
         .loader_overrides(LoaderOverrides {
-            user_config_path: Some(selected_config.clone()),
+            user_config_path: Some(selected_config.abs()),
+            user_config_profile: Some("work".to_string()),
             ..LoaderOverrides::without_managed_config_for_tests()
         })
         .build()
@@ -4538,10 +4539,18 @@ fn profile_v2_config_path_accepts_only_plain_names() -> anyhow::Result<()> {
     let codex_home = TempDir::new()?;
     assert_eq!(
         resolve_profile_v2_config_path(codex_home.path(), "work")?,
-        codex_home.path().join("work.config.toml")
+        codex_home.path().join("work.config.toml").abs()
     );
 
-    for invalid in ["", ".", "..", "nested/work", "nested\\work", "work.toml"] {
+    for invalid in [
+        "",
+        ".",
+        "..",
+        "nested/work",
+        "nested\\work",
+        "work.toml",
+        "work.name",
+    ] {
         assert!(
             resolve_profile_v2_config_path(codex_home.path(), invalid).is_err(),
             "{invalid:?} should be rejected"
@@ -5142,6 +5151,7 @@ config_file = "./agents/researcher.toml"
         vec![codex_config::ConfigLayerEntry::new(
             codex_app_server_protocol::ConfigLayerSource::User {
                 file: codex_home.path().join(CONFIG_TOML_FILE).abs(),
+                profile: None,
             },
             layer_config,
         )],

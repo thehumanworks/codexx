@@ -93,7 +93,7 @@ pub async fn load_config_layers_state(
     cloud_requirements: CloudRequirementsLoader,
     thread_config_loader: &dyn ThreadConfigLoader,
 ) -> io::Result<ConfigLayerStack> {
-    let profile_user_config_path = overrides.user_config_path.clone();
+    let active_user_profile = overrides.user_config_profile.clone();
     let ignore_managed_requirements = overrides.ignore_managed_requirements;
     let ignore_user_config = overrides.ignore_user_config;
     let ignore_user_and_project_exec_policy_rules =
@@ -179,14 +179,19 @@ pub async fn load_config_layers_state(
     // profile config as a second user layer on top so the profile only needs to
     // contain overrides.
     let base_user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home);
-    layers.push(load_user_config_layer(fs, &base_user_file, ignore_user_config).await?);
+    layers.push(load_user_config_layer(fs, &base_user_file, None, ignore_user_config).await?);
 
-    let active_user_file = match profile_user_config_path {
-        Some(path) => AbsolutePathBuf::from_absolute_path(path)?,
-        None => base_user_file.clone(),
-    };
+    let active_user_file = overrides.user_config_path(codex_home)?;
     if active_user_file != base_user_file {
-        layers.push(load_user_config_layer(fs, &active_user_file, ignore_user_config).await?);
+        layers.push(
+            load_user_config_layer(
+                fs,
+                &active_user_file,
+                active_user_profile,
+                ignore_user_config,
+            )
+            .await?,
+        );
     }
 
     if let Some(cwd) = cwd {
@@ -312,12 +317,14 @@ pub async fn load_config_layers_state(
 async fn load_user_config_layer(
     fs: &dyn ExecutorFileSystem,
     user_file: &AbsolutePathBuf,
+    profile: Option<String>,
     ignore_user_config: bool,
 ) -> io::Result<ConfigLayerEntry> {
     if ignore_user_config {
         return Ok(ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: user_file.clone(),
+                profile,
             },
             TomlValue::Table(toml::map::Map::new()),
         ));
@@ -327,6 +334,7 @@ async fn load_user_config_layer(
         ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: user_file.clone(),
+                profile: profile.clone(),
             },
             config_toml,
         )

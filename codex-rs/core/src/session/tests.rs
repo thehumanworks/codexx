@@ -1174,7 +1174,8 @@ async fn reload_user_config_layer_updates_base_and_selected_profile_layers() {
     let config = ConfigBuilder::without_managed_config_for_tests()
         .codex_home(codex_home.to_path_buf())
         .loader_overrides(LoaderOverrides {
-            user_config_path: Some(profile_config_path.to_path_buf()),
+            user_config_path: Some(profile_config_path.abs()),
+            user_config_profile: Some("work".to_string()),
             ..LoaderOverrides::without_managed_config_for_tests()
         })
         .build()

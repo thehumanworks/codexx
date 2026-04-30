@@ -11,13 +11,15 @@ use codex_app_server_protocol::ConfigLayerSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 use toml::Value as TomlValue;
 
 /// LoaderOverrides overrides managed configuration inputs (primarily for tests).
 #[derive(Debug, Default, Clone)]
 pub struct LoaderOverrides {
-    pub user_config_path: Option<PathBuf>,
+    pub user_config_path: Option<AbsolutePathBuf>,
+    pub user_config_profile: Option<String>,
     pub managed_config_path: Option<PathBuf>,
     pub system_config_path: Option<PathBuf>,
     pub system_requirements_path: Option<PathBuf>,
@@ -38,6 +40,7 @@ impl LoaderOverrides {
         let base = std::env::temp_dir().join("codex-config-tests");
         Self {
             user_config_path: None,
+            user_config_profile: None,
             managed_config_path: Some(base.join("managed_config.toml")),
             system_config_path: Some(base.join("config.toml")),
             system_requirements_path: Some(base.join("requirements.toml")),
@@ -56,8 +59,19 @@ impl LoaderOverrides {
     pub fn with_managed_config_path_for_tests(managed_config_path: PathBuf) -> Self {
         Self {
             user_config_path: None,
+            user_config_profile: None,
             managed_config_path: Some(managed_config_path),
             ..Self::without_managed_config_for_tests()
+        }
+    }
+
+    pub fn user_config_path(&self, codex_home: &Path) -> std::io::Result<AbsolutePathBuf> {
+        match self.user_config_path.as_ref() {
+            Some(path) => Ok(path.clone()),
+            None => Ok(AbsolutePathBuf::resolve_path_against_base(
+                crate::CONFIG_TOML_FILE,
+                codex_home,
+            )),
         }
     }
 }
@@ -138,7 +152,7 @@ impl ConfigLayerEntry {
         match &self.name {
             ConfigLayerSource::Mdm { .. } => None,
             ConfigLayerSource::System { file } => file.parent(),
-            ConfigLayerSource::User { file } => file.parent(),
+            ConfigLayerSource::User { file, .. } => file.parent(),
             ConfigLayerSource::Project { dot_codex_folder } => Some(dot_codex_folder.clone()),
             ConfigLayerSource::SessionFlags => None,
             ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. } => None,
@@ -211,14 +225,14 @@ impl ConfigLayerStack {
     /// Returns the active raw user config layer, if any.
     ///
     /// This does not merge other config layers or apply any requirements.
-    pub fn get_user_layer(&self) -> Option<&ConfigLayerEntry> {
+    pub fn get_active_user_layer(&self) -> Option<&ConfigLayerEntry> {
         self.user_layer_index
             .and_then(|index| self.layers.get(index))
     }
 
     pub fn get_user_config_file(&self) -> Option<&AbsolutePathBuf> {
-        let layer = self.get_user_layer()?;
-        let ConfigLayerSource::User { file } = &layer.name else {
+        let layer = self.get_active_user_layer()?;
+        let ConfigLayerSource::User { file, .. } = &layer.name else {
             return None;
         };
         Some(file)
@@ -269,55 +283,57 @@ impl ConfigLayerStack {
     /// replaced; otherwise, it is inserted into the stack at the appropriate
     /// position based on precedence rules.
     pub fn with_user_config(&self, config_toml: &AbsolutePathBuf, user_config: TomlValue) -> Self {
+        let profile = self.layers.iter().find_map(|layer| match &layer.name {
+            ConfigLayerSource::User { file, profile } if file == config_toml => profile.clone(),
+            _ => None,
+        });
+        self.with_user_config_profile(config_toml, profile, user_config)
+    }
+
+    pub fn with_user_config_profile(
+        &self,
+        config_toml: &AbsolutePathBuf,
+        profile: Option<String>,
+        user_config: TomlValue,
+    ) -> Self {
         let user_layer = ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: config_toml.clone(),
+                profile,
             },
             user_config,
         );
 
         let mut layers = self.layers.clone();
-        let matching_user_layer_index = layers.iter().position(|layer| {
+        if let Some(index) = layers.iter().position(|layer| {
             matches!(
                 &layer.name,
-                ConfigLayerSource::User { file } if file == config_toml
+                ConfigLayerSource::User { file, .. } if file == config_toml
             )
+        }) {
+            layers.remove(index);
+        }
+        match layers
+            .iter()
+            .position(|layer| layer.name.precedence() > user_layer.name.precedence())
+        {
+            Some(index) => layers.insert(index, user_layer),
+            None => layers.push(user_layer),
+        }
+        let user_layer_index = layers.iter().enumerate().rev().find_map(|(index, layer)| {
+            if matches!(layer.name, ConfigLayerSource::User { .. }) {
+                Some(index)
+            } else {
+                None
+            }
         });
-        match matching_user_layer_index.or(self.user_layer_index) {
-            Some(index) => {
-                layers[index] = user_layer;
-                Self {
-                    layers,
-                    user_layer_index: self.user_layer_index,
-                    requirements: self.requirements.clone(),
-                    requirements_toml: self.requirements_toml.clone(),
-                    ignore_user_and_project_exec_policy_rules: self
-                        .ignore_user_and_project_exec_policy_rules,
-                }
-            }
-            None => {
-                let user_layer_index = match layers
-                    .iter()
-                    .position(|layer| layer.name.precedence() > user_layer.name.precedence())
-                {
-                    Some(index) => {
-                        layers.insert(index, user_layer);
-                        index
-                    }
-                    None => {
-                        layers.push(user_layer);
-                        layers.len() - 1
-                    }
-                };
-                Self {
-                    layers,
-                    user_layer_index: Some(user_layer_index),
-                    requirements: self.requirements.clone(),
-                    requirements_toml: self.requirements_toml.clone(),
-                    ignore_user_and_project_exec_policy_rules: self
-                        .ignore_user_and_project_exec_policy_rules,
-                }
-            }
+        Self {
+            layers,
+            user_layer_index,
+            requirements: self.requirements.clone(),
+            requirements_toml: self.requirements_toml.clone(),
+            ignore_user_and_project_exec_policy_rules: self
+                .ignore_user_and_project_exec_policy_rules,
         }
     }
 

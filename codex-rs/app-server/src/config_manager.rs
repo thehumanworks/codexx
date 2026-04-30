@@ -1,6 +1,5 @@
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader;
-use codex_config::CONFIG_TOML_FILE;
 use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigLayerStack;
 use codex_config::LoaderOverrides;
@@ -61,13 +60,7 @@ impl ConfigManager {
     }
 
     pub(crate) fn user_config_path(&self) -> std::io::Result<AbsolutePathBuf> {
-        match self.loader_overrides.user_config_path.as_ref() {
-            Some(path) => AbsolutePathBuf::from_absolute_path(path.clone()),
-            None => Ok(AbsolutePathBuf::resolve_path_against_base(
-                CONFIG_TOML_FILE,
-                self.codex_home(),
-            )),
-        }
+        self.loader_overrides.user_config_path(self.codex_home())
     }
 
     pub(crate) fn current_cli_overrides(&self) -> Vec<(String, TomlValue)> {
@@ -157,6 +150,16 @@ impl ConfigManager {
             self.current_cli_overrides(),
         )
         .await?;
+        if self.loader_overrides.user_config_path.is_some()
+            || self.loader_overrides.user_config_profile.is_some()
+        {
+            let user_config_path = self.loader_overrides.user_config_path(self.codex_home())?;
+            config.config_layer_stack = config.config_layer_stack.with_user_config_profile(
+                &user_config_path,
+                self.loader_overrides.user_config_profile.clone(),
+                TomlValue::Table(toml::map::Map::new()),
+            );
+        }
         self.apply_runtime_feature_enablement(&mut config);
         self.apply_arg0_paths(&mut config);
         Ok(config)

@@ -143,7 +143,7 @@ async fn ignore_user_config_keeps_empty_user_layer() -> std::io::Result<()> {
     .await?;
 
     let user_layer = layers
-        .get_user_layer()
+        .get_active_user_layer()
         .expect("expected a user layer even when CODEX_HOME/config.toml is ignored");
     assert_eq!(
         user_layer.config,
@@ -319,12 +319,13 @@ async fn returns_empty_when_all_layers_missing() {
     .await
     .expect("load layers");
     let user_layer = layers
-        .get_user_layer()
+        .get_active_user_layer()
         .expect("expected a user layer even when CODEX_HOME/config.toml does not exist");
     assert_eq!(
         &ConfigLayerEntry {
             name: ConfigLayerSource::User {
-                file: AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, tmp.path())
+                file: AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, tmp.path()),
+                profile: None,
             },
             config: TomlValue::Table(toml::map::Map::new()),
             raw_toml: None,
@@ -383,7 +384,9 @@ approval_policy = "on-failure"
     std::fs::write(&selected_config, r#"model = "gpt-work""#).expect("write selected user config");
 
     let mut overrides = LoaderOverrides::with_managed_config_path_for_tests(managed_path);
-    overrides.user_config_path = Some(selected_config.clone());
+    overrides.user_config_path =
+        Some(AbsolutePathBuf::from_absolute_path(&selected_config).expect("selected config path"));
+    overrides.user_config_profile = Some("work".to_string());
 
     let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
     let layers = load_config_layers_state(
@@ -407,15 +410,17 @@ approval_policy = "on-failure"
         user_layers[0].name,
         ConfigLayerSource::User {
             file: AbsolutePathBuf::from_absolute_path(tmp.path().join(CONFIG_TOML_FILE))
-                .expect("base user config path")
+                .expect("base user config path"),
+            profile: None,
         }
     );
-    let user_layer = layers.get_user_layer().expect("selected user layer");
+    let user_layer = layers.get_active_user_layer().expect("selected user layer");
     assert_eq!(
         user_layer.name,
         ConfigLayerSource::User {
             file: AbsolutePathBuf::from_absolute_path(&selected_config)
-                .expect("selected user config path")
+                .expect("selected user config path"),
+            profile: Some("work".to_string()),
         }
     );
     assert_eq!(
@@ -473,6 +478,7 @@ async fn includes_thread_config_layers_in_stack() -> anyhow::Result<()> {
             ConfigLayerSource::SessionFlags,
             ConfigLayerSource::User {
                 file: AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, tmp.path()),
+                profile: None,
             },
             ConfigLayerSource::System {
                 file: expected_system_config,

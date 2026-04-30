@@ -189,7 +189,10 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     );
     let config_layer_stack = ConfigLayerStack::new(
         vec![ConfigLayerEntry::new(
-            ConfigLayerSource::User { file: config_path },
+            ConfigLayerSource::User {
+                file: config_path,
+                profile: None,
+            },
             user_config,
         )],
         ConfigRequirements {
@@ -244,6 +247,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
             ConfigLayerEntry::new(
                 ConfigLayerSource::User {
                     file: user_config_path,
+                    profile: None,
                 },
                 config_with_hook_state(&managed_key, /*enabled*/ false),
             ),
@@ -465,6 +469,7 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         vec![ConfigLayerEntry::new(
             ConfigLayerSource::User {
                 file: config_path.clone(),
+                profile: None,
             },
             config_toml,
         )],

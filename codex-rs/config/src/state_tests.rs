@@ -43,7 +43,10 @@ fn active_user_layer_is_highest_precedence_user_layer() {
     let base_file = test_user_config_path("config.toml");
     let profile_file = test_user_config_path("work.config.toml");
     let base_layer = ConfigLayerEntry::new(
-        ConfigLayerSource::User { file: base_file },
+        ConfigLayerSource::User {
+            file: base_file,
+            profile: None,
+        },
         toml::from_str(
             r#"
 model = "base"
@@ -55,6 +58,7 @@ approval_policy = "on-failure"
     let profile_layer = ConfigLayerEntry::new(
         ConfigLayerSource::User {
             file: profile_file.clone(),
+            profile: Some("work".to_string()),
         },
         toml::from_str(r#"model = "profile""#).expect("profile config"),
     );
@@ -91,12 +95,14 @@ fn with_user_config_updates_matching_user_layer_without_replacing_active_profile
     let base_layer = ConfigLayerEntry::new(
         ConfigLayerSource::User {
             file: base_file.clone(),
+            profile: None,
         },
         toml::from_str(r#"model = "base""#).expect("base config"),
     );
     let profile_layer = ConfigLayerEntry::new(
         ConfigLayerSource::User {
             file: profile_file.clone(),
+            profile: Some("work".to_string()),
         },
         toml::from_str(r#"approval_policy = "on-failure""#).expect("profile config"),
     );

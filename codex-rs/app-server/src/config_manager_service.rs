@@ -216,7 +216,7 @@ impl ConfigManager {
             .load_thread_agnostic_config()
             .await
             .map_err(|err| ConfigManagerError::io("failed to load configuration", err))?;
-        let user_layer = match layers.get_user_layer() {
+        let user_layer = match layers.get_active_user_layer() {
             Some(layer) => Cow::Borrowed(layer),
             None => Cow::Owned(create_empty_user_layer(&allowed_path).await?),
         };
@@ -322,7 +322,7 @@ impl ConfigManager {
         Ok(ConfigWriteResponse {
             status,
             version: updated_layers
-                .get_user_layer()
+                .get_active_user_layer()
                 .ok_or_else(|| {
                     ConfigManagerError::write(
                         ConfigWriteErrorCode::UserLayerNotFound,
@@ -376,6 +376,7 @@ async fn create_empty_user_layer(
     Ok(ConfigLayerEntry::new(
         ConfigLayerSource::User {
             file: config_toml.clone(),
+            profile: None,
         },
         toml_value,
     ))
@@ -575,7 +576,7 @@ fn override_message(layer: &ConfigLayerSource) -> String {
             dot_codex_folder.display(),
         ),
         ConfigLayerSource::SessionFlags => "Overridden by session flags".to_string(),
-        ConfigLayerSource::User { file } => {
+        ConfigLayerSource::User { file, .. } => {
             format!("Overridden by user config: {}", file.display())
         }
         ConfigLayerSource::LegacyManagedConfigTomlFromFile { file } => {
@@ -595,7 +596,7 @@ fn compute_override_metadata(
     effective: &TomlValue,
     segments: &[String],
 ) -> Option<OverriddenMetadata> {
-    let user_value = match layers.get_user_layer() {
+    let user_value = match layers.get_active_user_layer() {
         Some(user_layer) => value_at_path(&user_layer.config, segments),
         None => return None,
     };

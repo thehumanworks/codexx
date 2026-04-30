@@ -293,7 +293,8 @@ async fn read_includes_origins_and_layers() {
     assert_eq!(
         layers.get(1).unwrap().name,
         ConfigLayerSource::User {
-            file: user_file.clone()
+            file: user_file.clone(),
+            profile: None,
         }
     );
     assert!(matches!(
@@ -463,7 +464,9 @@ async fn write_value_defaults_to_selected_user_config_path() {
 
     let mut loader_overrides =
         LoaderOverrides::with_managed_config_path_for_tests(tmp.path().join("managed_config.toml"));
-    loader_overrides.user_config_path = Some(selected_path.clone());
+    loader_overrides.user_config_path =
+        Some(AbsolutePathBuf::from_absolute_path(&selected_path).expect("selected config path"));
+    loader_overrides.user_config_profile = Some("work".to_string());
     let service = ConfigManager::new_for_tests(
         tmp.path().to_path_buf(),
         vec![],
@@ -488,6 +491,41 @@ async fn write_value_defaults_to_selected_user_config_path() {
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE)).expect("read main config"),
         "model = \"gpt-main\""
+    );
+}
+
+#[tokio::test]
+async fn load_default_config_preserves_selected_user_config_path_after_load_error() {
+    let tmp = tempdir().expect("tempdir");
+    std::fs::write(tmp.path().join(CONFIG_TOML_FILE), "model = \"gpt-main\"").unwrap();
+    let selected_path = tmp.path().join("work.config.toml");
+    std::fs::write(&selected_path, "not valid toml").unwrap();
+    let selected_file =
+        AbsolutePathBuf::from_absolute_path(&selected_path).expect("selected config path");
+
+    let mut loader_overrides =
+        LoaderOverrides::with_managed_config_path_for_tests(tmp.path().join("managed_config.toml"));
+    loader_overrides.user_config_path = Some(selected_file.clone());
+    loader_overrides.user_config_profile = Some("work".to_string());
+    let service = ConfigManager::new_for_tests(
+        tmp.path().to_path_buf(),
+        vec![],
+        loader_overrides,
+        CloudRequirementsLoader::default(),
+    );
+
+    service
+        .load_latest_config(/*fallback_cwd*/ None)
+        .await
+        .expect_err("selected config should fail to load");
+    let config = service
+        .load_default_config()
+        .await
+        .expect("default config loads after selected config error");
+
+    assert_eq!(
+        config.config_layer_stack.get_user_config_file(),
+        Some(&selected_file)
     );
 }
 
@@ -702,7 +740,10 @@ async fn read_reports_managed_overrides_user_and_session_flags() {
     assert_eq!(layers.get(1).unwrap().name, ConfigLayerSource::SessionFlags);
     assert_eq!(
         layers.get(2).unwrap().name,
-        ConfigLayerSource::User { file: user_file }
+        ConfigLayerSource::User {
+            file: user_file,
+            profile: None
+        }
     );
 }
 

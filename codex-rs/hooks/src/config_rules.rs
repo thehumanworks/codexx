@@ -89,6 +89,7 @@ mod tests {
                 ConfigLayerEntry::new(
                     ConfigLayerSource::User {
                         file: test_path_buf("/tmp/config.toml").abs(),
+                        profile: None,
                     },
                     config_with_hook_override(key, Some(/*enabled*/ false)),
                 ),
@@ -123,6 +124,7 @@ mod tests {
             vec![ConfigLayerEntry::new(
                 ConfigLayerSource::User {
                     file: test_path_buf("/tmp/config.toml").abs(),
+                    profile: None,
                 },
                 config,
             )],
@@ -157,6 +159,7 @@ mod tests {
             vec![ConfigLayerEntry::new(
                 ConfigLayerSource::User {
                     file: test_path_buf("/tmp/config.toml").abs(),
+                    profile: None,
                 },
                 config,
             )],

@@ -1115,14 +1115,11 @@ impl Config {
 pub fn resolve_profile_v2_config_path(
     codex_home: &Path,
     profile_name: &str,
-) -> std::io::Result<PathBuf> {
+) -> std::io::Result<AbsolutePathBuf> {
     if profile_name.is_empty()
-        || profile_name == "."
-        || profile_name == ".."
-        || profile_name.contains(std::path::MAIN_SEPARATOR)
-        || profile_name.contains('/')
-        || profile_name.contains('\\')
-        || profile_name.ends_with(".toml")
+        || !profile_name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
     {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -1132,7 +1129,10 @@ pub fn resolve_profile_v2_config_path(
         ));
     }
 
-    Ok(codex_home.join(format!("{profile_name}{CONFIG_PROFILE_V2_SUFFIX}")))
+    Ok(AbsolutePathBuf::resolve_path_against_base(
+        format!("{profile_name}{CONFIG_PROFILE_V2_SUFFIX}"),
+        codex_home,
+    ))
 }
 
 /// DEPRECATED: Use [Config::load_with_cli_overrides()] instead because working

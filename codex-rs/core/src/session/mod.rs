@@ -1397,7 +1397,7 @@ impl Session {
                 )
                 .into_iter()
                 .filter_map(|layer| {
-                    let ConfigLayerSource::User { file } = &layer.name else {
+                    let ConfigLayerSource::User { file, .. } = &layer.name else {
                         return None;
                     };
                     Some(file.clone())

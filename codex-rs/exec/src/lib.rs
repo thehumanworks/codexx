@@ -325,7 +325,8 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         None => None,
     };
     let loader_overrides = LoaderOverrides {
-        user_config_path: user_config_path.clone(),
+        user_config_path,
+        user_config_profile: config_profile_v2.clone(),
         ignore_user_config,
         ignore_user_and_project_exec_policy_rules: ignore_rules,
         ..Default::default()
