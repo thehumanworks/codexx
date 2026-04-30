@@ -256,6 +256,8 @@ impl ExecPolicyManager {
             PowershellCommandSequenceParseMode::ExecPolicy,
         )
         .filter(|commands| !commands.is_empty());
+        #[cfg(not(windows))]
+        let powershell_commands: Option<Vec<Vec<String>>> = None;
         let (commands, used_complex_parsing) = if let Some(commands) = powershell_commands.clone() {
             (commands, false)
         } else {
