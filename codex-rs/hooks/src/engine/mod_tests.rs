@@ -326,6 +326,7 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
         HookTrustStatus::Untrusted
     );
     assert_eq!(untrusted.hook_entries[0].trusted_hash, None);
+    assert_eq!(untrusted.handlers, Vec::new());
 
     let current_hash = untrusted.hook_entries[0].current_hash.clone();
     let trusted_stack = ConfigLayerStack::new(
@@ -351,6 +352,7 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
         HookTrustStatus::Trusted
     );
     assert_eq!(trusted.hook_entries[0].trusted_hash, Some(current_hash));
+    assert_eq!(trusted.handlers.len(), 1);
 
     let changed_stack = ConfigLayerStack::new(
         vec![ConfigLayerEntry::new(
@@ -380,6 +382,7 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
         changed.hook_entries[0].trusted_hash.as_deref(),
         Some("sha256:old")
     );
+    assert_eq!(changed.handlers, Vec::new());
 }
 
 fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
@@ -450,6 +453,45 @@ fn config_with_pre_tool_use_hook(command: &str) -> TomlValue {
         },
     }))
     .expect("config TOML should deserialize")
+}
+
+fn trusted_plugin_hook_stack(
+    config_path: AbsolutePathBuf,
+    plugin_hook_sources: &[PluginHookSource],
+) -> ConfigLayerStack {
+    let discovered = super::discovery::discover_handlers(
+        /*config_layer_stack*/ None,
+        plugin_hook_sources.to_vec(),
+        Vec::new(),
+    );
+    let state = discovered
+        .hook_entries
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.key,
+                serde_json::json!({
+                    "trusted_hash": entry.current_hash,
+                }),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let config = serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "state": state,
+        },
+    }))
+    .expect("config TOML should deserialize");
+
+    ConfigLayerStack::new(
+        vec![ConfigLayerEntry::new(
+            ConfigLayerSource::User { file: config_path },
+            config,
+        )],
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack")
 }
 
 #[test]
@@ -586,7 +628,7 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
     config_table.insert("hooks".to_string(), hooks_table);
     let config_layer_stack = ConfigLayerStack::new(
         vec![ConfigLayerEntry::new(
-            ConfigLayerSource::User {
+            ConfigLayerSource::System {
                 file: config_path.clone(),
             },
             config_toml,
@@ -631,7 +673,7 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         engine
             .handlers
             .iter()
-            .all(|handler| !handler.source.is_managed())
+            .all(|handler| handler.source.is_managed())
     );
     assert_eq!(preview[0].source_path, hooks_json_path);
     assert_eq!(preview[1].source_path, config_path);
@@ -680,10 +722,14 @@ print(json.dumps({
             ..Default::default()
         },
     }];
+    let config_layer_stack = trusted_plugin_hook_stack(
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute config path"),
+        &plugin_hook_sources,
+    );
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*config_layer_stack*/ None,
-        plugin_hook_sources.clone(),
+        Some(&config_layer_stack),
+        plugin_hook_sources,
         Vec::new(),
         CommandShell {
             program: String::new(),
@@ -784,9 +830,13 @@ fn plugin_hook_sources_expand_plugin_placeholders() {
             ..Default::default()
         },
     }];
+    let config_layer_stack = trusted_plugin_hook_stack(
+        AbsolutePathBuf::try_from(temp.path().join("config.toml")).expect("absolute config path"),
+        &plugin_hook_sources,
+    );
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*config_layer_stack*/ None,
+        Some(&config_layer_stack),
         plugin_hook_sources,
         Vec::new(),
         CommandShell {
