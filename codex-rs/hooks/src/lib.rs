@@ -47,6 +47,7 @@ pub use legacy_notify::notify_hook;
 pub use registry::HookListOutcome;
 pub use registry::Hooks;
 pub use registry::HooksConfig;
+pub use registry::SkillHookSource;
 pub use registry::command_from_argv;
 pub use registry::list_hooks;
 pub use schema::write_schema_fixtures;

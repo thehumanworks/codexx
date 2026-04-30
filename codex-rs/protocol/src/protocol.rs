@@ -1573,6 +1573,7 @@ pub enum HookSource {
     Mdm,
     SessionFlags,
     Plugin,
+    Skill,
     CloudRequirements,
     LegacyManagedConfigFile,
     LegacyManagedConfigMdm,
@@ -4020,6 +4021,7 @@ mod tests {
         assert_eq!(HookSource::Project.is_managed(), false);
         assert_eq!(HookSource::SessionFlags.is_managed(), false);
         assert_eq!(HookSource::Plugin.is_managed(), false);
+        assert_eq!(HookSource::Skill.is_managed(), false);
         assert_eq!(HookSource::Unknown.is_managed(), false);
     }
 

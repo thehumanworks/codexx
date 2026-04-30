@@ -18,6 +18,7 @@ pub(super) fn image_generation_tool_auth_allowed(auth_manager: Option<&AuthManag
 pub(crate) struct TurnSkillsContext {
     pub(crate) outcome: Arc<SkillLoadOutcome>,
     pub(crate) implicit_invocation_seen_skills: Arc<Mutex<HashSet<String>>>,
+    active_hook_sources: Arc<std::sync::RwLock<Vec<codex_hooks::SkillHookSource>>>,
 }
 
 impl TurnSkillsContext {
@@ -25,6 +26,28 @@ impl TurnSkillsContext {
         Self {
             outcome,
             implicit_invocation_seen_skills: Arc::new(Mutex::new(HashSet::new())),
+            active_hook_sources: Arc::new(std::sync::RwLock::new(Vec::new())),
+        }
+    }
+
+    pub(crate) fn set_active_hook_sources(&self, sources: Vec<codex_hooks::SkillHookSource>) {
+        let mut active_hook_sources = self
+            .active_hook_sources
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *active_hook_sources = sources;
+    }
+
+    pub(crate) fn hooks_for_turn(&self, base_hooks: Arc<Hooks>) -> Arc<Hooks> {
+        let active_hook_sources = self
+            .active_hook_sources
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if active_hook_sources.is_empty() {
+            base_hooks
+        } else {
+            Arc::new(base_hooks.with_skill_hook_sources(active_hook_sources))
         }
     }
 }

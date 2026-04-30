@@ -5,6 +5,7 @@ use std::sync::atomic::Ordering;
 
 use crate::SkillInjections;
 use crate::SkillLoadOutcome;
+use crate::active_skill_hook_sources;
 use crate::build_skill_injections;
 use crate::client::ModelClientSession;
 use crate::client_common::Prompt;
@@ -222,6 +223,19 @@ pub(crate) async fn run_turn(
             &connector_slug_counts,
         )
     });
+    if turn_context.features.enabled(Feature::CodexHooks)
+        && let Some(outcome) = skills_outcome
+    {
+        let (skill_hook_sources, skill_hook_warnings) =
+            active_skill_hook_sources(outcome, &mentioned_skills);
+        turn_context
+            .turn_skills
+            .set_active_hook_sources(skill_hook_sources);
+        for message in skill_hook_warnings {
+            sess.send_event(&turn_context, EventMsg::Warning(WarningEvent { message }))
+                .await;
+        }
+    }
     let config = turn_context.config.clone();
     if config
         .features
@@ -520,7 +534,7 @@ pub(crate) async fn run_turn(
                         stop_hook_active,
                         last_assistant_message: last_agent_message.clone(),
                     };
-                    let hooks = sess.hooks();
+                    let hooks = turn_context.turn_skills.hooks_for_turn(sess.hooks());
                     for run in hooks.preview_stop(&stop_request) {
                         sess.send_event(
                             &turn_context,

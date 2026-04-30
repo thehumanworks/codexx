@@ -116,7 +116,7 @@ pub(crate) async fn run_pending_session_start_hooks(
         permission_mode: hook_permission_mode(turn_context),
         source: session_start_source,
     };
-    let hooks = sess.hooks();
+    let hooks = turn_context.turn_skills.hooks_for_turn(sess.hooks());
     let preview_runs = hooks.preview_session_start(&request);
     run_context_injecting_hook(
         sess,
@@ -153,7 +153,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
         tool_use_id,
         tool_input: tool_input.clone(),
     };
-    let hooks = sess.hooks();
+    let hooks = turn_context.turn_skills.hooks_for_turn(sess.hooks());
     let preview_runs = hooks.preview_pre_tool_use(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;
 
@@ -203,7 +203,7 @@ pub(crate) async fn run_permission_request_hooks(
         run_id_suffix: run_id_suffix.to_string(),
         tool_input: payload.tool_input,
     };
-    let hooks = sess.hooks();
+    let hooks = turn_context.turn_skills.hooks_for_turn(sess.hooks());
     let preview_runs = hooks.preview_permission_request(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;
 
@@ -244,7 +244,7 @@ pub(crate) async fn run_post_tool_use_hooks(
         tool_input,
         tool_response,
     };
-    let hooks = sess.hooks();
+    let hooks = turn_context.turn_skills.hooks_for_turn(sess.hooks());
     let preview_runs = hooks.preview_post_tool_use(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;
 
@@ -478,6 +478,7 @@ fn hook_run_metric_tags(run: &HookRunSummary) -> [(&'static str, &'static str); 
         HookSource::Mdm => "mdm",
         HookSource::SessionFlags => "session_flags",
         HookSource::Plugin => "plugin",
+        HookSource::Skill => "skill",
         HookSource::CloudRequirements => "cloud_requirements",
         HookSource::LegacyManagedConfigFile => "legacy_managed_config_file",
         HookSource::LegacyManagedConfigMdm => "legacy_managed_config_mdm",

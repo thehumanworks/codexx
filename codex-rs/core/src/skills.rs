@@ -9,6 +9,7 @@ use crate::session::turn_context::TurnContext;
 use codex_analytics::InvocationType;
 use codex_analytics::SkillInvocation;
 use codex_analytics::build_track_events_context;
+use codex_hooks::SkillHookSource;
 use codex_protocol::protocol::SkillScope;
 use codex_protocol::request_user_input::RequestUserInputArgs;
 use codex_protocol::request_user_input::RequestUserInputQuestion;
@@ -229,4 +230,41 @@ pub(crate) async fn maybe_emit_implicit_skill_invocation(
             ),
             vec![invocation],
         );
+}
+
+pub(crate) fn active_skill_hook_sources(
+    outcome: &SkillLoadOutcome,
+    skills: &[SkillMetadata],
+) -> (Vec<SkillHookSource>, Vec<String>) {
+    let mut sources = Vec::new();
+    let mut warnings = Vec::new();
+
+    for skill in skills {
+        let Some(hooks) = outcome.hooks_for_skill(skill) else {
+            continue;
+        };
+        if hooks.is_empty() {
+            continue;
+        }
+
+        let mut hooks = hooks.clone();
+        if !hooks.session_start.is_empty() {
+            warnings.push(format!(
+                "Skipping SessionStart hooks from skill {} because skills activate after thread start.",
+                skill.name
+            ));
+            hooks.session_start.clear();
+        }
+        if hooks.is_empty() {
+            continue;
+        }
+
+        sources.push(SkillHookSource {
+            skill_name: skill.name.clone(),
+            source_path: skill.path_to_skills_md.clone(),
+            hooks,
+        });
+    }
+
+    (sources, warnings)
 }

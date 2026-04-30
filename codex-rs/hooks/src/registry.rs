@@ -1,5 +1,7 @@
 use codex_config::ConfigLayerStack;
+use codex_config::HookEventsToml;
 use codex_plugin::PluginHookSource;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use tokio::process::Command;
 
 use crate::engine::ClaudeHooksEngine;
@@ -31,6 +33,13 @@ pub struct HooksConfig {
     pub plugin_hook_load_warnings: Vec<String>,
     pub shell_program: Option<String>,
     pub shell_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillHookSource {
+    pub skill_name: String,
+    pub source_path: AbsolutePathBuf,
+    pub hooks: HookEventsToml,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -79,6 +88,14 @@ impl Hooks {
 
     pub fn startup_warnings(&self) -> &[String] {
         self.engine.warnings()
+    }
+
+    pub fn with_skill_hook_sources(&self, skill_hook_sources: Vec<SkillHookSource>) -> Self {
+        Self {
+            after_agent: self.after_agent.clone(),
+            after_tool_use: self.after_tool_use.clone(),
+            engine: self.engine.with_skill_hook_sources(skill_hook_sources),
+        }
     }
 
     fn hooks_for_event(&self, hook_event: &HookEvent) -> &[Hook] {

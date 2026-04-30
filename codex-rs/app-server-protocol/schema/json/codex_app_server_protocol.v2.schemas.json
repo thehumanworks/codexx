@@ -6595,6 +6595,7 @@
         "mdm",
         "sessionFlags",
         "plugin",
+        "skill",
         "cloudRequirements",
         "legacyManagedConfigFile",
         "legacyManagedConfigMdm",

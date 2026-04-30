@@ -328,6 +328,46 @@ async fn loads_skills_from_home_agents_dir_for_user_scope() -> anyhow::Result<()
     Ok(())
 }
 
+#[tokio::test]
+async fn parses_hooks_from_skill_frontmatter() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let skill_dir = codex_home.path().join("skills").join("secure-operations");
+    fs::create_dir_all(&skill_dir)?;
+    fs::write(
+        skill_dir.join(SKILLS_FILENAME),
+        r#"---
+name: secure-operations
+description: security checks
+hooks:
+  PreToolUse:
+    - matcher: "Bash"
+      hooks:
+        - type: command
+          command: "./scripts/security-check.sh"
+---
+
+# Body
+"#,
+    )?;
+
+    let outcome = load_skills_from_roots(vec![SkillRoot {
+        path: codex_home.path().join("skills").abs(),
+        scope: SkillScope::User,
+        file_system: Arc::clone(&LOCAL_FS),
+    }])
+    .await;
+
+    let skill = outcome.skills.first().expect("skill should load");
+    let hooks = outcome
+        .hooks_for_skill(skill)
+        .expect("skill hooks should be retained");
+    assert_eq!(hooks.pre_tool_use.len(), 1);
+    assert_eq!(hooks.pre_tool_use[0].matcher.as_deref(), Some("Bash"));
+    assert_eq!(hooks.handler_count(), 1);
+
+    Ok(())
+}
+
 fn write_skill(codex_home: &TempDir, dir: &str, name: &str, description: &str) -> PathBuf {
     write_skill_at(&codex_home.path().join("skills"), dir, name, description)
 }

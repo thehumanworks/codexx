@@ -6,6 +6,7 @@ pub(crate) mod schema_loader;
 
 use std::collections::HashMap;
 
+use crate::registry::SkillHookSource;
 use codex_config::ConfigLayerStack;
 use codex_plugin::PluginHookSource;
 use codex_protocol::protocol::HookEventName;
@@ -87,6 +88,7 @@ pub struct HookListEntry {
 
 #[derive(Clone)]
 pub(crate) struct ClaudeHooksEngine {
+    enabled: bool,
     handlers: Vec<ConfiguredHandler>,
     warnings: Vec<String>,
     shell: CommandShell,
@@ -102,6 +104,7 @@ impl ClaudeHooksEngine {
     ) -> Self {
         if !enabled {
             return Self {
+                enabled,
                 handlers: Vec::new(),
                 warnings: Vec::new(),
                 shell,
@@ -115,6 +118,7 @@ impl ClaudeHooksEngine {
             plugin_hook_load_warnings,
         );
         Self {
+            enabled,
             handlers: discovered.handlers,
             warnings: discovered.warnings,
             shell,
@@ -123,6 +127,35 @@ impl ClaudeHooksEngine {
 
     pub(crate) fn warnings(&self) -> &[String] {
         &self.warnings
+    }
+
+    pub(crate) fn with_skill_hook_sources(&self, skill_hook_sources: Vec<SkillHookSource>) -> Self {
+        if skill_hook_sources.is_empty() {
+            return self.clone();
+        }
+        if !self.enabled {
+            return self.clone();
+        }
+
+        let mut handlers = self.handlers.clone();
+        let mut warnings = self.warnings.clone();
+        let next_display_order = handlers
+            .iter()
+            .map(|handler| handler.display_order)
+            .max()
+            .map_or(0, |display_order| display_order + 1);
+        discovery::append_skill_hook_sources(
+            &mut handlers,
+            &mut warnings,
+            next_display_order,
+            skill_hook_sources,
+        );
+        Self {
+            enabled: self.enabled,
+            handlers,
+            warnings,
+            shell: self.shell.clone(),
+        }
     }
 
     pub(crate) fn preview_session_start(

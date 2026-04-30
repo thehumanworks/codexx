@@ -91,6 +91,7 @@ pub(crate) use skills::SkillLoadOutcome;
 pub(crate) use skills::SkillMetadata;
 pub(crate) use skills::SkillsLoadInput;
 pub(crate) use skills::SkillsManager;
+pub(crate) use skills::active_skill_hook_sources;
 pub(crate) use skills::build_available_skills;
 pub(crate) use skills::build_skill_injections;
 pub(crate) use skills::build_skill_name_counts;

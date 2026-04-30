@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
 
+use codex_config::HookEventsToml;
 use codex_exec_server::ExecutorFileSystem;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
@@ -92,6 +93,7 @@ pub struct SkillLoadOutcome {
     pub(crate) skill_roots: Vec<AbsolutePathBuf>,
     pub(crate) skill_root_by_path: Arc<HashMap<AbsolutePathBuf, AbsolutePathBuf>>,
     pub(crate) file_systems_by_skill_path: SkillFileSystemsByPath,
+    pub(crate) hooks_by_skill_path: HashMap<AbsolutePathBuf, HookEventsToml>,
     pub(crate) implicit_skills_by_scripts_dir: Arc<HashMap<AbsolutePathBuf, SkillMetadata>>,
     pub(crate) implicit_skills_by_doc_path: Arc<HashMap<AbsolutePathBuf, SkillMetadata>>,
 }
@@ -125,6 +127,10 @@ impl SkillLoadOutcome {
     ) -> Option<Arc<dyn ExecutorFileSystem>> {
         self.file_systems_by_skill_path
             .get(&skill.path_to_skills_md)
+    }
+
+    pub fn hooks_for_skill(&self, skill: &SkillMetadata) -> Option<&HookEventsToml> {
+        self.hooks_by_skill_path.get(&skill.path_to_skills_md)
     }
 }
 
@@ -178,6 +184,9 @@ pub fn filter_skill_load_outcome_for_product(
     outcome
         .file_systems_by_skill_path
         .retain_paths(&retained_paths);
+    outcome
+        .hooks_by_skill_path
+        .retain(|path, _| retained_paths.contains(path));
     outcome.skill_root_by_path = Arc::new(
         outcome
             .skill_root_by_path

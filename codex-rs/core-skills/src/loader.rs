@@ -10,6 +10,7 @@ use crate::system::system_cache_root_dir;
 use codex_app_server_protocol::ConfigLayerSource;
 use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
+use codex_config::HookEventsToml;
 use codex_config::default_project_root_markers;
 use codex_config::merge_toml_values;
 use codex_config::project_root_markers_from_config;
@@ -42,6 +43,8 @@ struct SkillFrontmatter {
     description: Option<String>,
     #[serde(default)]
     metadata: SkillFrontmatterMetadata,
+    #[serde(default)]
+    hooks: HookEventsToml,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -554,8 +557,11 @@ async fn discover_skills_under_root(
 
             if metadata.is_file && file_name == SKILLS_FILENAME {
                 match parse_skill_file(fs, &path, scope).await {
-                    Ok(skill) => {
-                        outcome.skills.push(skill);
+                    Ok(parsed) => {
+                        outcome
+                            .hooks_by_skill_path
+                            .insert(parsed.metadata.path_to_skills_md.clone(), parsed.hooks);
+                        outcome.skills.push(parsed.metadata);
                     }
                     Err(err) => {
                         if scope != SkillScope::System {
@@ -583,7 +589,7 @@ async fn parse_skill_file(
     fs: &dyn ExecutorFileSystem,
     path: &AbsolutePathBuf,
     scope: SkillScope,
-) -> Result<SkillMetadata, SkillParseError> {
+) -> Result<ParsedSkill, SkillParseError> {
     let contents = fs
         .read_file_text(path, /*sandbox*/ None)
         .await
@@ -630,16 +636,24 @@ async fn parse_skill_file(
 
     let resolved_path = canonicalize_for_skill_identity(path);
 
-    Ok(SkillMetadata {
-        name,
-        description,
-        short_description,
-        interface,
-        dependencies,
-        policy,
-        path_to_skills_md: resolved_path,
-        scope,
+    Ok(ParsedSkill {
+        metadata: SkillMetadata {
+            name,
+            description,
+            short_description,
+            interface,
+            dependencies,
+            policy,
+            path_to_skills_md: resolved_path,
+            scope,
+        },
+        hooks: parsed.hooks,
     })
+}
+
+struct ParsedSkill {
+    metadata: SkillMetadata,
+    hooks: HookEventsToml,
 }
 
 fn default_skill_name(path: &AbsolutePathBuf) -> String {

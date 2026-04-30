@@ -23,6 +23,7 @@ use super::HookListEntry;
 use crate::config_rules::disabled_hook_keys_from_stack;
 use crate::events::common::matcher_pattern_for_event;
 use crate::events::common::validate_matcher_pattern;
+use crate::registry::SkillHookSource;
 use codex_protocol::protocol::HookHandlerType;
 use codex_protocol::protocol::HookSource;
 
@@ -191,6 +192,44 @@ fn append_plugin_hook_sources(
                 disabled_hook_keys,
                 env,
                 plugin_id: Some(plugin_id),
+            },
+            hooks,
+        );
+    }
+}
+
+pub(crate) fn append_skill_hook_sources(
+    handlers: &mut Vec<ConfiguredHandler>,
+    warnings: &mut Vec<String>,
+    mut display_order: i64,
+    skill_hook_sources: Vec<SkillHookSource>,
+) {
+    let disabled_hook_keys = HashSet::new();
+    let mut hook_entries = Vec::new();
+    for source in skill_hook_sources {
+        let SkillHookSource {
+            skill_name,
+            source_path,
+            mut hooks,
+        } = source;
+        if !hooks.session_start.is_empty() {
+            warnings.push(format!(
+                "skipping SessionStart hooks from skill {skill_name}: skills activate after thread start"
+            ));
+            hooks.session_start.clear();
+        }
+        append_hook_events(
+            handlers,
+            &mut hook_entries,
+            warnings,
+            &mut display_order,
+            HookHandlerSource {
+                path: &source_path,
+                key_source: format!("skill:{}", source_path.display()),
+                source: HookSource::Skill,
+                disabled_hook_keys: &disabled_hook_keys,
+                env: HashMap::new(),
+                plugin_id: None,
             },
             hooks,
         );
