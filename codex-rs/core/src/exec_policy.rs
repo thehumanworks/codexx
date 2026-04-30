@@ -886,7 +886,14 @@ fn derive_requested_execpolicy_amendment_from_prefix_rule_for_powershell(
         return None;
     }
 
-    if matched_rules.iter().any(is_policy_match) {
+    // PowerShell evaluation can combine outer wrapper matches with unmatched
+    // inner commands. Existing explicit allow rules should not suppress a
+    // requested inner-command prefix rule that would resolve the remaining
+    // prompt, but explicit prompt/forbidden matches still should.
+    if matched_rules
+        .iter()
+        .any(|rule_match| is_policy_match(rule_match) && rule_match.decision() != Decision::Allow)
+    {
         return None;
     }
 
