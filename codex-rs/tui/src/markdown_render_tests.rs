@@ -28,6 +28,14 @@ fn plain_lines(text: &Text<'_>) -> Vec<String> {
         .collect()
 }
 
+fn find_span<'a>(text: &'a Text<'_>, content: &str) -> &'a Span<'a> {
+    text.lines
+        .iter()
+        .flat_map(|line| line.spans.iter())
+        .find(|span| span.content == content)
+        .unwrap_or_else(|| panic!("expected span containing {content:?} in {text:?}"))
+}
+
 fn assert_table_lines_leave_wrap_safety_column(lines: &[String], width: usize) {
     assert!(
         lines
@@ -292,6 +300,69 @@ fn table_inline_links_and_html_breaks_stay_inside_table() {
             && lines.iter().any(|line| line.contains("two"))
             && lines.iter().all(|line| !line.contains("<br>")),
         "HTML breaks should render as table cell line breaks: {lines:?}"
+    );
+}
+
+#[test]
+fn table_preserves_inline_styles_in_boxed_layout() {
+    let markdown = "| Feature | Sample |\n| --- | --- |\n| Code | `run just fmt` |\n| Bold | **strong** |\n| Italic | *soft* |\n| Strike | ~~gone~~ |\n| Link | [docs](https://example.com/docs) |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(96), /*cwd*/ None);
+
+    assert_eq!(find_span(&rendered, "run just fmt").style, "x".cyan().style);
+    assert_eq!(find_span(&rendered, "strong").style, "x".bold().style);
+    assert_eq!(find_span(&rendered, "soft").style, "x".italic().style);
+    assert_eq!(
+        find_span(&rendered, "gone").style,
+        "x".crossed_out().style
+    );
+    assert_eq!(
+        find_span(&rendered, "https://example.com/docs").style,
+        "x".cyan().underlined().style
+    );
+}
+
+#[test]
+fn table_preserves_inline_styles_in_vertical_layout() {
+    let markdown =
+        "| Feature | Sample | Notes |\n| --- | --- | --- |\n| Code | `cargo test` | **done** |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(30), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("Sample │ cargo")),
+        "narrow table should render as vertical key/value rows: {lines:?}"
+    );
+    assert_eq!(find_span(&rendered, "cargo test").style, "x".cyan().style);
+    assert_eq!(find_span(&rendered, "done").style, "x".bold().style);
+}
+
+#[test]
+fn table_local_file_links_match_regular_response_display() {
+    let markdown = "| Path |\n| --- |\n| [label](file:///Users/example/code/codex/codex-rs/tui/src/markdown_render.rs#L74C3) |\n";
+    let rendered = render_markdown_text_with_width_and_cwd(
+        markdown,
+        /*width*/ None,
+        Some(Path::new("/Users/example/code/codex")),
+    );
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("codex-rs/tui/src/markdown_render.rs:74:3")),
+        "local table link should show the resolved target: {lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.contains("label")),
+        "local table link should suppress the markdown label: {lines:?}"
+    );
+    assert_eq!(
+        find_span(&rendered, "codex-rs/tui/src/markdown_render.rs:74:3").style,
+        "x".cyan().style
     );
 }
 

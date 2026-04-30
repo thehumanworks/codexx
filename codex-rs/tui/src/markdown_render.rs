@@ -30,9 +30,11 @@ use std::sync::LazyLock;
 use url::Url;
 
 mod table;
-use table::TableState;
+mod table_cell;
+mod table_state;
 use table::normalize_table_boundaries;
 use table::render_table_lines;
+use table_state::TableState;
 
 struct MarkdownStyles {
     h1: Style,
@@ -285,13 +287,7 @@ where
             Tag::Emphasis => self.push_inline_style(self.styles.emphasis),
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
-            Tag::Link { dest_url, .. } => {
-                if let Some(table) = self.table.as_mut() {
-                    table.start_link(dest_url.to_string());
-                } else {
-                    self.push_link(dest_url.to_string());
-                }
-            }
+            Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
             Tag::Table(_) => self.start_table(),
             Tag::TableHead | Tag::TableRow => self.start_table_row(),
             Tag::TableCell => self.start_table_cell(),
@@ -320,8 +316,8 @@ where
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
             TagEnd::Link => {
-                if let Some(table) = self.table.as_mut() {
-                    table.end_link();
+                if self.table.is_some() {
+                    self.pop_table_link();
                 } else {
                     self.pop_link();
                 }
@@ -435,8 +431,14 @@ where
     }
 
     fn text(&mut self, text: CowStr<'a>) {
-        if let Some(table) = self.table.as_mut() {
-            table.push_text(&text);
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(&text, style);
+            }
             return;
         }
         if self.suppressing_local_link_label() {
@@ -492,8 +494,13 @@ where
     }
 
     fn code(&mut self, code: CowStr<'a>) {
-        if let Some(table) = self.table.as_mut() {
-            table.push_text(&code);
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(&code, self.styles.code);
+            }
             return;
         }
         if self.suppressing_local_link_label() {
@@ -509,8 +516,14 @@ where
     }
 
     fn html(&mut self, html: CowStr<'a>, inline: bool) {
-        if let Some(table) = self.table.as_mut() {
-            table.push_html(&html);
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_html(&html, style);
+            }
             return;
         }
         if self.suppressing_local_link_label() {
@@ -533,8 +546,14 @@ where
     }
 
     fn hard_break(&mut self) {
-        if let Some(table) = self.table.as_mut() {
-            table.push_text(" ");
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(" ", style);
+            }
             return;
         }
         if self.suppressing_local_link_label() {
@@ -545,8 +564,14 @@ where
     }
 
     fn soft_break(&mut self) {
-        if let Some(table) = self.table.as_mut() {
-            table.push_text(" ");
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(" ", style);
+            }
             return;
         }
         if self.suppressing_local_link_label() {
@@ -718,6 +743,31 @@ where
                 self.push_span(Span::styled(local_target_display, style));
                 self.line_ends_with_local_link_target = true;
             }
+        }
+    }
+
+    fn pop_table_link(&mut self) {
+        let Some(link) = self.link.take() else {
+            return;
+        };
+        let Some(table) = self.table.as_mut() else {
+            return;
+        };
+
+        if link.show_destination {
+            table.push_span(" (".into());
+            table.push_span(Span::styled(link.destination, self.styles.link));
+            table.push_span(")".into());
+        } else if let Some(local_target_display) = link.local_target_display {
+            // Local file links are rendered as code-like path text so the transcript shows the
+            // resolved target instead of arbitrary caller-provided label text.
+            let style = self
+                .inline_styles
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .patch(self.styles.code);
+            table.push_span(Span::styled(local_target_display, style));
         }
     }
 

@@ -1,73 +1,12 @@
+use super::table_cell::TableCell;
 use std::borrow::Cow;
 
+use crate::render::line_utils::line_to_static;
+use crate::wrapping::RtOptions;
+use crate::wrapping::word_wrap_line;
 use ratatui::text::Line;
+use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
-
-#[derive(Debug, Default)]
-pub(super) struct TableState {
-    pub(super) rows: Vec<Vec<String>>,
-    current_row: Vec<String>,
-    current_cell: String,
-    in_cell: bool,
-    current_link_destination: Option<String>,
-}
-
-impl TableState {
-    pub(super) fn start_row(&mut self) {
-        self.current_row.clear();
-    }
-
-    pub(super) fn start_cell(&mut self) {
-        self.current_cell.clear();
-        self.in_cell = true;
-    }
-
-    pub(super) fn push_text(&mut self, text: &str) {
-        if self.in_cell {
-            self.current_cell.push_str(text);
-        }
-    }
-
-    pub(super) fn push_html(&mut self, html: &str) {
-        let trimmed = html.trim();
-        if matches!(
-            trimmed.to_ascii_lowercase().as_str(),
-            "<br>" | "<br/>" | "<br />"
-        ) {
-            self.push_text("\n");
-        } else {
-            self.push_text(html);
-        }
-    }
-
-    pub(super) fn start_link(&mut self, destination: String) {
-        self.current_link_destination = Some(destination);
-    }
-
-    pub(super) fn end_link(&mut self) {
-        let Some(destination) = self.current_link_destination.take() else {
-            return;
-        };
-        if self.in_cell && !destination.is_empty() {
-            self.current_cell.push_str(" (");
-            self.current_cell.push_str(&destination);
-            self.current_cell.push(')');
-        }
-    }
-
-    pub(super) fn end_cell(&mut self) {
-        self.current_link_destination = None;
-        self.current_row
-            .push(std::mem::take(&mut self.current_cell));
-        self.in_cell = false;
-    }
-
-    pub(super) fn end_row(&mut self) {
-        if !self.current_row.is_empty() {
-            self.rows.push(std::mem::take(&mut self.current_row));
-        }
-    }
-}
 
 #[derive(Debug)]
 struct TableLayoutCandidate {
@@ -84,7 +23,10 @@ struct TableMetrics {
     hard_wrap_count: usize,
 }
 
-pub(super) fn render_table_lines(rows: &[Vec<String>], width: Option<usize>) -> Vec<Line<'static>> {
+pub(super) fn render_table_lines(
+    rows: &[Vec<TableCell>],
+    width: Option<usize>,
+) -> Vec<Line<'static>> {
     if rows.is_empty() {
         return Vec::new();
     }
@@ -104,10 +46,7 @@ pub(super) fn render_table_lines(rows: &[Vec<String>], width: Option<usize>) -> 
             &candidate.column_widths,
             candidate.padding,
             candidate.hard_wrap,
-        )
-        .into_iter()
-        .map(Line::from)
-        .collect(),
+        ),
         None => render_vertical_table(&normalized_rows, available_width),
     }
 }
@@ -224,17 +163,17 @@ fn is_table_delimiter_source(line: &str) -> bool {
     })
 }
 
-fn normalize_table_rows(rows: &[Vec<String>], column_count: usize) -> Vec<Vec<String>> {
+fn normalize_table_rows(rows: &[Vec<TableCell>], column_count: usize) -> Vec<Vec<TableCell>> {
     rows.iter()
         .map(|row| {
             let mut normalized = row.clone();
-            normalized.resize(column_count, String::new());
+            normalized.resize(column_count, TableCell::default());
             normalized
         })
         .collect()
 }
 
-fn desired_column_widths(rows: &[Vec<String>], column_count: usize) -> Vec<usize> {
+fn desired_column_widths(rows: &[Vec<TableCell>], column_count: usize) -> Vec<usize> {
     let mut widths = vec![3; column_count];
     for row in rows {
         for (index, cell) in row.iter().enumerate() {
@@ -245,7 +184,7 @@ fn desired_column_widths(rows: &[Vec<String>], column_count: usize) -> Vec<usize
 }
 
 fn choose_table_layout(
-    rows: &[Vec<String>],
+    rows: &[Vec<TableCell>],
     desired_widths: &[usize],
     available_width: usize,
     column_count: usize,
@@ -295,7 +234,7 @@ fn width_shape_requires_vertical(column_count: usize, available_width: usize) ->
 }
 
 fn build_table_candidate(
-    rows: &[Vec<String>],
+    rows: &[Vec<TableCell>],
     desired_widths: &[usize],
     column_widths: Vec<usize>,
     available_width: usize,
@@ -368,31 +307,49 @@ fn allocate_table_widths(
 }
 
 fn render_box_table(
-    rows: &[Vec<String>],
+    rows: &[Vec<TableCell>],
     column_widths: &[usize],
     padding: usize,
     hard_wrap: bool,
-) -> Vec<String> {
+) -> Vec<Line<'static>> {
     let mut out = Vec::new();
-    out.push(border_line("┌", "┬", "┐", column_widths, padding));
+    out.push(Line::from(border_line(
+        "┌",
+        "┬",
+        "┐",
+        column_widths,
+        padding,
+    )));
 
     for (index, row) in rows.iter().enumerate() {
         out.extend(render_table_row(row, column_widths, padding, hard_wrap));
         if index == 0 {
-            out.push(border_line("├", "┼", "┤", column_widths, padding));
+            out.push(Line::from(border_line(
+                "├",
+                "┼",
+                "┤",
+                column_widths,
+                padding,
+            )));
         }
     }
 
-    out.push(border_line("└", "┴", "┘", column_widths, padding));
+    out.push(Line::from(border_line(
+        "└",
+        "┴",
+        "┘",
+        column_widths,
+        padding,
+    )));
     out
 }
 
 fn render_table_row(
-    row: &[String],
+    row: &[TableCell],
     column_widths: &[usize],
     padding: usize,
     hard_wrap: bool,
-) -> Vec<String> {
+) -> Vec<Line<'static>> {
     let wrapped_cells = row
         .iter()
         .zip(column_widths)
@@ -402,19 +359,29 @@ fn render_table_row(
     let mut out = Vec::with_capacity(row_height);
 
     for line_index in 0..row_height {
-        let mut line = String::from("│");
+        let mut spans = vec![Span::from("│")];
         for (cell_lines, width) in wrapped_cells.iter().zip(column_widths) {
-            let content = cell_lines.get(line_index).map(String::as_str).unwrap_or("");
-            line.push_str(&" ".repeat(padding));
-            line.push_str(content);
-            line.push_str(&" ".repeat(width.saturating_sub(content.width())));
-            line.push_str(&" ".repeat(padding));
-            line.push('│');
+            let content = cell_lines.get(line_index);
+            push_padding(&mut spans, padding);
+            if let Some(content) = content {
+                spans.extend(content.spans.iter().cloned());
+                push_padding(&mut spans, width.saturating_sub(content.width()));
+            } else {
+                push_padding(&mut spans, *width);
+            }
+            push_padding(&mut spans, padding);
+            spans.push(Span::from("│"));
         }
-        out.push(line);
+        out.push(Line::from(spans));
     }
 
     out
+}
+
+fn push_padding(spans: &mut Vec<Span<'static>>, width: usize) {
+    if width > 0 {
+        spans.push(Span::from(" ".repeat(width)));
+    }
 }
 
 fn border_line(
@@ -431,36 +398,44 @@ fn border_line(
     format!("{left}{}{right}", cell_segments.join(separator))
 }
 
-fn wrap_table_cell(cell: &str, width: usize, hard_wrap: bool) -> Vec<String> {
-    if cell.is_empty() {
-        return vec![String::new()];
+fn wrap_table_cell(cell: &TableCell, width: usize, hard_wrap: bool) -> Vec<Line<'static>> {
+    if cell.lines().is_empty() {
+        return vec![Line::default()];
     }
     let mut lines = Vec::new();
-    let options = textwrap::Options::new(width)
+    let options = RtOptions::new(width)
         .break_words(hard_wrap)
         .word_separator(textwrap::WordSeparator::AsciiSpace)
         .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit);
 
-    for segment in cell.split('\n') {
-        let wrapped = textwrap::wrap(segment, options.clone())
+    for segment in cell.lines() {
+        if segment.width() == 0 {
+            lines.push(Line::default());
+            continue;
+        }
+        let wrapped = word_wrap_line(segment, options.clone())
             .into_iter()
-            .map(std::borrow::Cow::into_owned)
+            .map(|line| line_to_static(&line))
             .collect::<Vec<_>>();
         if wrapped.is_empty() {
-            lines.push(String::new());
+            lines.push(Line::default());
         } else {
             lines.extend(wrapped);
         }
     }
 
     if lines.is_empty() {
-        vec![String::new()]
+        vec![Line::default()]
     } else {
         lines
     }
 }
 
-fn table_metrics(rows: &[Vec<String>], column_widths: &[usize], hard_wrap: bool) -> TableMetrics {
+fn table_metrics(
+    rows: &[Vec<TableCell>],
+    column_widths: &[usize],
+    hard_wrap: bool,
+) -> TableMetrics {
     let mut row_heights = Vec::with_capacity(rows.len());
     let mut hard_wraps_url_or_code = false;
     let mut hard_wrap_count = 0usize;
@@ -498,14 +473,15 @@ fn table_metrics(rows: &[Vec<String>], column_widths: &[usize], hard_wrap: bool)
     }
 }
 
-fn cell_needs_hard_wrap(cell: &str, width: usize) -> bool {
-    cell.split('\n')
+fn cell_needs_hard_wrap(cell: &TableCell, width: usize) -> bool {
+    cell.plain_text()
+        .split('\n')
         .flat_map(str::split_whitespace)
         .any(|token| token.width() > width)
 }
 
 fn should_render_vertical(
-    rows: &[Vec<String>],
+    rows: &[Vec<TableCell>],
     desired_widths: &[usize],
     column_widths: &[usize],
     available_width: usize,
@@ -557,11 +533,11 @@ fn table_total_width(column_widths: &[usize], padding: usize) -> usize {
         + padding * 2 * column_widths.len()
 }
 
-fn is_index_column(rows: &[Vec<String>], index: usize) -> bool {
+fn is_index_column(rows: &[Vec<TableCell>], index: usize) -> bool {
     let header = rows
         .first()
         .and_then(|row| row.get(index))
-        .map(|header| normalized_header(header))
+        .map(normalized_header)
         .unwrap_or_default();
     if matches!(header.as_str(), "#" | "id" | "idx" | "index" | "row") {
         return true;
@@ -570,15 +546,16 @@ fn is_index_column(rows: &[Vec<String>], index: usize) -> bool {
     rows.iter()
         .skip(1)
         .filter_map(|row| row.get(index))
-        .filter(|cell| !cell.trim().is_empty())
-        .all(|cell| cell.trim().chars().all(|ch| ch.is_ascii_digit()))
+        .map(TableCell::trimmed_plain_text)
+        .filter(|cell| !cell.is_empty())
+        .all(|cell| cell.chars().all(|ch| ch.is_ascii_digit()))
 }
 
-fn is_content_heavy_column(rows: &[Vec<String>], index: usize) -> bool {
+fn is_content_heavy_column(rows: &[Vec<TableCell>], index: usize) -> bool {
     let header = rows
         .first()
         .and_then(|row| row.get(index))
-        .map(|header| normalized_header(header))
+        .map(normalized_header)
         .unwrap_or_default();
     if [
         "link",
@@ -603,31 +580,32 @@ fn is_content_heavy_column(rows: &[Vec<String>], index: usize) -> bool {
         .any(|cell| is_url_or_code_like(cell) || cell.width() > 24)
 }
 
-fn is_url_or_code_like(cell: &str) -> bool {
-    cell.contains("://")
-        || cell.contains("::")
-        || cell.contains("=>")
-        || cell.contains("->")
-        || cell.contains('`')
-        || cell.contains('{')
-        || cell.contains('}')
-        || cell.contains('(')
-        || cell.contains(')')
+fn is_url_or_code_like(cell: &TableCell) -> bool {
+    let text = cell.plain_text();
+    text.contains("://")
+        || text.contains("::")
+        || text.contains("=>")
+        || text.contains("->")
+        || text.contains('`')
+        || text.contains('{')
+        || text.contains('}')
+        || text.contains('(')
+        || text.contains(')')
 }
 
-fn has_width_risk_chars(rows: &[Vec<String>]) -> bool {
+fn has_width_risk_chars(rows: &[Vec<TableCell>]) -> bool {
     rows.iter().flatten().any(|cell| {
-        cell.chars().any(|ch| {
+        cell.plain_text().chars().any(|ch| {
             matches!(ch, '\u{fe0f}' | '\u{200d}') || ('\u{1f300}'..='\u{1faff}').contains(&ch)
         })
     })
 }
 
-fn normalized_header(header: &str) -> String {
-    header.trim().to_ascii_lowercase()
+fn normalized_header(header: &TableCell) -> String {
+    header.trimmed_plain_text().to_ascii_lowercase()
 }
 
-fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Line<'static>> {
+fn render_vertical_table(rows: &[Vec<TableCell>], available_width: usize) -> Vec<Line<'static>> {
     let Some((headers, body_rows)) = rows.split_first() else {
         return Vec::new();
     };
@@ -644,8 +622,13 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
     let max_value_width = body_rows
         .iter()
         .flat_map(|row| included_columns.iter().filter_map(|index| row.get(*index)))
-        .flat_map(|cell| cell.split('\n'))
-        .map(UnicodeWidthStr::width)
+        .flat_map(|cell| {
+            cell.plain_text()
+                .lines()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .map(|line| line.width())
         .max()
         .unwrap_or(1);
     let available_content_width = available_width.saturating_sub(7);
@@ -688,20 +671,15 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
         }
         for index in &included_columns {
             let label = truncate_to_width(&vertical_label(headers, *index), label_width);
-            let cell = row.get(*index).map(String::as_str).unwrap_or("").trim();
-            let value = if cell.is_empty() { "—" } else { cell };
-            let wrapped = textwrap::wrap(
-                value,
-                textwrap::Options::new(value_width)
-                    .break_words(true)
-                    .word_separator(textwrap::WordSeparator::AsciiSpace)
-                    .wrap_algorithm(textwrap::WrapAlgorithm::FirstFit),
-            )
-            .into_iter()
-            .map(std::borrow::Cow::into_owned)
-            .collect::<Vec<_>>();
+            let empty_cell = TableCell::default();
+            let cell = row.get(*index).unwrap_or(&empty_cell);
+            let wrapped = if cell.is_blank() {
+                vec![Line::from("—")]
+            } else {
+                wrap_table_cell(cell, value_width, /*hard_wrap*/ true)
+            };
             let wrapped = if wrapped.is_empty() {
-                vec![String::new()]
+                vec![Line::default()]
             } else {
                 wrapped
             };
@@ -710,11 +688,14 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
                 let label = if line_index == 0 { label.as_str() } else { "" };
                 let label_padding = label_width.saturating_sub(label.width());
                 let value_padding = value_width.saturating_sub(value_line.width());
-                out.push(Line::from(format!(
-                    "│ {}{label} │ {value_line}{} │",
-                    " ".repeat(label_padding),
-                    " ".repeat(value_padding),
-                )));
+                let mut spans = vec![Span::from("│ ")];
+                push_padding(&mut spans, label_padding);
+                spans.push(Span::from(label.to_string()));
+                spans.push(Span::from(" │ "));
+                spans.extend(value_line.spans.iter().cloned());
+                push_padding(&mut spans, value_padding);
+                spans.push(Span::from(" │"));
+                out.push(Line::from(spans));
             }
         }
     }
@@ -728,31 +709,30 @@ fn render_vertical_table(rows: &[Vec<String>], available_width: usize) -> Vec<Li
     out
 }
 
-fn included_vertical_columns(headers: &[String], body_rows: &[Vec<String>]) -> Vec<usize> {
+fn included_vertical_columns(headers: &[TableCell], body_rows: &[Vec<TableCell>]) -> Vec<usize> {
     let first_column_titles_rows = headers
         .first()
-        .map(|header| normalized_header(header))
+        .map(normalized_header)
         .is_some_and(|header| matches!(header.as_str(), "#" | "id" | "idx" | "index" | "row"))
         && headers.len() > 1;
 
     (0..headers.len())
         .filter(|index| !(first_column_titles_rows && *index == 0))
         .filter(|index| {
-            !headers[*index].trim().is_empty()
+            !headers[*index].is_blank()
                 || body_rows
                     .iter()
-                    .any(|row| row.get(*index).is_some_and(|cell| !cell.trim().is_empty()))
+                    .any(|row| row.get(*index).is_some_and(|cell| !cell.is_blank()))
         })
         .collect()
 }
 
-fn vertical_label(headers: &[String], index: usize) -> String {
+fn vertical_label(headers: &[TableCell], index: usize) -> String {
     headers
         .get(index)
-        .map(|header| header.trim())
+        .map(TableCell::trimmed_plain_text)
         .filter(|header| !header.is_empty())
-        .unwrap_or("Column")
-        .to_string()
+        .unwrap_or_else(|| "Column".to_string())
 }
 
 fn truncate_to_width(input: &str, max_width: usize) -> String {
