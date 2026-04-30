@@ -47,7 +47,6 @@ use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::NonSteerableTurnKind;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
@@ -1588,19 +1587,15 @@ async fn record_initial_history_reconstructs_forked_transcript() {
 async fn session_configured_reports_permission_profile_for_external_sandbox() -> anyhow::Result<()>
 {
     let server = start_mock_server().await;
-    let sandbox_policy = SandboxPolicy::ExternalSandbox {
-        network_access: codex_protocol::protocol::NetworkAccess::Restricted,
-    };
     let expected_permission_profile = PermissionProfile::External {
         network: NetworkSandboxPolicy::Restricted,
     };
     let config_permission_profile = expected_permission_profile.clone();
     let mut builder = test_codex().with_config(move |config| {
-        config.permissions.permission_profile =
-            codex_config::Constrained::allow_any(config_permission_profile);
         config
-            .set_legacy_sandbox_policy(sandbox_policy)
-            .expect("set sandbox policy");
+            .permissions
+            .set_permission_profile(config_permission_profile)
+            .expect("set permission profile");
     });
 
     let test = builder.build(&server).await?;
@@ -3029,7 +3024,7 @@ async fn session_configuration_apply_permission_profile_accepts_direct_write_roo
     let file_system_sandbox_policy =
         FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
             path: FileSystemPath::Path {
-                path: external_write_path.clone(),
+                path: external_write_path,
             },
             access: FileSystemAccessMode::Write,
         }]);
@@ -3052,12 +3047,9 @@ async fn session_configuration_apply_permission_profile_accepts_direct_write_roo
     );
     assert_eq!(
         updated.sandbox_policy(),
-        SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![external_write_path],
-            network_access: false,
-            exclude_tmpdir_env_var: true,
-            exclude_slash_tmp: true,
-        }
+        permission_profile
+            .to_legacy_sandbox_policy(session_configuration.cwd.as_path())
+            .expect("direct write-root profile should project to legacy sandbox")
     );
 }
 
@@ -3154,21 +3146,24 @@ async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_
     let project_root = workspace.path().join("project");
     let original_cwd = project_root.join("subdir");
     session_configuration.cwd = original_cwd.abs();
-    let sandbox_policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: Vec::new(),
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
+    let permission_profile = PermissionProfile::workspace_write_with(
+        &[],
+        NetworkSandboxPolicy::Restricted,
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ true,
+    );
+    let sandbox_policy = permission_profile
+        .to_legacy_sandbox_policy(session_configuration.cwd.as_path())
+        .expect("workspace profile should project to legacy sandbox");
     let file_system_sandbox_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
         &sandbox_policy,
         &session_configuration.cwd,
     );
     session_configuration.permission_profile = codex_config::Constrained::allow_any(
         PermissionProfile::from_runtime_permissions_with_enforcement(
-            SandboxEnforcement::from_legacy_sandbox_policy(&sandbox_policy),
+            SandboxEnforcement::Managed,
             &file_system_sandbox_policy,
-            NetworkSandboxPolicy::from(&sandbox_policy),
+            NetworkSandboxPolicy::Restricted,
         ),
     );
 
