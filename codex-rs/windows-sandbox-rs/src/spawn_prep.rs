@@ -7,7 +7,7 @@ use crate::cap::load_or_create_cap_sids;
 use crate::cap::workspace_cap_sid_for_cwd;
 use crate::env::apply_no_network_to_env;
 use crate::env::ensure_non_interactive_pager;
-use crate::env::inherit_path_env;
+use crate::env::inherit_windows_bootstrap_env;
 use crate::env::normalize_null_device_env;
 use crate::identity::SandboxCreds;
 use crate::identity::require_logon_sandbox_creds;
@@ -107,7 +107,7 @@ fn prepare_spawn_context_common(
     normalize_null_device_env(env_map);
     ensure_non_interactive_pager(env_map);
     if inherit_path {
-        inherit_path_env(env_map);
+        inherit_windows_bootstrap_env(env_map);
     }
     if add_git_safe_directory {
         inject_git_safe_directory(env_map, cwd);
