@@ -22,6 +22,7 @@ windows_modules!(
     helper_materialization,
     hide_users,
     identity,
+    legacy_cwd,
     logging,
     path_normalization,
     policy,
@@ -253,6 +254,7 @@ mod windows_impl {
     use super::allow::compute_allow_paths;
     use super::cap::load_or_create_cap_sids;
     use super::cap::workspace_cap_sid_for_cwd;
+    use super::legacy_cwd::effective_legacy_spawn_cwd;
     use super::logging::log_failure;
     use super::logging::log_success;
     use super::path_normalization::canonicalize_path;
@@ -461,11 +463,12 @@ mod windows_impl {
         }
         let (stdin_pair, stdout_pair, stderr_pair) = unsafe { setup_stdio_pipes()? };
         let ((in_r, in_w), (out_r, out_w), (err_r, err_w)) = (stdin_pair, stdout_pair, stderr_pair);
+        let effective_cwd = effective_legacy_spawn_cwd(cwd, logs_base_dir);
         let spawn_res = unsafe {
             create_process_as_user(
                 h_token,
                 &command,
-                cwd,
+                &effective_cwd,
                 &env_map,
                 logs_base_dir,
                 Some((in_r, out_w, err_w)),

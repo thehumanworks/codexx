@@ -3,6 +3,7 @@ use super::windows_common::normalize_windows_tty_input;
 use crate::acl::revoke_ace;
 use crate::conpty::spawn_conpty_process_as_user;
 use crate::desktop::LaunchDesktop;
+use crate::legacy_cwd::effective_legacy_spawn_cwd;
 use crate::logging::log_failure;
 use crate::logging::log_success;
 use crate::process::StderrMode;
@@ -66,11 +67,12 @@ fn spawn_legacy_process(
     writer_rx: mpsc::Receiver<Vec<u8>>,
     logs_base_dir: Option<&Path>,
 ) -> Result<LegacyProcessHandles> {
+    let effective_cwd = effective_legacy_spawn_cwd(cwd, logs_base_dir);
     let (pi, output_join, writer_handle, hpc, desktop) = if tty {
         let (pi, conpty) = spawn_conpty_process_as_user(
             h_token,
             command,
-            cwd,
+            &effective_cwd,
             env_map,
             use_private_desktop,
             logs_base_dir,
@@ -87,7 +89,7 @@ fn spawn_legacy_process(
         let pipe_handles = spawn_process_with_pipes(
             h_token,
             command,
-            cwd,
+            &effective_cwd,
             env_map,
             if stdin_open {
                 StdinMode::Open
