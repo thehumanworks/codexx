@@ -24,7 +24,6 @@ use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::Op;
-use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::Submission;
 use codex_protocol::protocol::ThreadMemoryMode;
@@ -63,9 +62,9 @@ pub struct CodexThreadTurnContextOverrides {
     pub cwd: Option<PathBuf>,
     pub approval_policy: Option<AskForApproval>,
     pub approvals_reviewer: Option<ApprovalsReviewer>,
-    pub sandbox_policy: Option<SandboxPolicy>,
     pub permission_profile: Option<PermissionProfile>,
     pub active_permission_profile: Option<ActivePermissionProfile>,
+    pub clear_active_permission_profile: bool,
     pub windows_sandbox_level: Option<WindowsSandboxLevel>,
     pub model: Option<String>,
     pub effort: Option<Option<ReasoningEffort>>,
@@ -214,9 +213,9 @@ impl CodexThread {
             cwd,
             approval_policy,
             approvals_reviewer,
-            sandbox_policy,
             permission_profile,
             active_permission_profile,
+            clear_active_permission_profile,
             windows_sandbox_level,
             model,
             effort,
@@ -234,19 +233,6 @@ impl CodexThread {
                 .await
                 .with_updates(model, effort, /*developer_instructions*/ None)
         };
-        let clear_active_permission_profile =
-            permission_profile.is_none() && sandbox_policy.is_some();
-        let permission_profile = match (permission_profile, sandbox_policy.as_ref()) {
-            (Some(permission_profile), _) => Some(permission_profile),
-            (None, Some(sandbox_policy)) => Some(
-                self.codex
-                    .session
-                    .permission_profile_from_legacy_sandbox_update(sandbox_policy, cwd.as_deref())
-                    .await,
-            ),
-            (None, None) => None,
-        };
-
         let updates = SessionSettingsUpdate {
             cwd,
             approval_policy,

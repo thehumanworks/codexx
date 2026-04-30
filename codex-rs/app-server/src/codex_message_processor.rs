@@ -341,8 +341,11 @@ use codex_protocol::dynamic_tools::DynamicToolSpec as CoreDynamicToolSpec;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::Result as CodexResult;
 use codex_protocol::items::TurnItem;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::ConversationAudioParams;
 use codex_protocol::protocol::ConversationStartParams;
@@ -361,6 +364,7 @@ use codex_protocol::protocol::ReviewDelivery as CoreReviewDelivery;
 use codex_protocol::protocol::ReviewRequest;
 use codex_protocol::protocol::ReviewTarget as CoreReviewTarget;
 use codex_protocol::protocol::RolloutItem;
+use codex_protocol::protocol::SandboxPolicy as CoreSandboxPolicy;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -6666,6 +6670,19 @@ impl CodexMessageProcessor {
                 } else {
                     (None, None)
                 };
+            let permission_profile_for_validation =
+                if permission_profile.is_some() || sandbox_policy.is_none() {
+                    permission_profile.clone()
+                } else {
+                    let snapshot = thread.config_snapshot().await;
+                    sandbox_policy.as_ref().map(|sandbox_policy| {
+                        permission_profile_from_legacy_turn_sandbox_policy(
+                            &snapshot,
+                            sandbox_policy,
+                            cwd.as_deref(),
+                        )
+                    })
+                };
             let model = params.model;
             let effort = params.effort.map(Some);
             let summary = params.summary;
@@ -6681,9 +6698,9 @@ impl CodexMessageProcessor {
                         cwd: cwd.clone(),
                         approval_policy,
                         approvals_reviewer,
-                        sandbox_policy: sandbox_policy.clone(),
-                        permission_profile: permission_profile.clone(),
+                        permission_profile: permission_profile_for_validation,
                         active_permission_profile: active_permission_profile.clone(),
+                        clear_active_permission_profile: sandbox_policy.is_some(),
                         windows_sandbox_level: None,
                         model: model.clone(),
                         effort,
@@ -9566,6 +9583,27 @@ fn apply_permission_profile_selection_to_config_overrides(
                 }
             },
         ));
+}
+
+fn permission_profile_from_legacy_turn_sandbox_policy(
+    snapshot: &ThreadConfigSnapshot,
+    sandbox_policy: &CoreSandboxPolicy,
+    cwd: Option<&Path>,
+) -> PermissionProfile {
+    let sandbox_cwd = cwd.unwrap_or(snapshot.cwd.as_path());
+    let configured_file_system_sandbox_policy =
+        snapshot.permission_profile.file_system_sandbox_policy();
+    let file_system_sandbox_policy =
+        FileSystemSandboxPolicy::from_legacy_sandbox_policy_preserving_deny_entries(
+            sandbox_policy,
+            sandbox_cwd,
+            &configured_file_system_sandbox_policy,
+        );
+    PermissionProfile::from_runtime_permissions_with_enforcement(
+        SandboxEnforcement::from_legacy_sandbox_policy(sandbox_policy),
+        &file_system_sandbox_policy,
+        NetworkSandboxPolicy::from(sandbox_policy),
+    )
 }
 
 fn thread_response_sandbox_policy(
