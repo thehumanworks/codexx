@@ -66,7 +66,6 @@ use codex_app_server_protocol::InitializeParams;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::NonSteerableTurnKind;
 use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::SessionSource as AppServerSessionSource;
 use codex_app_server_protocol::Thread;
@@ -106,6 +105,7 @@ use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use std::collections::HashSet;
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -155,7 +155,10 @@ fn sample_thread_start_response(
         instruction_sources: Vec::new(),
         approval_policy: AppServerAskForApproval::OnFailure,
         approvals_reviewer: AppServerApprovalsReviewer::User,
-        sandbox: AppServerSandboxPolicy::DangerFullAccess,
+        sandbox: CorePermissionProfile::Disabled
+            .to_legacy_sandbox_policy(Path::new("/"))
+            .expect("disabled profile should project to legacy sandbox")
+            .into(),
         permission_profile: None,
         active_permission_profile: None,
         reasoning_effort: None,
@@ -209,7 +212,10 @@ fn sample_thread_resume_response_with_source(
         instruction_sources: Vec::new(),
         approval_policy: AppServerAskForApproval::OnFailure,
         approvals_reviewer: AppServerApprovalsReviewer::User,
-        sandbox: AppServerSandboxPolicy::DangerFullAccess,
+        sandbox: CorePermissionProfile::Disabled
+            .to_legacy_sandbox_policy(Path::new("/"))
+            .expect("disabled profile should project to legacy sandbox")
+            .into(),
         permission_profile: None,
         active_permission_profile: None,
         reasoning_effort: None,

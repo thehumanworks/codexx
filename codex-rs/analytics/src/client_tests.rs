@@ -7,7 +7,6 @@ use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ClientResponsePayload;
 use codex_app_server_protocol::PermissionProfile as AppServerPermissionProfile;
 use codex_app_server_protocol::RequestId;
-use codex_app_server_protocol::SandboxPolicy as AppServerSandboxPolicy;
 use codex_app_server_protocol::SessionSource as AppServerSessionSource;
 use codex_app_server_protocol::Thread;
 use codex_app_server_protocol::ThreadArchiveParams;
@@ -26,6 +25,7 @@ use codex_protocol::models::PermissionProfile as CorePermissionProfile;
 use codex_utils_absolute_path::test_support::PathBufExt;
 use codex_utils_absolute_path::test_support::test_path_buf;
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokio::sync::mpsc;
@@ -109,7 +109,10 @@ fn sample_thread_start_response() -> ClientResponsePayload {
         instruction_sources: Vec::new(),
         approval_policy: AppServerAskForApproval::OnFailure,
         approvals_reviewer: AppServerApprovalsReviewer::User,
-        sandbox: AppServerSandboxPolicy::DangerFullAccess,
+        sandbox: CorePermissionProfile::Disabled
+            .to_legacy_sandbox_policy(Path::new("/"))
+            .expect("disabled profile should project to legacy sandbox")
+            .into(),
         permission_profile: Some(sample_permission_profile()),
         active_permission_profile: None,
         reasoning_effort: None,
@@ -126,7 +129,10 @@ fn sample_thread_resume_response() -> ClientResponsePayload {
         instruction_sources: Vec::new(),
         approval_policy: AppServerAskForApproval::OnFailure,
         approvals_reviewer: AppServerApprovalsReviewer::User,
-        sandbox: AppServerSandboxPolicy::DangerFullAccess,
+        sandbox: CorePermissionProfile::Disabled
+            .to_legacy_sandbox_policy(Path::new("/"))
+            .expect("disabled profile should project to legacy sandbox")
+            .into(),
         permission_profile: Some(sample_permission_profile()),
         active_permission_profile: None,
         reasoning_effort: None,
@@ -143,7 +149,10 @@ fn sample_thread_fork_response() -> ClientResponsePayload {
         instruction_sources: Vec::new(),
         approval_policy: AppServerAskForApproval::OnFailure,
         approvals_reviewer: AppServerApprovalsReviewer::User,
-        sandbox: AppServerSandboxPolicy::DangerFullAccess,
+        sandbox: CorePermissionProfile::Disabled
+            .to_legacy_sandbox_policy(Path::new("/"))
+            .expect("disabled profile should project to legacy sandbox")
+            .into(),
         permission_profile: Some(sample_permission_profile()),
         active_permission_profile: None,
         reasoning_effort: None,
