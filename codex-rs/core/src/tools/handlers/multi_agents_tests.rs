@@ -25,10 +25,10 @@ use codex_protocol::config_types::ShellEnvironmentPolicy;
 use codex_protocol::models::BaseInstructions;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputBody;
+use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
-use codex_protocol::models::SandboxEnforcement;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
@@ -36,10 +36,8 @@ use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::FileSystemAccessMode;
 use codex_protocol::protocol::FileSystemPath;
 use codex_protocol::protocol::FileSystemSandboxEntry;
-use codex_protocol::protocol::FileSystemSandboxPolicy;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::InterAgentCommunication;
-use codex_protocol::protocol::NetworkSandboxPolicy;
 use codex_protocol::protocol::Op;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionSource;
@@ -1786,22 +1784,22 @@ async fn spawn_agent_reapplies_runtime_sandbox_after_role_config() {
     let manager = thread_manager();
     session.services.agent_control = manager.agent_control();
     let expected_sandbox = turn.config.legacy_sandbox_policy();
-    let mut expected_file_system_sandbox_policy =
-        FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(&expected_sandbox, &turn.cwd);
-    expected_file_system_sandbox_policy
-        .entries
-        .push(FileSystemSandboxEntry {
-            path: FileSystemPath::GlobPattern {
-                pattern: "**/.env".to_string(),
-            },
-            access: FileSystemAccessMode::None,
-        });
-    let expected_network_sandbox_policy = NetworkSandboxPolicy::from(&expected_sandbox);
-    let expected_permission_profile = PermissionProfile::from_runtime_permissions_with_enforcement(
-        SandboxEnforcement::from_legacy_sandbox_policy(&expected_sandbox),
-        &expected_file_system_sandbox_policy,
-        expected_network_sandbox_policy,
-    );
+    let mut expected_permission_profile = turn.config.permissions.permission_profile();
+    let PermissionProfile::Managed { file_system, .. } = &mut expected_permission_profile else {
+        panic!("test fixture should use managed permissions");
+    };
+    let ManagedFileSystemPermissions::Restricted { entries, .. } = file_system else {
+        panic!("test fixture should use restricted filesystem permissions");
+    };
+    entries.push(FileSystemSandboxEntry {
+        path: FileSystemPath::GlobPattern {
+            pattern: "**/.env".to_string(),
+        },
+        access: FileSystemAccessMode::None,
+    });
+    let expected_file_system_sandbox_policy =
+        expected_permission_profile.file_system_sandbox_policy();
+    let expected_network_sandbox_policy = expected_permission_profile.network_sandbox_policy();
     turn.approval_policy
         .set(AskForApproval::OnRequest)
         .expect("approval policy should be set");
