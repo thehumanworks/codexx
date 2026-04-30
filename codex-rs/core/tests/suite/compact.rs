@@ -68,7 +68,7 @@ const DUMMY_FUNCTION_NAME: &str = "test_tool";
 const DUMMY_CALL_ID: &str = "call-multi-auto";
 const FUNCTION_CALL_LIMIT_MSG: &str = "function call limit push";
 const POST_AUTO_USER_MSG: &str = "post auto follow-up";
-const PRETURN_CONTEXT_DIFF_CWD: &str = "/tmp/PRETURN_CONTEXT_DIFF_CWD";
+const PRETURN_CONTEXT_DIFF_CWD: &str = "PRETURN_CONTEXT_DIFF_CWD";
 
 pub(super) const COMPACT_WARNING_MESSAGE: &str = "Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.";
 
@@ -3008,7 +3008,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
     let request_log = mount_sse_sequence(&server, vec![sse1, sse2, sse3, sse4]).await;
 
     let model_provider = non_openai_model_provider(&server);
-    let codex = test_codex()
+    let test = test_codex()
         .with_config(move |config| {
             config.model_provider = model_provider;
             set_test_compact_prompt(config);
@@ -3016,8 +3016,11 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
         })
         .build(&server)
         .await
-        .expect("build codex")
-        .codex;
+        .expect("build codex");
+    let preturn_context_diff_cwd = test.cwd_path().join(PRETURN_CONTEXT_DIFF_CWD);
+    std::fs::create_dir_all(&preturn_context_diff_cwd)
+        .expect("create pre-turn context override cwd");
+    let codex = test.codex;
 
     for user in ["USER_ONE", "USER_TWO"] {
         codex
@@ -3036,7 +3039,7 @@ async fn snapshot_request_shape_pre_turn_compaction_including_incoming_user_mess
     }
     codex
         .submit(Op::OverrideTurnContext {
-            cwd: Some(PathBuf::from(PRETURN_CONTEXT_DIFF_CWD)),
+            cwd: Some(preturn_context_diff_cwd.clone()),
             approval_policy: None,
             approvals_reviewer: None,
             sandbox_policy: None,

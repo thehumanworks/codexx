@@ -378,7 +378,7 @@ async fn start_thread_keeps_internal_threads_hidden_from_normal_lookups() {
 }
 
 #[tokio::test]
-async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
+async fn resume_and_fork_restore_thread_environments_from_rollout() {
     let temp_dir = tempdir().expect("tempdir");
     let mut config = test_config().await;
     config.codex_home = temp_dir.path().join("codex-home").abs();
@@ -401,6 +401,10 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         cwd: selected_cwd.clone(),
     }];
     let default_cwd = config.cwd.clone();
+    let runtime_environments = vec![TurnEnvironmentSelection {
+        environment_id: "local".to_string(),
+        cwd: default_cwd.clone(),
+    }];
     let thread_store = thread_store_from_config(&config);
 
     let source = manager
@@ -418,6 +422,19 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         .await
         .expect("start source thread");
     source.thread.ensure_rollout_materialized().await;
+    let source_turn = source
+        .thread
+        .codex
+        .session
+        .new_turn_with_sub_id("source-turn".to_string(), SessionSettingsUpdate::default())
+        .await
+        .expect("build source turn context");
+    source
+        .thread
+        .codex
+        .session
+        .record_context_updates_and_set_reference_context_item(&source_turn)
+        .await;
     source
         .thread
         .flush_rollout()
@@ -427,11 +444,52 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
         .thread
         .rollout_path()
         .expect("source rollout path should exist");
+    let InitialHistory::Resumed(persisted_history) =
+        RolloutRecorder::get_rollout_history(&rollout_path)
+            .await
+            .expect("read source rollout history")
+    else {
+        panic!("expected resumed source rollout history");
+    };
+    let persisted_turn_context = persisted_history
+        .history
+        .iter()
+        .find_map(|item| match item {
+            RolloutItem::TurnContext(ctx) => Some(ctx.clone()),
+            _ => None,
+        });
+    assert_eq!(
+        persisted_turn_context
+            .as_ref()
+            .and_then(|ctx| ctx.environments.clone()),
+        Some(runtime_environments.clone())
+    );
     source
         .thread
         .shutdown_and_wait()
         .await
         .expect("shutdown source thread before resume");
+    let InitialHistory::Resumed(post_shutdown_history) =
+        RolloutRecorder::get_rollout_history(&rollout_path)
+            .await
+            .expect("read post-shutdown source rollout history")
+    else {
+        panic!("expected resumed post-shutdown source rollout history");
+    };
+    let post_shutdown_turn_context =
+        post_shutdown_history
+            .history
+            .iter()
+            .find_map(|item| match item {
+                RolloutItem::TurnContext(ctx) => Some(ctx.clone()),
+                _ => None,
+            });
+    assert_eq!(
+        post_shutdown_turn_context
+            .as_ref()
+            .and_then(|ctx| ctx.environments.clone()),
+        Some(runtime_environments.clone())
+    );
     let _ = manager.remove_thread(&source.thread_id).await;
 
     let resumed = manager

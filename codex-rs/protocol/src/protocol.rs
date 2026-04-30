@@ -107,7 +107,7 @@ pub const REALTIME_CONVERSATION_OPEN_TAG: &str = "<realtime_conversation>";
 pub const REALTIME_CONVERSATION_CLOSE_TAG: &str = "</realtime_conversation>";
 pub const USER_MESSAGE_BEGIN: &str = "## My request for Codex:";
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, JsonSchema, TS)]
 pub struct TurnEnvironmentSelection {
     pub environment_id: String,
     pub cwd: AbsolutePathBuf,
@@ -2854,6 +2854,8 @@ pub struct TurnContextItem {
     pub trace_id: Option<String>,
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub environments: Option<Vec<TurnEnvironmentSelection>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_date: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
@@ -5116,6 +5118,7 @@ mod tests {
             turn_id: None,
             trace_id: None,
             cwd: test_path_buf("/tmp"),
+            environments: None,
             current_date: None,
             timezone: None,
             approval_policy: AskForApproval::Never,

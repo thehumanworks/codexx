@@ -1,7 +1,6 @@
 #![allow(clippy::expect_used)]
 
 use std::fs;
-use std::path::PathBuf;
 
 use anyhow::Result;
 use codex_core::compact::SUMMARY_PREFIX;
@@ -104,7 +103,7 @@ fn contains_defer_loading(value: &Value) -> bool {
     }
 }
 
-const PRETURN_CONTEXT_DIFF_CWD: &str = "/tmp/PRETURN_CONTEXT_DIFF_CWD";
+const PRETURN_CONTEXT_DIFF_CWD: &str = "PRETURN_CONTEXT_DIFF_CWD";
 const DUMMY_FUNCTION_NAME: &str = "test_tool";
 const REMOTE_COMPACT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -2213,6 +2212,9 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_including_incoming_us
             }),
     )
     .await?;
+    let preturn_context_diff_cwd = harness.test().cwd_path().join(PRETURN_CONTEXT_DIFF_CWD);
+    std::fs::create_dir_all(&preturn_context_diff_cwd)
+        .expect("create pre-turn context override cwd");
     let codex = harness.test().codex.clone();
 
     let responses_mock = responses::mount_sse_sequence(
@@ -2244,7 +2246,7 @@ async fn snapshot_request_shape_remote_pre_turn_compaction_including_incoming_us
         if user == "USER_THREE" {
             codex
                 .submit(Op::OverrideTurnContext {
-                    cwd: Some(PathBuf::from(PRETURN_CONTEXT_DIFF_CWD)),
+                    cwd: Some(preturn_context_diff_cwd.clone()),
                     approval_policy: None,
                     approvals_reviewer: None,
                     sandbox_policy: None,
