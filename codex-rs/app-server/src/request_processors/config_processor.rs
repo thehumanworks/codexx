@@ -11,6 +11,11 @@ use crate::transport::RemoteControlHandle;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::AppListUpdatedNotification;
 use codex_app_server_protocol::ClientResponsePayload;
+use codex_app_server_protocol::ComputerUseConfig;
+use codex_app_server_protocol::ComputerUseMacosConfig;
+use codex_app_server_protocol::ComputerUseMacosRequirements;
+use codex_app_server_protocol::ComputerUseRequirements;
+use codex_app_server_protocol::Config as ApiConfig;
 use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigReadParams;
 use codex_app_server_protocol::ConfigReadResponse;
@@ -97,6 +102,10 @@ impl ConfigRequestProcessor {
         let fallback_cwd = params.cwd.as_ref().map(PathBuf::from);
         let mut response = self.config_manager.read(params).await.map_err(map_error)?;
         let config = self.load_latest_config(fallback_cwd).await?;
+        apply_computer_use_requirements(
+            &mut response.config,
+            config.config_layer_stack.requirements_toml(),
+        );
         for feature_key in SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT {
             let Some(feature) = feature_for_key(feature_key) else {
                 continue;
@@ -412,6 +421,48 @@ impl ConfigRequestProcessor {
     }
 }
 
+fn apply_computer_use_requirements(config: &mut ApiConfig, requirements: &ConfigRequirementsToml) {
+    let Some(requirements) = requirements.computer_use.as_ref() else {
+        return;
+    };
+
+    let computer_use = config.computer_use.get_or_insert(ComputerUseConfig {
+        allow_persistent_approval: None,
+        macos: None,
+    });
+    if requirements.allow_persistent_approval == Some(false)
+        || computer_use.allow_persistent_approval.is_none()
+    {
+        computer_use.allow_persistent_approval = requirements.allow_persistent_approval;
+    }
+
+    let Some(required_macos) = requirements.macos.as_ref() else {
+        return;
+    };
+
+    let macos = computer_use.macos.get_or_insert(ComputerUseMacosConfig {
+        denied_bundle_ids: None,
+        allowed_bundle_ids: None,
+    });
+    if let Some(denied_bundle_ids) = required_macos.denied_bundle_ids.as_ref()
+        && !denied_bundle_ids.is_empty()
+    {
+        let config_denied_bundle_ids = macos.denied_bundle_ids.get_or_insert_with(Vec::new);
+        for bundle_id in denied_bundle_ids {
+            if !config_denied_bundle_ids.contains(bundle_id) {
+                config_denied_bundle_ids.push(bundle_id.clone());
+            }
+        }
+    }
+    if let Some(allowed_bundle_ids) = required_macos.allowed_bundle_ids.as_ref() {
+        if let Some(config_allowed_bundle_ids) = macos.allowed_bundle_ids.as_mut() {
+            config_allowed_bundle_ids.retain(|bundle_id| allowed_bundle_ids.contains(bundle_id));
+        } else {
+            macos.allowed_bundle_ids = Some(allowed_bundle_ids.clone());
+        }
+    }
+}
+
 fn map_requirements_toml_to_api(requirements: ConfigRequirementsToml) -> ConfigRequirements {
     ConfigRequirements {
         allowed_approval_policies: requirements.allowed_approval_policies.map(|policies| {
@@ -450,6 +501,17 @@ fn map_requirements_toml_to_api(requirements: ConfigRequirementsToml) -> ConfigR
             .enforce_residency
             .map(map_residency_requirement_to_api),
         network: requirements.network.map(map_network_requirements_to_api),
+        computer_use: requirements
+            .computer_use
+            .map(|requirements| ComputerUseRequirements {
+                allow_persistent_approval: requirements.allow_persistent_approval,
+                macos: requirements
+                    .macos
+                    .map(|requirements| ComputerUseMacosRequirements {
+                        denied_bundle_ids: requirements.denied_bundle_ids,
+                        allowed_bundle_ids: requirements.allowed_bundle_ids,
+                    }),
+            }),
     }
 }
 
@@ -618,5 +680,94 @@ fn config_write_error(code: ConfigWriteErrorCode, message: impl Into<String>) ->
         data: Some(json!({
             "config_write_error_code": code,
         })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_config::ComputerUseMacosRequirementsToml as CoreComputerUseMacosRequirementsToml;
+    use codex_config::ComputerUseRequirementsToml as CoreComputerUseRequirementsToml;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    #[test]
+    fn map_requirements_toml_to_api_converts_computer_use() {
+        let requirements = ConfigRequirementsToml {
+            computer_use: Some(CoreComputerUseRequirementsToml {
+                allow_persistent_approval: Some(false),
+                macos: Some(CoreComputerUseMacosRequirementsToml {
+                    denied_bundle_ids: Some(vec!["com.apple.Terminal".to_string()]),
+                    allowed_bundle_ids: Some(vec!["com.apple.Safari".to_string()]),
+                }),
+            }),
+            ..Default::default()
+        };
+
+        let mapped = map_requirements_toml_to_api(requirements);
+
+        assert_eq!(
+            mapped.computer_use,
+            Some(ComputerUseRequirements {
+                allow_persistent_approval: Some(false),
+                macos: Some(ComputerUseMacosRequirements {
+                    denied_bundle_ids: Some(vec!["com.apple.Terminal".to_string()]),
+                    allowed_bundle_ids: Some(vec!["com.apple.Safari".to_string()]),
+                }),
+            }),
+        );
+    }
+
+    #[test]
+    fn apply_computer_use_requirements_to_config_is_restrictive() {
+        let mut config: ApiConfig = serde_json::from_value(json!({
+            "computer_use": {
+                "allow_persistent_approval": true,
+                "macos": {
+                    "denied_bundle_ids": [
+                        "com.example.ConfigDenied",
+                        "com.example.SharedDenied"
+                    ],
+                    "allowed_bundle_ids": [
+                        "com.example.SharedAllowed",
+                        "com.example.ConfigAllowed"
+                    ]
+                }
+            }
+        }))
+        .expect("valid config");
+        let requirements = ConfigRequirementsToml {
+            computer_use: Some(CoreComputerUseRequirementsToml {
+                allow_persistent_approval: Some(false),
+                macos: Some(CoreComputerUseMacosRequirementsToml {
+                    denied_bundle_ids: Some(vec![
+                        "com.example.RequiredDenied".to_string(),
+                        "com.example.SharedDenied".to_string(),
+                    ]),
+                    allowed_bundle_ids: Some(vec![
+                        "com.example.SharedAllowed".to_string(),
+                        "com.example.RequiredAllowed".to_string(),
+                    ]),
+                }),
+            }),
+            ..Default::default()
+        };
+
+        apply_computer_use_requirements(&mut config, &requirements);
+
+        assert_eq!(
+            config.computer_use,
+            Some(ComputerUseConfig {
+                allow_persistent_approval: Some(false),
+                macos: Some(ComputerUseMacosConfig {
+                    denied_bundle_ids: Some(vec![
+                        "com.example.ConfigDenied".to_string(),
+                        "com.example.SharedDenied".to_string(),
+                        "com.example.RequiredDenied".to_string(),
+                    ]),
+                    allowed_bundle_ids: Some(vec!["com.example.SharedAllowed".to_string()]),
+                }),
+            }),
+        );
     }
 }
