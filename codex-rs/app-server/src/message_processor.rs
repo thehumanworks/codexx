@@ -732,7 +732,10 @@ impl MessageProcessor {
             return Err(invalid_request(experimental_required_message(reason)));
         }
         let connection_id = connection_request_id.connection_id;
-        if let ClientRequest::TurnStart { request_id, .. }
+        if let ClientRequest::ThreadStart { request_id, .. }
+        | ClientRequest::ThreadResume { request_id, .. }
+        | ClientRequest::ThreadFork { request_id, .. }
+        | ClientRequest::TurnStart { request_id, .. }
         | ClientRequest::TurnSteer { request_id, .. } = &codex_request
         {
             self.analytics_events_client.track_request(
