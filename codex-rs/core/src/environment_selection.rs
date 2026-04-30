@@ -174,4 +174,15 @@ mod tests {
             "local"
         );
     }
+
+    #[tokio::test]
+    async fn resolved_environment_selections_use_fallback_without_selections() {
+        let cwd = AbsolutePathBuf::current_dir().expect("cwd");
+        let manager = EnvironmentManager::default_for_tests();
+
+        let resolved =
+            resolve_environment_selections(&manager, &[]).expect("empty selections are valid");
+
+        assert_eq!(resolved.primary_cwd_or_fallback(&cwd), cwd);
+    }
 }

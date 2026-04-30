@@ -2024,11 +2024,11 @@ async fn turn_start_model_surface_gates_multi_environment_process_tools() -> Res
     assert!(body_contains(multi_request, "<environments>"));
     assert!(body_contains(
         multi_request,
-        r#"<environment id=\"local\" primary=\"true\">"#
+        r#"<environment id=\"local\" default=\"true\">"#
     ));
     assert!(body_contains(
         multi_request,
-        r#"<environment id=\"remote\" primary=\"false\">"#
+        r#"<environment id=\"remote\" default=\"false\">"#
     ));
     assert!(body_contains(multi_request, "environment_id"));
 

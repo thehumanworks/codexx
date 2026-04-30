@@ -105,10 +105,6 @@ impl TurnContext {
         self.permission_profile.network_sandbox_policy()
     }
 
-    pub(crate) fn primary_environment(&self) -> Option<&TurnEnvironment> {
-        self.environments.first()
-    }
-
     pub(crate) fn sandbox_policy(&self) -> SandboxPolicy {
         let file_system_sandbox_policy = self.file_system_sandbox_policy();
         let network_sandbox_policy = self.network_sandbox_policy();

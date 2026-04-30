@@ -21,7 +21,7 @@ pub(crate) struct EnvironmentContext {
 pub(crate) struct EnvironmentContextEnvironment {
     pub(crate) id: String,
     pub(crate) cwd: PathBuf,
-    pub(crate) primary: bool,
+    pub(crate) default: bool,
 }
 
 impl EnvironmentContextEnvironment {
@@ -34,7 +34,7 @@ impl EnvironmentContextEnvironment {
             .map(|(index, environment)| Self {
                 id: environment.environment_id.clone(),
                 cwd: environment.cwd.to_path_buf(),
-                primary: index == 0,
+                default: index == 0,
             })
             .collect()
     }
@@ -48,7 +48,7 @@ impl EnvironmentContextEnvironment {
             .map(|(index, environment)| Self {
                 id: environment.environment_id.clone(),
                 cwd: environment.cwd.to_path_buf(),
-                primary: index == 0,
+                default: index == 0,
             })
             .collect()
     }
@@ -146,10 +146,17 @@ impl EnvironmentContext {
     }
 
     pub(crate) fn from_turn_context(turn_context: &TurnContext, shell: &Shell) -> Self {
+        let environments =
+            EnvironmentContextEnvironment::from_turn_environments(&turn_context.environments);
+        let environments = if environments.len() > 1 {
+            environments
+        } else {
+            Vec::new()
+        };
         Self::new(
             Some(turn_context.cwd.to_path_buf()),
             shell.name().to_string(),
-            EnvironmentContextEnvironment::from_turn_environments(&turn_context.environments),
+            environments,
             turn_context.current_date.clone(),
             turn_context.timezone.clone(),
             Self::network_from_turn_context(turn_context),
@@ -239,8 +246,8 @@ impl ContextualUserFragment for EnvironmentContext {
             lines.push("  <environments>".to_string());
             for environment in &self.environments {
                 lines.push(format!(
-                    "    <environment id=\"{}\" primary=\"{}\">",
-                    environment.id, environment.primary
+                    "    <environment id=\"{}\" default=\"{}\">",
+                    environment.id, environment.default
                 ));
                 lines.push(format!(
                     "      <cwd>{}</cwd>",

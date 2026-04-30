@@ -44,6 +44,7 @@ use codex_protocol::protocol::McpToolCallBeginEvent;
 use codex_protocol::protocol::Op;
 use codex_protocol::user_input::UserInput;
 use codex_utils_cargo_bin::cargo_bin;
+use core_test_support::PathBufExt;
 use core_test_support::assert_regex_match;
 use core_test_support::remote_env_env_var;
 use core_test_support::responses;

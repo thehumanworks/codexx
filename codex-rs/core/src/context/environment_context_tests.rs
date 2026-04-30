@@ -210,22 +210,22 @@ fn serialize_environment_context_with_multiple_selected_environments() {
         EnvironmentContextEnvironment {
             id: "local".to_string(),
             cwd: test_path_buf("/primary"),
-            primary: true,
+            default: true,
         },
         EnvironmentContextEnvironment {
             id: "remote".to_string(),
             cwd: test_path_buf("/remote/repo"),
-            primary: false,
+            default: false,
         },
     ];
 
     let expected = format!(
         r#"<environment_context>
   <environments>
-    <environment id="local" primary="true">
+    <environment id="local" default="true">
       <cwd>{}</cwd>
     </environment>
-    <environment id="remote" primary="false">
+    <environment id="remote" default="false">
       <cwd>{}</cwd>
     </environment>
   </environments>
