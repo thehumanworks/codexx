@@ -354,41 +354,20 @@ impl ToolRegistry {
             return Err(err);
         }
 
-        let pre_tool_use_outcome =
-            if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation) {
-                let outcome = run_pre_tool_use_hooks(
-                    &invocation.session,
-                    &invocation.turn,
-                    invocation.call_id.clone(),
-                    &pre_tool_use_payload.tool_name,
-                    &pre_tool_use_payload.tool_input,
-                )
-                .await;
-                if outcome.should_block
-                    && let Some(reason) = outcome.block_reason.as_deref()
-                {
-                    let message = if (pre_tool_use_payload.tool_name.name() == "Bash"
-                        || pre_tool_use_payload.tool_name.name() == "apply_patch")
-                        && let Some(command) = pre_tool_use_payload
-                            .tool_input
-                            .get("command")
-                            .and_then(Value::as_str)
-                    {
-                        format!("Command blocked by PreToolUse hook: {reason}. Command: {command}")
-                    } else {
-                        format!(
-                            "Tool call blocked by PreToolUse hook: {reason}. Tool: {}",
-                            pre_tool_use_payload.tool_name.name()
-                        )
-                    };
-                    let err = FunctionCallError::RespondToModel(message);
-                    dispatch_trace.record_failed(&err);
-                    return Err(err);
-                }
-                Some(outcome)
-            } else {
-                None
-            };
+        if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation)
+            && let Some(message) = run_pre_tool_use_hooks(
+                &invocation.session,
+                &invocation.turn,
+                invocation.call_id.clone(),
+                &pre_tool_use_payload.tool_name,
+                &pre_tool_use_payload.tool_input,
+            )
+            .await
+        {
+            let err = FunctionCallError::RespondToModel(message);
+            dispatch_trace.record_failed(&err);
+            return Err(err);
+        }
 
         let is_mutating = handler.is_mutating(&invocation).await;
         let response_cell = tokio::sync::Mutex::new(None);

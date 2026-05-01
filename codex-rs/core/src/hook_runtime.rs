@@ -140,7 +140,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
     tool_use_id: String,
     tool_name: &HookToolName,
     tool_input: &Value,
-) -> PreToolUseOutcome {
+) -> Option<String> {
     let request = PreToolUseRequest {
         session_id: sess.conversation_id,
         turn_id: turn_context.sub_id.clone(),
@@ -157,10 +157,31 @@ pub(crate) async fn run_pre_tool_use_hooks(
     let preview_runs = hooks.preview_pre_tool_use(&request);
     emit_hook_started_events(sess, turn_context, preview_runs).await;
 
-    let outcome = hooks.run_pre_tool_use(request).await;
-    emit_hook_completed_events(sess, turn_context, outcome.hook_events.clone()).await;
-    record_additional_contexts(sess, turn_context, outcome.additional_contexts.clone()).await;
-    outcome
+    let PreToolUseOutcome {
+        hook_events,
+        should_block,
+        block_reason,
+        additional_contexts,
+    } = hooks.run_pre_tool_use(request).await;
+    emit_hook_completed_events(sess, turn_context, hook_events).await;
+    record_additional_contexts(sess, turn_context, additional_contexts).await;
+
+    if should_block {
+        block_reason.map(|reason| {
+            if (tool_name.name() == "Bash" || tool_name.name() == "apply_patch")
+                && let Some(command) = tool_input.get("command").and_then(Value::as_str)
+            {
+                format!("Command blocked by PreToolUse hook: {reason}. Command: {command}")
+            } else {
+                format!(
+                    "Tool call blocked by PreToolUse hook: {reason}. Tool: {}",
+                    tool_name.name()
+                )
+            }
+        })
+    } else {
+        None
+    }
 }
 
 // PermissionRequest hooks share the same preview/start/completed event flow as
