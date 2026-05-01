@@ -5,21 +5,24 @@
 //! the stored cells as source, clears the Codex-owned terminal history, and re-emits the transcript
 //! for the new terminal size.
 //!
-//! Streaming output is the fragile part of this lifecycle. Active streams first appear as transient
-//! stream cells, then consolidate into source-backed finalized cells. Resize work that happens
-//! before consolidation is marked as stream-time work so consolidation can force one final rebuild
-//! from the finalized source.
+//! Streaming output is the fragile part of this lifecycle. Active streams first appear as stream
+//! cells that may carry the latest fully-emitted stable markdown source, then consolidate into
+//! source-backed finalized cells. Resize work that happens before consolidation uses that stable
+//! source when available and is still marked as stream-time work so consolidation can force one
+//! final rebuild from the finalized source.
 //!
 //! The row cap is enforced while rendering from `HistoryCell` source, not after writing to the
 //! terminal. Initial resume replay uses the same display-line buffering contract so large sessions
 //! do not write more retained rows than resize replay would later be willing to rebuild.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
 use codex_features::Feature;
 use color_eyre::eyre::Result;
+use ratatui::prelude::Stylize;
 use ratatui::text::Line;
 
 use super::App;
@@ -27,12 +30,19 @@ use super::InitialHistoryReplayBuffer;
 use crate::history_cell;
 use crate::history_cell::HistoryCell;
 use crate::insert_history::HistoryLineWrapPolicy;
+use crate::render::line_utils::prefix_lines;
 use crate::transcript_reflow::TRANSCRIPT_REFLOW_DEBOUNCE;
 use crate::tui;
 
 struct ReflowCellDisplay {
     lines: Vec<Line<'static>>,
     is_stream_continuation: bool,
+}
+
+struct AgentMessageStreamSource {
+    source: String,
+    cwd: PathBuf,
+    is_first_line: bool,
 }
 
 /// Rendered transcript lines ready to be replayed into terminal scrollback.
@@ -431,7 +441,23 @@ impl App {
         let row_cap = self.resize_reflow_max_rows();
         let mut cell_displays = VecDeque::new();
         let mut rendered_rows = 0usize;
-        let mut start = self.transcript_cells.len();
+        let stream_run_start =
+            trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
+        let stream_source = self
+            .trailing_agent_message_stream_source(stream_run_start, self.transcript_cells.len());
+        let mut start = stream_source
+            .as_ref()
+            .map(|_| stream_run_start)
+            .unwrap_or(self.transcript_cells.len());
+
+        if let Some(stream_source) = stream_source {
+            let lines = render_agent_message_stream_source(&stream_source, width);
+            rendered_rows += lines.len();
+            cell_displays.push_front(ReflowCellDisplay {
+                lines,
+                is_stream_continuation: !stream_source.is_first_line,
+            });
+        }
 
         while start > 0 {
             start -= 1;
@@ -486,6 +512,37 @@ impl App {
         }
     }
 
+    fn trailing_agent_message_stream_source(
+        &self,
+        start: usize,
+        end: usize,
+    ) -> Option<AgentMessageStreamSource> {
+        if start == end {
+            return None;
+        }
+
+        let first_agent_cell = self.transcript_cells[start]
+            .as_any()
+            .downcast_ref::<history_cell::AgentMessageCell>()?;
+        let is_first_line = first_agent_cell.is_first_line();
+
+        let mut latest_source = None;
+        for cell in &self.transcript_cells[start..end] {
+            let agent_cell = cell
+                .as_any()
+                .downcast_ref::<history_cell::AgentMessageCell>()?;
+            if let Some((source, cwd)) = agent_cell.markdown_source() {
+                latest_source = Some(AgentMessageStreamSource {
+                    source: source.to_string(),
+                    cwd: cwd.to_path_buf(),
+                    is_first_line,
+                });
+            }
+        }
+
+        latest_source
+    }
+
     /// Return whether current transcript state should be treated as stream-time resize state.
     ///
     /// The active stream controllers cover normal streaming. The trailing-cell checks cover the
@@ -499,4 +556,39 @@ impl App {
             || trailing_run_start::<history_cell::ProposedPlanStreamCell>(&self.transcript_cells)
                 < self.transcript_cells.len()
     }
+}
+
+fn render_agent_message_stream_source(
+    stream_source: &AgentMessageStreamSource,
+    width: u16,
+) -> Vec<Line<'static>> {
+    let Some(wrap_width) = crate::width::usable_content_width_u16(width, /*reserved_cols*/ 2)
+    else {
+        return prefix_lines(
+            vec![Line::default()],
+            if stream_source.is_first_line {
+                "• ".dim()
+            } else {
+                "  ".into()
+            },
+            "  ".into(),
+        );
+    };
+
+    let mut lines = Vec::new();
+    crate::markdown::append_markdown(
+        &stream_source.source,
+        Some(wrap_width),
+        Some(stream_source.cwd.as_path()),
+        &mut lines,
+    );
+    prefix_lines(
+        lines,
+        if stream_source.is_first_line {
+            "• ".dim()
+        } else {
+            "  ".into()
+        },
+        "  ".into(),
+    )
 }

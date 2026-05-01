@@ -7,8 +7,10 @@
 //! returns the accumulated source to the app for consolidation.
 //!
 //! Width changes are handled by re-rendering from source and rebuilding only the not-yet-emitted
-//! queue. Already emitted rows stay emitted until the app-level transcript reflow rebuilds the full
-//! scrollback from finalized cells.
+//! queue. Already emitted rows stay emitted, but the last emitted stable stream cell carries a
+//! source snapshot so app-level transcript reflow can rebuild from markdown instead of re-wrapping
+//! stale table rows. Finalization still consolidates the stream into one finalized source-backed
+//! cell.
 
 use crate::history_cell::HistoryCell;
 use crate::history_cell::HistoryRenderMode;
@@ -105,6 +107,14 @@ impl StreamCore {
         let step = self.state.drain_n(max_lines);
         self.emitted_len += step.len();
         step
+    }
+
+    fn emitted_stable_source(&self) -> Option<&str> {
+        if self.stable_source_end > 0 && self.emitted_len >= self.rendered_lines.len() {
+            Some(&self.raw_source[..self.stable_source_end])
+        } else {
+            None
+        }
     }
 
     fn queued_lines(&self) -> usize {
@@ -261,8 +271,10 @@ impl StreamCore {
 ///
 /// The controller emits transient `AgentMessageCell`s for live display and returns raw markdown
 /// source on `finalize` so the app can replace those transient cells with a source-backed
-/// `AgentMarkdownCell`. Callers should use `set_width` on terminal resize; rebuilding the queue
-/// from already emitted cells would duplicate output instead of preserving the stream position.
+/// `AgentMarkdownCell`. Cells emitted after a stable prefix is fully drained carry that stable
+/// source as a resize-reflow repair hint. Callers should use `set_width` on terminal resize;
+/// rebuilding the queue from already emitted cells would duplicate output instead of preserving the
+/// stream position.
 pub(crate) struct StreamController {
     core: StreamCore,
     header_emitted: bool,
@@ -316,14 +328,15 @@ impl StreamController {
         }
 
         let source = std::mem::take(&mut self.core.raw_source);
-        let out = self.emit(remaining);
+        let out = self.emit(remaining, Some(source.clone()));
         self.core.reset();
         (out, Some(source))
     }
 
     pub(crate) fn on_commit_tick(&mut self) -> (Option<Box<dyn HistoryCell>>, bool) {
         let step = self.core.tick();
-        (self.emit(step), self.core.is_idle())
+        let source = self.core.emitted_stable_source().map(str::to_string);
+        (self.emit(step, source), self.core.is_idle())
     }
 
     pub(crate) fn on_commit_tick_batch(
@@ -331,7 +344,8 @@ impl StreamController {
         max_lines: usize,
     ) -> (Option<Box<dyn HistoryCell>>, bool) {
         let step = self.core.tick_batch(max_lines);
-        (self.emit(step), self.core.is_idle())
+        let source = self.core.emitted_stable_source().map(str::to_string);
+        (self.emit(step, source), self.core.is_idle())
     }
 
     pub(crate) fn queued_lines(&self) -> usize {
@@ -354,15 +368,32 @@ impl StreamController {
         self.core.set_render_mode(render_mode);
     }
 
-    fn emit(&mut self, lines: Vec<Line<'static>>) -> Option<Box<dyn HistoryCell>> {
+    fn emit(
+        &mut self,
+        lines: Vec<Line<'static>>,
+        markdown_source: Option<String>,
+    ) -> Option<Box<dyn HistoryCell>> {
         if lines.is_empty() {
             return None;
         }
-        Some(Box::new(history_cell::AgentMessageCell::new(lines, {
-            let header_emitted = self.header_emitted;
-            self.header_emitted = true;
-            !header_emitted
-        })))
+        let header_emitted = self.header_emitted;
+        self.header_emitted = true;
+        let is_first_line = !header_emitted;
+        if let Some(source) = markdown_source {
+            Some(Box::new(
+                history_cell::AgentMessageCell::new_with_markdown_source(
+                    lines,
+                    is_first_line,
+                    source,
+                    self.core.cwd.as_path(),
+                ),
+            ))
+        } else {
+            Some(Box::new(history_cell::AgentMessageCell::new(
+                lines,
+                is_first_line,
+            )))
+        }
     }
 }
 

@@ -539,6 +539,16 @@ impl HistoryCell for ReasoningSummaryCell {
 pub(crate) struct AgentMessageCell {
     lines: Vec<Line<'static>>,
     is_first_line: bool,
+    /// Stable markdown source that had fully drained by the time this transient stream cell was
+    /// emitted. Resize reflow uses the latest snapshot in a trailing stream run to rebuild tables
+    /// from source instead of wrapping already-rendered table borders as plain text.
+    markdown_source: Option<AgentMessageMarkdownSource>,
+}
+
+#[derive(Debug)]
+struct AgentMessageMarkdownSource {
+    source: String,
+    cwd: PathBuf,
 }
 
 impl AgentMessageCell {
@@ -546,7 +556,34 @@ impl AgentMessageCell {
         Self {
             lines,
             is_first_line,
+            markdown_source: None,
         }
+    }
+
+    pub(crate) fn new_with_markdown_source(
+        lines: Vec<Line<'static>>,
+        is_first_line: bool,
+        source: String,
+        cwd: &Path,
+    ) -> Self {
+        Self {
+            lines,
+            is_first_line,
+            markdown_source: Some(AgentMessageMarkdownSource {
+                source,
+                cwd: cwd.to_path_buf(),
+            }),
+        }
+    }
+
+    pub(crate) fn markdown_source(&self) -> Option<(&str, &Path)> {
+        self.markdown_source
+            .as_ref()
+            .map(|source| (source.source.as_str(), source.cwd.as_path()))
+    }
+
+    pub(crate) fn is_first_line(&self) -> bool {
+        self.is_first_line
     }
 }
 

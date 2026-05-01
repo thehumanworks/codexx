@@ -4019,9 +4019,13 @@ fn rendered_line_text(line: &Line<'static>) -> String {
         .collect()
 }
 
+fn markdown_table_source() -> &'static str {
+    "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across terminal widths while staying in table form. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n"
+}
+
 fn markdown_table_cell() -> Arc<dyn HistoryCell> {
     Arc::new(AgentMarkdownCell::new(
-        "| Area | Result |\n| --- | --- |\n| Streaming resize | This cell contains enough prose to wrap differently across terminal widths while staying in table form. |\n| Scrollback preservation | SENTINEL_TABLE_VALUE_WITH_LONG_UNBREAKABLE_TOKEN |\n".to_string(),
+        markdown_table_source().to_string(),
         &std::env::temp_dir(),
     )) as Arc<dyn HistoryCell>
 }
@@ -4149,6 +4153,53 @@ async fn table_resize_lifecycle_reflow_preserves_scrollback_and_rerenders_width(
     assert!(
         narrow_text.len() > wide_text.len(),
         "expanded scrollback reflow should reduce table wrapping\nnarrow={narrow_text:?}\nwide={wide_text:?}",
+    );
+}
+
+#[tokio::test]
+async fn table_resize_lifecycle_stream_reflow_uses_markdown_source_not_transient_table_rows() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+    let cwd = std::env::temp_dir();
+    let source = markdown_table_source();
+    let wide_body_width =
+        crate::width::usable_content_width_u16(/*total_width*/ 96, /*reserved_cols*/ 2)
+            .expect("wide terminal width should leave markdown body room");
+    let mut controller =
+        crate::streaming::controller::StreamController::new(Some(wide_body_width), cwd.as_path());
+    assert!(controller.push(&format!(
+        "{source}\nTail paragraph keeps the preceding table stable.\n"
+    )));
+    loop {
+        let (cell, idle) = controller.on_commit_tick();
+        if let Some(cell) = cell {
+            app.transcript_cells.push(cell.into());
+        }
+        if idle {
+            break;
+        }
+    }
+    assert!(
+        app.transcript_cells.len() > 1,
+        "stream should emit stable table lines over multiple transient cells",
+    );
+
+    let reflowed_from_transient = app.render_transcript_lines_for_reflow(/*width*/ 44);
+    let source_backed = AgentMarkdownCell::new(source.to_string(), cwd.as_path());
+    let expected_source_backed = source_backed.display_lines(/*width*/ 44);
+
+    assert_eq!(
+        reflowed_from_transient
+            .lines
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>(),
+        expected_source_backed
+            .iter()
+            .map(rendered_line_text)
+            .collect::<Vec<_>>(),
+        "resize reflow during streaming must rebuild tables from markdown source, not re-wrap stale transient table rows",
     );
 }
 
