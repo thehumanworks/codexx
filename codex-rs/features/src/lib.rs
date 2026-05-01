@@ -632,6 +632,7 @@ impl FeaturesToml {
         let Self {
             multi_agent_v2,
             apps_mcp_path_override,
+            network_proxy,
             entries,
         } = self;
         for key in legacy::legacy_feature_keys() {
@@ -643,6 +644,8 @@ impl FeaturesToml {
                 materialize_resolved_feature_enabled(multi_agent_v2, enabled);
             } else if spec.id == Feature::AppsMcpPathOverride {
                 materialize_resolved_feature_enabled(apps_mcp_path_override, enabled);
+            } else if spec.id == Feature::NetworkProxy {
+                materialize_resolved_feature_enabled(network_proxy, enabled);
             } else {
                 entries.insert(spec.key.to_string(), enabled);
             }
