@@ -3,6 +3,8 @@ use std::path::Path;
 
 use crate::SkillLoadOutcome;
 use crate::SkillMetadata;
+use codex_protocol::parse_command::ParsedCommand;
+use codex_shell_command::parse_command::parse_command_impl;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub(crate) fn build_implicit_skill_path_indexes(
@@ -101,15 +103,11 @@ fn detect_skill_doc_read(
     tokens: &[String],
     workdir: &AbsolutePathBuf,
 ) -> Option<SkillMetadata> {
-    if !command_reads_file(tokens) {
-        return None;
-    }
-
-    for token in tokens.iter().skip(1) {
-        if token.starts_with('-') {
+    // Keep partially parsed reads from pipelines such as `cat SKILL.md | head`.
+    for parsed in parse_command_impl(&tokens_with_command_basename(tokens)) {
+        let ParsedCommand::Read { path, .. } = parsed else {
             continue;
-        }
-        let path = Path::new(token);
+        };
         let candidate_path = canonicalize_if_exists(&workdir.join(path));
         if let Some(candidate) = outcome.implicit_skills_by_doc_path.get(&candidate_path) {
             return Some(candidate.clone());
@@ -119,13 +117,14 @@ fn detect_skill_doc_read(
     None
 }
 
-fn command_reads_file(tokens: &[String]) -> bool {
-    const READERS: [&str; 8] = ["cat", "sed", "head", "tail", "less", "more", "bat", "awk"];
-    let Some(program) = tokens.first() else {
-        return false;
+fn tokens_with_command_basename(tokens: &[String]) -> Vec<String> {
+    let Some((program, rest)) = tokens.split_first() else {
+        return Vec::new();
     };
-    let program = command_basename(program).to_ascii_lowercase();
-    READERS.contains(&program.as_str())
+    let mut normalized = Vec::with_capacity(tokens.len());
+    normalized.push(command_basename(program).to_ascii_lowercase());
+    normalized.extend_from_slice(rest);
+    normalized
 }
 
 fn command_basename(command: &str) -> String {

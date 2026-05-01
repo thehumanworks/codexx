@@ -3,6 +3,8 @@
 
 use anyhow::Result;
 use codex_core::ThreadManager;
+use codex_core::skills::SkillsLoadInput;
+use codex_core::skills::detect_implicit_skill_invocation_for_command;
 use codex_core::thread_store_from_config;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::EnvironmentManager;
@@ -145,6 +147,47 @@ async fn user_turn_includes_skill_instructions() -> Result<()> {
         }),
         "expected skill instructions in user input, got {user_texts:?}"
     );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn parsed_skill_doc_reads_detect_loaded_repo_skill() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let mut builder = test_codex().with_workspace_setup(|cwd, fs| async move {
+        write_repo_skill(cwd, fs, "demo", "demo skill", "# Body").await
+    });
+    let test = builder.build_remote_aware(&server).await?;
+    let skills_input = SkillsLoadInput::new(
+        test.config.cwd.clone(),
+        Vec::new(),
+        test.config.config_layer_stack.clone(),
+        test.config.bundled_skills_enabled(),
+    );
+    let outcome = test
+        .thread_manager
+        .skills_manager()
+        .skills_for_config(&skills_input, Some(test.fs()))
+        .await;
+    let skill_path = test.config.cwd.join(".agents/skills/demo/SKILL.md");
+    let skill_path_str = skill_path.to_string_lossy();
+
+    let parsed_read = detect_implicit_skill_invocation_for_command(
+        &outcome,
+        &format!("nl {skill_path_str}"),
+        &test.config.cwd,
+    )
+    .map(|skill| skill.name);
+    let non_read = detect_implicit_skill_invocation_for_command(
+        &outcome,
+        &format!("echo {skill_path_str}"),
+        &test.config.cwd,
+    )
+    .map(|skill| skill.name);
+
+    assert_eq!((parsed_read, non_read), (Some("demo".to_string()), None));
 
     Ok(())
 }
