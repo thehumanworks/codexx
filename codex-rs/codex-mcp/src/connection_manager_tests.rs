@@ -28,7 +28,6 @@ use pretty_assertions::assert_eq;
 use rmcp::model::CreateElicitationRequestParams;
 use rmcp::model::ElicitationAction;
 use rmcp::model::ElicitationCapability;
-use rmcp::model::FormElicitationCapability;
 use rmcp::model::JsonObject;
 use rmcp::model::Meta;
 use rmcp::model::NumberOrString;
@@ -845,18 +844,14 @@ async fn host_owned_codex_apps_server_is_identified_by_client_provenance() {
 }
 
 #[test]
-fn elicitation_capability_enabled_for_custom_servers() {
+fn elicitation_capability_uses_2025_06_18_shape_for_all_servers() {
     for server_name in [CODEX_APPS_MCP_SERVER_NAME, "custom_mcp"] {
         let capability = elicitation_capability_for_server(server_name);
-        assert!(matches!(
-            capability,
-            Some(ElicitationCapability {
-                form: Some(FormElicitationCapability {
-                    schema_validation: None
-                }),
-                url: None,
-            })
-        ));
+        assert_eq!(capability, Some(ElicitationCapability::default()));
+        assert_eq!(
+            serde_json::to_value(capability).expect("serialize elicitation capability"),
+            serde_json::json!({})
+        );
     }
 }
 
