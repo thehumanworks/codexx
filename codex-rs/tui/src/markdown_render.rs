@@ -27,6 +27,7 @@ use regex_lite::Regex;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use unicode_width::UnicodeWidthStr;
 use url::Url;
 
 mod table;
@@ -401,8 +402,18 @@ where
         let Some(table) = self.table.take() else {
             return;
         };
-        let lines = render_table_lines(&table.rows, self.wrap_width);
-        self.text.lines.extend(lines);
+        let prefix_width = self
+            .prefix_spans(/*pending_marker_line*/ false)
+            .iter()
+            .map(|span| span.content.width())
+            .sum();
+        let table_width = self
+            .wrap_width
+            .map(|width| width.saturating_sub(prefix_width));
+        for line in render_table_lines(&table.rows, table_width) {
+            self.push_line(line);
+            self.flush_current_line();
+        }
         self.needs_newline = true;
     }
 

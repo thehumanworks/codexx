@@ -152,6 +152,41 @@ fn table_resize_lifecycle_renderer_uses_vertical_fallback_only_at_tiny_width() {
 }
 
 #[test]
+fn table_nested_in_blockquote_preserves_prefix() {
+    let markdown = "> | Area | Result |\n> | --- | --- |\n> | Resize | Keeps nested prefixes |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(40), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .filter(|line| line.contains('│') || line.contains('─'))
+            .all(|line| line.starts_with("> ")),
+        "nested blockquote table should preserve blockquote prefix: {lines:?}"
+    );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 40);
+}
+
+#[test]
+fn table_nested_in_list_preserves_prefix() {
+    let markdown =
+        "- item\n  | Area | Result |\n  | --- | --- |\n  | Resize | Keeps nested prefixes |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(40), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .filter(|line| line.contains('│') || line.contains('─'))
+            .all(|line| line.starts_with("  ")),
+        "nested list table should preserve list indentation: {lines:?}"
+    );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 40);
+}
+
+#[test]
 fn table_readability_fallback_keeps_dense_large_table_boxed_when_wide() {
     let rendered = render_markdown_text_with_width_and_cwd(
         &dense_large_table_fixture(),
