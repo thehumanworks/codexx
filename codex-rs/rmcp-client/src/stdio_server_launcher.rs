@@ -490,7 +490,7 @@ impl ExecutorStdioServerLauncher {
             env,
             env_vars,
             cwd,
-            telemetry_sink: _,
+            telemetry_sink,
         } = command;
         let program_name = program.to_string_lossy().into_owned();
         let envs = create_env_overlay_for_remote_mcp_server(env, &env_vars);
@@ -525,6 +525,7 @@ impl ExecutorStdioServerLauncher {
             inner: StdioServerTransportInner::Executor(ExecutorProcessTransport::new(
                 started.process,
                 program_name,
+                telemetry_sink,
             )),
             process,
         })
@@ -592,7 +593,7 @@ impl ExecutorStdioServerLauncher {
 
 const CODEX_TELEMETRY_STDERR_PREFIX: &str = "@codex-telemetry ";
 
-fn handle_stderr_line(
+pub(super) fn handle_stderr_line(
     program_name: &str,
     line: &str,
     telemetry_sink: Option<&StdioServerTelemetrySink>,

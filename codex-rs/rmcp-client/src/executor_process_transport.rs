@@ -41,8 +41,10 @@ use serde_json::to_vec;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast;
 use tracing::debug;
-use tracing::info;
 use tracing::warn;
+
+use crate::stdio_server_launcher::StdioServerTelemetrySink;
+use crate::stdio_server_launcher::handle_stderr_line;
 
 static PROCESS_COUNTER: AtomicUsize = AtomicUsize::new(1);
 
@@ -78,6 +80,9 @@ pub(super) struct ExecutorProcessTransport {
     /// Buffered stderr bytes for diagnostic logging.
     stderr: Vec<u8>,
 
+    /// Optional sink for structured stderr telemetry lines.
+    telemetry_sink: Option<StdioServerTelemetrySink>,
+
     /// Whether the executor has reported process closure or a terminal
     /// subscription failure. Once closed, any remaining partial stdout line is
     /// flushed once and then rmcp receives EOF.
@@ -95,7 +100,11 @@ pub(super) struct ExecutorProcessTransport {
 }
 
 impl ExecutorProcessTransport {
-    pub(super) fn new(process: Arc<dyn ExecProcess>, program_name: String) -> Self {
+    pub(super) fn new(
+        process: Arc<dyn ExecProcess>,
+        program_name: String,
+        telemetry_sink: Option<StdioServerTelemetrySink>,
+    ) -> Self {
         // Subscribe before returning the transport to rmcp. Some test servers
         // can emit output or exit quickly after `process/start`, and the
         // process event log will replay anything that landed before this
@@ -107,6 +116,7 @@ impl ExecutorProcessTransport {
             program_name,
             stdout: Vec::new(),
             stderr: Vec::new(),
+            telemetry_sink,
             closed: false,
             terminated: false,
             last_seq: 0,
@@ -321,10 +331,10 @@ impl ExecutorProcessTransport {
             if line.last() == Some(&b'\r') {
                 line.pop();
             }
-            info!(
-                "MCP server stderr ({}): {}",
-                self.program_name,
-                String::from_utf8_lossy(&line)
+            handle_stderr_line(
+                &self.program_name,
+                &String::from_utf8_lossy(&line),
+                self.telemetry_sink.as_ref(),
             );
         }
     }
@@ -334,10 +344,10 @@ impl ExecutorProcessTransport {
             return;
         }
         let line = take(&mut self.stderr);
-        info!(
-            "MCP server stderr ({}): {}",
-            self.program_name,
-            String::from_utf8_lossy(&line)
+        handle_stderr_line(
+            &self.program_name,
+            &String::from_utf8_lossy(&line),
+            self.telemetry_sink.as_ref(),
         );
     }
 

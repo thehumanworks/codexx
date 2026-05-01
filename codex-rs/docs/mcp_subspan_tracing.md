@@ -11,11 +11,11 @@ This document describes Codex's experimental MCP client extension for ingesting 
 
 Codex creates an `mcp.tools.call` span around each MCP tool call. Some MCP servers perform meaningful nested work that is useful to inspect as child spans of that call. The `codex/subspan-tracing` capability lets a server opt in to receiving the active W3C trace context for a tool call and emitting sanitized span records back to Codex.
 
-This is intended for local stdio MCP servers. Telemetry records are out-of-band with respect to the MCP JSON-RPC stream and must not affect tool-call success or transport liveness.
+This is intended for stdio MCP servers whose stderr stream is observed by Codex. Telemetry records are out-of-band with respect to the MCP JSON-RPC stream and must not affect tool-call success or transport liveness.
 
 ## Capability Negotiation
 
-Codex advertises client support during MCP `initialize`:
+Codex advertises client support during MCP `initialize` only when the active MCP transport can observe stderr telemetry:
 
 ```json
 {
@@ -90,7 +90,7 @@ For `stderr-jsonl`, each telemetry record is written to the MCP server process s
 The rest of the line is a single JSON object:
 
 ```text
-@codex-telemetry {"v":1,"type":"span","name":"example.work",...}
+@codex-telemetry {"v":1,"type":"span","name":"browser_use.tab.goto",...}
 ```
 
 Normal stderr output must not use that prefix. Codex preserves ordinary stderr logging behavior for non-telemetry lines.
@@ -171,4 +171,3 @@ Subspan telemetry is best effort:
 ## Current Attribute Profile
 
 `browser-use-v1` is the initial attribute profile used by Browser Use instrumentation. Codex currently allows Browser Use, Node REPL, and JS-related span names and attribute keys needed for that profile. New profiles should be added deliberately with their own allowlist changes and tests.
-

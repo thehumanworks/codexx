@@ -206,6 +206,8 @@ impl AsyncManagedClient {
         let startup_tool_filter = tool_filter;
         let startup_complete = Arc::new(AtomicBool::new(false));
         let subspan_tracing_enabled = Arc::new(AtomicBool::new(false));
+        let subspan_tracing_stderr_jsonl_available =
+            subspan_tracing_stderr_jsonl_available(&config, &runtime_environment);
         let startup_complete_for_fut = Arc::clone(&startup_complete);
         let subspan_tracing_enabled_for_fut = Arc::clone(&subspan_tracing_enabled);
         let cancel_token_for_fut = cancel_token.clone();
@@ -239,6 +241,7 @@ impl AsyncManagedClient {
                         elicitation_requests,
                         codex_apps_tools_cache_context,
                         subspan_tracing_enabled: subspan_tracing_enabled_for_fut,
+                        subspan_tracing_stderr_jsonl_available,
                     },
                 )
                 .await
@@ -515,25 +518,28 @@ async fn start_server_task(
         elicitation_requests,
         codex_apps_tools_cache_context,
         subspan_tracing_enabled,
+        subspan_tracing_stderr_jsonl_available,
     } = params;
     let elicitation = elicitation_capability_for_server(&server_name);
-    let mut subspan_tracing_capability = JsonObject::new();
-    subspan_tracing_capability.insert(
-        "version".to_string(),
-        serde_json::json!(MCP_SUBSPAN_TRACING_VERSION),
-    );
-    subspan_tracing_capability.insert(
-        "transports".to_string(),
-        serde_json::json!([MCP_SUBSPAN_TRACING_TRANSPORT_STDERR_JSONL]),
-    );
-    let client_experimental_capabilities = BTreeMap::from([(
-        MCP_SUBSPAN_TRACING_CAPABILITY.to_string(),
-        subspan_tracing_capability,
-    )]);
+    let client_experimental_capabilities = subspan_tracing_stderr_jsonl_available.then(|| {
+        let mut subspan_tracing_capability = JsonObject::new();
+        subspan_tracing_capability.insert(
+            "version".to_string(),
+            serde_json::json!(MCP_SUBSPAN_TRACING_VERSION),
+        );
+        subspan_tracing_capability.insert(
+            "transports".to_string(),
+            serde_json::json!([MCP_SUBSPAN_TRACING_TRANSPORT_STDERR_JSONL]),
+        );
+        BTreeMap::from([(
+            MCP_SUBSPAN_TRACING_CAPABILITY.to_string(),
+            subspan_tracing_capability,
+        )])
+    });
     let initialize_params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
-            experimental: Some(client_experimental_capabilities),
+            experimental: client_experimental_capabilities,
             extensions: None,
             roots: None,
             sampling: None,
@@ -622,6 +628,22 @@ struct StartServerTaskParams {
     elicitation_requests: ElicitationRequestManager,
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
     subspan_tracing_enabled: Arc<AtomicBool>,
+    subspan_tracing_stderr_jsonl_available: bool,
+}
+
+fn subspan_tracing_stderr_jsonl_available(
+    config: &McpServerConfig,
+    runtime_environment: &McpRuntimeEnvironment,
+) -> bool {
+    if !matches!(config.transport, McpServerTransportConfig::Stdio { .. }) {
+        return false;
+    }
+
+    match config.experimental_environment.as_deref() {
+        None | Some("local") => true,
+        Some("remote") => runtime_environment.environment().is_remote(),
+        Some(_) => false,
+    }
 }
 
 async fn make_rmcp_client(
@@ -759,8 +781,11 @@ fn subspan_tracing_telemetry_sink(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_exec_server::Environment;
     use rmcp::model::JsonObject;
     use rmcp::model::Meta;
+    use std::path::PathBuf;
+    use std::sync::Arc;
 
     fn tool_with_connector_meta() -> RmcpTool {
         RmcpTool {
@@ -856,6 +881,56 @@ mod tests {
         ] {
             assert!(meta.0.contains_key(key), "{key} should be preserved");
         }
+    }
+
+    fn local_runtime_environment() -> McpRuntimeEnvironment {
+        McpRuntimeEnvironment::new(
+            Arc::new(Environment::default_for_tests()),
+            PathBuf::from("/tmp"),
+        )
+    }
+
+    fn remote_runtime_environment() -> McpRuntimeEnvironment {
+        McpRuntimeEnvironment::new(
+            Arc::new(
+                Environment::create_for_tests(Some("ws://executor.example".to_string()))
+                    .expect("remote environment"),
+            ),
+            PathBuf::from("/tmp"),
+        )
+    }
+
+    fn mcp_server_config(value: serde_json::Value) -> McpServerConfig {
+        serde_json::from_value(value).expect("mcp server config")
+    }
+
+    #[tokio::test]
+    async fn subspan_tracing_stderr_jsonl_is_available_only_when_stderr_is_observed() {
+        assert!(subspan_tracing_stderr_jsonl_available(
+            &mcp_server_config(serde_json::json!({"command": "node"})),
+            &local_runtime_environment(),
+        ));
+
+        assert!(!subspan_tracing_stderr_jsonl_available(
+            &mcp_server_config(serde_json::json!({"url": "https://mcp.example"})),
+            &local_runtime_environment(),
+        ));
+
+        assert!(!subspan_tracing_stderr_jsonl_available(
+            &mcp_server_config(serde_json::json!({
+                "command": "node",
+                "experimental_environment": "remote",
+            })),
+            &local_runtime_environment(),
+        ));
+
+        assert!(subspan_tracing_stderr_jsonl_available(
+            &mcp_server_config(serde_json::json!({
+                "command": "node",
+                "experimental_environment": "remote",
+            })),
+            &remote_runtime_environment(),
+        ));
     }
 
     #[test]
