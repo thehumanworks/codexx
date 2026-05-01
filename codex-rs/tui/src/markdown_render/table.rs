@@ -23,6 +23,14 @@ struct TableMetrics {
     hard_wrap_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TableFallbackPolicy {
+    LastResort,
+    Balanced,
+}
+
+const DEFAULT_TABLE_FALLBACK_POLICY: TableFallbackPolicy = TableFallbackPolicy::LastResort;
+
 pub(super) fn render_table_lines(
     rows: &[Vec<TableCell>],
     width: Option<usize>,
@@ -40,7 +48,13 @@ pub(super) fn render_table_lines(
     let normalized_rows = normalize_table_rows(rows, column_count);
     let widths = desired_column_widths(&normalized_rows, column_count);
 
-    match choose_table_layout(&normalized_rows, &widths, available_width, column_count) {
+    match choose_table_layout(
+        &normalized_rows,
+        &widths,
+        available_width,
+        column_count,
+        current_table_fallback_policy(),
+    ) {
         Some(candidate) => render_box_table(
             &normalized_rows,
             &candidate.column_widths,
@@ -48,6 +62,16 @@ pub(super) fn render_table_lines(
             candidate.hard_wrap,
         ),
         None => render_vertical_table(&normalized_rows, available_width),
+    }
+}
+
+fn current_table_fallback_policy() -> TableFallbackPolicy {
+    match std::env::var("CODEX_TUI_TABLE_FALLBACK_POLICY")
+        .ok()
+        .as_deref()
+    {
+        Some("balanced") => TableFallbackPolicy::Balanced,
+        _ => DEFAULT_TABLE_FALLBACK_POLICY,
     }
 }
 
@@ -188,12 +212,16 @@ fn choose_table_layout(
     desired_widths: &[usize],
     available_width: usize,
     column_count: usize,
+    policy: TableFallbackPolicy,
 ) -> Option<TableLayoutCandidate> {
-    if available_width < 32 || width_shape_requires_vertical(column_count, available_width) {
+    if policy == TableFallbackPolicy::Balanced
+        && (available_width < 32 || width_shape_requires_vertical(column_count, available_width))
+    {
         return None;
     }
 
     let normal = allocate_table_widths(
+        rows,
         desired_widths,
         available_width,
         column_count,
@@ -206,6 +234,7 @@ fn choose_table_layout(
             widths,
             available_width,
             /*padding*/ 1,
+            policy,
         )
     });
     if normal.is_some() {
@@ -213,6 +242,7 @@ fn choose_table_layout(
     }
 
     allocate_table_widths(
+        rows,
         desired_widths,
         available_width,
         column_count,
@@ -225,6 +255,7 @@ fn choose_table_layout(
             widths,
             available_width,
             /*padding*/ 0,
+            policy,
         )
     })
 }
@@ -239,6 +270,7 @@ fn build_table_candidate(
     column_widths: Vec<usize>,
     available_width: usize,
     padding: usize,
+    policy: TableFallbackPolicy,
 ) -> Option<TableLayoutCandidate> {
     let metrics = table_metrics(rows, &column_widths, /*hard_wrap*/ false);
     let needs_hard_wrap = metrics.hard_wrap_count > 0 || metrics.max_body_row_height > 12;
@@ -251,15 +283,25 @@ fn build_table_candidate(
         (false, metrics)
     };
 
-    if should_render_vertical(
-        rows,
-        desired_widths,
-        &column_widths,
-        available_width,
-        padding,
-        hard_wrap,
-        &metrics,
-    ) {
+    let should_fallback = match policy {
+        TableFallbackPolicy::LastResort => should_render_vertical_last_resort(
+            rows,
+            &column_widths,
+            available_width,
+            padding,
+            &metrics,
+        ),
+        TableFallbackPolicy::Balanced => should_render_vertical_balanced(
+            rows,
+            desired_widths,
+            &column_widths,
+            available_width,
+            padding,
+            hard_wrap,
+            &metrics,
+        ),
+    };
+    if should_fallback {
         return None;
     }
 
@@ -271,6 +313,7 @@ fn build_table_candidate(
 }
 
 fn allocate_table_widths(
+    rows: &[Vec<TableCell>],
     desired_widths: &[usize],
     available_width: usize,
     column_count: usize,
@@ -286,15 +329,54 @@ fn allocate_table_widths(
 
     let mut widths = vec![3; column_count];
     let mut remaining = available_content_width - min_total;
-    while remaining > 0 {
+
+    let basic_targets = desired_widths
+        .iter()
+        .enumerate()
+        .map(|(index, desired)| {
+            let header = rows
+                .first()
+                .and_then(|row| row.get(index))
+                .map(normalized_header)
+                .unwrap_or_default();
+            let is_icon_column = matches!(header.as_str(), "icon" | "emoji");
+            let compact_target = if is_index_column(rows, index) || is_icon_column {
+                4
+            } else {
+                6
+            };
+            (*desired).min(compact_target).max(3)
+        })
+        .collect::<Vec<_>>();
+    grow_columns_to_targets(&mut widths, &mut remaining, &basic_targets);
+
+    let content_targets = desired_widths
+        .iter()
+        .enumerate()
+        .map(|(index, desired)| {
+            if is_content_heavy_column(rows, index) {
+                (*desired).min(24).max(widths[index])
+            } else {
+                widths[index]
+            }
+        })
+        .collect::<Vec<_>>();
+    grow_columns_to_targets(&mut widths, &mut remaining, &content_targets);
+    grow_columns_to_targets(&mut widths, &mut remaining, desired_widths);
+
+    Some(widths)
+}
+
+fn grow_columns_to_targets(widths: &mut [usize], remaining: &mut usize, targets: &[usize]) {
+    while *remaining > 0 {
         let mut changed = false;
-        for index in 0..column_count {
-            if remaining == 0 {
+        for index in 0..widths.len() {
+            if *remaining == 0 {
                 break;
             }
-            if widths[index] < desired_widths[index] {
+            if widths[index] < targets[index] {
                 widths[index] += 1;
-                remaining -= 1;
+                *remaining -= 1;
                 changed = true;
             }
         }
@@ -302,8 +384,6 @@ fn allocate_table_widths(
             break;
         }
     }
-
-    Some(widths)
 }
 
 fn render_box_table(
@@ -480,7 +560,44 @@ fn cell_needs_hard_wrap(cell: &TableCell, width: usize) -> bool {
         .any(|token| token.width() > width)
 }
 
-fn should_render_vertical(
+fn should_render_vertical_last_resort(
+    rows: &[Vec<TableCell>],
+    column_widths: &[usize],
+    available_width: usize,
+    padding: usize,
+    metrics: &TableMetrics,
+) -> bool {
+    let column_count = column_widths.len();
+    let body_rows = rows.len().saturating_sub(1);
+    if metrics.max_body_row_height > 24
+        || (body_rows >= 10 && metrics.average_body_row_height > 6.0)
+        || (body_rows >= 24 && metrics.average_body_row_height > 4.0)
+    {
+        return true;
+    }
+
+    let non_index_columns = (0..column_count)
+        .filter(|index| !is_index_column(rows, *index))
+        .count();
+    let starved_non_index_columns = column_widths
+        .iter()
+        .enumerate()
+        .filter(|(index, width)| !is_index_column(rows, *index) && **width <= 3)
+        .count();
+    if column_count >= 4
+        && body_rows >= 12
+        && non_index_columns > 0
+        && starved_non_index_columns == non_index_columns
+    {
+        return true;
+    }
+
+    has_width_risk_chars(rows)
+        && available_width <= 24
+        && table_total_width(column_widths, padding) >= available_width
+}
+
+fn should_render_vertical_balanced(
     rows: &[Vec<TableCell>],
     desired_widths: &[usize],
     column_widths: &[usize],

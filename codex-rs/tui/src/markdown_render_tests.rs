@@ -172,55 +172,55 @@ fn table_readability_fallback_keeps_dense_large_table_boxed_when_wide() {
 }
 
 #[test]
-fn table_readability_fallback_uses_vertical_for_dense_large_table_when_narrow() {
+fn table_readability_fallback_keeps_dense_large_table_boxed_when_narrow() {
     let rendered = render_markdown_text_with_width_and_cwd(
         &dense_large_table_fixture(),
-        Some(64),
+        /*width*/ Some(64),
         /*cwd*/ None,
     );
     let lines = plain_lines(&rendered);
 
     assert!(
-        lines.iter().any(|line| line.contains("│       Token │ Row 31"))
+        lines.iter().any(|line| line.starts_with("┌"))
             && lines
                 .iter()
-                .any(|line| line.contains("│        Link │ row (https://example.com/31)")),
-        "vertical fallback should render aligned key/value records: {lines:?}"
+                .any(|line| line.contains("│ 31") && line.contains("Row 31")),
+        "last-resort fallback should keep narrow dense tables boxed with wrapping: {lines:?}"
     );
     assert!(
-        lines.iter().any(|line| line.contains('┼')),
-        "vertical fallback should separate source rows: {lines:?}"
-    );
-    assert!(
-        lines.iter().all(|line| !line.starts_with("Row ")),
-        "vertical fallback should not render row headers: {lines:?}"
+        lines
+            .iter()
+            .all(|line| !line.contains("│       Token │ Row 31")),
+        "narrow dense table should not use key/value fallback: {lines:?}"
     );
     assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 64);
 }
 
 #[test]
-fn table_readability_fallback_wraps_vertical_values_under_value_column() {
+fn table_readability_fallback_wraps_boxed_values_before_fallback() {
     let markdown = "| # | Color Sample |\n| --- | --- |\n| 31 | The color sample is the same as the others, but with a touch of white too. |\n";
-    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(30), /*cwd*/ None);
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(30), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
-    assert_eq!(lines[0], "┌──────────────┬────────────┐");
     assert!(
         lines
             .iter()
-            .any(|line| line.starts_with("│ Color Sample │ The color")),
-        "first vertical value line should include the boxed label: {lines:?}"
+            .any(|line| line.contains("│ 31") && line.contains("The color sample")),
+        "first boxed value line should include the row value: {lines:?}"
     );
     assert!(
         lines
             .iter()
             .skip(1)
-            .any(|line| line.starts_with("│              │ sample")),
-        "wrapped vertical value should align under the value column: {lines:?}"
+            .any(|line| line.contains("│     │") && line.contains("the same as the")),
+        "wrapped boxed value should align under its column: {lines:?}"
     );
     assert!(
-        lines.iter().all(|line| !line.starts_with("Row ")),
-        "vertical fallback should not render row headers: {lines:?}"
+        lines
+            .iter()
+            .all(|line| !line.contains("│ Color Sample │ The color")),
+        "wrappable two-column table should not use key/value fallback: {lines:?}"
     );
     assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 30);
 }
@@ -228,7 +228,8 @@ fn table_readability_fallback_wraps_vertical_values_under_value_column() {
 #[test]
 fn table_readability_fallback_keeps_small_status_table_boxed_when_narrow() {
     let markdown = "| ID | Status | Owner | Summary |\n| --- | --- | --- | --- |\n| 1 | ✅ Done | Ana | Added markdown_table parsing |\n| 2 | 🟡 Review | Ben | Checks links like RFC (https://example.com/rfc) |\n| 3 | 🔴 Blocked | ci-bot | Fails on foo \\| bar escaping |\n| 4 | ⚪ Planned | Dana | Needs snapshot coverage |\n";
-    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(64), /*cwd*/ None);
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(64), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
     assert!(
@@ -239,9 +240,32 @@ fn table_readability_fallback_keeps_small_status_table_boxed_when_narrow() {
 }
 
 #[test]
+fn table_readability_fallback_keeps_video_small_table_boxed() {
+    let markdown = "| Emoji | Title | Content | State | Notes |\n| --- | --- | --- | --- | --- |\n| 🚀 | Alpha | **bold** text | done | launch |\n| 🎯 | Beta | *italic* text | pending | target |\n| 💡 | Gamma | `inline code` | review | snippet |\n| 🔗 | Delta | [delta](https://example.com/delta) | done | link cell |\n| ✨ | Epsilon | ~~strike~~ | done | cleanup |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(64), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.starts_with("│ 🚀") && line.contains("Alpha")),
+        "video small table should render as a boxed table at 64 columns: {lines:?}"
+    );
+    assert!(
+        lines
+            .iter()
+            .all(|line| !line.contains("│ Emoji │ 🚀")),
+        "video small table should not use key/value fallback at 64 columns: {lines:?}"
+    );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 64);
+}
+
+#[test]
 fn table_readability_fallback_keeps_tiny_table_boxed() {
     let markdown = "| Tiny | Table |\n| --- | --- |\n| A | B |\n| C | D |\n";
-    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(40), /*cwd*/ None);
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(40), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
     assert!(
@@ -252,28 +276,52 @@ fn table_readability_fallback_keeps_tiny_table_boxed() {
 }
 
 #[test]
-fn table_readability_fallback_uses_vertical_for_emoji_near_fit() {
+fn table_readability_fallback_keeps_emoji_near_fit_boxed() {
     let markdown = "| Feature | Markdown Coverage | Sample Output |\n| --- | --- | --- |\n| Emoji | 😎 ✅ 🧩 | Visual glyphs |\n";
-    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(41), /*cwd*/ None);
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(41), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
     assert!(
         lines
             .iter()
-            .any(|line| line.contains("│ Markdown Coverage │ 😎 ✅ 🧩")),
-        "emoji-heavy near-fit table should fall back to key/value layout: {lines:?}"
+            .any(|line| line.contains("│ Emoji") && line.contains("😎 ✅ 🧩")),
+        "emoji-heavy near-fit table should remain boxed: {lines:?}"
     );
     assert!(
-        lines.iter().all(|line| !line.starts_with("Row ")),
-        "emoji-heavy fallback should not render row headers: {lines:?}"
+        lines
+            .iter()
+            .all(|line| !line.contains("│ Markdown Coverage │ 😎 ✅ 🧩")),
+        "emoji-heavy near-fit table should not use key/value fallback: {lines:?}"
     );
     assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 41);
 }
 
 #[test]
+fn table_readability_fallback_uses_vertical_when_boxed_is_impossible() {
+    let markdown = "| A | B | C | D | E |\n| --- | --- | --- | --- | --- |\n| one | two | three | four | five |\n| six | seven | eight | nine | ten |\n";
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(20), /*cwd*/ None);
+    let lines = plain_lines(&rendered);
+
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("A │ one")),
+        "impossibly narrow table should use key/value fallback: {lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains('┼')),
+        "vertical fallback should separate source rows: {lines:?}"
+    );
+    assert_table_lines_leave_wrap_safety_column(&lines, /*width*/ 20);
+}
+
+#[test]
 fn table_inline_links_and_html_breaks_stay_inside_table() {
     let markdown = "| A | B |\n|---|---|\n| [link](https://example.com) | [CLI docs](https://example.com/cli) |\n| one<br>two | three<br>four |\n";
-    let rendered = render_markdown_text_with_width_and_cwd(markdown, Some(72), /*cwd*/ None);
+    let rendered =
+        render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(72), /*cwd*/ None);
     let lines = plain_lines(&rendered);
 
     assert!(
@@ -324,8 +372,7 @@ fn table_preserves_inline_styles_in_boxed_layout() {
 
 #[test]
 fn table_preserves_inline_styles_in_vertical_layout() {
-    let markdown =
-        "| Feature | Sample | Notes |\n| --- | --- | --- |\n| Code | `cargo test` | **done** |\n";
+    let markdown = "| # | Feature | Sample | Notes | Extra | A | B | C |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n| 1 | Code | `cargo test` | **done** | x | y | z | q |\n";
     let rendered =
         render_markdown_text_with_width_and_cwd(markdown, /*width*/ Some(30), /*cwd*/ None);
     let lines = plain_lines(&rendered);
