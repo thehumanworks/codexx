@@ -1,6 +1,42 @@
 use super::*;
 
 impl Session {
+    pub(crate) fn mcp_runtime_environment_for_configuration(
+        &self,
+        session_configuration: &SessionConfiguration,
+    ) -> CodexResult<McpRuntimeEnvironment> {
+        let turn_environment = crate::environment_selection::resolve_environment_selections(
+            self.services.environment_manager.as_ref(),
+            &session_configuration.environments,
+        )
+        .map_err(|err| {
+            CodexErr::InvalidRequest(err.to_string().replace(
+                "unknown turn environment id",
+                "unknown stored MCP environment id",
+            ))
+        })?
+        .primary_turn_environment()
+        .cloned();
+
+        if let Some(turn_environment) = turn_environment {
+            return Ok(McpRuntimeEnvironment::new(
+                Arc::clone(&turn_environment.environment),
+                turn_environment.cwd.to_path_buf(),
+            ));
+        }
+
+        let default_environment = self
+            .services
+            .environment_manager
+            .default_environment()
+            .unwrap_or_else(|| self.services.environment_manager.local_environment());
+
+        Ok(McpRuntimeEnvironment::new(
+            default_environment,
+            session_configuration.cwd.to_path_buf(),
+        ))
+    }
+
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "active turn checks and turn state updates must remain atomic"
