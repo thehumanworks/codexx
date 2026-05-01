@@ -201,7 +201,7 @@ async fn record_guardian_denial(session: &Arc<Session>, turn: &Arc<TurnContext>,
             turn.as_ref(),
             EventMsg::GuardianWarning(WarningEvent {
                 message: format!(
-                    "Auto-review rejected too many approval requests for this turn ({consecutive_denials} consecutive, {total_denials} total); requesting manual approval for the current request."
+                    "Automatic approval review rejected too many approval requests for this turn ({consecutive_denials} consecutive, {total_denials} total); requesting manual approval for the current request."
                 ),
             }),
         )
