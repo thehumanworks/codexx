@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::Instant;
 
 use crossterm::Command;
 use crossterm::SynchronizedUpdate;
@@ -21,7 +22,6 @@ use crossterm::event::EnableFocusChange;
 use crossterm::event::KeyEvent;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
-#[cfg(not(unix))]
 use crossterm::terminal::supports_keyboard_enhancement;
 use ratatui::backend::Backend;
 use ratatui::backend::CrosstermBackend;
@@ -283,36 +283,136 @@ pub fn init() -> Result<Terminal> {
 
     set_panic_hook();
 
-    #[cfg(unix)]
-    let backend = CrosstermBackend::new(stdout());
-
-    #[cfg(not(unix))]
     let mut backend = CrosstermBackend::new(stdout());
 
     #[cfg(unix)]
-    let cursor_pos =
-        match crate::terminal_probe::cursor_position(crate::terminal_probe::DEFAULT_TIMEOUT) {
-            Ok(Some(pos)) => pos,
-            Ok(None) => {
-                tracing::warn!("initial cursor position probe timed out; defaulting to origin");
-                Position { x: 0, y: 0 }
+    let cursor_pos = match crate::terminal_probe::selected_probe_mode() {
+        crate::terminal_probe::ProbeMode::Bounded => {
+            let start = Instant::now();
+            let result =
+                crate::terminal_probe::cursor_position(crate::terminal_probe::DEFAULT_TIMEOUT);
+            let elapsed = start.elapsed();
+            let outcome = match &result {
+                Ok(Some(_)) => "ok",
+                Ok(None) => "no_response",
+                Err(_) => "error",
+            };
+            crate::terminal_probe::record_probe_timing(
+                "cursor_position",
+                crate::terminal_probe::ProbeMode::Bounded,
+                elapsed,
+                outcome,
+                result
+                    .as_ref()
+                    .err()
+                    .map(|err| err as &dyn std::fmt::Display),
+            );
+            match result {
+                Ok(Some(pos)) => pos,
+                Ok(None) => {
+                    tracing::warn!("initial cursor position probe timed out; defaulting to origin");
+                    Position { x: 0, y: 0 }
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "failed to read initial cursor position; defaulting to origin: {err}"
+                    );
+                    Position { x: 0, y: 0 }
+                }
             }
-            Err(err) => {
-                tracing::warn!(
-                    "failed to read initial cursor position; defaulting to origin: {err}"
-                );
-                Position { x: 0, y: 0 }
-            }
-        };
+        }
+        crate::terminal_probe::ProbeMode::Crossterm => {
+            cursor_position_with_crossterm_timing(&mut backend)
+        }
+    };
 
     #[cfg(not(unix))]
-    let cursor_pos = backend.get_cursor_position().unwrap_or_else(|err| {
-        tracing::warn!("failed to read initial cursor position; defaulting to origin: {err}");
-        Position { x: 0, y: 0 }
-    });
+    let cursor_pos = cursor_position_with_crossterm_timing(&mut backend);
 
     let tui = CustomTerminal::with_options_and_cursor_position(backend, cursor_pos)?;
     Ok(tui)
+}
+
+fn cursor_position_with_crossterm_timing(backend: &mut CrosstermBackend<Stdout>) -> Position {
+    let start = Instant::now();
+    let result = backend.get_cursor_position();
+    let elapsed = start.elapsed();
+    crate::terminal_probe::record_probe_timing(
+        "cursor_position",
+        crate::terminal_probe::ProbeMode::Crossterm,
+        elapsed,
+        if result.is_ok() { "ok" } else { "error" },
+        result
+            .as_ref()
+            .err()
+            .map(|err| err as &dyn std::fmt::Display),
+    );
+    result.unwrap_or_else(|err| {
+        tracing::warn!("failed to read initial cursor position; defaulting to origin: {err}");
+        Position { x: 0, y: 0 }
+    })
+}
+
+#[cfg(unix)]
+fn keyboard_enhancement_supported_with_timing() -> bool {
+    match crate::terminal_probe::selected_probe_mode() {
+        crate::terminal_probe::ProbeMode::Bounded => {
+            let start = Instant::now();
+            let result = crate::terminal_probe::keyboard_enhancement_supported(
+                crate::terminal_probe::DEFAULT_TIMEOUT,
+            );
+            let elapsed = start.elapsed();
+            let outcome = match &result {
+                Ok(Some(true)) => "supported",
+                Ok(Some(false)) => "unsupported",
+                Ok(None) => "no_response",
+                Err(_) => "error",
+            };
+            crate::terminal_probe::record_probe_timing(
+                "keyboard_enhancement",
+                crate::terminal_probe::ProbeMode::Bounded,
+                elapsed,
+                outcome,
+                result
+                    .as_ref()
+                    .err()
+                    .map(|err| err as &dyn std::fmt::Display),
+            );
+            result
+                .unwrap_or(/*default*/ None)
+                .unwrap_or(/*default*/ false)
+        }
+        crate::terminal_probe::ProbeMode::Crossterm => {
+            keyboard_enhancement_supported_with_crossterm_timing()
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn keyboard_enhancement_supported_with_timing() -> bool {
+    keyboard_enhancement_supported_with_crossterm_timing()
+}
+
+fn keyboard_enhancement_supported_with_crossterm_timing() -> bool {
+    let start = Instant::now();
+    let result = supports_keyboard_enhancement();
+    let elapsed = start.elapsed();
+    let outcome = match &result {
+        Ok(true) => "supported",
+        Ok(false) => "unsupported",
+        Err(_) => "error",
+    };
+    crate::terminal_probe::record_probe_timing(
+        "keyboard_enhancement",
+        crate::terminal_probe::ProbeMode::Crossterm,
+        elapsed,
+        outcome,
+        result
+            .as_ref()
+            .err()
+            .map(|err| err as &dyn std::fmt::Display),
+    );
+    result.unwrap_or(/*default*/ false)
 }
 
 fn set_panic_hook() {
@@ -366,17 +466,8 @@ impl Tui {
 
         // Detect keyboard enhancement support before any EventStream is created so the
         // crossterm poller can acquire its lock without contention.
-        #[cfg(unix)]
         let enhanced_keys_supported = !keyboard_modes::keyboard_enhancement_disabled()
-            && crate::terminal_probe::keyboard_enhancement_supported(
-                crate::terminal_probe::DEFAULT_TIMEOUT,
-            )
-            .unwrap_or(/*default*/ None)
-            .unwrap_or(/*default*/ false);
-
-        #[cfg(not(unix))]
-        let enhanced_keys_supported = !keyboard_modes::keyboard_enhancement_disabled()
-            && supports_keyboard_enhancement().unwrap_or(false);
+            && keyboard_enhancement_supported_with_timing();
         // Cache this to avoid contention with the event reader.
         supports_color::on_cached(supports_color::Stream::Stdout);
         let _ = crate::terminal_palette::default_colors();

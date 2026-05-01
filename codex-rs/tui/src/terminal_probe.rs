@@ -3,6 +3,111 @@
 //! Crossterm's public helpers wait up to two seconds for terminal responses. That is too long for
 //! TUI startup, where unsupported terminals should simply fall back to conservative defaults.
 
+use std::fmt;
+use std::time::Duration;
+
+pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(100);
+
+const PROBE_MODE_ENV_VAR: &str = "CODEX_TUI_TERMINAL_PROBE_MODE";
+const TRACE_PROBES_ENV_VAR: &str = "CODEX_TUI_TRACE_TERMINAL_PROBES";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProbeMode {
+    Bounded,
+    Crossterm,
+}
+
+impl ProbeMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Bounded => "bounded",
+            Self::Crossterm => "crossterm",
+        }
+    }
+}
+
+impl fmt::Display for ProbeMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+pub(crate) fn selected_probe_mode() -> ProbeMode {
+    probe_mode_for(std::env::var(PROBE_MODE_ENV_VAR).ok().as_deref())
+}
+
+fn probe_mode_for(value: Option<&str>) -> ProbeMode {
+    match value.map(str::trim) {
+        Some(value)
+            if value.eq_ignore_ascii_case("crossterm")
+                || value.eq_ignore_ascii_case("legacy")
+                || value.eq_ignore_ascii_case("blocking") =>
+        {
+            ProbeMode::Crossterm
+        }
+        Some(value)
+            if value.eq_ignore_ascii_case("bounded")
+                || value.eq_ignore_ascii_case("fast")
+                || value.eq_ignore_ascii_case("opportunistic") =>
+        {
+            ProbeMode::Bounded
+        }
+        _ => ProbeMode::Bounded,
+    }
+}
+
+pub(crate) fn trace_probes_enabled() -> bool {
+    parse_bool_env(std::env::var(TRACE_PROBES_ENV_VAR).ok().as_deref())
+        .unwrap_or(/*default*/ false)
+}
+
+fn parse_bool_env(value: Option<&str>) -> Option<bool> {
+    match value.map(str::trim) {
+        Some("1") => Some(true),
+        Some(value) if value.eq_ignore_ascii_case("true") => Some(true),
+        Some(value) if value.eq_ignore_ascii_case("yes") => Some(true),
+        Some(value) if value.eq_ignore_ascii_case("on") => Some(true),
+        Some("0") => Some(false),
+        Some(value) if value.eq_ignore_ascii_case("false") => Some(false),
+        Some(value) if value.eq_ignore_ascii_case("no") => Some(false),
+        Some(value) if value.eq_ignore_ascii_case("off") => Some(false),
+        _ => None,
+    }
+}
+
+pub(crate) fn record_probe_timing(
+    probe: &'static str,
+    mode: ProbeMode,
+    elapsed: Duration,
+    outcome: &'static str,
+    error: Option<&dyn fmt::Display>,
+) {
+    if !trace_probes_enabled() {
+        return;
+    }
+
+    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
+    match error {
+        Some(error) => tracing::info!(
+            target: "codex_tui::terminal_probe",
+            probe,
+            mode = %mode,
+            elapsed_ms,
+            outcome,
+            error = %error,
+            "terminal capability probe"
+        ),
+        None => tracing::info!(
+            target: "codex_tui::terminal_probe",
+            probe,
+            mode = %mode,
+            elapsed_ms,
+            outcome,
+            "terminal capability probe"
+        ),
+    }
+}
+
 #[cfg(unix)]
 #[cfg_attr(test, allow(dead_code))]
 mod imp {
@@ -16,8 +121,6 @@ mod imp {
 
     use crossterm::event::KeyboardEnhancementFlags;
     use ratatui::layout::Position;
-
-    pub(crate) const DEFAULT_TIMEOUT: Duration = Duration::from_millis(100);
 
     #[derive(Debug, Clone, Copy, Eq, PartialEq)]
     pub(crate) struct DefaultColors {
@@ -341,5 +444,30 @@ mod imp {
 #[cfg(unix)]
 pub(crate) use imp::*;
 
-#[cfg(not(unix))]
-pub(crate) const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(100);
+#[cfg(test)]
+mod env_tests {
+    use super::*;
+
+    #[test]
+    fn probe_mode_parses_known_values() {
+        assert_eq!(probe_mode_for(Some("crossterm")), ProbeMode::Crossterm);
+        assert_eq!(probe_mode_for(Some("legacy")), ProbeMode::Crossterm);
+        assert_eq!(probe_mode_for(Some("blocking")), ProbeMode::Crossterm);
+        assert_eq!(probe_mode_for(Some("bounded")), ProbeMode::Bounded);
+        assert_eq!(probe_mode_for(Some("fast")), ProbeMode::Bounded);
+        assert_eq!(probe_mode_for(/*value*/ None), ProbeMode::Bounded);
+    }
+
+    #[test]
+    fn bool_env_parses_common_values() {
+        assert_eq!(parse_bool_env(Some("1")), Some(true));
+        assert_eq!(parse_bool_env(Some("true")), Some(true));
+        assert_eq!(parse_bool_env(Some("yes")), Some(true));
+        assert_eq!(parse_bool_env(Some("on")), Some(true));
+        assert_eq!(parse_bool_env(Some("0")), Some(false));
+        assert_eq!(parse_bool_env(Some("false")), Some(false));
+        assert_eq!(parse_bool_env(Some("no")), Some(false));
+        assert_eq!(parse_bool_env(Some("off")), Some(false));
+        assert_eq!(parse_bool_env(Some("bogus")), None);
+    }
+}

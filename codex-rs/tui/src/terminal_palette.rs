@@ -71,8 +71,12 @@ pub fn default_bg() -> Option<(u8, u8, u8)> {
 #[cfg(all(unix, not(test)))]
 mod imp {
     use super::DefaultColors;
+    use crossterm::style::Color as CrosstermColor;
+    use crossterm::style::query_background_color;
+    use crossterm::style::query_foreground_color;
     use std::sync::Mutex;
     use std::sync::OnceLock;
+    use std::time::Instant;
 
     struct Cache<T> {
         attempted: bool,
@@ -126,13 +130,73 @@ mod imp {
     }
 
     fn query_default_colors() -> Option<DefaultColors> {
-        crate::terminal_probe::default_colors(crate::terminal_probe::DEFAULT_TIMEOUT)
-            .ok()
-            .flatten()
-            .map(|colors| DefaultColors {
-                fg: colors.fg,
-                bg: colors.bg,
-            })
+        match crate::terminal_probe::selected_probe_mode() {
+            crate::terminal_probe::ProbeMode::Bounded => query_default_colors_bounded(),
+            crate::terminal_probe::ProbeMode::Crossterm => query_default_colors_crossterm(),
+        }
+    }
+
+    fn query_default_colors_bounded() -> Option<DefaultColors> {
+        let start = Instant::now();
+        let result = crate::terminal_probe::default_colors(crate::terminal_probe::DEFAULT_TIMEOUT);
+        let elapsed = start.elapsed();
+        let outcome = match &result {
+            Ok(Some(_)) => "ok",
+            Ok(None) => "no_response",
+            Err(_) => "error",
+        };
+        crate::terminal_probe::record_probe_timing(
+            "default_colors",
+            crate::terminal_probe::ProbeMode::Bounded,
+            elapsed,
+            outcome,
+            result
+                .as_ref()
+                .err()
+                .map(|err| err as &dyn std::fmt::Display),
+        );
+        result.ok().flatten().map(|colors| DefaultColors {
+            fg: colors.fg,
+            bg: colors.bg,
+        })
+    }
+
+    fn query_default_colors_crossterm() -> Option<DefaultColors> {
+        let fg = query_default_color_crossterm("default_foreground", query_foreground_color);
+        let bg = query_default_color_crossterm("default_background", query_background_color);
+        fg.zip(bg).map(|(fg, bg)| DefaultColors { fg, bg })
+    }
+
+    fn query_default_color_crossterm(
+        probe: &'static str,
+        query: fn() -> std::io::Result<Option<CrosstermColor>>,
+    ) -> Option<(u8, u8, u8)> {
+        let start = Instant::now();
+        let result = query();
+        let elapsed = start.elapsed();
+        let outcome = match &result {
+            Ok(Some(_)) => "ok",
+            Ok(None) => "no_response",
+            Err(_) => "error",
+        };
+        crate::terminal_probe::record_probe_timing(
+            probe,
+            crate::terminal_probe::ProbeMode::Crossterm,
+            elapsed,
+            outcome,
+            result
+                .as_ref()
+                .err()
+                .map(|err| err as &dyn std::fmt::Display),
+        );
+        result.ok().flatten().and_then(color_to_tuple)
+    }
+
+    fn color_to_tuple(color: CrosstermColor) -> Option<(u8, u8, u8)> {
+        match color {
+            CrosstermColor::Rgb { r, g, b } => Some((r, g, b)),
+            _ => None,
+        }
     }
 }
 
