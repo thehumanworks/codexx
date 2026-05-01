@@ -1,9 +1,11 @@
 use std::net::SocketAddr;
 
 use pretty_assertions::assert_eq;
+use tokio::task::JoinSet;
 
 use super::DEFAULT_LISTEN_URL;
 use super::parse_listen_url;
+use super::reap_finished_connections;
 
 #[test]
 fn parse_listen_url_accepts_default_websocket_url() {
@@ -47,4 +49,15 @@ fn parse_listen_url_rejects_unsupported_url() {
         err.to_string(),
         "unsupported --listen URL `http://127.0.0.1:1234`; expected `ws://IP:PORT`"
     );
+}
+
+#[tokio::test]
+async fn reap_finished_connections_drains_completed_join_set_tasks() {
+    let mut tasks = JoinSet::new();
+    tasks.spawn(async {});
+    tokio::task::yield_now().await;
+
+    reap_finished_connections(&mut tasks);
+
+    assert!(tasks.is_empty());
 }

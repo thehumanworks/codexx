@@ -51,7 +51,8 @@ impl ConnectionProcessor {
     }
 
     async fn is_idle(&self) -> bool {
-        self.drain_state.active_http_request_count() == 0
+        self.drain_state.active_rpc_request_count() == 0
+            && self.drain_state.active_http_request_count() == 0
             && self.session_registry.active_process_count().await == 0
     }
 
@@ -80,7 +81,7 @@ async fn run_connection(
     let notifications = RpcNotificationSender::new(outgoing_tx.clone());
     let handler = Arc::new(ExecServerHandler::new(
         session_registry,
-        drain_state,
+        Arc::clone(&drain_state),
         notifications,
         runtime_paths,
     ));
@@ -123,6 +124,7 @@ async fn run_connection(
             JsonRpcConnectionEvent::Message(message) => match message {
                 codex_app_server_protocol::JSONRPCMessage::Request(request) => {
                     if let Some(route) = router.request_route(request.method.as_str()) {
+                        let _request_guard = drain_state.start_rpc_request();
                         let message = tokio::select! {
                             message = route(Arc::clone(&handler), request) => message,
                             _ = disconnected_rx.changed() => {

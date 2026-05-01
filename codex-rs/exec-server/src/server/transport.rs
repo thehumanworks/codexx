@@ -74,6 +74,7 @@ async fn run_websocket_listener(
     std::io::stdout().flush()?;
 
     loop {
+        reap_finished_connections(&mut connection_tasks);
         tokio::select! {
             accept_result = listener.accept() => {
                 let (stream, peer_addr) = accept_result?;
@@ -133,6 +134,14 @@ async fn run_websocket_listener(
     while connection_tasks.join_next().await.is_some() {}
     processor.shutdown_all_sessions().await;
     Ok(())
+}
+
+fn reap_finished_connections(connection_tasks: &mut JoinSet<()>) {
+    while let Some(result) = connection_tasks.try_join_next() {
+        if let Err(err) = result {
+            warn!("exec-server websocket connection task failed: {err}");
+        }
+    }
 }
 
 async fn shutdown_signal() -> std::io::Result<()> {
