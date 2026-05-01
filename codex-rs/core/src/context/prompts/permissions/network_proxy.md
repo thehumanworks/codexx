@@ -9,4 +9,4 @@ Interpret proxy failures precisely:
 - `blocked-by-denylist` means the host is explicitly denied by policy.
 - A message about local/private network addresses means the sandbox is blocking local or private targets.
 
-Do not infer a proxy denial from a generic network failure alone. Timeouts, hangs, DNS errors, TLS errors, and connection failures are only evidence of proxy policy when accompanied by proxy-specific headers or messages.
+Do not infer a proxy denial from a generic network failure alone. Proxy-mediated requests can themselves time out or hang. Treat timeouts, hangs, DNS errors, TLS errors, and connection failures as evidence of proxy policy only when they also include proxy-specific headers or messages.
