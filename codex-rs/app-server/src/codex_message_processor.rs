@@ -4006,12 +4006,6 @@ impl CodexMessageProcessor {
         } else {
             false
         };
-        if include_turns && has_live_in_progress_turn {
-            let thread_state = self.thread_state_manager.thread_state(thread_id).await;
-            let state = thread_state.lock().await;
-            state.refresh_running_command_durations(&mut thread.turns);
-        }
-
         let thread_status = self
             .thread_watch_manager
             .loaded_status_for_thread(&thread.id)
@@ -8432,11 +8426,6 @@ async fn handle_pending_thread_resume_request(
             .await;
         return;
     }
-    {
-        let state = thread_state.lock().await;
-        state.refresh_running_command_durations(&mut thread.turns);
-    }
-
     let thread_status = thread_watch_manager
         .loaded_status_for_thread(&thread.id)
         .await;

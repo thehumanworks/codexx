@@ -54,6 +54,8 @@ use codex_protocol::protocol::ViewImageToolCallEvent;
 use codex_protocol::protocol::WebSearchBeginEvent;
 use codex_protocol::protocol::WebSearchEndEvent;
 use std::collections::HashMap;
+use std::time::SystemTime;
+use std::time::UNIX_EPOCH;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -82,9 +84,45 @@ pub fn build_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Turn> {
     builder.finish()
 }
 
+fn now_unix_timestamp_ms() -> i64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    i64::try_from(millis).unwrap_or(i64::MAX)
+}
+
+fn elapsed_duration_ms(started_at_ms: i64) -> i64 {
+    now_unix_timestamp_ms().saturating_sub(started_at_ms)
+}
+
+fn materialize_running_command_durations(
+    running_command_started_at_ms: &HashMap<String, i64>,
+    turns: &mut [Turn],
+) {
+    for turn in turns {
+        for item in &mut turn.items {
+            let ThreadItem::CommandExecution {
+                id,
+                status: CommandExecutionStatus::InProgress,
+                duration_ms,
+                ..
+            } = item
+            else {
+                continue;
+            };
+            let Some(started_at_ms) = running_command_started_at_ms.get(id) else {
+                continue;
+            };
+            *duration_ms = Some(elapsed_duration_ms(*started_at_ms));
+        }
+    }
+}
+
 pub struct ThreadHistoryBuilder {
     turns: Vec<Turn>,
     current_turn: Option<PendingTurn>,
+    running_command_started_at_ms: HashMap<String, i64>,
     next_item_index: i64,
     current_rollout_index: usize,
     next_rollout_index: usize,
@@ -101,6 +139,7 @@ impl ThreadHistoryBuilder {
         Self {
             turns: Vec::new(),
             current_turn: None,
+            running_command_started_at_ms: HashMap::new(),
             next_item_index: 1,
             current_rollout_index: 0,
             next_rollout_index: 0,
@@ -113,14 +152,21 @@ impl ThreadHistoryBuilder {
 
     pub fn finish(mut self) -> Vec<Turn> {
         self.finish_current_turn();
+        materialize_running_command_durations(&self.running_command_started_at_ms, &mut self.turns);
         self.turns
     }
 
     pub fn active_turn_snapshot(&self) -> Option<Turn> {
-        self.current_turn
+        let mut turn = self
+            .current_turn
             .as_ref()
             .map(Turn::from)
-            .or_else(|| self.turns.last().cloned())
+            .or_else(|| self.turns.last().cloned())?;
+        materialize_running_command_durations(
+            &self.running_command_started_at_ms,
+            std::slice::from_mut(&mut turn),
+        );
+        Some(turn)
     }
 
     /// Returns the index of the active turn snapshot within the finished turn list.
@@ -405,11 +451,16 @@ impl ThreadHistoryBuilder {
     }
 
     fn handle_exec_command_begin(&mut self, payload: &ExecCommandBeginEvent) {
+        self.running_command_started_at_ms.insert(
+            payload.call_id.clone(),
+            payload.started_at_ms.unwrap_or_else(now_unix_timestamp_ms),
+        );
         let item = build_command_execution_begin_item(payload);
         self.upsert_item_in_turn_id(&payload.turn_id, item);
     }
 
     fn handle_exec_command_end(&mut self, payload: &ExecCommandEndEvent) {
+        self.running_command_started_at_ms.remove(&payload.call_id);
         let item = build_command_execution_end_item(payload);
         // Command completions can arrive out of order. Unified exec may return
         // while a PTY is still running, then emit ExecCommandEnd later from a

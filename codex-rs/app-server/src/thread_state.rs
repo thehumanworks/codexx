@@ -1,11 +1,8 @@
 use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::ConnectionRequestId;
-use chrono::Utc;
-use codex_app_server_protocol::CommandExecutionStatus;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ThreadGoal;
 use codex_app_server_protocol::ThreadHistoryBuilder;
-use codex_app_server_protocol::ThreadItem;
 use codex_app_server_protocol::Turn;
 use codex_app_server_protocol::TurnError;
 use codex_core::CodexThread;
@@ -26,14 +23,6 @@ use tokio::sync::watch;
 use tracing::error;
 
 type PendingInterruptQueue = Vec<ConnectionRequestId>;
-
-fn now_unix_timestamp_ms() -> i64 {
-    Utc::now().timestamp_millis()
-}
-
-fn elapsed_duration_ms(started_at_ms: i64) -> i64 {
-    now_unix_timestamp_ms().saturating_sub(started_at_ms)
-}
 
 pub(crate) struct PendingThreadResumeRequest {
     pub(crate) request_id: ConnectionRequestId,
@@ -85,7 +74,6 @@ pub(crate) struct ThreadState {
     pub(crate) cancel_tx: Option<oneshot::Sender<()>>,
     pub(crate) experimental_raw_events: bool,
     pub(crate) listener_generation: u64,
-    running_command_started_at_ms: HashMap<String, i64>,
     listener_command_tx: Option<mpsc::UnboundedSender<ThreadListenerCommand>>,
     current_turn_history: ThreadHistoryBuilder,
     listener_thread: Option<Weak<CodexThread>>,
@@ -134,46 +122,12 @@ impl ThreadState {
     }
 
     pub(crate) fn active_turn_snapshot(&self) -> Option<Turn> {
-        let mut turn = self.current_turn_history.active_turn_snapshot()?;
-        self.refresh_running_command_durations(std::slice::from_mut(&mut turn));
-        Some(turn)
-    }
-
-    pub(crate) fn refresh_running_command_durations(&self, turns: &mut [Turn]) {
-        for turn in turns {
-            for item in &mut turn.items {
-                let ThreadItem::CommandExecution {
-                    id,
-                    status: CommandExecutionStatus::InProgress,
-                    duration_ms,
-                    ..
-                } = item
-                else {
-                    continue;
-                };
-                let Some(started_at) = self.running_command_started_at_ms.get(id) else {
-                    continue;
-                };
-                *duration_ms = Some(elapsed_duration_ms(*started_at));
-            }
-        }
+        self.current_turn_history.active_turn_snapshot()
     }
 
     pub(crate) fn track_current_turn_event(&mut self, event_turn_id: &str, event: &EventMsg) {
-        match event {
-            EventMsg::TurnStarted(payload) => {
-                self.turn_summary.started_at = payload.started_at;
-            }
-            EventMsg::ExecCommandBegin(payload) => {
-                self.running_command_started_at_ms.insert(
-                    payload.call_id.clone(),
-                    payload.started_at_ms.unwrap_or_else(now_unix_timestamp_ms),
-                );
-            }
-            EventMsg::ExecCommandEnd(payload) => {
-                self.running_command_started_at_ms.remove(&payload.call_id);
-            }
-            _ => {}
+        if let EventMsg::TurnStarted(payload) = event {
+            self.turn_summary.started_at = payload.started_at;
         }
         self.current_turn_history.handle_event(event);
         if matches!(event, EventMsg::TurnAborted(_) | EventMsg::TurnComplete(_))
