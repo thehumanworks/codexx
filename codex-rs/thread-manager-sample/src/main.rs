@@ -200,6 +200,7 @@ fn new_config(model: Option<String>, arg0_paths: Arg0DispatchPaths) -> anyhow::R
         tui_raw_output_mode: false,
         terminal_resize_reflow: TerminalResizeReflowConfig::default(),
         tui_keymap: TuiKeymap::default(),
+        tui_unified_mentions_remember_search_mode: false,
         tui_vim_mode_default: false,
         cwd,
         cli_auth_credentials_store_mode: AuthCredentialsStoreMode::File,

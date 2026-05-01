@@ -2482,6 +2482,9 @@
               "scroll_down": null,
               "scroll_up": null
             },
+            "unified_mentions": {
+              "toggle_remember_search_mode": null
+            },
             "vim_normal": {
               "append_after_cursor": null,
               "append_line_end": null,
@@ -2601,6 +2604,11 @@
           "default": null,
           "description": "Syntax highlighting theme name (kebab-case).\n\nWhen set, overrides automatic light/dark theme detection. Use `/theme` in the TUI or see `$CODEX_HOME/themes` for custom themes.",
           "type": "string"
+        },
+        "unified_mentions_remember_search_mode": {
+          "default": false,
+          "description": "Remember the last unified mentions type filter for the current TUI session. Defaults to `false`.",
+          "type": "boolean"
         },
         "vim_mode_default": {
           "default": false,
@@ -3113,6 +3121,16 @@
             "scroll_up": null
           }
         },
+        "unified_mentions": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/TuiUnifiedMentionsKeymap"
+            }
+          ],
+          "default": {
+            "toggle_remember_search_mode": null
+          }
+        },
         "vim_normal": {
           "allOf": [
             {
@@ -3290,6 +3308,21 @@
             }
           ],
           "description": "Scroll up by one row."
+        }
+      },
+      "type": "object"
+    },
+    "TuiUnifiedMentionsKeymap": {
+      "additionalProperties": false,
+      "description": "Unified mentions popup keybindings.",
+      "properties": {
+        "toggle_remember_search_mode": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/KeybindingsSpec"
+            }
+          ],
+          "description": "Toggle whether the popup remembers the last selected search mode."
         }
       },
       "type": "object"

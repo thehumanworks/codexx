@@ -48,6 +48,7 @@ pub(crate) struct RuntimeKeymap {
     pub(crate) vim_operator: VimOperatorKeymap,
     pub(crate) pager: PagerKeymap,
     pub(crate) list: ListKeymap,
+    pub(crate) unified_mentions: UnifiedMentionsKeymap,
     pub(crate) approval: ApprovalKeymap,
 }
 
@@ -207,6 +208,12 @@ pub(crate) struct ListKeymap {
     pub(crate) move_down: Vec<KeyBinding>,
     pub(crate) accept: Vec<KeyBinding>,
     pub(crate) cancel: Vec<KeyBinding>,
+}
+
+/// Unified mentions popup keybindings.
+#[derive(Clone, Debug)]
+pub(crate) struct UnifiedMentionsKeymap {
+    pub(crate) toggle_remember_search_mode: Vec<KeyBinding>,
 }
 
 /// Approval modal keybindings.
@@ -512,6 +519,15 @@ impl RuntimeKeymap {
             cancel: resolve_local!(keymap, defaults, list, cancel),
         };
 
+        let unified_mentions = UnifiedMentionsKeymap {
+            toggle_remember_search_mode: resolve_local!(
+                keymap,
+                defaults,
+                unified_mentions,
+                toggle_remember_search_mode
+            ),
+        };
+
         let approval = ApprovalKeymap {
             open_fullscreen: resolve_local!(keymap, defaults, approval, open_fullscreen),
             open_thread: resolve_local!(keymap, defaults, approval, open_thread),
@@ -532,6 +548,7 @@ impl RuntimeKeymap {
             vim_operator,
             pager,
             list,
+            unified_mentions,
             approval,
         };
 
@@ -721,6 +738,9 @@ impl RuntimeKeymap {
                 accept: default_bindings![plain(KeyCode::Enter)],
                 cancel: default_bindings![plain(KeyCode::Esc)],
             },
+            unified_mentions: UnifiedMentionsKeymap {
+                toggle_remember_search_mode: default_bindings![alt(KeyCode::Char('r'))],
+            },
             approval: ApprovalKeymap {
                 open_fullscreen: default_bindings![
                     ctrl(KeyCode::Char('a')),
@@ -854,6 +874,10 @@ impl RuntimeKeymap {
                 ("list.move_down", self.list.move_down.as_slice()),
                 ("list.accept", self.list.accept.as_slice()),
                 ("list.cancel", self.list.cancel.as_slice()),
+                (
+                    "unified_mentions.toggle_remember_search_mode",
+                    self.unified_mentions.toggle_remember_search_mode.as_slice(),
+                ),
                 (
                     "approval.open_fullscreen",
                     self.approval.open_fullscreen.as_slice(),
@@ -1126,6 +1150,14 @@ impl RuntimeKeymap {
                 ("accept", self.list.accept.as_slice()),
                 ("cancel", self.list.cancel.as_slice()),
             ],
+        )?;
+
+        validate_unique(
+            "unified_mentions",
+            [(
+                "toggle_remember_search_mode",
+                self.unified_mentions.toggle_remember_search_mode.as_slice(),
+            )],
         )?;
 
         validate_unique(
@@ -1657,6 +1689,10 @@ mod tests {
             vec![key_hint::ctrl(KeyCode::Char('s'))]
         );
         assert_eq!(runtime.editor.kill_whole_line, Vec::new());
+        assert_eq!(
+            runtime.unified_mentions.toggle_remember_search_mode,
+            vec![key_hint::alt(KeyCode::Char('r'))]
+        );
     }
 
     #[test]
