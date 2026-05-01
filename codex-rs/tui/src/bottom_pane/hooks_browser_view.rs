@@ -2,6 +2,7 @@ use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookSource;
+use codex_app_server_protocol::HookTrustStatus;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -84,9 +85,7 @@ impl HooksBrowserView {
                 let active = self
                     .hooks
                     .iter()
-                    .filter(|hook| {
-                        hook.event_name == event_name && (hook.enabled || hook.is_managed)
-                    })
+                    .filter(|hook| hook.event_name == event_name && hook_is_active(hook))
                     .count();
                 EventRow {
                     event_name,
@@ -292,11 +291,7 @@ impl HooksBrowserView {
         self.handlers_for_event(event_name)
             .enumerate()
             .map(|(idx, hook)| {
-                let marker = if hook.enabled || hook.is_managed {
-                    'x'
-                } else {
-                    ' '
-                };
+                let marker = if hook_is_active(hook) { 'x' } else { ' ' };
                 let row = format!("[{marker}] {}", hook_title(idx));
                 let mut line = Line::from(row);
                 line = truncate_line_with_ellipsis_if_overflow(line, width);
@@ -523,6 +518,14 @@ impl Renderable for HooksBrowserView {
         Paragraph::new(lines).render(content_area, buf);
         self.render_footer(footer_area, buf);
     }
+}
+
+fn hook_is_active(hook: &HookMetadata) -> bool {
+    hook.enabled
+        && matches!(
+            hook.trust_status,
+            HookTrustStatus::Managed | HookTrustStatus::Trusted
+        )
 }
 
 struct EventRow {
@@ -806,6 +809,35 @@ mod tests {
     }
 
     #[test]
+    fn renders_untrusted_enabled_handler_as_inactive() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let mut untrusted_hook = hook(
+            "path:untrusted",
+            HookEventName::PreToolUse,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "~/bin/untrusted.sh",
+            /*enabled*/ true,
+            /*is_managed*/ false,
+            /*display_order*/ 0,
+        );
+        untrusted_hook.trusted_hash = None;
+        untrusted_hook.trust_status = HookTrustStatus::Untrusted;
+        let mut view = HooksBrowserView::new(
+            vec![untrusted_hook],
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+        assert_snapshot!(
+            "hooks_browser_untrusted_enabled_handler",
+            render_lines(&view, /*width*/ 112)
+        );
+    }
+
+    #[test]
     fn renders_managed_handler_without_toggle_hint() {
         let mut view = view();
         view.handle_key_event(KeyEvent::from(KeyCode::Down));
@@ -937,7 +969,7 @@ mod tests {
                 HookSource::System,
                 /*plugin_id*/ None,
                 "/enterprise/hooks/pre-tool-use-check.sh",
-                /*enabled*/ false,
+                /*enabled*/ true,
                 /*is_managed*/ true,
                 /*display_order*/ 0,
             )],
@@ -954,6 +986,38 @@ mod tests {
 
         assert_eq!(pre_tool_use.installed, 1);
         assert_eq!(pre_tool_use.active, 1);
+    }
+
+    #[test]
+    fn untrusted_enabled_hooks_do_not_count_as_active() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let mut untrusted_hook = hook(
+            "path:untrusted",
+            HookEventName::PreToolUse,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "~/bin/untrusted.sh",
+            /*enabled*/ true,
+            /*is_managed*/ false,
+            /*display_order*/ 0,
+        );
+        untrusted_hook.trusted_hash = None;
+        untrusted_hook.trust_status = HookTrustStatus::Untrusted;
+        let view = HooksBrowserView::new(
+            vec![untrusted_hook],
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
+
+        let rows = view.event_rows();
+        let pre_tool_use = rows
+            .into_iter()
+            .find(|row| row.event_name == HookEventName::PreToolUse)
+            .expect("pre tool use row");
+
+        assert_eq!(pre_tool_use.installed, 1);
+        assert_eq!(pre_tool_use.active, 0);
     }
 
     fn assert_unmanaged_toggle_key(key_code: KeyCode) {

@@ -1,0 +1,17 @@
+---
+source: tui/src/bottom_pane/hooks_browser_view.rs
+expression: "render_lines(&view, 112)"
+---
+                                                                                                                
+  PreToolUse hooks                                                                                              
+  Turn hooks on or off. Your changes are saved automatically.                                                   
+                                                                                                                
+  [ ] Hook 1                                                                                                    
+                                                                                                                
+  Event     PreToolUse                                                                                          
+  Matcher   Bash                                                                                                
+  Source    User config - /tmp/hooks.json                                                                       
+  Command   ~/bin/untrusted.sh                                                                                  
+  Timeout   30s                                                                                                 
+                                                                                                                
+  Press space or enter to toggle; esc to go back
