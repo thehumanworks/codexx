@@ -724,7 +724,7 @@ async fn resume_replays_image_tool_outputs_with_detail() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn includes_session_id_and_model_headers_in_request() {
+async fn includes_session_id_thread_id_and_model_headers_in_request() {
     skip_if_no_network!();
 
     // Mock server
@@ -743,6 +743,7 @@ async fn includes_session_id_and_model_headers_in_request() {
         .expect("create new conversation");
     let codex = test.codex.clone();
     let expected_session_id = test.session_configured.session_id;
+    let expected_thread_id = test.session_configured.thread_id;
 
     codex
         .submit(Op::UserInput {
@@ -762,6 +763,7 @@ async fn includes_session_id_and_model_headers_in_request() {
     let request = resp_mock.single_request();
     assert_eq!(request.path(), "/v1/responses");
     let request_session_id = request.header("session_id").expect("session_id header");
+    let request_thread_id = request.header("thread_id").expect("thread_id header");
     let request_authorization = request
         .header("authorization")
         .expect("authorization header");
@@ -772,6 +774,7 @@ async fn includes_session_id_and_model_headers_in_request() {
             .expect("read installation id");
 
     assert_eq!(request_session_id, expected_session_id.to_string());
+    assert_eq!(request_thread_id, expected_thread_id.to_string());
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Test API Key");
     assert_eq!(
@@ -1000,6 +1003,7 @@ async fn chatgpt_auth_sends_correct_request() {
         .expect("create new conversation");
     let codex = test.codex.clone();
     let expected_session_id = test.session_configured.session_id;
+    let expected_thread_id = test.session_configured.thread_id;
 
     codex
         .submit(Op::UserInput {
@@ -1028,10 +1032,12 @@ async fn chatgpt_auth_sends_correct_request() {
     let request_body = request.body_json();
 
     let request_session_id = request.header("session_id").expect("session_id header");
+    let request_thread_id = request.header("thread_id").expect("thread_id header");
     let installation_id =
         std::fs::read_to_string(test.codex_home_path().join(INSTALLATION_ID_FILENAME))
             .expect("read installation id");
     assert_eq!(request_session_id, expected_session_id.to_string());
+    assert_eq!(request_thread_id, expected_thread_id.to_string());
 
     assert_eq!(request_originator, originator().value);
     assert_eq!(request_authorization, "Bearer Access Token");

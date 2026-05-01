@@ -91,7 +91,7 @@ impl<T: HttpTransport> ResponsesClient<T> {
         if let Some(ref thread_id) = thread_id {
             insert_header(&mut headers, "x-client-request-id", thread_id);
         }
-        headers.extend(build_session_headers(session_id));
+        headers.extend(build_session_headers(session_id, thread_id));
         if let Some(subagent) = subagent_header(&session_source) {
             insert_header(&mut headers, "x-openai-subagent", &subagent);
         }

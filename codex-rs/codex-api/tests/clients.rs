@@ -463,6 +463,10 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
         Some("sess_123")
     );
     assert_eq!(
+        req.headers.get("thread_id").and_then(|v| v.to_str().ok()),
+        Some("thread_123")
+    );
+    assert_eq!(
         req.headers
             .get("x-client-request-id")
             .and_then(|v| v.to_str().ok()),

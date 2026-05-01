@@ -191,7 +191,7 @@ impl RequestRouteTelemetry {
 /// A session-scoped client for model-provider API calls.
 ///
 /// This holds configuration and state that should be shared across turns within a Codex session
-/// (auth, provider selection, conversation id, and transport fallback state).
+/// (auth, provider selection, thread id, and transport fallback state).
 ///
 /// WebSocket fallback is session-scoped: once a turn activates the HTTP fallback, subsequent turns
 /// will also use HTTP for the remainder of the session.
@@ -476,9 +476,10 @@ impl ModelClient {
             extra_headers.insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
         }
         extra_headers.extend(self.build_responses_identity_headers());
-        extra_headers.extend(build_session_headers(Some(
-            self.state.session_id.to_string(),
-        )));
+        extra_headers.extend(build_session_headers(
+            Some(self.state.session_id.to_string()),
+            Some(self.state.thread_id.to_string()),
+        ));
         let trace_attempt = compaction_trace.start_attempt(&payload);
         let result = client
             .compact_input(&payload, extra_headers)
@@ -800,7 +801,7 @@ impl ModelClient {
         if let Ok(header_value) = HeaderValue::from_str(&thread_id) {
             headers.insert("x-client-request-id", header_value);
         }
-        headers.extend(build_session_headers(Some(session_id)));
+        headers.extend(build_session_headers(Some(session_id), Some(thread_id)));
         headers.extend(self.build_responses_identity_headers());
         headers.insert(
             OPENAI_BETA_HEADER,
