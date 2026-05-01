@@ -76,7 +76,7 @@ where
     K: AsRef<std::ffi::OsStr>,
     V: AsRef<std::ffi::OsStr>,
 {
-    spawn_exec_server(env, None).await
+    spawn_exec_server(env, /*config_contents*/ None).await
 }
 
 async fn spawn_exec_server<I, K, V>(
