@@ -31,6 +31,7 @@ use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
 pub(crate) use bottom_pane_view::BottomPaneView;
 use bottom_pane_view::ViewCompletion;
+use codex_config::types::PromptSubmitKey;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
 use codex_file_search::FileMatch;
@@ -231,6 +232,7 @@ pub(crate) struct BottomPaneParams {
     pub(crate) frame_requester: FrameRequester,
     pub(crate) has_input_focus: bool,
     pub(crate) enhanced_keys_supported: bool,
+    pub(crate) prompt_submit_key: PromptSubmitKey,
     pub(crate) placeholder_text: String,
     pub(crate) disable_paste_burst: bool,
     pub(crate) animations_enabled: bool,
@@ -244,17 +246,22 @@ impl BottomPane {
             frame_requester,
             has_input_focus,
             enhanced_keys_supported,
+            prompt_submit_key,
             placeholder_text,
             disable_paste_burst,
             animations_enabled,
             skills,
         } = params;
-        let mut composer = ChatComposer::new(
+        let mut composer = ChatComposer::new_with_config(
             has_input_focus,
             app_event_tx.clone(),
             enhanced_keys_supported,
             placeholder_text,
             disable_paste_burst,
+            ChatComposerConfig {
+                prompt_submit_key,
+                ..Default::default()
+            },
         );
         composer.set_frame_requester(frame_requester.clone());
         let keymap = RuntimeKeymap::defaults();
@@ -1624,6 +1631,7 @@ mod tests {
     use crate::status_indicator_widget::StatusDetailsCapitalization;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
+    use assert_matches::assert_matches;
     use codex_protocol::protocol::ReviewDecision;
     use codex_protocol::protocol::SkillScope;
     use crossterm::event::KeyCode;
@@ -1670,6 +1678,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst,
             animations_enabled: true,
@@ -1770,6 +1779,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: true,
             animations_enabled: true,
@@ -1790,6 +1800,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: true,
             animations_enabled: true,
@@ -1806,6 +1817,34 @@ mod tests {
         assert!(!pane.quit_shortcut_hint_visible());
     }
 
+    #[test]
+    fn shift_enter_submit_key_reaches_main_prompt_composer() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut pane = BottomPane::new(BottomPaneParams {
+            app_event_tx: tx,
+            frame_requester: FrameRequester::test_dummy(),
+            has_input_focus: true,
+            enhanced_keys_supported: true,
+            prompt_submit_key: PromptSubmitKey::ShiftEnter,
+            placeholder_text: "Ask Codex to do anything".to_string(),
+            disable_paste_burst: false,
+            animations_enabled: true,
+            skills: Some(Vec::new()),
+        });
+        pane.set_composer_text("hello".to_string(), Vec::new(), Vec::new());
+
+        assert_eq!(
+            InputResult::None,
+            pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))
+        );
+        assert_eq!(pane.composer_text(), "hello\n");
+        assert_matches!(
+            pane.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT)),
+            InputResult::Submitted { text, .. } if text == "hello"
+        );
+    }
+
     // live ring removed; related tests deleted.
 
     #[test]
@@ -1818,6 +1857,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2065,6 +2105,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2132,6 +2173,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2159,6 +2201,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2190,6 +2233,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2213,6 +2257,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2242,6 +2287,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2279,6 +2325,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2311,6 +2358,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2342,6 +2390,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2371,6 +2420,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2394,6 +2444,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2441,6 +2492,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2476,6 +2528,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2512,6 +2565,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2560,6 +2614,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2647,6 +2702,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2695,6 +2751,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,
@@ -2773,6 +2830,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: true,

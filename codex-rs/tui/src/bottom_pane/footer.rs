@@ -66,7 +66,7 @@ use ratatui::widgets::Widget;
 pub(crate) struct FooterProps {
     pub(crate) mode: FooterMode,
     pub(crate) esc_backtrack_hint: bool,
-    pub(crate) use_shift_enter_hint: bool,
+    pub(crate) newline_hint: NewlineHint,
     pub(crate) is_task_running: bool,
     pub(crate) collaboration_modes_enabled: bool,
     pub(crate) is_wsl: bool,
@@ -85,6 +85,13 @@ pub(crate) struct FooterProps {
     /// When both this label and the configured status line are available, they are rendered on the
     /// same row separated by ` · `.
     pub(crate) active_agent_label: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NewlineHint {
+    Enter,
+    ShiftEnter,
+    CtrlJ,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -710,7 +717,7 @@ fn footer_from_props_lines(
         }
         FooterMode::ShortcutOverlay => {
             let state = ShortcutsState {
-                use_shift_enter_hint: props.use_shift_enter_hint,
+                newline_hint: props.newline_hint,
                 esc_backtrack_hint: props.esc_backtrack_hint,
                 is_wsl: props.is_wsl,
                 collaboration_modes_enabled: props.collaboration_modes_enabled,
@@ -832,7 +839,7 @@ fn footer_hint_items_line(items: &[(String, String)]) -> Line<'static> {
 
 #[derive(Clone, Copy, Debug)]
 struct ShortcutsState {
-    use_shift_enter_hint: bool,
+    newline_hint: NewlineHint,
     esc_backtrack_hint: bool,
     is_wsl: bool,
     collaboration_modes_enabled: bool,
@@ -1021,8 +1028,9 @@ impl ShortcutBinding {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DisplayCondition {
     Always,
-    WhenShiftEnterHint,
-    WhenNotShiftEnterHint,
+    WhenEnterNewlineHint,
+    WhenShiftEnterNewlineHint,
+    WhenCtrlJNewlineHint,
     WhenUnderWSL,
     WhenCollaborationModesEnabled,
 }
@@ -1031,8 +1039,11 @@ impl DisplayCondition {
     fn matches(self, state: ShortcutsState) -> bool {
         match self {
             DisplayCondition::Always => true,
-            DisplayCondition::WhenShiftEnterHint => state.use_shift_enter_hint,
-            DisplayCondition::WhenNotShiftEnterHint => !state.use_shift_enter_hint,
+            DisplayCondition::WhenEnterNewlineHint => state.newline_hint == NewlineHint::Enter,
+            DisplayCondition::WhenShiftEnterNewlineHint => {
+                state.newline_hint == NewlineHint::ShiftEnter
+            }
+            DisplayCondition::WhenCtrlJNewlineHint => state.newline_hint == NewlineHint::CtrlJ,
             DisplayCondition::WhenUnderWSL => state.is_wsl,
             DisplayCondition::WhenCollaborationModesEnabled => state.collaboration_modes_enabled,
         }
@@ -1111,12 +1122,16 @@ const SHORTCUTS: &[ShortcutDescriptor] = &[
         id: ShortcutId::InsertNewline,
         bindings: &[
             ShortcutBinding {
+                key: key_hint::plain(KeyCode::Enter),
+                condition: DisplayCondition::WhenEnterNewlineHint,
+            },
+            ShortcutBinding {
                 key: key_hint::shift(KeyCode::Enter),
-                condition: DisplayCondition::WhenShiftEnterHint,
+                condition: DisplayCondition::WhenShiftEnterNewlineHint,
             },
             ShortcutBinding {
                 key: key_hint::ctrl(KeyCode::Char('j')),
-                condition: DisplayCondition::WhenNotShiftEnterHint,
+                condition: DisplayCondition::WhenCtrlJNewlineHint,
             },
         ],
         prefix: "",
@@ -1456,26 +1471,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerEmpty,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
-                is_task_running: false,
-                collaboration_modes_enabled: false,
-                is_wsl: false,
-                quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
-                context_window_percent: None,
-                context_window_used_tokens: None,
-                status_line_value: None,
-                status_line_enabled: false,
-                key_hints: FooterKeyHints::default_bindings(),
-                active_agent_label: None,
-            },
-        );
-
-        snapshot_footer(
-            "footer_shortcuts_shift_and_esc",
-            FooterProps {
-                mode: FooterMode::ShortcutOverlay,
-                esc_backtrack_hint: true,
-                use_shift_enter_hint: true,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1493,11 +1489,52 @@ mod tests {
         );
 
         snapshot_footer(
+            "footer_shortcuts_shift_and_esc",
+            FooterProps {
+                mode: FooterMode::ShortcutOverlay,
+                esc_backtrack_hint: true,
+                newline_hint: NewlineHint::ShiftEnter,
+                is_task_running: false,
+                collaboration_modes_enabled: false,
+                is_wsl: false,
+                quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+                context_window_percent: None,
+                context_window_used_tokens: None,
+                status_line_value: None,
+                status_line_enabled: false,
+                key_hints: FooterKeyHints::default_bindings(),
+                active_agent_label: None,
+            },
+        );
+
+        snapshot_footer(
+            "footer_shortcuts_enter_newline",
+            FooterProps {
+                mode: FooterMode::ShortcutOverlay,
+                esc_backtrack_hint: false,
+                newline_hint: NewlineHint::Enter,
+                is_task_running: false,
+                collaboration_modes_enabled: false,
+                is_wsl: false,
+                quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
+                context_window_percent: None,
+                context_window_used_tokens: None,
+                status_line_value: None,
+                status_line_enabled: false,
+                key_hints: FooterKeyHints {
+                    insert_newline: Some(key_hint::plain(KeyCode::Enter)),
+                    ..FooterKeyHints::default_bindings()
+                },
+                active_agent_label: None,
+            },
+        );
+
+        snapshot_footer(
             "footer_shortcuts_collaboration_modes_enabled",
             FooterProps {
                 mode: FooterMode::ShortcutOverlay,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: false,
                 collaboration_modes_enabled: true,
                 is_wsl: false,
@@ -1516,7 +1553,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::QuitShortcutReminder,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1535,7 +1572,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::QuitShortcutReminder,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: true,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1554,7 +1591,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::EscHint,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1573,7 +1610,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::EscHint,
                 esc_backtrack_hint: true,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1592,7 +1629,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerEmpty,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: true,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1611,7 +1648,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerEmpty,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: false,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1630,7 +1667,7 @@ mod tests {
             FooterProps {
                 mode: FooterMode::ComposerHasDraft,
                 esc_backtrack_hint: false,
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 is_task_running: true,
                 collaboration_modes_enabled: false,
                 is_wsl: false,
@@ -1647,7 +1684,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
@@ -1677,7 +1714,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: true,
             collaboration_modes_enabled: true,
             is_wsl: false,
@@ -1700,7 +1737,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
@@ -1718,7 +1755,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerHasDraft,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: true,
             collaboration_modes_enabled: false,
             is_wsl: false,
@@ -1736,7 +1773,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerHasDraft,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
@@ -1754,7 +1791,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
@@ -1777,7 +1814,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
@@ -1800,7 +1837,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
@@ -1824,7 +1861,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
@@ -1849,7 +1886,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
@@ -1867,7 +1904,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: false,
             is_wsl: false,
@@ -1888,7 +1925,7 @@ mod tests {
         let props = FooterProps {
             mode: FooterMode::ComposerEmpty,
             esc_backtrack_hint: false,
-            use_shift_enter_hint: false,
+            newline_hint: NewlineHint::CtrlJ,
             is_task_running: false,
             collaboration_modes_enabled: true,
             is_wsl: false,
@@ -1950,7 +1987,7 @@ mod tests {
 
         let actual_key = descriptor
             .binding_for(ShortcutsState {
-                use_shift_enter_hint: false,
+                newline_hint: NewlineHint::CtrlJ,
                 esc_backtrack_hint: false,
                 is_wsl,
                 collaboration_modes_enabled: false,

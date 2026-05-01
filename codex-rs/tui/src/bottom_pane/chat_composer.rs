@@ -38,8 +38,10 @@
 //!
 //! # Submission and Prompt Expansion
 //!
-//! `Enter` submits immediately. `Tab` requests queuing while a task is running; if no task is
-//! running, `Tab` submits just like Enter so input is never dropped.
+//! `Enter` submits immediately by default. The main prompt composer can opt into a mode where
+//! plain `Enter` inserts a newline and `Shift+Enter` submits when the terminal reports modified
+//! enter keys. `Tab` requests queuing while a task is running; if no task is running, `Tab`
+//! submits just like Enter so input is never dropped.
 //! `Tab` does not submit when entering a `!` shell command.
 //! When a voice transcription placeholder is still resolving, `Enter`/`Tab` records the submit or
 //! queue intent and waits for the transcription result before running the normal submission path.
@@ -143,6 +145,7 @@ use crate::key_hint::has_ctrl_or_alt;
 use crate::legacy_core::config::DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::ui_consts::FOOTER_INDENT_COLS;
+use codex_config::types::PromptSubmitKey;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyEventKind;
@@ -174,6 +177,7 @@ use super::footer::FooterKeyHints;
 use super::footer::FooterMode;
 use super::footer::FooterProps;
 use super::footer::GoalStatusIndicator;
+use super::footer::NewlineHint;
 use super::footer::SummaryLeft;
 use super::footer::can_show_left_with_context;
 use super::footer::context_window_line;
@@ -323,6 +327,8 @@ pub(crate) struct ChatComposerConfig {
     pub(crate) image_paste_enabled: bool,
     /// Delay before holding Space on a non-empty draft switches into voice capture.
     pub(crate) voice_transcription_space_hold_delay_ms: u64,
+    /// Which key submits this composer.
+    pub(crate) prompt_submit_key: PromptSubmitKey,
 }
 
 impl Default for ChatComposerConfig {
@@ -333,6 +339,7 @@ impl Default for ChatComposerConfig {
             image_paste_enabled: true,
             voice_transcription_space_hold_delay_ms:
                 DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS,
+            prompt_submit_key: PromptSubmitKey::Enter,
         }
     }
 }
@@ -349,6 +356,7 @@ impl ChatComposerConfig {
             image_paste_enabled: false,
             voice_transcription_space_hold_delay_ms:
                 DEFAULT_VOICE_TRANSCRIPTION_SPACE_HOLD_DELAY_MS,
+            prompt_submit_key: PromptSubmitKey::Enter,
         }
     }
 }
@@ -418,7 +426,8 @@ pub(crate) struct ChatComposer {
     quit_shortcut_expires_at: Option<Instant>,
     quit_shortcut_key: KeyBinding,
     esc_backtrack_hint: bool,
-    use_shift_enter_hint: bool,
+    prompt_submit_key: PromptSubmitKey,
+    newline_hint: NewlineHint,
     dismissed_file_popup_token: Option<String>,
     current_file_query: Option<String>,
     pending_pastes: Vec<(String, String)>,
@@ -613,7 +622,9 @@ impl ChatComposer {
         disable_paste_burst: bool,
         config: ChatComposerConfig,
     ) -> Self {
-        let use_shift_enter_hint = enhanced_keys_supported;
+        let prompt_submit_key =
+            Self::effective_prompt_submit_key(config.prompt_submit_key, enhanced_keys_supported);
+        let newline_hint = Self::newline_hint(prompt_submit_key, enhanced_keys_supported);
         let default_keymap = RuntimeKeymap::defaults();
         let default_editor_keymap = default_keymap.editor.clone();
 
@@ -627,7 +638,8 @@ impl ChatComposer {
             quit_shortcut_expires_at: None,
             quit_shortcut_key: key_hint::ctrl(KeyCode::Char('c')),
             esc_backtrack_hint: false,
-            use_shift_enter_hint,
+            prompt_submit_key,
+            newline_hint,
             dismissed_file_popup_token: None,
             current_file_query: None,
             pending_pastes: Vec::new(),
@@ -685,7 +697,7 @@ impl ChatComposer {
             side_conversation_context_label: None,
             active_agent_label: None,
             history_search: None,
-            submit_keys: vec![key_hint::plain(KeyCode::Enter)],
+            submit_keys: Self::submit_keys(prompt_submit_key),
             queue_keys: vec![key_hint::plain(KeyCode::Tab)],
             toggle_shortcuts_keys: vec![
                 key_hint::plain(KeyCode::Char('?')),
@@ -698,7 +710,7 @@ impl ChatComposer {
             footer_show_transcript_key: Some(key_hint::ctrl(KeyCode::Char('t'))),
             footer_insert_newline_key: footer_insert_newline_key(
                 &default_keymap.editor.insert_newline,
-                use_shift_enter_hint,
+                newline_hint,
             ),
             footer_queue_key: Some(key_hint::plain(KeyCode::Tab)),
             footer_toggle_shortcuts_key: Some(key_hint::plain(KeyCode::Char('?'))),
@@ -715,6 +727,38 @@ impl ChatComposer {
         // Apply configuration via the setter to keep side-effects centralized.
         this.set_disable_paste_burst(disable_paste_burst);
         this
+    }
+
+    fn effective_prompt_submit_key(
+        configured_submit_key: PromptSubmitKey,
+        enhanced_keys_supported: bool,
+    ) -> PromptSubmitKey {
+        match (configured_submit_key, enhanced_keys_supported) {
+            (PromptSubmitKey::ShiftEnter, true) => PromptSubmitKey::ShiftEnter,
+            (PromptSubmitKey::ShiftEnter, false) | (PromptSubmitKey::Enter, _) => {
+                PromptSubmitKey::Enter
+            }
+        }
+    }
+
+    fn newline_hint(
+        prompt_submit_key: PromptSubmitKey,
+        enhanced_keys_supported: bool,
+    ) -> NewlineHint {
+        match (prompt_submit_key, enhanced_keys_supported) {
+            (PromptSubmitKey::ShiftEnter, true) => NewlineHint::Enter,
+            (PromptSubmitKey::Enter, true) => NewlineHint::ShiftEnter,
+            (PromptSubmitKey::Enter, false) | (PromptSubmitKey::ShiftEnter, false) => {
+                NewlineHint::CtrlJ
+            }
+        }
+    }
+
+    fn submit_keys(prompt_submit_key: PromptSubmitKey) -> Vec<KeyBinding> {
+        match prompt_submit_key {
+            PromptSubmitKey::Enter => vec![key_hint::plain(KeyCode::Enter)],
+            PromptSubmitKey::ShiftEnter => vec![key_hint::shift(KeyCode::Enter)],
+        }
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -805,12 +849,26 @@ impl ChatComposer {
         self.footer_external_editor_key = primary_binding(&keymap.app.open_external_editor);
         self.footer_show_transcript_key = primary_binding(&keymap.app.open_transcript);
         self.footer_insert_newline_key =
-            footer_insert_newline_key(&keymap.editor.insert_newline, self.use_shift_enter_hint);
+            footer_insert_newline_key(&keymap.editor.insert_newline, self.newline_hint);
         self.footer_queue_key = primary_binding(&keymap.composer.queue);
         self.footer_toggle_shortcuts_key = primary_binding(&keymap.composer.toggle_shortcuts);
         self.footer_history_search_key = primary_binding(&keymap.composer.history_search_previous);
         self.footer_reasoning_down_key = primary_binding(&keymap.chat.decrease_reasoning_effort);
         self.footer_reasoning_up_key = primary_binding(&keymap.chat.increase_reasoning_effort);
+        self.apply_prompt_submit_key_mode();
+    }
+
+    fn apply_prompt_submit_key_mode(&mut self) {
+        if self.prompt_submit_key == PromptSubmitKey::ShiftEnter {
+            let plain_enter = key_hint::plain(KeyCode::Enter);
+            self.submit_keys = Self::submit_keys(self.prompt_submit_key);
+            if !self.editor_keymap.insert_newline.contains(&plain_enter) {
+                self.editor_keymap.insert_newline.insert(0, plain_enter);
+            }
+            self.textarea.set_keymap_bindings(&self.editor_keymap);
+            self.footer_insert_newline_key =
+                footer_insert_newline_key(&self.editor_keymap.insert_newline, self.newline_hint);
+        }
     }
 
     pub fn set_collaboration_mode_indicator(
@@ -3648,7 +3706,7 @@ impl ChatComposer {
         FooterProps {
             mode,
             esc_backtrack_hint: self.esc_backtrack_hint,
-            use_shift_enter_hint: self.use_shift_enter_hint,
+            newline_hint: self.newline_hint,
             is_task_running: self.is_task_running,
             quit_shortcut_key: self.quit_shortcut_key,
             collaboration_modes_enabled: self.collaboration_modes_enabled,
@@ -4265,19 +4323,20 @@ impl ChatComposer {
 
 fn footer_insert_newline_key(
     bindings: &[KeyBinding],
-    enhanced_keys_supported: bool,
+    newline_hint: NewlineHint,
 ) -> Option<KeyBinding> {
     let shift_enter = key_hint::shift(KeyCode::Enter);
-    if enhanced_keys_supported && bindings.contains(&shift_enter) {
-        return Some(shift_enter);
-    }
-
     let plain_enter = key_hint::plain(KeyCode::Enter);
-    bindings
-        .iter()
-        .copied()
-        .find(|binding| *binding != plain_enter)
-        .or_else(|| bindings.first().copied())
+
+    match newline_hint {
+        NewlineHint::Enter if bindings.contains(&plain_enter) => Some(plain_enter),
+        NewlineHint::ShiftEnter if bindings.contains(&shift_enter) => Some(shift_enter),
+        NewlineHint::Enter | NewlineHint::ShiftEnter | NewlineHint::CtrlJ => bindings
+            .iter()
+            .copied()
+            .find(|binding| *binding != plain_enter && *binding != shift_enter)
+            .or_else(|| bindings.first().copied()),
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -5159,6 +5218,7 @@ mod tests {
     use super::*;
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
+    use assert_matches::assert_matches;
     use image::ImageBuffer;
     use image::Rgba;
     use pretty_assertions::assert_eq;
@@ -6874,6 +6934,70 @@ mod tests {
             InputResult::Submitted { text, .. } => assert_eq!(text, input),
             _ => panic!("expected Submitted"),
         }
+    }
+
+    #[test]
+    fn shift_enter_submit_mode_swaps_submit_and_newline_when_supported() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new_with_config(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ true,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+            ChatComposerConfig {
+                prompt_submit_key: PromptSubmitKey::ShiftEnter,
+                ..Default::default()
+            },
+        );
+        composer.textarea.insert_str("hello");
+
+        let (plain_enter_result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(InputResult::None, plain_enter_result);
+        assert_eq!(composer.textarea.text(), "hello\n");
+
+        composer.textarea.insert_str("world");
+        let (shift_enter_result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_matches!(
+            shift_enter_result,
+            InputResult::Submitted { text, .. } if text == "hello\nworld"
+        );
+    }
+
+    #[test]
+    fn shift_enter_submit_mode_falls_back_to_legacy_without_enhanced_keys() {
+        use crossterm::event::KeyCode;
+        use crossterm::event::KeyEvent;
+        use crossterm::event::KeyModifiers;
+
+        let (tx, _rx) = unbounded_channel::<AppEvent>();
+        let sender = AppEventSender::new(tx);
+        let mut composer = ChatComposer::new_with_config(
+            /*has_input_focus*/ true,
+            sender,
+            /*enhanced_keys_supported*/ false,
+            "Ask Codex to do anything".to_string(),
+            /*disable_paste_burst*/ false,
+            ChatComposerConfig {
+                prompt_submit_key: PromptSubmitKey::ShiftEnter,
+                ..Default::default()
+            },
+        );
+        composer.textarea.insert_str("hello");
+
+        let (plain_enter_result, _) =
+            composer.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_matches!(
+            plain_enter_result,
+            InputResult::Submitted { text, .. } if text == "hello"
+        );
     }
 
     /// Behavior: if the ASCII path has a pending first char (flicker suppression) and a non-ASCII

@@ -48,6 +48,7 @@ use codex_config::types::OAuthCredentialsStoreMode;
 use codex_config::types::OtelConfig;
 use codex_config::types::OtelConfigToml;
 use codex_config::types::OtelExporterKind;
+use codex_config::types::PromptSubmitKey;
 use codex_config::types::ToolSuggestConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_config::types::ToolSuggestDiscoverable;
@@ -483,6 +484,9 @@ pub struct Config {
     /// Controls whether a tab opened by the TUI fork-tab action is left
     /// selected or opened in the background.
     pub tui_fork_tab_open_behavior: ForkTabOpenBehavior,
+
+    /// Which key submits the main prompt composer in the TUI.
+    pub tui_prompt_submit_key: PromptSubmitKey,
 
     /// Enable ASCII animations and shimmer effects in the TUI.
     pub animations: bool,
@@ -2878,6 +2882,11 @@ impl Config {
                 .tui
                 .as_ref()
                 .map(|t| t.fork_tab_open_behavior)
+                .unwrap_or_default(),
+            tui_prompt_submit_key: cfg
+                .tui
+                .as_ref()
+                .map(|t| t.prompt_submit_key)
                 .unwrap_or_default(),
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
             show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),

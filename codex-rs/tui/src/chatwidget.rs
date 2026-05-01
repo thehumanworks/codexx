@@ -5403,6 +5403,7 @@ impl ChatWidget {
                 app_event_tx,
                 has_input_focus: true,
                 enhanced_keys_supported,
+                prompt_submit_key: config.tui_prompt_submit_key,
                 placeholder_text: placeholder.clone(),
                 disable_paste_burst: config.disable_paste_burst,
                 animations_enabled: config.animations,

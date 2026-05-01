@@ -1845,6 +1845,25 @@
       },
       "type": "object"
     },
+    "PromptSubmitKey": {
+      "description": "Controls which key submits the main prompt composer in the TUI.",
+      "oneOf": [
+        {
+          "description": "Preserve the legacy main prompt behavior: `Enter` submits and modified enter keys insert newlines when the terminal can report them.",
+          "enum": [
+            "enter"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Swap the main prompt behavior so `Shift+Enter` submits and plain `Enter` inserts a newline when the terminal can report modified enter keys.",
+          "enum": [
+            "shift-enter"
+          ],
+          "type": "string"
+        }
+      ]
+    },
     "RawMcpServerConfig": {
       "additionalProperties": false,
       "description": "Raw MCP config shape used for deserialization and supported-field JSON Schema generation.\n\nFields that are accepted only to produce targeted validation errors should be skipped in the generated schema.\n\nKeep `TryFrom<RawMcpServerConfig> for McpServerConfig` exhaustively destructuring this struct so new TOML fields cannot be added here without updating the validation/mapping logic that produces [`McpServerConfig`].",
@@ -2497,6 +2516,15 @@
           ],
           "default": true,
           "description": "Enable desktop notifications from the TUI. Defaults to `true`."
+        },
+        "prompt_submit_key": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/PromptSubmitKey"
+            }
+          ],
+          "default": "enter",
+          "description": "Controls which key submits the main TUI prompt composer.\n\n- `enter` (default): Preserve the legacy bindings, with `Enter` to submit and `Shift+Enter` to insert a newline when supported. - `shift-enter`: Use `Shift+Enter` to submit and plain `Enter` to insert a newline when the terminal can report modified enter keys. Terminals without that capability keep the legacy bindings."
         },
         "show_tooltips": {
           "default": true,

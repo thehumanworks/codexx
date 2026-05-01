@@ -47,6 +47,7 @@ use codex_config::types::Notice;
 use codex_config::types::NotificationCondition;
 use codex_config::types::NotificationMethod;
 use codex_config::types::Notifications;
+use codex_config::types::PromptSubmitKey;
 use codex_config::types::SandboxWorkspaceWrite;
 use codex_config::types::SkillsConfig;
 use codex_config::types::ToolSuggestDisabledTool;
@@ -595,6 +596,7 @@ fn config_toml_deserializes_model_availability_nux() {
             notification_settings: TuiNotificationSettings::default(),
             fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
             fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
+            prompt_submit_key: PromptSubmitKey::Enter,
             animations: true,
             show_tooltips: true,
             alternate_screen: AltScreenMode::default(),
@@ -1987,6 +1989,7 @@ fn tui_config_missing_notifications_field_defaults_to_enabled() {
             notification_settings: TuiNotificationSettings::default(),
             fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
             fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
+            prompt_submit_key: PromptSubmitKey::Enter,
             animations: true,
             show_tooltips: true,
             alternate_screen: AltScreenMode::Auto,
@@ -6084,6 +6087,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             tui_notifications: Default::default(),
             tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
             tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
+            tui_prompt_submit_key: PromptSubmitKey::Enter,
             animations: true,
             show_tooltips: true,
             model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -6284,6 +6288,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         tui_notifications: Default::default(),
         tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
         tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
+        tui_prompt_submit_key: PromptSubmitKey::Enter,
         animations: true,
         show_tooltips: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -6438,6 +6443,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         tui_notifications: Default::default(),
         tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
         tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
+        tui_prompt_submit_key: PromptSubmitKey::Enter,
         animations: true,
         show_tooltips: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -6577,6 +6583,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         tui_notifications: Default::default(),
         tui_fork_tab_exit_behavior: ForkTabExitBehavior::ReturnToShell,
         tui_fork_tab_open_behavior: ForkTabOpenBehavior::Foreground,
+        tui_prompt_submit_key: PromptSubmitKey::Enter,
         animations: true,
         show_tooltips: true,
         model_availability_nux: ModelAvailabilityNuxConfig::default(),
@@ -8713,6 +8720,7 @@ struct TuiTomlTest {
     fork_tab_exit_behavior: ForkTabExitBehavior,
     #[serde(default)]
     fork_tab_open_behavior: ForkTabOpenBehavior,
+    prompt_submit_key: PromptSubmitKey,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -8812,4 +8820,15 @@ fn test_tui_fork_tab_exit_behavior() {
         parsed.tui.fork_tab_exit_behavior,
         ForkTabExitBehavior::CloseTab
     );
+}
+
+#[test]
+fn test_tui_prompt_submit_key() {
+    let toml = r#"
+            [tui]
+            prompt_submit_key = "shift-enter"
+        "#;
+    let parsed: RootTomlTest =
+        toml::from_str(toml).expect("deserialize prompt_submit_key=\"shift-enter\"");
+    assert_eq!(parsed.tui.prompt_submit_key, PromptSubmitKey::ShiftEnter);
 }

@@ -608,6 +608,21 @@ pub enum ForkTabOpenBehavior {
     Background,
 }
 
+/// Controls which key submits the main prompt composer in the TUI.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum PromptSubmitKey {
+    /// Preserve the legacy main prompt behavior: `Enter` submits and modified
+    /// enter keys insert newlines when the terminal can report them.
+    #[default]
+    Enter,
+
+    /// Swap the main prompt behavior so `Shift+Enter` submits and plain
+    /// `Enter` inserts a newline when the terminal can report modified enter
+    /// keys.
+    ShiftEnter,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ModelAvailabilityNuxConfig {
@@ -643,6 +658,16 @@ pub struct Tui {
     /// - `background`: Restore focus to the source tab after the forked tab opens.
     #[serde(default)]
     pub fork_tab_open_behavior: ForkTabOpenBehavior,
+
+    /// Controls which key submits the main TUI prompt composer.
+    ///
+    /// - `enter` (default): Preserve the legacy bindings, with `Enter` to
+    ///   submit and `Shift+Enter` to insert a newline when supported.
+    /// - `shift-enter`: Use `Shift+Enter` to submit and plain `Enter` to insert
+    ///   a newline when the terminal can report modified enter keys. Terminals
+    ///   without that capability keep the legacy bindings.
+    #[serde(default)]
+    pub prompt_submit_key: PromptSubmitKey,
 
     /// Enable animations (welcome screen, shimmer effects, spinners).
     /// Defaults to `true`.

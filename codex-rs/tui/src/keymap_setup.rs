@@ -723,6 +723,7 @@ mod tests {
     use crate::bottom_pane::ListSelectionView;
     use crate::bottom_pane::SelectionTab;
     use crate::tui::FrameRequester;
+    use codex_config::types::PromptSubmitKey;
     use insta::assert_snapshot;
     use pretty_assertions::assert_eq;
     use ratatui::buffer::Buffer;
@@ -782,6 +783,7 @@ mod tests {
             frame_requester: FrameRequester::test_dummy(),
             has_input_focus: true,
             enhanced_keys_supported: false,
+            prompt_submit_key: PromptSubmitKey::Enter,
             placeholder_text: "Ask Codex to do anything".to_string(),
             disable_paste_burst: false,
             animations_enabled: false,

@@ -834,18 +834,22 @@ fn normalize_chatgpt_base_url(input: &str) -> String {
 
 async fn resolve_auth() -> Result<TranscriptionAuthContext, String> {
     let codex_home = find_codex_home().map_err(|e| format!("failed to find codex home: {e}"))?;
-    let auth = CodexAuth::from_auth_storage(&codex_home, AuthCredentialsStoreMode::Auto)
+    let config = Config::load_with_cli_overrides(Vec::new())
         .await
-        .map_err(|e| format!("failed to read auth.json: {e}"))?
-        .ok_or_else(|| "No Codex auth is configured; please run `codex login`".to_string())?;
+        .map_err(|e| format!("failed to load config: {e}"))?;
+    let auth = CodexAuth::from_auth_storage(
+        &codex_home,
+        AuthCredentialsStoreMode::Auto,
+        Some(&config.chatgpt_base_url),
+    )
+    .await
+    .map_err(|e| format!("failed to read auth.json: {e}"))?
+    .ok_or_else(|| "No Codex auth is configured; please run `codex login`".to_string())?;
 
     let chatgpt_account_id = auth.get_account_id();
     let bearer_token = auth
         .get_token()
         .map_err(|e| format!("failed to get auth token: {e}"))?;
-    let config = Config::load_with_cli_overrides(Vec::new())
-        .await
-        .map_err(|e| format!("failed to load config: {e}"))?;
     Ok(TranscriptionAuthContext {
         mode: auth.api_auth_mode(),
         bearer_token,
