@@ -1,8 +1,8 @@
 load("@crates//:data.bzl", "DEP_DATA")
 load("@crates//:defs.bzl", "all_crate_deps")
 load("@rules_platform//platform_data:defs.bzl", "platform_data")
-load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro", "rust_test")
 load("@rules_rust//cargo/private:cargo_build_script_wrapper.bzl", "cargo_build_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_proc_macro", "rust_test")
 
 PLATFORMS = [
     "linux_arm64_musl",
@@ -79,6 +79,12 @@ def _workspace_root_test_impl(ctx):
         runfiles = runfiles.merge(ctx.runfiles(files = data_dep[DefaultInfo].files.to_list()))
         runfiles = runfiles.merge(data_dep[DefaultInfo].default_runfiles)
 
+    location_targets = ctx.attr.data + [ctx.attr.test_bin, ctx.attr.workspace_root_marker]
+    env = {
+        key: ctx.expand_location(value, targets = location_targets)
+        for key, value in ctx.attr.env.items()
+    }
+
     return [
         DefaultInfo(
             executable = launcher,
@@ -86,13 +92,14 @@ def _workspace_root_test_impl(ctx):
             runfiles = runfiles,
         ),
         RunEnvironmentInfo(
-            environment = ctx.attr.env,
+            environment = env,
         ),
     ]
 
 workspace_root_test = rule(
     implementation = _workspace_root_test_impl,
     test = True,
+    toolchains = ["@bazel_tools//tools/test:default_test_toolchain_type"],
     attrs = {
         "data": attr.label_list(
             allow_files = True,
@@ -255,6 +262,7 @@ def codex_rust_crate(
         unit_test_name = name + "-unit-tests"
         unit_test_binary = name + "-unit-tests-bin"
         unit_test_shard_count = _test_shard_count(test_shard_counts, unit_test_name)
+
         # Shard at the workspace_root_test layer. rules_rust's sharding wrapper
         # expects to run from its own runfiles cwd, while workspace_root_test
         # deliberately changes cwd so Insta sees Cargo-like snapshot paths.
@@ -331,17 +339,17 @@ def codex_rust_crate(
         test_name = name + "-" + test_file_stem.replace("/", "-")
         if not test_name.endswith("-test"):
             test_name += "-test"
+        test_binary = test_name + "-bin"
 
         test_kwargs = {}
         test_kwargs.update(integration_test_kwargs)
         test_shard_count = _test_shard_count(test_shard_counts, test_name)
         if test_shard_count:
-            test_kwargs["experimental_enable_sharding"] = True
             test_kwargs["shard_count"] = test_shard_count
             test_kwargs["flaky"] = True
 
         rust_test(
-            name = test_name,
+            name = test_binary,
             crate_name = test_crate_name,
             crate_root = test,
             srcs = [test],
@@ -356,10 +364,16 @@ def codex_rust_crate(
                 "--remap-path-prefix=codex-rs=",
             ],
             rustc_env = rustc_env,
-            # Important: do not merge `test_env` here. Its unit-test-only
-            # `INSTA_WORKSPACE_ROOT="codex-rs"` is tuned for unit tests that
-            # execute from the repo root and can misplace integration snapshots.
             env = cargo_env,
+            tags = test_tags + ["manual"],
+        )
+
+        workspace_root_test(
+            name = test_name,
+            data = native.glob(["tests/**"], allow_empty = True) + sanitized_binaries + test_data_extra,
+            env = cargo_env,
+            test_bin = ":" + test_binary,
+            workspace_root_marker = "//codex-rs/utils/cargo-bin:repo_root.marker",
             tags = test_tags,
             **test_kwargs
         )
