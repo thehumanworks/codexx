@@ -194,7 +194,15 @@ pub async fn load_config_layers_state(
     // profile config as a second user layer on top so the profile only needs to
     // contain overrides.
     let base_user_file = AbsolutePathBuf::resolve_path_against_base(CONFIG_TOML_FILE, codex_home);
-    layers.push(load_user_config_layer(fs, &base_user_file, None, ignore_user_config).await?);
+    layers.push(
+        load_user_config_layer(
+            fs,
+            &base_user_file,
+            /*profile*/ None,
+            ignore_user_config,
+        )
+        .await?,
+    );
 
     let active_user_file = overrides.user_config_path(codex_home)?;
     if active_user_file != base_user_file {
