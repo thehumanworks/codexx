@@ -253,6 +253,12 @@ if [[ ${#bazel_args[@]} -eq 0 || ${#bazel_targets[@]} -eq 0 ]]; then
   exit 1
 fi
 
+if [[ "${RUNNER_OS:-}" == "Windows" && $windows_cross_compile -eq 1 && -z "${BUILDBUDDY_API_KEY:-}" ]]; then
+  # Fork PRs do not receive the BuildBuddy secret needed for the remote
+  # cross-compile config. Preserve the previous local Windows build shape.
+  windows_msvc_host_platform=1
+fi
+
 post_config_bazel_args=()
 if [[ "${RUNNER_OS:-}" == "Windows" && $windows_msvc_host_platform -eq 1 ]]; then
   has_host_platform_override=0
