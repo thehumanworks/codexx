@@ -171,6 +171,69 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
 }
 
 #[test]
+fn unknown_requirement_source_hooks_stay_managed() {
+    let temp = tempdir().expect("create temp dir");
+    let managed_dir =
+        AbsolutePathBuf::try_from(temp.path().join("managed-hooks")).expect("absolute path");
+    fs::create_dir_all(managed_dir.as_path()).expect("create managed hooks dir");
+    let managed_hooks = managed_hooks_for_current_platform(
+        managed_dir,
+        HookEventsToml {
+            pre_tool_use: vec![MatcherGroup {
+                matcher: Some("^Bash$".to_string()),
+                hooks: vec![HookHandlerConfig::Command {
+                    command: "python3 /tmp/managed.py".to_string(),
+                    timeout_sec: Some(10),
+                    r#async: false,
+                    status_message: Some("checking".to_string()),
+                }],
+            }],
+            ..Default::default()
+        },
+    );
+    let config_layer_stack = ConfigLayerStack::new(
+        Vec::new(),
+        ConfigRequirements {
+            managed_hooks: Some(ConstrainedWithSource::new(
+                Constrained::allow_any(managed_hooks.clone()),
+                Some(RequirementSource::Unknown),
+            )),
+            ..ConfigRequirements::default()
+        },
+        ConfigRequirementsToml {
+            hooks: Some(managed_hooks),
+            ..ConfigRequirementsToml::default()
+        },
+    )
+    .expect("config layer stack");
+
+    let engine = ClaudeHooksEngine::new(
+        /*enabled*/ true,
+        Some(&config_layer_stack),
+        Vec::new(),
+        Vec::new(),
+        CommandShell {
+            program: String::new(),
+            args: Vec::new(),
+        },
+    );
+
+    assert_eq!(engine.handlers.len(), 1);
+    assert_eq!(engine.handlers[0].source, HookSource::Unknown);
+    let discovered =
+        super::discovery::discover_handlers(Some(&config_layer_stack), Vec::new(), Vec::new());
+    assert_eq!(discovered.hook_entries.len(), 1);
+    assert_eq!(discovered.hook_entries[0].source, HookSource::Unknown);
+    assert_eq!(discovered.hook_entries[0].enabled, true);
+    assert_eq!(discovered.hook_entries[0].is_managed, true);
+    assert_eq!(discovered.hook_entries[0].trusted_hash, None);
+    assert_eq!(
+        discovered.hook_entries[0].trust_status,
+        HookTrustStatus::Managed
+    );
+}
+
+#[test]
 fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
     let temp = tempdir().expect("create temp dir");
     let managed_dir =

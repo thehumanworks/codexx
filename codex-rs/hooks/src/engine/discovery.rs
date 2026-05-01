@@ -39,6 +39,7 @@ struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
     key_source: String,
     source: HookSource,
+    is_managed: bool,
     hook_states: &'a HashMap<String, HookStateToml>,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
@@ -95,6 +96,7 @@ pub(crate) fn discover_handlers(
                         path: &source_path,
                         key_source: source_path.display().to_string(),
                         source: hook_source,
+                        is_managed: hook_source.is_managed(),
                         hook_states: &hook_states,
                         env: HashMap::new(),
                         plugin_id: None,
@@ -146,6 +148,7 @@ fn append_managed_requirement_handlers(
             path: &source_path,
             key_source: source_path.display().to_string(),
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
+            is_managed: true,
             hook_states,
             env: HashMap::new(),
             plugin_id: None,
@@ -190,6 +193,7 @@ fn append_plugin_hook_sources(
                 path: &source_path,
                 key_source: format!("{plugin_id}:{source_relative_path}"),
                 source: HookSource::Plugin,
+                is_managed: false,
                 hook_states,
                 env,
                 plugin_id: Some(plugin_id),
@@ -418,13 +422,13 @@ fn append_matcher_groups(
                         handler_index
                     );
                     let state = source.hook_states.get(&key);
-                    let enabled = source.source.is_managed()
-                        || state.and_then(|state| state.enabled) != Some(false);
-                    let trusted_hash = (!source.source.is_managed())
+                    let enabled =
+                        source.is_managed || state.and_then(|state| state.enabled) != Some(false);
+                    let trusted_hash = (!source.is_managed)
                         .then(|| state.and_then(|state| state.trusted_hash.clone()))
                         .flatten();
                     let trust_status =
-                        hook_trust_status(source.source.is_managed(), &current_hash, &trusted_hash);
+                        hook_trust_status(source.is_managed, &current_hash, &trusted_hash);
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -438,7 +442,7 @@ fn append_matcher_groups(
                         plugin_id: source.plugin_id.clone(),
                         display_order: *display_order,
                         enabled,
-                        is_managed: source.source.is_managed(),
+                        is_managed: source.is_managed,
                         current_hash,
                         trusted_hash,
                         trust_status,
@@ -610,6 +614,7 @@ mod tests {
             path,
             key_source: path.display().to_string(),
             source: hook_source(),
+            is_managed: hook_source().is_managed(),
             hook_states,
             env: std::collections::HashMap::new(),
             plugin_id: None,
