@@ -435,7 +435,8 @@ pub enum Op {
     UserInput {
         /// User input items, see `InputItem`
         items: Vec<UserInput>,
-        /// Optional turn-scoped environments.
+        /// Optional legacy environment selections. Prefer `UserTurn` or
+        /// `UserInputWithTurnContext` for turn-scoped environment selections.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         environments: Option<Vec<TurnEnvironmentSelection>>,
         /// Optional JSON Schema used to constrain the final assistant message for this turn.

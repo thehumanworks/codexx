@@ -1,6 +1,12 @@
 use crate::shell::ShellType;
 
 use super::*;
+use codex_protocol::config_types::ReasoningSummary as ReasoningSummaryConfig;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::SandboxPolicy;
+use codex_protocol::protocol::TurnContextItem;
+use codex_protocol::protocol::TurnEnvironmentSelection;
+use core_test_support::test_absolute_path;
 use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use std::path::PathBuf;
@@ -12,6 +18,42 @@ fn fake_shell_name() -> String {
         shell_snapshot: crate::shell::empty_shell_snapshot_receiver(),
     };
     shell.name().to_string()
+}
+
+fn turn_environment_selection(id: &str, cwd: &str) -> TurnEnvironmentSelection {
+    TurnEnvironmentSelection {
+        environment_id: id.to_string(),
+        cwd: test_absolute_path(cwd),
+    }
+}
+
+fn turn_context_item(
+    cwd: &str,
+    environments: Option<Vec<TurnEnvironmentSelection>>,
+) -> TurnContextItem {
+    TurnContextItem {
+        turn_id: None,
+        trace_id: None,
+        cwd: test_path_buf(cwd),
+        environments,
+        current_date: None,
+        timezone: None,
+        approval_policy: AskForApproval::Never,
+        sandbox_policy: SandboxPolicy::DangerFullAccess,
+        permission_profile: None,
+        network: None,
+        file_system_sandbox_policy: None,
+        model: "gpt-5".to_string(),
+        personality: None,
+        collaboration_mode: None,
+        realtime_active: None,
+        effort: None,
+        summary: ReasoningSummaryConfig::Auto,
+        user_instructions: None,
+        developer_instructions: None,
+        final_output_json_schema: None,
+        truncation_policy: None,
+    }
 }
 
 #[test]
@@ -164,6 +206,62 @@ fn equals_except_shell_ignores_shell() {
     );
 
     assert!(context1.equals_except_shell(&context2));
+}
+
+#[test]
+fn from_turn_context_item_omits_single_environment() {
+    let context = EnvironmentContext::from_turn_context_item(
+        &turn_context_item(
+            "/repo",
+            Some(vec![turn_environment_selection("local", "/repo")]),
+        ),
+        fake_shell_name(),
+    );
+
+    assert!(context.environments.is_empty());
+    assert_eq!(
+        context.render(),
+        format!(
+            r#"<environment_context>
+  <cwd>{}</cwd>
+  <shell>bash</shell>
+</environment_context>"#,
+            test_path_buf("/repo").display()
+        )
+    );
+}
+
+#[test]
+fn diff_reintroduces_cwd_when_environment_block_clears() {
+    let before = turn_context_item(
+        "/repo",
+        Some(vec![
+            turn_environment_selection("local", "/repo"),
+            turn_environment_selection("remote", "/remote/repo"),
+        ]),
+    );
+    let after = EnvironmentContext::from_turn_context_item(
+        &turn_context_item(
+            "/repo",
+            Some(vec![turn_environment_selection("local", "/repo")]),
+        ),
+        fake_shell_name(),
+    );
+
+    let diff = EnvironmentContext::diff_from_turn_context_item(&before, &after);
+
+    assert!(diff.environments.is_empty());
+    assert_eq!(diff.cwd, Some(test_path_buf("/repo")));
+    assert_eq!(
+        diff.render(),
+        format!(
+            r#"<environment_context>
+  <cwd>{}</cwd>
+  <shell>bash</shell>
+</environment_context>"#,
+            test_path_buf("/repo").display()
+        )
+    );
 }
 
 #[test]

@@ -168,6 +168,8 @@ pub(super) async fn user_input_or_turn_inner(
                     service_tier,
                     final_output_json_schema: Some(final_output_json_schema),
                     environments,
+                    persist_environments: false,
+                    sync_single_environment_cwd: false,
                     personality,
                     app_server_client_name: None,
                     app_server_client_version: None,
@@ -220,6 +222,8 @@ pub(super) async fn user_input_or_turn_inner(
                     service_tier,
                     final_output_json_schema: Some(final_output_json_schema),
                     environments,
+                    persist_environments: false,
+                    sync_single_environment_cwd: false,
                     personality,
                     app_server_client_name: None,
                     app_server_client_version: None,
@@ -232,15 +236,19 @@ pub(super) async fn user_input_or_turn_inner(
             environments,
             final_output_json_schema,
             responsesapi_client_metadata,
-        } => (
-            items,
-            SessionSettingsUpdate {
-                final_output_json_schema: Some(final_output_json_schema),
-                environments,
-                ..Default::default()
-            },
-            responsesapi_client_metadata,
-        ),
+        } => {
+            let persist_environments = environments.is_some();
+            (
+                items,
+                SessionSettingsUpdate {
+                    final_output_json_schema: Some(final_output_json_schema),
+                    environments,
+                    persist_environments,
+                    ..Default::default()
+                },
+                responsesapi_client_metadata,
+            )
+        }
         _ => unreachable!(),
     };
 
@@ -1040,11 +1048,13 @@ pub(super) async fn submission_loop(
                             /*developer_instructions*/ None,
                         )
                     };
+                    let sync_single_environment_cwd = cwd.is_some();
                     override_turn_context(
                         &sess,
                         sub.id.clone(),
                         SessionSettingsUpdate {
                             cwd,
+                            sync_single_environment_cwd,
                             approval_policy,
                             approvals_reviewer,
                             sandbox_policy,

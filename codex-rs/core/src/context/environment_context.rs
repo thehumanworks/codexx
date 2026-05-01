@@ -70,6 +70,31 @@ impl NetworkContext {
 }
 
 impl EnvironmentContext {
+    fn should_render_environments(environment_count: usize) -> bool {
+        environment_count > 1
+    }
+
+    fn model_facing_environments(
+        environments: Vec<EnvironmentContextEnvironment>,
+    ) -> Vec<EnvironmentContextEnvironment> {
+        // Preserve the legacy model-facing cwd/shell context for zero- and
+        // single-environment turns; only render explicit choices for multi-env.
+        if Self::should_render_environments(environments.len()) {
+            environments
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn turn_context_item_has_model_facing_environments(
+        turn_context_item: &TurnContextItem,
+    ) -> bool {
+        turn_context_item
+            .environments
+            .as_ref()
+            .is_some_and(|environments| Self::should_render_environments(environments.len()))
+    }
+
     pub(crate) fn new(
         cwd: Option<PathBuf>,
         shell: String,
@@ -116,7 +141,10 @@ impl EnvironmentContext {
         after: &EnvironmentContext,
     ) -> Self {
         let before_network = Self::network_from_turn_context_item(before);
+        let before_had_environments = Self::turn_context_item_has_model_facing_environments(before);
+        let environments = Self::model_facing_environments(after.environments.clone());
         let cwd = match &after.cwd {
+            Some(cwd) if before_had_environments && environments.is_empty() => Some(cwd.clone()),
             Some(cwd) if before.cwd.as_path() != cwd.as_path() => Some(cwd.clone()),
             _ => None,
         };
@@ -124,15 +152,6 @@ impl EnvironmentContext {
             after.network.clone()
         } else {
             before_network
-        };
-        let before_had_environments = before
-            .environments
-            .as_ref()
-            .is_some_and(|environments| environments.len() > 1);
-        let environments = if before_had_environments || after.environments.len() > 1 {
-            after.environments.clone()
-        } else {
-            Vec::new()
         };
         EnvironmentContext::new(
             cwd,
@@ -148,11 +167,7 @@ impl EnvironmentContext {
     pub(crate) fn from_turn_context(turn_context: &TurnContext, shell: &Shell) -> Self {
         let environments =
             EnvironmentContextEnvironment::from_turn_environments(&turn_context.environments);
-        let environments = if environments.len() > 1 {
-            environments
-        } else {
-            Vec::new()
-        };
+        let environments = Self::model_facing_environments(environments);
         Self::new(
             Some(turn_context.cwd.to_path_buf()),
             shell.name().to_string(),
@@ -171,9 +186,9 @@ impl EnvironmentContext {
         let environments = turn_context_item
             .environments
             .as_deref()
-            .filter(|environments| environments.len() > 1)
             .map(EnvironmentContextEnvironment::from_selected_environments)
             .unwrap_or_default();
+        let environments = Self::model_facing_environments(environments);
         Self::new(
             Some(turn_context_item.cwd.clone()),
             shell,
@@ -235,14 +250,10 @@ impl ContextualUserFragment for EnvironmentContext {
 
     fn body(&self) -> String {
         let mut lines = Vec::new();
-        if self.environments.len() <= 1 {
-            // Only change the model-facing surface when more than one selected
-            // environment is in use. Zero- and single-environment turns keep
-            // the existing cwd/shell shape.
-            if let Some(cwd) = &self.cwd {
-                lines.push(format!("  <cwd>{}</cwd>", cwd.to_string_lossy()));
-            }
-        } else {
+        // `self.environments` is pre-filtered to only contain model-facing
+        // environments for multi-env turns, preserving the legacy cwd/shell
+        // context for zero- and single-environment turns.
+        if !self.environments.is_empty() {
             lines.push("  <environments>".to_string());
             for environment in &self.environments {
                 lines.push(format!(
@@ -256,6 +267,8 @@ impl ContextualUserFragment for EnvironmentContext {
                 lines.push("    </environment>".to_string());
             }
             lines.push("  </environments>".to_string());
+        } else if let Some(cwd) = &self.cwd {
+            lines.push(format!("  <cwd>{}</cwd>", cwd.to_string_lossy()));
         }
 
         lines.push(format!("  <shell>{}</shell>", self.shell));

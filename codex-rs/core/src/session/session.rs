@@ -207,13 +207,18 @@ impl SessionConfiguration {
             .unwrap_or_else(|| self.cwd.clone());
 
         let cwd_changed = absolute_cwd.as_path() != self.cwd.as_path();
-        next_configuration.cwd = absolute_cwd.clone();
-        if updates.environments.is_none()
-            && cwd_changed
+        next_configuration.cwd = absolute_cwd;
+        if updates.persist_environments
+            && let Some(environments) = updates.environments.clone()
+        {
+            next_configuration.environments = environments;
+        }
+        if updates.sync_single_environment_cwd
+            && updates.environments.is_none()
             && next_configuration.environments.len() == 1
             && let Some(turn_environment) = next_configuration.environments.first_mut()
         {
-            turn_environment.cwd = absolute_cwd;
+            turn_environment.cwd = next_configuration.cwd.clone();
         }
 
         if let Some(permission_profile) = updates.permission_profile.clone() {
@@ -316,6 +321,12 @@ pub(crate) struct SessionSettingsUpdate {
     /// environments stored on `SessionConfiguration`; `Some([])` explicitly
     /// disables environments for this turn.
     pub(crate) environments: Option<Vec<TurnEnvironmentSelection>>,
+    /// Promote `environments` into sticky thread state after resolving this
+    /// update. Used by legacy input paths that do not carry full turn context.
+    pub(crate) persist_environments: bool,
+    /// When a legacy context override changes cwd without explicit environment
+    /// selections, keep the single stored environment aligned with that cwd.
+    pub(crate) sync_single_environment_cwd: bool,
     pub(crate) personality: Option<Personality>,
     pub(crate) app_server_client_name: Option<String>,
     pub(crate) app_server_client_version: Option<String>,
@@ -923,31 +934,8 @@ impl Session {
                 cancel_guard.cancel();
                 *cancel_guard = CancellationToken::new();
             }
-            let turn_environment = crate::environment_selection::resolve_environment_selections(
-                sess.services.environment_manager.as_ref(),
-                &session_configuration.environments,
-            )
-            .map_err(|err| {
-                CodexErr::InvalidRequest(err.to_string().replace(
-                    "unknown turn environment id",
-                    "unknown stored MCP environment id",
-                ))
-            })?
-            .primary_turn_environment()
-            .cloned();
-            let mcp_runtime_environment = match turn_environment {
-                Some(turn_environment) => McpRuntimeEnvironment::new(
-                    Arc::clone(&turn_environment.environment),
-                    turn_environment.cwd.to_path_buf(),
-                ),
-                None => McpRuntimeEnvironment::new(
-                    sess.services
-                        .environment_manager
-                        .default_environment()
-                        .unwrap_or_else(|| sess.services.environment_manager.local_environment()),
-                    session_configuration.cwd.to_path_buf(),
-                ),
-            };
+            let mcp_runtime_environment =
+                sess.mcp_runtime_environment_for_configuration(&session_configuration)?;
             let (mcp_connection_manager, cancel_token) = McpConnectionManager::new(
                 &mcp_servers,
                 config.mcp_oauth_credentials_store_mode,

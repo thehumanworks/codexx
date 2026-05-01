@@ -274,6 +274,8 @@ impl TurnContext {
     }
 
     pub(crate) fn has_multiple_selected_environments(&self) -> bool {
+        // Keep model-facing tool signatures on the legacy single-environment
+        // surface; only expose environment choices when the turn has >1.
         self.environments.len() > 1
     }
 
@@ -506,6 +508,8 @@ impl Session {
         .with_web_search_config(per_turn_config.web_search_config.clone())
         .with_allow_login_shell(per_turn_config.permissions.allow_login_shell)
         .with_has_environment(!environments.is_empty())
+        // Keep model-facing tool signatures on the legacy single-environment
+        // surface; only expose environment choices when the turn has >1.
         .with_has_multiple_selected_environments(environments.len() > 1)
         .with_spawn_agent_usage_hint(per_turn_config.multi_agent_v2.usage_hint_enabled)
         .with_spawn_agent_usage_hint_text(per_turn_config.multi_agent_v2.usage_hint_text.clone())

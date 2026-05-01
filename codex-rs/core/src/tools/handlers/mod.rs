@@ -107,6 +107,9 @@ pub(crate) fn resolve_process_tool_environment(
     turn: &TurnContext,
     environment_id: Option<&str>,
 ) -> Result<Option<ProcessToolEnvironment>, FunctionCallError> {
+    // Preserve the legacy model-facing process-tool behavior for zero- and
+    // single-environment turns; explicit environment routing is only exposed
+    // when the model sees multiple selected environments.
     if environment_id.is_none() && !turn.has_multiple_selected_environments() {
         return Ok(turn
             .primary_environment()
