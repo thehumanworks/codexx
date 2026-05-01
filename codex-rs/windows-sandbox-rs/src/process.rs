@@ -1,30 +1,31 @@
 use crate::desktop::LaunchDesktop;
 use crate::logging;
 use crate::proc_thread_attr::ProcThreadAttributeList;
+use crate::program_resolution::resolve_spawn_command;
 use crate::winutil::argv_to_command_line;
 use crate::winutil::format_last_error;
 use crate::winutil::to_wide;
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
-use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::CloseHandle;
-use windows_sys::Win32::Foundation::SetHandleInformation;
+use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+use windows_sys::Win32::Foundation::SetHandleInformation;
 use windows_sys::Win32::Storage::FileSystem::ReadFile;
 use windows_sys::Win32::System::Console::GetStdHandle;
 use windows_sys::Win32::System::Console::STD_ERROR_HANDLE;
 use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
 use windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE;
 use windows_sys::Win32::System::Pipes::CreatePipe;
-use windows_sys::Win32::System::Threading::CreateProcessAsUserW;
 use windows_sys::Win32::System::Threading::CREATE_UNICODE_ENVIRONMENT;
 use windows_sys::Win32::System::Threading::EXTENDED_STARTUPINFO_PRESENT;
+use windows_sys::Win32::System::Threading::CreateProcessAsUserW;
 use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 use windows_sys::Win32::System::Threading::STARTF_USESTDHANDLES;
 use windows_sys::Win32::System::Threading::STARTUPINFOEXW;
@@ -84,6 +85,8 @@ pub unsafe fn create_process_as_user(
     stdio: Option<(HANDLE, HANDLE, HANDLE)>,
     use_private_desktop: bool,
 ) -> Result<CreatedProcess> {
+    let resolved_command = resolve_spawn_command(argv, cwd, env_map);
+    let application_name = resolved_command.application_name.map(to_wide);
     let cmdline_str = argv_to_command_line(argv);
     let mut cmdline: Vec<u16> = to_wide(&cmdline_str);
     let env_block = make_env_block(env_map);
@@ -122,7 +125,10 @@ pub unsafe fn create_process_as_user(
             let creation_flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
             let ok = CreateProcessAsUserW(
                 h_token,
-                std::ptr::null(),
+                application_name
+                    .as_ref()
+                    .map(|path| path.as_ptr())
+                    .unwrap_or(std::ptr::null()),
                 cmdline.as_mut_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -163,7 +169,10 @@ pub unsafe fn create_process_as_user(
             let creation_flags = CREATE_UNICODE_ENVIRONMENT;
             let ok = CreateProcessAsUserW(
                 h_token,
-                std::ptr::null(),
+                application_name
+                    .as_ref()
+                    .map(|path| path.as_ptr())
+                    .unwrap_or(std::ptr::null()),
                 cmdline.as_mut_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
