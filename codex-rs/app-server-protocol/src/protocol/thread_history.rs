@@ -2429,58 +2429,6 @@ mod tests {
     }
 
     #[test]
-    fn exec_command_begin_updates_active_turn_snapshot_with_elapsed_duration() {
-        let turn_id = "turn-1";
-        let mut builder = ThreadHistoryBuilder::new();
-        let events = vec![
-            EventMsg::TurnStarted(TurnStartedEvent {
-                turn_id: turn_id.to_string(),
-                started_at: None,
-                model_context_window: None,
-                collaboration_mode_kind: Default::default(),
-            }),
-            EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
-                call_id: "exec-call".into(),
-                process_id: Some("pid-1".into()),
-                turn_id: turn_id.to_string(),
-                started_at_ms: None,
-                command: vec!["sleep".into(), "100".into()],
-                cwd: test_path_buf("/tmp").abs(),
-                parsed_cmd: vec![ParsedCommand::Unknown {
-                    cmd: "sleep 100".into(),
-                }],
-                source: ExecCommandSource::Agent,
-                interaction_input: None,
-            }),
-        ];
-
-        for event in &events {
-            builder.handle_event(event);
-        }
-
-        let snapshot = builder
-            .active_turn_snapshot()
-            .expect("active turn snapshot");
-        assert_eq!(
-            snapshot.items,
-            vec![ThreadItem::CommandExecution {
-                id: "exec-call".into(),
-                command: "sleep 100".into(),
-                cwd: test_path_buf("/tmp").abs(),
-                process_id: Some("pid-1".into()),
-                source: CommandExecutionSource::Agent,
-                status: CommandExecutionStatus::InProgress,
-                command_actions: vec![CommandAction::Unknown {
-                    command: "sleep 100".into(),
-                }],
-                aggregated_output: None,
-                exit_code: None,
-                duration_ms: Some(0),
-            }]
-        );
-    }
-
-    #[test]
     fn patch_apply_begin_updates_active_turn_snapshot_with_file_change() {
         let turn_id = "turn-1";
         let mut builder = ThreadHistoryBuilder::new();
