@@ -1580,7 +1580,7 @@ pub enum HookTrustStatus {
     Managed,
     Untrusted,
     Trusted,
-    Changed,
+    Modified,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, JsonSchema, TS)]

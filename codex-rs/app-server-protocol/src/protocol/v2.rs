@@ -483,7 +483,7 @@ v2_enum_from_core!(
 
 v2_enum_from_core!(
     pub enum HookTrustStatus from CoreHookTrustStatus {
-        Managed, Untrusted, Trusted, Changed
+        Managed, Untrusted, Trusted, Modified
     }
 );
 

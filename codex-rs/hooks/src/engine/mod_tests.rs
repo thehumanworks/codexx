@@ -376,7 +376,7 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
     assert_eq!(changed.hook_entries.len(), 1);
     assert_eq!(
         changed.hook_entries[0].trust_status,
-        HookTrustStatus::Changed
+        HookTrustStatus::Modified
     );
     assert_eq!(
         changed.hook_entries[0].trusted_hash.as_deref(),
@@ -729,7 +729,7 @@ print(json.dumps({
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
         Some(&config_layer_stack),
-        plugin_hook_sources,
+        plugin_hook_sources.clone(),
         Vec::new(),
         CommandShell {
             program: String::new(),

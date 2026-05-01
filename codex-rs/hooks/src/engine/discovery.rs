@@ -423,8 +423,17 @@ fn append_matcher_groups(
                     let trusted_hash = (!source.source.is_managed())
                         .then(|| state.and_then(|state| state.trusted_hash.clone()))
                         .flatten();
-                    let trust_status =
-                        hook_trust_status(source.source, &current_hash, trusted_hash.as_deref());
+                    let trust_status = if source.source.is_managed() {
+                        HookTrustStatus::Managed
+                    } else {
+                        match trusted_hash.as_deref() {
+                            Some(trusted_hash) if trusted_hash == current_hash => {
+                                HookTrustStatus::Trusted
+                            }
+                            Some(_) => HookTrustStatus::Modified,
+                            None => HookTrustStatus::Untrusted,
+                        }
+                    };
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -517,22 +526,6 @@ fn command_hook_hash(
         );
     }
     version_for_toml(&TomlValue::Table(table))
-}
-
-fn hook_trust_status(
-    source: HookSource,
-    current_hash: &str,
-    trusted_hash: Option<&str>,
-) -> HookTrustStatus {
-    if source.is_managed() {
-        return HookTrustStatus::Managed;
-    }
-
-    match trusted_hash {
-        Some(trusted_hash) if trusted_hash == current_hash => HookTrustStatus::Trusted,
-        Some(_) => HookTrustStatus::Changed,
-        None => HookTrustStatus::Untrusted,
-    }
 }
 
 fn hook_event_key_label(event_name: codex_protocol::protocol::HookEventName) -> &'static str {
