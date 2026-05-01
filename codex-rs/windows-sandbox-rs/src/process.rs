@@ -4,26 +4,26 @@ use crate::proc_thread_attr::ProcThreadAttributeList;
 use crate::winutil::argv_to_command_line;
 use crate::winutil::format_last_error;
 use crate::winutil::to_wide;
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::path::Path;
 use std::ptr;
-use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::CloseHandle;
-use windows_sys::Win32::Foundation::SetHandleInformation;
+use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::Foundation::HANDLE_FLAG_INHERIT;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+use windows_sys::Win32::Foundation::SetHandleInformation;
 use windows_sys::Win32::Storage::FileSystem::ReadFile;
 use windows_sys::Win32::System::Console::GetStdHandle;
 use windows_sys::Win32::System::Console::STD_ERROR_HANDLE;
 use windows_sys::Win32::System::Console::STD_INPUT_HANDLE;
 use windows_sys::Win32::System::Console::STD_OUTPUT_HANDLE;
 use windows_sys::Win32::System::Pipes::CreatePipe;
-use windows_sys::Win32::System::Threading::CreateProcessAsUserW;
 use windows_sys::Win32::System::Threading::CREATE_UNICODE_ENVIRONMENT;
+use windows_sys::Win32::System::Threading::CreateProcessAsUserW;
 use windows_sys::Win32::System::Threading::EXTENDED_STARTUPINFO_PRESENT;
 use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 use windows_sys::Win32::System::Threading::STARTF_USESTDHANDLES;
@@ -35,6 +35,8 @@ pub struct CreatedProcess {
     pub startup_info: STARTUPINFOW,
     _desktop: LaunchDesktop,
 }
+
+pub(crate) const DEFAULT_WINDOWS_DESKTOP: &str = "Winsta0\\Default";
 
 pub fn make_env_block(env: &HashMap<String, String>) -> Vec<u16> {
     let mut items: Vec<(String, String)> =
@@ -72,6 +74,10 @@ unsafe fn ensure_inheritable_stdio(si: &mut STARTUPINFOW) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn should_retry_without_private_desktop(use_private_desktop: bool, err: i32) -> bool {
+    use_private_desktop && matches!(err, 5 | 1920)
+}
+
 /// # Safety
 /// Caller must provide a valid primary token handle (`h_token`) with appropriate access,
 /// and the `argv`, `cwd`, and `env_map` must remain valid for the duration of the call.
@@ -88,6 +94,7 @@ pub unsafe fn create_process_as_user(
     let mut cmdline: Vec<u16> = to_wide(&cmdline_str);
     let env_block = make_env_block(env_map);
     let desktop = LaunchDesktop::prepare(use_private_desktop, logs_base_dir)?;
+    let default_desktop = to_wide(DEFAULT_WINDOWS_DESKTOP);
     let mut pi: PROCESS_INFORMATION = std::mem::zeroed();
     let cwd_wide = to_wide(cwd);
     let env_block_len = env_block.len();
@@ -118,23 +125,42 @@ pub unsafe fn create_process_as_user(
             let mut attrs = ProcThreadAttributeList::new(/*attr_count*/ 1)?;
             attrs.set_handle_list(inherited_handles)?;
             si.lpAttributeList = attrs.as_mut_ptr();
-
             let creation_flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
-            let ok = CreateProcessAsUserW(
-                h_token,
-                std::ptr::null(),
-                cmdline.as_mut_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                1,
-                creation_flags,
-                env_block.as_ptr() as *mut c_void,
-                cwd_wide.as_ptr(),
-                &si.StartupInfo,
-                &mut pi,
-            );
-            if ok == 0 {
+            loop {
+                let ok = CreateProcessAsUserW(
+                    h_token,
+                    std::ptr::null(),
+                    cmdline.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    1,
+                    creation_flags,
+                    env_block.as_ptr() as *mut c_void,
+                    cwd_wide.as_ptr(),
+                    &si.StartupInfo,
+                    &mut pi,
+                );
+                if ok != 0 {
+                    break;
+                }
                 let err = GetLastError() as i32;
+                if should_retry_without_private_desktop(use_private_desktop, err)
+                    && si.StartupInfo.lpDesktop != default_desktop.as_ptr() as *mut u16
+                {
+                    logging::debug_log(
+                        &format!(
+                            "CreateProcessAsUserW failed on private desktop: {} ({}); retrying on {} | cwd={} | cmd={}",
+                            err,
+                            format_last_error(err),
+                            DEFAULT_WINDOWS_DESKTOP,
+                            cwd.display(),
+                            cmdline_str,
+                        ),
+                        logs_base_dir,
+                    );
+                    si.StartupInfo.lpDesktop = default_desktop.as_ptr() as *mut u16;
+                    continue;
+                }
                 let msg = format!(
                     "CreateProcessAsUserW failed: {} ({}) | cwd={} | cmd={} | env_u16_len={} | si_flags={} | creation_flags={}",
                     err,
@@ -161,21 +187,41 @@ pub unsafe fn create_process_as_user(
             ensure_inheritable_stdio(&mut si)?;
 
             let creation_flags = CREATE_UNICODE_ENVIRONMENT;
-            let ok = CreateProcessAsUserW(
-                h_token,
-                std::ptr::null(),
-                cmdline.as_mut_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-                1,
-                creation_flags,
-                env_block.as_ptr() as *mut c_void,
-                cwd_wide.as_ptr(),
-                &si,
-                &mut pi,
-            );
-            if ok == 0 {
+            loop {
+                let ok = CreateProcessAsUserW(
+                    h_token,
+                    std::ptr::null(),
+                    cmdline.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    1,
+                    creation_flags,
+                    env_block.as_ptr() as *mut c_void,
+                    cwd_wide.as_ptr(),
+                    &si,
+                    &mut pi,
+                );
+                if ok != 0 {
+                    break;
+                }
                 let err = GetLastError() as i32;
+                if should_retry_without_private_desktop(use_private_desktop, err)
+                    && si.lpDesktop != default_desktop.as_ptr() as *mut u16
+                {
+                    logging::debug_log(
+                        &format!(
+                            "CreateProcessAsUserW failed on private desktop: {} ({}); retrying on {} | cwd={} | cmd={}",
+                            err,
+                            format_last_error(err),
+                            DEFAULT_WINDOWS_DESKTOP,
+                            cwd.display(),
+                            cmdline_str,
+                        ),
+                        logs_base_dir,
+                    );
+                    si.lpDesktop = default_desktop.as_ptr() as *mut u16;
+                    continue;
+                }
                 let msg = format!(
                     "CreateProcessAsUserW failed: {} ({}) | cwd={} | cmd={} | env_u16_len={} | si_flags={} | creation_flags={}",
                     err,
@@ -323,6 +369,23 @@ pub fn spawn_process_with_pipes(
         },
         desktop,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_retry_without_private_desktop;
+
+    #[test]
+    fn private_desktop_retry_handles_known_spawn_errors() {
+        assert!(should_retry_without_private_desktop(true, 5));
+        assert!(should_retry_without_private_desktop(true, 1920));
+    }
+
+    #[test]
+    fn private_desktop_retry_is_disabled_for_other_cases() {
+        assert!(!should_retry_without_private_desktop(false, 5));
+        assert!(!should_retry_without_private_desktop(true, 2));
+    }
 }
 
 /// Reads a HANDLE until EOF and invokes `on_chunk` for each read.
