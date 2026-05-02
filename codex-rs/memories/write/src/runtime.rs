@@ -191,7 +191,7 @@ impl MemoryStartupContext {
                 &context.session_telemetry,
                 context.reasoning_effort,
                 context.reasoning_summary,
-                context.service_tier,
+                context.service_tier.clone(),
                 context.turn_metadata_header.as_deref(),
                 &InferenceTraceContext::disabled(),
             )
