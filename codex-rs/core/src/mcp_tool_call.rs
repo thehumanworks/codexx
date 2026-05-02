@@ -1469,6 +1469,80 @@ async fn lookup_mcp_app_usage_metadata(
     })
 }
 
+fn build_mcp_tool_approval_question(
+    question_id: String,
+    server: &str,
+    tool_name: &str,
+    connector_name: Option<&str>,
+    prompt_options: McpToolApprovalPromptOptions,
+    question_override: Option<&str>,
+) -> RequestUserInputQuestion {
+    let question = question_override
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            build_mcp_tool_approval_fallback_message(server, tool_name, connector_name)
+        });
+    let question = format!("{}?", question.trim_end_matches('?'));
+
+    let mut options = vec![RequestUserInputQuestionOption {
+        label: MCP_TOOL_APPROVAL_ACCEPT.to_string(),
+        description: "Run the tool and continue.".to_string(),
+    }];
+    if prompt_options.allow_session_remember {
+        options.push(RequestUserInputQuestionOption {
+            label: MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION.to_string(),
+            description: "Run the tool and remember this choice for this session.".to_string(),
+        });
+    }
+    if prompt_options.allow_persistent_approval {
+        options.push(RequestUserInputQuestionOption {
+            label: MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER.to_string(),
+            description: "Run the tool and remember this choice for future tool calls.".to_string(),
+        });
+    }
+    options.push(RequestUserInputQuestionOption {
+        label: MCP_TOOL_APPROVAL_CANCEL.to_string(),
+        description: "Cancel this tool call.".to_string(),
+    });
+
+    RequestUserInputQuestion {
+        id: question_id,
+        header: "Approve app tool call?".to_string(),
+        question,
+        is_other: false,
+        is_secret: false,
+        options: Some(options),
+    }
+}
+
+fn build_mcp_tool_approval_fallback_message(
+    server: &str,
+    tool_name: &str,
+    connector_name: Option<&str>,
+) -> String {
+    let actor = connector_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            if server == CODEX_APPS_MCP_SERVER_NAME {
+                "this app".to_string()
+            } else {
+                format!("the {server} MCP server")
+            }
+        });
+    format!("Allow {actor} to run tool \"{tool_name}\"?")
+}
+
+fn mcp_tool_approval_question_text(question: String, monitor_reason: Option<&str>) -> String {
+    match monitor_reason.map(str::trim) {
+        Some(reason) if !reason.is_empty() => {
+            format!("Tool call needs your approval. Reason: {reason}")
+        }
+        _ => question,
+    }
+}
+
 fn arc_monitor_interrupt_message(reason: &str) -> String {
     let reason = reason.trim();
     if reason.is_empty() {
@@ -1615,80 +1689,6 @@ fn mcp_tool_approval_elicitation_meta(
     }
 
     (!meta.is_empty()).then_some(JsonValue::Object(meta))
-}
-
-fn build_mcp_tool_approval_question(
-    question_id: String,
-    server: &str,
-    tool_name: &str,
-    connector_name: Option<&str>,
-    prompt_options: McpToolApprovalPromptOptions,
-    question_override: Option<&str>,
-) -> RequestUserInputQuestion {
-    let question = question_override
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            build_mcp_tool_approval_fallback_message(server, tool_name, connector_name)
-        });
-    let question = format!("{}?", question.trim_end_matches('?'));
-
-    let mut options = vec![RequestUserInputQuestionOption {
-        label: MCP_TOOL_APPROVAL_ACCEPT.to_string(),
-        description: "Run the tool and continue.".to_string(),
-    }];
-    if prompt_options.allow_session_remember {
-        options.push(RequestUserInputQuestionOption {
-            label: MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION.to_string(),
-            description: "Run the tool and remember this choice for this session.".to_string(),
-        });
-    }
-    if prompt_options.allow_persistent_approval {
-        options.push(RequestUserInputQuestionOption {
-            label: MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER.to_string(),
-            description: "Run the tool and remember this choice for future tool calls.".to_string(),
-        });
-    }
-    options.push(RequestUserInputQuestionOption {
-        label: MCP_TOOL_APPROVAL_CANCEL.to_string(),
-        description: "Cancel this tool call.".to_string(),
-    });
-
-    RequestUserInputQuestion {
-        id: question_id,
-        header: "Approve app tool call?".to_string(),
-        question,
-        is_other: false,
-        is_secret: false,
-        options: Some(options),
-    }
-}
-
-fn build_mcp_tool_approval_fallback_message(
-    server: &str,
-    tool_name: &str,
-    connector_name: Option<&str>,
-) -> String {
-    let actor = connector_name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            if server == CODEX_APPS_MCP_SERVER_NAME {
-                "this app".to_string()
-            } else {
-                format!("the {server} MCP server")
-            }
-        });
-    format!("Allow {actor} to run tool \"{tool_name}\"?")
-}
-
-fn mcp_tool_approval_question_text(question: String, monitor_reason: Option<&str>) -> String {
-    match monitor_reason.map(str::trim) {
-        Some(reason) if !reason.is_empty() => {
-            format!("Tool call needs your approval. Reason: {reason}")
-        }
-        _ => question,
-    }
 }
 
 fn build_mcp_tool_approval_display_params(
