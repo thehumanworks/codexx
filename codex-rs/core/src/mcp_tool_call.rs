@@ -977,7 +977,7 @@ async fn maybe_request_mcp_tool_approval(
     let approval_required = requires_mcp_tool_approval(annotations);
     let approval_required = !auto_approved_by_permissions
         && (approval_required || approval_mode == AppToolApproval::Prompt);
-    if pre_tool_use_allows || (!approval_required && !pre_tool_use_asks_user) {
+    if !pre_tool_use_allows && !approval_required && !pre_tool_use_asks_user {
         return None;
     }
 
@@ -1005,6 +1005,9 @@ async fn maybe_request_mcp_tool_approval(
                 ));
             }
         }
+    }
+    if pre_tool_use_allows {
+        return None;
     }
 
     let session_approval_key = session_mcp_tool_approval_key(invocation, metadata, approval_mode);
