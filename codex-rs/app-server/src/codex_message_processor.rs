@@ -143,6 +143,7 @@ use codex_app_server_protocol::SendAddCreditsNudgeEmailParams;
 use codex_app_server_protocol::SendAddCreditsNudgeEmailResponse;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequestResolvedNotification;
+use codex_app_server_protocol::ServiceTier;
 use codex_app_server_protocol::SkillSummary;
 use codex_app_server_protocol::SkillsConfigWriteParams;
 use codex_app_server_protocol::SkillsConfigWriteResponse;
@@ -2538,7 +2539,7 @@ impl CodexMessageProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
+            Self::resolve_service_tier_override(service_tier),
             cwd,
             approval_policy,
             approvals_reviewer,
@@ -2919,7 +2920,7 @@ impl CodexMessageProcessor {
                 thread: thread.clone(),
                 model: config_snapshot.model,
                 model_provider: config_snapshot.model_provider_id,
-                service_tier: config_snapshot.service_tier,
+                service_tier: config_snapshot.service_tier.as_ref().and_then(ServiceTier::from_core),
                 cwd: config_snapshot.cwd,
                 instruction_sources,
                 approval_policy: config_snapshot.approval_policy.into(),
@@ -3017,6 +3018,12 @@ impl CodexMessageProcessor {
                 .map_err(|err| invalid_request(environment_selection_error_message(err)))?;
         }
         Ok(environment_selections)
+    }
+
+    fn resolve_service_tier_override(
+        service_tier: Option<Option<ServiceTier>>,
+    ) -> Option<Option<codex_protocol::config_types::ServiceTier>> {
+        service_tier.map(|service_tier| service_tier.map(ServiceTier::to_core))
     }
 
     async fn thread_archive(&self, request_id: ConnectionRequestId, params: ThreadArchiveParams) {
@@ -4381,7 +4388,7 @@ impl CodexMessageProcessor {
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
-            service_tier,
+            Self::resolve_service_tier_override(service_tier),
             cwd,
             approval_policy,
             approvals_reviewer,
@@ -4499,7 +4506,10 @@ impl CodexMessageProcessor {
                     thread,
                     model: session_configured.model,
                     model_provider: session_configured.model_provider_id,
-                    service_tier: session_configured.service_tier,
+                    service_tier: session_configured
+                        .service_tier
+                        .as_ref()
+                        .and_then(ServiceTier::from_core),
                     cwd: session_configured.cwd,
                     instruction_sources,
                     approval_policy: session_configured.approval_policy.into(),
@@ -5013,7 +5023,7 @@ impl CodexMessageProcessor {
             let mut typesafe_overrides = self.build_thread_config_overrides(
                 model,
                 model_provider,
-                service_tier,
+                Self::resolve_service_tier_override(service_tier),
                 cwd,
                 approval_policy,
                 approvals_reviewer,
@@ -5134,7 +5144,10 @@ impl CodexMessageProcessor {
                 thread: thread.clone(),
                 model: session_configured.model,
                 model_provider: session_configured.model_provider_id,
-                service_tier: session_configured.service_tier,
+                service_tier: session_configured
+                    .service_tier
+                    .as_ref()
+                    .and_then(ServiceTier::from_core),
                 cwd: session_configured.cwd,
                 instruction_sources,
                 approval_policy: session_configured.approval_policy.into(),
@@ -6769,7 +6782,7 @@ impl CodexMessageProcessor {
             let model = params.model;
             let effort = params.effort.map(Some);
             let summary = params.summary;
-            let service_tier = params.service_tier;
+            let service_tier = Self::resolve_service_tier_override(params.service_tier);
             let personality = params.personality;
 
             // If any overrides are provided, validate them synchronously so the
@@ -8492,7 +8505,7 @@ async fn handle_pending_thread_resume_request(
         thread,
         model,
         model_provider: model_provider_id,
-        service_tier,
+        service_tier: service_tier.as_ref().and_then(ServiceTier::from_core),
         cwd,
         instruction_sources,
         approval_policy: approval_policy.into(),
@@ -8662,11 +8675,15 @@ fn collect_resume_override_mismatches(
         ));
     }
     if let Some(requested_service_tier) = request.service_tier.as_ref()
-        && requested_service_tier != &config_snapshot.service_tier
+        && requested_service_tier.map(ServiceTier::to_core).as_ref()
+            != config_snapshot.service_tier.as_ref()
     {
+        let active_service_tier = config_snapshot
+            .service_tier
+            .as_ref()
+            .and_then(ServiceTier::from_core);
         mismatch_details.push(format!(
-            "service_tier requested={requested_service_tier:?} active={:?}",
-            config_snapshot.service_tier
+            "service_tier requested={requested_service_tier:?} active={active_service_tier:?}"
         ));
     }
     if let Some(requested_cwd) = request.cwd.as_deref() {
@@ -10048,6 +10065,7 @@ mod tests {
     use codex_model_provider_info::ModelProviderInfo;
     use codex_model_provider_info::WireApi;
     use codex_protocol::ThreadId;
+    use codex_protocol::config_types::ServiceTier as CoreServiceTier;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::permissions::FileSystemAccessMode;
     use codex_protocol::permissions::FileSystemPath;
@@ -10528,7 +10546,7 @@ mod tests {
             path: None,
             model: None,
             model_provider: None,
-            service_tier: Some(Some(codex_protocol::config_types::ServiceTier::Fast)),
+            service_tier: Some(Some(ServiceTier::fast())),
             cwd: None,
             approval_policy: None,
             approvals_reviewer: None,
@@ -10544,7 +10562,7 @@ mod tests {
         let config_snapshot = ThreadConfigSnapshot {
             model: "gpt-5".to_string(),
             model_provider_id: "openai".to_string(),
-            service_tier: Some(codex_protocol::config_types::ServiceTier::Flex),
+            service_tier: Some(CoreServiceTier::flex()),
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
