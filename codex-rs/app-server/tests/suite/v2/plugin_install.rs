@@ -75,8 +75,8 @@ async fn plugin_install_rejects_relative_marketplace_paths() -> Result<()> {
         .send_raw_request(
             "plugin/install",
             Some(serde_json::json!({
-                "marketplacePath": "relative-marketplace.json",
-                "pluginName": "missing-plugin",
+                "localMarketplacePath": "relative-marketplace.json",
+                "localPluginName": "missing-plugin",
             })),
         )
         .await?;
@@ -100,9 +100,10 @@ async fn plugin_install_rejects_missing_install_source() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -116,7 +117,7 @@ async fn plugin_install_rejects_missing_install_source() -> Result<()> {
     assert!(
         err.error
             .message
-            .contains("requires exactly one of marketplacePath or remoteMarketplaceName")
+            .contains("requires exactly one of localMarketplacePath or remoteMarketplaceName")
     );
     Ok(())
 }
@@ -129,11 +130,12 @@ async fn plugin_install_rejects_multiple_install_sources() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 codex_home.path().join("marketplace.json"),
             )?),
             remote_marketplace_name: Some("openai-curated".to_string()),
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("sample-plugin".to_string()),
         })
         .await?;
 
@@ -147,7 +149,7 @@ async fn plugin_install_rejects_multiple_install_sources() -> Result<()> {
     assert!(
         err.error
             .message
-            .contains("requires exactly one of marketplacePath or remoteMarketplaceName")
+            .contains("requires exactly one of localMarketplacePath or remoteMarketplaceName")
     );
     Ok(())
 }
@@ -160,9 +162,10 @@ async fn plugin_install_rejects_remote_marketplace_when_remote_plugin_is_disable
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "plugins~Plugin_22222222222222222222222222222222".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("plugins~Plugin_22222222222222222222222222222222".to_string()),
         })
         .await?;
 
@@ -383,7 +386,7 @@ async fn plugin_install_rejects_invalid_remote_release_version() -> Result<()> {
 }
 
 #[tokio::test]
-async fn plugin_install_rejects_invalid_remote_plugin_name() -> Result<()> {
+async fn plugin_install_rejects_invalid_remote_plugin_id() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_remote_plugin_catalog_config(codex_home.path(), "https://example.invalid/backend-api/")?;
     let mut mcp = McpProcess::new(codex_home.path()).await?;
@@ -391,9 +394,10 @@ async fn plugin_install_rejects_invalid_remote_plugin_name() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "linear/../../oops".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("linear/../../oops".to_string()),
         })
         .await?;
 
@@ -514,9 +518,10 @@ async fn plugin_install_rejects_when_workspace_codex_plugins_disabled() -> Resul
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -543,11 +548,12 @@ async fn plugin_install_returns_invalid_request_for_missing_marketplace_file() -
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 codex_home.path().join("missing-marketplace.json"),
             )?),
             remote_marketplace_name: None,
-            plugin_name: "missing-plugin".to_string(),
+            local_plugin_name: Some("missing-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -584,9 +590,10 @@ async fn plugin_install_returns_invalid_request_for_not_available_plugin() -> Re
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -634,9 +641,10 @@ async fn plugin_install_returns_invalid_request_for_disallowed_product_plugin() 
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -683,9 +691,10 @@ async fn plugin_install_tracks_analytics_event() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
     let response: JSONRPCResponse = timeout(
@@ -890,9 +899,10 @@ async fn plugin_install_returns_apps_needing_auth() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -974,9 +984,10 @@ async fn plugin_install_filters_disallowed_apps_needing_auth() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -1041,9 +1052,10 @@ async fn plugin_install_makes_bundled_mcp_servers_available_to_followup_requests
 
     let request_id = mcp
         .send_plugin_install_request(PluginInstallParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
     let response: JSONRPCResponse = timeout(
@@ -1459,9 +1471,10 @@ async fn send_remote_plugin_install_request(
     remote_plugin_id: &str,
 ) -> Result<i64> {
     mcp.send_plugin_install_request(PluginInstallParams {
-        marketplace_path: None,
+        local_marketplace_path: None,
         remote_marketplace_name: Some("caller-marketplace-is-ignored".to_string()),
-        plugin_name: remote_plugin_id.to_string(),
+        local_plugin_name: None,
+        remote_plugin_id: Some(remote_plugin_id.to_string()),
     })
     .await
 }

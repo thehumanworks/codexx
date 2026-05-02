@@ -1595,9 +1595,10 @@ mod tests {
         let plugin_install = ClientRequest::PluginInstall {
             request_id: request_id(),
             params: v2::PluginInstallParams {
-                marketplace_path: Some(absolute_path("/tmp/marketplace")),
+                local_marketplace_path: Some(absolute_path("/tmp/marketplace")),
                 remote_marketplace_name: None,
-                plugin_name: "plugin-a".to_string(),
+                local_plugin_name: Some("plugin-a".to_string()),
+                remote_plugin_id: None,
             },
         };
         assert_eq!(

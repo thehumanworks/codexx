@@ -63,9 +63,10 @@ async fn plugin_read_rejects_missing_read_source() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -79,7 +80,7 @@ async fn plugin_read_rejects_missing_read_source() -> Result<()> {
     assert!(
         err.error
             .message
-            .contains("requires exactly one of marketplacePath or remoteMarketplaceName")
+            .contains("requires exactly one of localMarketplacePath or remoteMarketplaceName")
     );
     Ok(())
 }
@@ -92,11 +93,12 @@ async fn plugin_read_rejects_multiple_read_sources() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 codex_home.path().join("marketplace.json"),
             )?),
             remote_marketplace_name: Some("openai-curated".to_string()),
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("sample-plugin".to_string()),
         })
         .await?;
 
@@ -110,7 +112,7 @@ async fn plugin_read_rejects_multiple_read_sources() -> Result<()> {
     assert!(
         err.error
             .message
-            .contains("requires exactly one of marketplacePath or remoteMarketplaceName")
+            .contains("requires exactly one of localMarketplacePath or remoteMarketplaceName")
     );
     Ok(())
 }
@@ -123,9 +125,10 @@ async fn plugin_read_rejects_remote_marketplace_when_remote_plugin_is_disabled()
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("sample-plugin".to_string()),
         })
         .await?;
 
@@ -254,9 +257,10 @@ async fn plugin_read_reads_remote_plugin_details_when_remote_plugin_enabled() ->
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "plugins~Plugin_00000000000000000000000000000000".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("plugins~Plugin_00000000000000000000000000000000".to_string()),
         })
         .await?;
 
@@ -383,9 +387,10 @@ async fn plugin_read_maps_missing_remote_plugin_to_invalid_request() -> Result<(
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "plugins~Plugin_missing".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("plugins~Plugin_missing".to_string()),
         })
         .await?;
 
@@ -435,9 +440,10 @@ remote_plugin = true
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "linear".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("linear".to_string()),
         })
         .await?;
 
@@ -457,7 +463,7 @@ remote_plugin = true
 }
 
 #[tokio::test]
-async fn plugin_read_rejects_invalid_remote_plugin_name() -> Result<()> {
+async fn plugin_read_rejects_invalid_remote_plugin_id() -> Result<()> {
     let codex_home = TempDir::new()?;
     write_remote_plugin_catalog_config(codex_home.path(), "https://example.invalid/backend-api/")?;
     let mut mcp = McpProcess::new(codex_home.path()).await?;
@@ -465,9 +471,10 @@ async fn plugin_read_rejects_invalid_remote_plugin_name() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: None,
+            local_marketplace_path: None,
             remote_marketplace_name: Some("chatgpt-global".to_string()),
-            plugin_name: "linear/../../oops".to_string(),
+            local_plugin_name: None,
+            remote_plugin_id: Some("linear/../../oops".to_string()),
         })
         .await?;
 
@@ -525,9 +532,10 @@ enabled = true
         AbsolutePathBuf::try_from(repo_root.path().join(".agents/plugins/marketplace.json"))?;
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(marketplace_path.clone()),
+            local_marketplace_path: Some(marketplace_path.clone()),
             remote_marketplace_name: None,
-            plugin_name: "demo-plugin".to_string(),
+            local_plugin_name: Some("demo-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -679,9 +687,10 @@ enabled = true
         AbsolutePathBuf::try_from(repo_root.path().join(".agents/plugins/marketplace.json"))?;
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(marketplace_path.clone()),
+            local_marketplace_path: Some(marketplace_path.clone()),
             remote_marketplace_name: None,
-            plugin_name: "demo-plugin".to_string(),
+            local_plugin_name: Some("demo-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -827,9 +836,10 @@ async fn plugin_read_returns_app_needs_auth() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(marketplace_path),
+            local_marketplace_path: Some(marketplace_path),
             remote_marketplace_name: None,
-            plugin_name: "sample-plugin".to_string(),
+            local_plugin_name: Some("sample-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -894,11 +904,12 @@ async fn plugin_read_accepts_legacy_string_default_prompt() -> Result<()> {
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 repo_root.path().join(".agents/plugins/marketplace.json"),
             )?),
             remote_marketplace_name: None,
-            plugin_name: "demo-plugin".to_string(),
+            local_plugin_name: Some("demo-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -956,11 +967,12 @@ async fn plugin_read_describes_uninstalled_git_source_without_cloning() -> Resul
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 repo_root.path().join(".agents/plugins/marketplace.json"),
             )?),
             remote_marketplace_name: None,
-            plugin_name: "toolkit".to_string(),
+            local_plugin_name: Some("toolkit".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -1019,11 +1031,12 @@ async fn plugin_read_returns_invalid_request_when_plugin_is_missing() -> Result<
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 repo_root.path().join(".agents/plugins/marketplace.json"),
             )?),
             remote_marketplace_name: None,
-            plugin_name: "missing-plugin".to_string(),
+            local_plugin_name: Some("missing-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 
@@ -1072,11 +1085,12 @@ async fn plugin_read_returns_invalid_request_when_plugin_manifest_is_missing() -
 
     let request_id = mcp
         .send_plugin_read_request(PluginReadParams {
-            marketplace_path: Some(AbsolutePathBuf::try_from(
+            local_marketplace_path: Some(AbsolutePathBuf::try_from(
                 repo_root.path().join(".agents/plugins/marketplace.json"),
             )?),
             remote_marketplace_name: None,
-            plugin_name: "demo-plugin".to_string(),
+            local_plugin_name: Some("demo-plugin".to_string()),
+            remote_plugin_id: None,
         })
         .await?;
 

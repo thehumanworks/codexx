@@ -733,9 +733,10 @@ pub(super) async fn fetch_plugin_install(
         .request_typed(ClientRequest::PluginInstall {
             request_id,
             params: PluginInstallParams {
-                marketplace_path: Some(marketplace_path),
+                local_marketplace_path: Some(marketplace_path),
                 remote_marketplace_name: None,
-                plugin_name,
+                local_plugin_name: Some(plugin_name),
+                remote_plugin_id: None,
             },
         })
         .await

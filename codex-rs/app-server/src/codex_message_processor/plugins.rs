@@ -188,30 +188,35 @@ impl CodexMessageProcessor {
     ) -> Result<PluginReadResponse, JSONRPCErrorError> {
         let plugins_manager = self.thread_manager.plugins_manager();
         let PluginReadParams {
-            marketplace_path,
+            local_marketplace_path,
             remote_marketplace_name,
-            plugin_name,
+            local_plugin_name,
+            remote_plugin_id,
         } = params;
-        let read_source = match (marketplace_path, remote_marketplace_name) {
-            (Some(marketplace_path), None) => Ok(marketplace_path),
-            (None, Some(remote_marketplace_name)) => Err(remote_marketplace_name),
-            (Some(_), Some(_)) | (None, None) => {
-                return Err(invalid_request(
-                    "plugin/read requires exactly one of marketplacePath or remoteMarketplaceName",
-                ));
-            }
+        let read_source = plugin_request_source(
+            "plugin/read",
+            local_marketplace_path,
+            remote_marketplace_name,
+            local_plugin_name,
+            remote_plugin_id,
+        )?;
+        let config_cwd = match &read_source {
+            PluginRequestSource::Local {
+                marketplace_path, ..
+            } => marketplace_path.as_path().parent().map(Path::to_path_buf),
+            PluginRequestSource::Remote { .. } => None,
         };
-        let config_cwd = read_source.as_ref().ok().and_then(|marketplace_path| {
-            marketplace_path.as_path().parent().map(Path::to_path_buf)
-        });
 
         let config = self.load_latest_config(config_cwd).await?;
         let plugins_input = config.plugins_config_input();
 
         let plugin = match read_source {
-            Ok(marketplace_path) => {
+            PluginRequestSource::Local {
+                marketplace_path,
+                local_plugin_name,
+            } => {
                 let request = PluginReadRequest {
-                    plugin_name,
+                    plugin_name: local_plugin_name,
                     marketplace_path,
                 };
                 let outcome = plugins_manager
@@ -259,7 +264,10 @@ impl CodexMessageProcessor {
                     mcp_servers: outcome.plugin.mcp_server_names,
                 }
             }
-            Err(remote_marketplace_name) => {
+            PluginRequestSource::Remote {
+                remote_marketplace_name,
+                remote_plugin_id,
+            } => {
                 if !config.features.enabled(Feature::Plugins)
                     || !config.features.enabled(Feature::RemotePlugin)
                 {
@@ -271,12 +279,12 @@ impl CodexMessageProcessor {
                 let remote_plugin_service_config = RemotePluginServiceConfig {
                     chatgpt_base_url: config.chatgpt_base_url.clone(),
                 };
-                validate_remote_plugin_id(&plugin_name)?;
+                validate_remote_plugin_id(&remote_plugin_id)?;
                 let remote_detail = codex_core_plugins::remote::fetch_remote_plugin_detail(
                     &remote_plugin_service_config,
                     auth.as_ref(),
                     &remote_marketplace_name,
-                    &plugin_name,
+                    &remote_plugin_id,
                 )
                 .await
                 .map_err(|err| {
@@ -503,21 +511,30 @@ impl CodexMessageProcessor {
         params: PluginInstallParams,
     ) -> Result<PluginInstallResponse, JSONRPCErrorError> {
         let PluginInstallParams {
-            marketplace_path,
+            local_marketplace_path,
             remote_marketplace_name,
-            plugin_name,
+            local_plugin_name,
+            remote_plugin_id,
         } = params;
-        let marketplace_path = match (marketplace_path, remote_marketplace_name) {
-            (Some(marketplace_path), None) => marketplace_path,
-            (None, Some(remote_marketplace_name)) => {
+        let install_source = plugin_request_source(
+            "plugin/install",
+            local_marketplace_path,
+            remote_marketplace_name,
+            local_plugin_name,
+            remote_plugin_id,
+        )?;
+        let (marketplace_path, local_plugin_name) = match install_source {
+            PluginRequestSource::Local {
+                marketplace_path,
+                local_plugin_name,
+            } => (marketplace_path, local_plugin_name),
+            PluginRequestSource::Remote {
+                remote_marketplace_name,
+                remote_plugin_id,
+            } => {
                 return self
-                    .remote_plugin_install_response(remote_marketplace_name, plugin_name)
+                    .remote_plugin_install_response(remote_marketplace_name, remote_plugin_id)
                     .await;
-            }
-            (Some(_), Some(_)) | (None, None) => {
-                return Err(invalid_request(
-                    "plugin/install requires exactly one of marketplacePath or remoteMarketplaceName",
-                ));
             }
         };
         let config_cwd = marketplace_path.as_path().parent().map(Path::to_path_buf);
@@ -535,7 +552,7 @@ impl CodexMessageProcessor {
 
         let plugins_manager = self.thread_manager.plugins_manager();
         let request = PluginInstallRequest {
-            plugin_name,
+            plugin_name: local_plugin_name,
             marketplace_path,
         };
 
@@ -907,13 +924,70 @@ impl CodexMessageProcessor {
     }
 }
 
-fn is_valid_remote_uninstall_plugin_id(plugin_name: &str) -> bool {
-    is_valid_remote_plugin_id(plugin_name)
-        && (plugin_name.starts_with("plugins~")
-            || plugin_name.starts_with("plugins_")
-            || plugin_name.starts_with("app_")
-            || plugin_name.starts_with("asdk_app_")
-            || plugin_name.starts_with("connector_"))
+enum PluginRequestSource {
+    Local {
+        marketplace_path: AbsolutePathBuf,
+        local_plugin_name: String,
+    },
+    Remote {
+        remote_marketplace_name: String,
+        remote_plugin_id: String,
+    },
+}
+
+fn plugin_request_source(
+    method: &str,
+    local_marketplace_path: Option<AbsolutePathBuf>,
+    remote_marketplace_name: Option<String>,
+    local_plugin_name: Option<String>,
+    remote_plugin_id: Option<String>,
+) -> Result<PluginRequestSource, JSONRPCErrorError> {
+    match (local_marketplace_path, remote_marketplace_name) {
+        (Some(marketplace_path), None) => {
+            if remote_plugin_id.is_some() {
+                return Err(invalid_request(format!(
+                    "{method} with localMarketplacePath requires localPluginName, not remotePluginId"
+                )));
+            }
+            let Some(local_plugin_name) = local_plugin_name else {
+                return Err(invalid_request(format!(
+                    "{method} with localMarketplacePath requires localPluginName"
+                )));
+            };
+            Ok(PluginRequestSource::Local {
+                marketplace_path,
+                local_plugin_name,
+            })
+        }
+        (None, Some(remote_marketplace_name)) => {
+            if local_plugin_name.is_some() {
+                return Err(invalid_request(format!(
+                    "{method} with remoteMarketplaceName requires remotePluginId, not localPluginName"
+                )));
+            }
+            let Some(remote_plugin_id) = remote_plugin_id else {
+                return Err(invalid_request(format!(
+                    "{method} with remoteMarketplaceName requires remotePluginId"
+                )));
+            };
+            Ok(PluginRequestSource::Remote {
+                remote_marketplace_name,
+                remote_plugin_id,
+            })
+        }
+        (Some(_), Some(_)) | (None, None) => Err(invalid_request(format!(
+            "{method} requires exactly one of localMarketplacePath or remoteMarketplaceName"
+        ))),
+    }
+}
+
+fn is_valid_remote_uninstall_plugin_id(plugin_id: &str) -> bool {
+    is_valid_remote_plugin_id(plugin_id)
+        && (plugin_id.starts_with("plugins~")
+            || plugin_id.starts_with("plugins_")
+            || plugin_id.starts_with("app_")
+            || plugin_id.starts_with("asdk_app_")
+            || plugin_id.starts_with("connector_"))
 }
 
 fn remote_marketplace_to_info(marketplace: RemoteMarketplace) -> PluginMarketplaceEntry {

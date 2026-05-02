@@ -2428,17 +2428,23 @@ class PluginAuthPolicy(Enum):
     on_use = "ON_USE"
 
 
+class PluginAvailability(Enum):
+    disabled_by_admin = "DISABLED_BY_ADMIN"
+    available = "AVAILABLE"
+
+
 class PluginInstallParams(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    marketplace_path: Annotated[
-        AbsolutePathBuf | None, Field(alias="marketplacePath")
+    local_marketplace_path: Annotated[
+        AbsolutePathBuf | None, Field(alias="localMarketplacePath")
     ] = None
-    plugin_name: Annotated[str, Field(alias="pluginName")]
+    local_plugin_name: Annotated[str | None, Field(alias="localPluginName")] = None
     remote_marketplace_name: Annotated[
         str | None, Field(alias="remoteMarketplaceName")
     ] = None
+    remote_plugin_id: Annotated[str | None, Field(alias="remotePluginId")] = None
 
 
 class PluginInstallPolicy(Enum):
@@ -2531,13 +2537,14 @@ class PluginReadParams(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    marketplace_path: Annotated[
-        AbsolutePathBuf | None, Field(alias="marketplacePath")
+    local_marketplace_path: Annotated[
+        AbsolutePathBuf | None, Field(alias="localMarketplacePath")
     ] = None
-    plugin_name: Annotated[str, Field(alias="pluginName")]
+    local_plugin_name: Annotated[str | None, Field(alias="localPluginName")] = None
     remote_marketplace_name: Annotated[
         str | None, Field(alias="remoteMarketplaceName")
     ] = None
+    remote_plugin_id: Annotated[str | None, Field(alias="remotePluginId")] = None
 
 
 class PluginShareDeleteParams(BaseModel):
@@ -2631,6 +2638,10 @@ class PluginSummary(BaseModel):
         populate_by_name=True,
     )
     auth_policy: Annotated[PluginAuthPolicy, Field(alias="authPolicy")]
+    availability: Annotated[
+        PluginAvailability | None,
+        Field(description="Availability state for installing and using the plugin."),
+    ] = "AVAILABLE"
     enabled: bool
     id: str
     install_policy: Annotated[PluginInstallPolicy, Field(alias="installPolicy")]
@@ -6443,11 +6454,22 @@ class PluginReadResponse(BaseModel):
     plugin: PluginDetail
 
 
+class PluginShareListItem(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    local_plugin_path: Annotated[
+        AbsolutePathBuf | None, Field(alias="localPluginPath")
+    ] = None
+    plugin: PluginSummary
+    share_url: Annotated[str, Field(alias="shareUrl")]
+
+
 class PluginShareListResponse(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    data: list[PluginSummary]
+    data: list[PluginShareListItem]
 
 
 class RateLimitSnapshot(BaseModel):

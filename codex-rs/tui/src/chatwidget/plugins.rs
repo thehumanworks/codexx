@@ -1818,9 +1818,10 @@ impl ChatWidget {
                     tx.send(AppEvent::FetchPluginDetail {
                         cwd: cwd.clone(),
                         params: codex_app_server_protocol::PluginReadParams {
-                            marketplace_path: Some(marketplace_path.clone()),
+                            local_marketplace_path: Some(marketplace_path.clone()),
                             remote_marketplace_name: None,
-                            plugin_name: plugin_name.clone(),
+                            local_plugin_name: Some(plugin_name.clone()),
+                            remote_plugin_id: None,
                         },
                     });
                 })]

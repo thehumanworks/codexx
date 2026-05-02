@@ -4597,10 +4597,13 @@ pub struct MarketplaceLoadErrorInfo {
 #[ts(export_to = "v2/")]
 pub struct PluginReadParams {
     #[ts(optional = nullable)]
-    pub marketplace_path: Option<AbsolutePathBuf>,
+    pub local_marketplace_path: Option<AbsolutePathBuf>,
     #[ts(optional = nullable)]
     pub remote_marketplace_name: Option<String>,
-    pub plugin_name: String,
+    #[ts(optional = nullable)]
+    pub local_plugin_name: Option<String>,
+    #[ts(optional = nullable)]
+    pub remote_plugin_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -4987,10 +4990,13 @@ pub struct SkillsConfigWriteResponse {
 #[ts(export_to = "v2/")]
 pub struct PluginInstallParams {
     #[ts(optional = nullable)]
-    pub marketplace_path: Option<AbsolutePathBuf>,
+    pub local_marketplace_path: Option<AbsolutePathBuf>,
     #[ts(optional = nullable)]
     pub remote_marketplace_name: Option<String>,
-    pub plugin_name: String,
+    #[ts(optional = nullable)]
+    pub local_plugin_name: Option<String>,
+    #[ts(optional = nullable)]
+    pub remote_plugin_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -10658,42 +10664,46 @@ mod tests {
         let marketplace_path_json = marketplace_path.as_path().display().to_string();
         assert_eq!(
             serde_json::to_value(PluginReadParams {
-                marketplace_path: Some(marketplace_path.clone()),
+                local_marketplace_path: Some(marketplace_path.clone()),
                 remote_marketplace_name: None,
-                plugin_name: "gmail".to_string(),
+                local_plugin_name: Some("gmail".to_string()),
+                remote_plugin_id: None,
             })
             .unwrap(),
             json!({
-                "marketplacePath": marketplace_path_json,
+                "localMarketplacePath": marketplace_path_json,
                 "remoteMarketplaceName": null,
-                "pluginName": "gmail",
+                "localPluginName": "gmail",
+                "remotePluginId": null,
             }),
         );
 
         assert_eq!(
             serde_json::from_value::<PluginReadParams>(json!({
-                "marketplacePath": marketplace_path_json,
-                "pluginName": "gmail",
+                "localMarketplacePath": marketplace_path_json,
+                "localPluginName": "gmail",
                 "forceRemoteSync": true,
             }))
             .unwrap(),
             PluginReadParams {
-                marketplace_path: Some(marketplace_path),
+                local_marketplace_path: Some(marketplace_path),
                 remote_marketplace_name: None,
-                plugin_name: "gmail".to_string(),
+                local_plugin_name: Some("gmail".to_string()),
+                remote_plugin_id: None,
             },
         );
 
         assert_eq!(
             serde_json::from_value::<PluginReadParams>(json!({
                 "remoteMarketplaceName": "openai-curated",
-                "pluginName": "gmail",
+                "remotePluginId": "plugins~Plugin_gmail",
             }))
             .unwrap(),
             PluginReadParams {
-                marketplace_path: None,
+                local_marketplace_path: None,
                 remote_marketplace_name: Some("openai-curated".to_string()),
-                plugin_name: "gmail".to_string(),
+                local_plugin_name: None,
+                remote_plugin_id: Some("plugins~Plugin_gmail".to_string()),
             },
         );
     }
@@ -10709,43 +10719,47 @@ mod tests {
         let marketplace_path_json = marketplace_path.as_path().display().to_string();
         assert_eq!(
             serde_json::to_value(PluginInstallParams {
-                marketplace_path: Some(marketplace_path.clone()),
+                local_marketplace_path: Some(marketplace_path.clone()),
                 remote_marketplace_name: None,
-                plugin_name: "gmail".to_string(),
+                local_plugin_name: Some("gmail".to_string()),
+                remote_plugin_id: None,
             })
             .unwrap(),
             json!({
-                "marketplacePath": marketplace_path_json,
+                "localMarketplacePath": marketplace_path_json,
                 "remoteMarketplaceName": null,
-                "pluginName": "gmail",
+                "localPluginName": "gmail",
+                "remotePluginId": null,
             }),
         );
 
         assert_eq!(
             serde_json::from_value::<PluginInstallParams>(json!({
-                "marketplacePath": marketplace_path_json,
-                "pluginName": "gmail",
+                "localMarketplacePath": marketplace_path_json,
+                "localPluginName": "gmail",
                 "forceRemoteSync": true,
             }))
             .unwrap(),
             PluginInstallParams {
-                marketplace_path: Some(marketplace_path),
+                local_marketplace_path: Some(marketplace_path),
                 remote_marketplace_name: None,
-                plugin_name: "gmail".to_string(),
+                local_plugin_name: Some("gmail".to_string()),
+                remote_plugin_id: None,
             },
         );
 
         assert_eq!(
             serde_json::from_value::<PluginInstallParams>(json!({
                 "remoteMarketplaceName": "openai-curated",
-                "pluginName": "gmail",
+                "remotePluginId": "plugins~Plugin_gmail",
                 "forceRemoteSync": true,
             }))
             .unwrap(),
             PluginInstallParams {
-                marketplace_path: None,
+                local_marketplace_path: None,
                 remote_marketplace_name: Some("openai-curated".to_string()),
-                plugin_name: "gmail".to_string(),
+                local_plugin_name: None,
+                remote_plugin_id: Some("plugins~Plugin_gmail".to_string()),
             },
         );
     }

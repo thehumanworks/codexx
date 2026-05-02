@@ -12028,7 +12028,7 @@
       "PluginInstallParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
-          "marketplacePath": {
+          "localMarketplacePath": {
             "anyOf": [
               {
                 "$ref": "#/definitions/v2/AbsolutePathBuf"
@@ -12038,19 +12038,25 @@
               }
             ]
           },
-          "pluginName": {
-            "type": "string"
+          "localPluginName": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "remoteMarketplaceName": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "remotePluginId": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": [
-          "pluginName"
-        ],
         "title": "PluginInstallParams",
         "type": "object"
       },
@@ -12301,7 +12307,7 @@
       "PluginReadParams": {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "properties": {
-          "marketplacePath": {
+          "localMarketplacePath": {
             "anyOf": [
               {
                 "$ref": "#/definitions/v2/AbsolutePathBuf"
@@ -12311,19 +12317,25 @@
               }
             ]
           },
-          "pluginName": {
-            "type": "string"
+          "localPluginName": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "remoteMarketplaceName": {
             "type": [
               "string",
               "null"
             ]
+          },
+          "remotePluginId": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
-        "required": [
-          "pluginName"
-        ],
         "title": "PluginReadParams",
         "type": "object"
       },
