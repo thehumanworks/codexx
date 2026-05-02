@@ -7117,6 +7117,12 @@ pub enum McpServerStartupState {
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct McpServerStatusUpdatedNotification {
+    /// Identifier of the thread whose `McpConnectionManager` produced this
+    /// update. Always set on notifications emitted by current servers;
+    /// remains `Option` so legacy clients that omit the field still
+    /// deserialise and route as a global event.
+    #[serde(default)]
+    pub thread_id: Option<String>,
     pub name: String,
     pub status: McpServerStartupState,
     pub error: Option<String>,

@@ -3345,6 +3345,7 @@ async fn side_thread_ignores_global_mcp_startup_notifications() {
         &app_server,
         codex_app_server_client::AppServerEvent::ServerNotification(
             ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: None,
                 name: "sentry".to_string(),
                 status: McpServerStartupState::Failed,
                 error: Some("sentry is not logged in".to_string()),
@@ -3354,6 +3355,44 @@ async fn side_thread_ignores_global_mcp_startup_notifications() {
     .await;
 
     assert!(app_event_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn sub_agent_mcp_startup_does_not_pollute_leader_status() {
+    let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    while app_event_rx.try_recv().is_ok() {}
+    let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+    let primary_thread_id = ThreadId::new();
+    let sub_agent_thread_id = ThreadId::new();
+    app.primary_thread_id = Some(primary_thread_id);
+    app.active_thread_id = Some(primary_thread_id);
+    // The leader expects only its own MCP server to settle; the sub-agent will
+    // attempt to start a different one in its own session.
+    app.chat_widget
+        .set_mcp_startup_expected_servers(["leader-mcp".to_string()]);
+    assert!(!app.chat_widget.is_task_running_for_test());
+
+    // A sub-agent's `Starting` event must not seed the leader's
+    // `mcp_startup_status` map and must not flip the leader's spinner.
+    app.handle_app_server_event(
+        &app_server,
+        codex_app_server_client::AppServerEvent::ServerNotification(
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: Some(sub_agent_thread_id.to_string()),
+                name: "sub-agent-mcp".to_string(),
+                status: McpServerStartupState::Starting,
+                error: None,
+            }),
+        ),
+    )
+    .await;
+
+    assert!(
+        !app.chat_widget.is_task_running_for_test(),
+        "leader spinner should not be triggered by sub-agent MCP startup events",
+    );
 }
 
 #[tokio::test]
