@@ -893,17 +893,7 @@ async fn network_proxy_feature_starts_proxy_without_enabling_sandbox_network() -
     let cwd = TempDir::new()?;
     let config = Config::load_from_base_config_with_overrides(
         ConfigToml {
-            features: Some(
-                toml::from_str(
-                    r#"
-[network_proxy]
-enabled = true
-proxy_url = "http://127.0.0.1:43128"
-enable_socks5 = false
-"#,
-                )
-                .expect("valid features"),
-            ),
+            features: Some(toml::from_str("network_proxy = true").expect("valid features")),
             ..Default::default()
         },
         ConfigOverrides {
@@ -923,8 +913,49 @@ enable_socks5 = false
         .network
         .as_ref()
         .expect("network_proxy should start the managed network proxy");
-    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
-    assert!(!network.socks_enabled());
+    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:3128");
+    assert!(network.socks_enabled());
+    Ok(())
+}
+
+#[tokio::test]
+async fn network_proxy_feature_does_not_widen_legacy_workspace_write_network_access()
+-> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let cwd = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        toml::from_str(
+            r#"
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = false
+
+[features]
+network_proxy = true
+"#,
+        )
+        .expect("valid config"),
+        ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            ..Default::default()
+        },
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.permissions.network_sandbox_policy(),
+        NetworkSandboxPolicy::Restricted
+    );
+    assert!(
+        config
+            .permissions
+            .network
+            .as_ref()
+            .expect("network_proxy should start the managed network proxy")
+            .enabled()
+    );
     Ok(())
 }
 
