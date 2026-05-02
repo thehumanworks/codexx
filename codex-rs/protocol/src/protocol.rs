@@ -1828,6 +1828,9 @@ pub struct ItemStartedEvent {
     pub thread_id: ThreadId,
     pub turn_id: String,
     pub item: TurnItem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub started_at_ms: Option<i64>,
 }
 
 impl HasLegacyEvent for ItemStartedEvent {
@@ -1852,6 +1855,9 @@ pub struct ItemCompletedEvent {
     pub thread_id: ThreadId,
     pub turn_id: String,
     pub item: TurnItem,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub completed_at_ms: Option<i64>,
 }
 
 pub trait HasLegacyEvent {
@@ -4591,6 +4597,7 @@ mod tests {
                     queries: None,
                 },
             }),
+            started_at_ms: None,
         };
 
         let legacy_events = event.as_legacy_events(/*show_raw_agent_reasoning*/ false);
@@ -4607,6 +4614,7 @@ mod tests {
             thread_id: ThreadId::new(),
             turn_id: "turn-1".into(),
             item: TurnItem::UserMessage(UserMessageItem::new(&[])),
+            started_at_ms: None,
         };
 
         assert!(
@@ -4628,6 +4636,7 @@ mod tests {
                 result: String::new(),
                 saved_path: None,
             }),
+            started_at_ms: None,
         };
 
         let legacy_events = event.as_legacy_events(/*show_raw_agent_reasoning*/ false);
@@ -4658,6 +4667,7 @@ mod tests {
                 stdout: None,
                 stderr: None,
             }),
+            started_at_ms: None,
         };
 
         let legacy_events = event.as_legacy_events(/*show_raw_agent_reasoning*/ false);
@@ -4685,6 +4695,7 @@ mod tests {
                 result: "Zm9v".into(),
                 saved_path: Some(test_path_buf("/tmp/ig-1.png").abs()),
             }),
+            completed_at_ms: None,
         };
 
         let legacy_events = event.as_legacy_events(/*show_raw_agent_reasoning*/ false);
@@ -4724,6 +4735,7 @@ mod tests {
                 stdout: Some("Done!".into()),
                 stderr: Some(String::new()),
             }),
+            completed_at_ms: None,
         };
 
         let legacy_events = event.as_legacy_events(/*show_raw_agent_reasoning*/ false);
