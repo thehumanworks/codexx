@@ -1,5 +1,6 @@
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use tokio::sync::Mutex;
 use tokio::time::Duration;
@@ -25,6 +26,7 @@ use codex_protocol::protocol::ExecOutputStream;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 pub(crate) const TRAILING_OUTPUT_GRACE: Duration = Duration::from_millis(100);
+const OUTPUT_DRAIN_WARN_AFTER: Duration = Duration::from_secs(5);
 
 /// Upper bound for a single ExecCommandOutputDelta chunk emitted by unified exec.
 ///
@@ -41,6 +43,7 @@ pub(crate) fn start_streaming_output(
     process: &UnifiedExecProcess,
     context: &UnifiedExecContext,
     transcript: Arc<Mutex<HeadTailBuffer>>,
+    process_id: i32,
 ) {
     let mut receiver = process.output_receiver();
     let output_drained = process.output_drained_notify();
@@ -53,6 +56,12 @@ pub(crate) fn start_streaming_output(
     tokio::spawn(async move {
         use tokio::sync::broadcast::error::RecvError;
 
+        tracing::debug!(
+            call_id = %call_id,
+            process_id,
+            "unified exec output streaming started"
+        );
+
         let mut pending = Vec::<u8>::new();
         let mut emitted_deltas: usize = 0;
 
@@ -61,6 +70,11 @@ pub(crate) fn start_streaming_output(
         loop {
             tokio::select! {
                 _ = exit_token.cancelled(), if grace_sleep.is_none() => {
+                    tracing::debug!(
+                        call_id = %call_id,
+                        process_id,
+                        "unified exec output stream observed process exit; starting trailing output grace"
+                    );
                     let deadline = Instant::now() + TRAILING_OUTPUT_GRACE;
                     grace_sleep.replace(Box::pin(tokio::time::sleep_until(deadline)));
                 }
@@ -70,6 +84,12 @@ pub(crate) fn start_streaming_output(
                         sleep.as_mut().await;
                     }
                 }, if grace_sleep.is_some() => {
+                    tracing::debug!(
+                        call_id = %call_id,
+                        process_id,
+                        drain_reason = "grace_timeout",
+                        "unified exec output stream drained"
+                    );
                     output_drained.notify_one();
                     break;
                 }
@@ -81,6 +101,12 @@ pub(crate) fn start_streaming_output(
                             continue;
                         },
                         Err(RecvError::Closed) => {
+                            tracing::debug!(
+                                call_id = %call_id,
+                                process_id,
+                                drain_reason = "receiver_closed",
+                                "unified exec output stream drained"
+                            );
                             output_drained.notify_one();
                             break;
                         }
@@ -119,9 +145,54 @@ pub(crate) fn spawn_exit_watcher(
     let output_drained = process.output_drained_notify();
 
     tokio::spawn(async move {
+        tracing::debug!(
+            call_id = %call_id,
+            process_id,
+            "unified exec exit watcher started"
+        );
         exit_token.cancelled().await;
-        output_drained.notified().await;
+        let exit_observed_at = Instant::now();
+        let exit_code = process.exit_code();
+        tracing::debug!(
+            call_id = %call_id,
+            process_id,
+            ?exit_code,
+            "unified exec exit watcher observed process exit"
+        );
 
+        let drain_wait = output_drained.notified();
+        tokio::pin!(drain_wait);
+        tracing::debug!(
+            call_id = %call_id,
+            process_id,
+            "unified exec exit watcher waiting for output drain"
+        );
+        tokio::select! {
+            _ = &mut drain_wait => {}
+            _ = tokio::time::sleep(OUTPUT_DRAIN_WARN_AFTER) => {
+                let output_closed = process
+                    .output_handles()
+                    .output_closed
+                    .load(Ordering::Acquire);
+                tracing::warn!(
+                    call_id = %call_id,
+                    process_id,
+                    ?exit_code,
+                    output_closed,
+                    waited_ms = exit_observed_at.elapsed().as_millis(),
+                    "unified exec exit watcher is still waiting for output drain after process exit"
+                );
+                drain_wait.await;
+            }
+        }
+        tracing::debug!(
+            call_id = %call_id,
+            process_id,
+            waited_ms = exit_observed_at.elapsed().as_millis(),
+            "unified exec exit watcher observed output drain"
+        );
+
+        let completed_call_id = call_id.clone();
         let duration = Instant::now().saturating_duration_since(started_at);
         if let Some(message) = process.failure_message() {
             emit_failed_exec_end_for_unified_exec(
@@ -153,6 +224,12 @@ pub(crate) fn spawn_exit_watcher(
             )
             .await;
         }
+        tracing::debug!(
+            call_id = %completed_call_id,
+            process_id,
+            exit_code = ?process.exit_code(),
+            "unified exec exit watcher emitted ExecCommandEnd"
+        );
         session_ref
             .services
             .unified_exec_manager

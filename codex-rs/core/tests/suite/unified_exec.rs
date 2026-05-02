@@ -656,7 +656,7 @@ async fn unified_exec_emits_output_delta_for_exec_command() -> Result<()> {
 
     let call_id = "uexec-delta-1";
     let args = json!({
-        "cmd": "/usr/bin/printf HELLO-UEXEC",
+        "cmd": "printf 'HELLO-UEXEC'",
         "yield_time_ms": 1000,
     });
 
