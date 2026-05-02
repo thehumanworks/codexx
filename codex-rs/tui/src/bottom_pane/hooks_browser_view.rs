@@ -725,8 +725,7 @@ mod tests {
             plugin_id: plugin_id.map(str::to_string),
             display_order,
             enabled,
-            current_hash: current_hash.clone(),
-            trusted_hash: (!is_managed).then_some(current_hash),
+            current_hash,
             trust_status: if is_managed {
                 HookTrustStatus::Managed
             } else {
@@ -821,7 +820,6 @@ mod tests {
             /*is_managed*/ false,
             /*display_order*/ 0,
         );
-        untrusted_hook.trusted_hash = None;
         untrusted_hook.trust_status = HookTrustStatus::Untrusted;
         let mut view = HooksBrowserView::new(
             vec![untrusted_hook],
@@ -1001,7 +999,6 @@ mod tests {
             /*is_managed*/ false,
             /*display_order*/ 0,
         );
-        untrusted_hook.trusted_hash = None;
         untrusted_hook.trust_status = HookTrustStatus::Untrusted;
         let view = HooksBrowserView::new(
             vec![untrusted_hook],

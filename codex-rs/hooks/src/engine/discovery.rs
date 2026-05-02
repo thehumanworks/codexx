@@ -71,6 +71,7 @@ pub(crate) fn discover_handlers(
             /*include_disabled*/ false,
         ) {
             let hook_source = hook_source_for_config_layer_source(&layer.name);
+            let is_managed = is_managed_config_layer_source(&layer.name);
             let json_hooks = load_hooks_json(layer.config_folder().as_deref(), &mut warnings);
             let toml_hooks = load_toml_hooks_from_layer(layer, &mut warnings);
 
@@ -96,7 +97,7 @@ pub(crate) fn discover_handlers(
                         path: &source_path,
                         key_source: source_path.display().to_string(),
                         source: hook_source,
-                        is_managed: hook_source.is_managed(),
+                        is_managed,
                         hook_states: &hook_states,
                         env: HashMap::new(),
                         plugin_id: None,
@@ -422,13 +423,10 @@ fn append_matcher_groups(
                         handler_index
                     );
                     let state = source.hook_states.get(&key);
-                    let enabled =
-                        source.is_managed || state.and_then(|state| state.enabled) != Some(false);
-                    let trusted_hash = (!source.is_managed)
-                        .then(|| state.and_then(|state| state.trusted_hash.clone()))
-                        .flatten();
+                    let enabled = hook_enabled(source.is_managed, state);
+                    let trusted_hash = hook_trusted_hash(source.is_managed, state);
                     let trust_status =
-                        hook_trust_status(source.is_managed, &current_hash, &trusted_hash);
+                        hook_trust_status(source.is_managed, &current_hash, trusted_hash);
                     hook_entries.push(HookListEntry {
                         key,
                         event_name,
@@ -444,7 +442,6 @@ fn append_matcher_groups(
                         enabled,
                         is_managed: source.is_managed,
                         current_hash,
-                        trusted_hash,
                         trust_status,
                     });
                     if enabled
@@ -537,17 +534,27 @@ fn hook_event_key_label(event_name: codex_protocol::protocol::HookEventName) -> 
 fn hook_trust_status(
     is_managed: bool,
     current_hash: &str,
-    trusted_hash: &Option<String>,
+    trusted_hash: Option<&str>,
 ) -> HookTrustStatus {
     if is_managed {
         HookTrustStatus::Managed
     } else {
-        match trusted_hash.as_deref() {
+        match trusted_hash {
             Some(trusted_hash) if trusted_hash == current_hash => HookTrustStatus::Trusted,
             Some(_) => HookTrustStatus::Modified,
             None => HookTrustStatus::Untrusted,
         }
     }
+}
+
+fn hook_enabled(is_managed: bool, state: Option<&HookStateToml>) -> bool {
+    is_managed || state.and_then(|state| state.enabled) != Some(false)
+}
+
+fn hook_trusted_hash(is_managed: bool, state: Option<&HookStateToml>) -> Option<&str> {
+    (!is_managed)
+        .then(|| state.and_then(|state| state.trusted_hash.as_deref()))
+        .flatten()
 }
 
 fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource {
@@ -562,6 +569,16 @@ fn hook_source_for_config_layer_source(source: &ConfigLayerSource) -> HookSource
         }
         ConfigLayerSource::LegacyManagedConfigTomlFromMdm => HookSource::LegacyManagedConfigMdm,
     }
+}
+
+fn is_managed_config_layer_source(source: &ConfigLayerSource) -> bool {
+    matches!(
+        source,
+        ConfigLayerSource::System { .. }
+            | ConfigLayerSource::Mdm { .. }
+            | ConfigLayerSource::LegacyManagedConfigTomlFromFile { .. }
+            | ConfigLayerSource::LegacyManagedConfigTomlFromMdm
+    )
 }
 
 fn hook_source_for_requirement_source(source: Option<&RequirementSource>) -> HookSource {
@@ -610,12 +627,11 @@ mod tests {
         path: &'a AbsolutePathBuf,
         hook_states: &'a std::collections::HashMap<String, HookStateToml>,
     ) -> super::HookHandlerSource<'a> {
-        let source = hook_source();
         super::HookHandlerSource {
             path,
             key_source: path.display().to_string(),
-            source,
-            is_managed: source.is_managed(),
+            source: hook_source(),
+            is_managed: true,
             hook_states,
             env: std::collections::HashMap::new(),
             plugin_id: None,

@@ -85,7 +85,6 @@ pub struct HookListEntry {
     pub enabled: bool,
     pub is_managed: bool,
     pub current_hash: String,
-    pub trusted_hash: Option<String>,
     pub trust_status: HookTrustStatus,
 }
 

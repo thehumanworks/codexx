@@ -6430,12 +6430,6 @@
         },
         "trustStatus": {
           "$ref": "#/definitions/HookTrustStatus"
-        },
-        "trustedHash": {
-          "type": [
-            "string",
-            "null"
-          ]
         }
       },
       "required": [

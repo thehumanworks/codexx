@@ -9821,12 +9821,6 @@
           },
           "trustStatus": {
             "$ref": "#/definitions/v2/HookTrustStatus"
-          },
-          "trustedHash": {
-            "type": [
-              "string",
-              "null"
-            ]
           }
         },
         "required": [

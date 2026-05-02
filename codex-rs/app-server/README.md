@@ -1461,7 +1461,7 @@ Use `hooks/list` to fetch discovered hooks for one or more `cwds`. Each result i
 
 Hooks are returned even when disabled so clients can render and re-enable them. User-controlled state lives under `hooks.state`. Managed hooks are non-configurable, and user entries for managed hook keys are ignored during loading.
 
-For unmanaged hooks, `currentHash`, `trustedHash`, and `trustStatus` describe whether the current definition is first-seen, approved, or changed since approval. Only trusted unmanaged hooks become runnable. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
+For unmanaged hooks, `currentHash` and `trustStatus` describe whether the current definition is first-seen, approved, or changed since approval. Only trusted unmanaged hooks become runnable. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
 
 ```json
 {
@@ -1494,7 +1494,6 @@ For unmanaged hooks, `currentHash`, `trustedHash`, and `trustStatus` describe wh
         "displayOrder": 0,
         "enabled": true,
         "currentHash": "sha256:...",
-        "trustedHash": null,
         "trustStatus": "untrusted"
       }],
       "warnings": [],

@@ -226,7 +226,6 @@ fn unknown_requirement_source_hooks_stay_managed() {
     assert_eq!(discovered.hook_entries[0].source, HookSource::Unknown);
     assert_eq!(discovered.hook_entries[0].enabled, true);
     assert_eq!(discovered.hook_entries[0].is_managed, true);
-    assert_eq!(discovered.hook_entries[0].trusted_hash, None);
     assert_eq!(
         discovered.hook_entries[0].trust_status,
         HookTrustStatus::Managed
@@ -391,7 +390,6 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
         untrusted.hook_entries[0].trust_status,
         HookTrustStatus::Untrusted
     );
-    assert_eq!(untrusted.hook_entries[0].trusted_hash, None);
     assert_eq!(untrusted.handlers, Vec::new());
 
     let current_hash = untrusted.hook_entries[0].current_hash.clone();
@@ -403,7 +401,7 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
                 &key,
                 HookStateToml {
                     enabled: None,
-                    trusted_hash: Some(current_hash.clone()),
+                    trusted_hash: Some(current_hash),
                 },
             ),
         )],
@@ -417,7 +415,6 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
         trusted.hook_entries[0].trust_status,
         HookTrustStatus::Trusted
     );
-    assert_eq!(trusted.hook_entries[0].trusted_hash, Some(current_hash));
     assert_eq!(trusted.handlers.len(), 1);
 
     let changed_stack = ConfigLayerStack::new(
@@ -443,10 +440,6 @@ fn unmanaged_hook_trust_status_tracks_stored_hash() {
     assert_eq!(
         changed.hook_entries[0].trust_status,
         HookTrustStatus::Modified
-    );
-    assert_eq!(
-        changed.hook_entries[0].trusted_hash.as_deref(),
-        Some("sha256:old")
     );
     assert_eq!(changed.handlers, Vec::new());
 }
