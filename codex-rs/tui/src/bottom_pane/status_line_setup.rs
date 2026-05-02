@@ -106,7 +106,7 @@ pub(crate) enum StatusLineItem {
     /// Full session UUID.
     SessionId,
 
-    /// Whether Fast mode is currently active.
+    /// Current service-tier selection.
     FastMode,
 
     /// Current thread title (if set by user).
@@ -148,7 +148,7 @@ impl StatusLineItem {
             StatusLineItem::SessionId => {
                 "Current session identifier (omitted until session starts)"
             }
-            StatusLineItem::FastMode => "Whether Fast mode is currently active",
+            StatusLineItem::FastMode => "Current service tier (or default when unset)",
             StatusLineItem::ThreadTitle => "Current thread title (omitted when unavailable)",
             StatusLineItem::TaskProgress => {
                 "Latest task progress from update_plan (omitted until available)"

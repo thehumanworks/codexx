@@ -49,6 +49,7 @@ use codex_protocol::models::PermissionProfile as CorePermissionProfile;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::openai_models::InputModality;
 use codex_protocol::openai_models::ModelAvailabilityNux as CoreModelAvailabilityNux;
+use codex_protocol::openai_models::ModelServiceTier as CoreModelServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::openai_models::default_input_modalities;
 use codex_protocol::parse_command::ParsedCommand as CoreParsedCommand;
@@ -2508,6 +2509,35 @@ impl From<CoreModelAvailabilityNux> for ModelAvailabilityNux {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ModelServiceTier {
+    pub id: ServiceTier,
+    pub name: String,
+    pub description: String,
+}
+
+impl From<CoreModelServiceTier> for ModelServiceTier {
+    fn from(value: CoreModelServiceTier) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            description: value.description,
+        }
+    }
+}
+
+impl From<ModelServiceTier> for CoreModelServiceTier {
+    fn from(value: ModelServiceTier) -> Self {
+        Self {
+            id: value.id,
+            name: value.name,
+            description: value.description,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -2527,7 +2557,7 @@ pub struct Model {
     #[serde(default)]
     pub supports_personality: bool,
     #[serde(default)]
-    pub additional_speed_tiers: Vec<String>,
+    pub service_tiers: Vec<ModelServiceTier>,
     // Only one model should be marked as default.
     pub is_default: bool,
 }

@@ -7862,10 +7862,10 @@
     },
     "Model": {
       "properties": {
-        "additionalSpeedTiers": {
+        "serviceTiers": {
           "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/ModelServiceTier"
           },
           "type": "array"
         },
@@ -7957,6 +7957,25 @@
       },
       "required": [
         "message"
+      ],
+      "type": "object"
+    },
+    "ModelServiceTier": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ServiceTier"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "name"
       ],
       "type": "object"
     },
@@ -12029,10 +12048,7 @@
       "type": "object"
     },
     "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex"
-      ],
+      "description": "String-backed service tier identifier. Known values include `priority`, `flex`, and `ultrafast`, but other backend-provided ids are allowed.",
       "type": "string"
     },
     "SessionMigration": {

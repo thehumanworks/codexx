@@ -137,6 +137,7 @@ mod textarea;
 mod unified_exec_footer;
 pub(crate) use feedback_view::FeedbackNoteView;
 pub(crate) use selection_tabs::SelectionTab;
+use slash_commands::ServiceTierCommand;
 
 /// How long the "press again to quit" hint stays visible.
 ///
@@ -383,6 +384,11 @@ impl BottomPane {
 
     pub fn set_fast_command_enabled(&mut self, enabled: bool) {
         self.composer.set_fast_command_enabled(enabled);
+        self.request_redraw();
+    }
+
+    pub fn set_service_tier_commands(&mut self, commands: Vec<ServiceTierCommand>) {
+        self.composer.set_service_tier_commands(commands);
         self.request_redraw();
     }
 

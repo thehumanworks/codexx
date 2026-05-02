@@ -50,7 +50,12 @@ fn model_from_preset(preset: &ModelPreset) -> Model {
         // cache report `supports_personality = false`.
         // todo(sayan): fix, maybe make roundtrip use ModelInfo only
         supports_personality: false,
-        additional_speed_tiers: preset.additional_speed_tiers.clone(),
+        service_tiers: preset
+            .service_tiers
+            .clone()
+            .into_iter()
+            .map(Into::into)
+            .collect(),
         is_default: preset.is_default,
     }
 }

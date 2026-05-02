@@ -22,10 +22,10 @@
     },
     "Model": {
       "properties": {
-        "additionalSpeedTiers": {
+        "serviceTiers": {
           "default": [],
           "items": {
-            "type": "string"
+            "$ref": "#/definitions/ModelServiceTier"
           },
           "type": "array"
         },
@@ -120,6 +120,25 @@
       ],
       "type": "object"
     },
+    "ModelServiceTier": {
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/definitions/ServiceTier"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "description",
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
     "ModelUpgradeInfo": {
       "properties": {
         "migrationMarkdown": {
@@ -175,6 +194,10 @@
         "reasoningEffort"
       ],
       "type": "object"
+    },
+    "ServiceTier": {
+      "description": "String-backed service tier identifier. Known values include `priority`, `flex`, and `ultrafast`, but other backend-provided ids are allowed.",
+      "type": "string"
     }
   },
   "properties": {

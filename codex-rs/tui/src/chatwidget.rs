@@ -57,6 +57,7 @@ use crate::bottom_pane::StatusSurfacePreviewData;
 use crate::bottom_pane::StatusSurfacePreviewItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::bottom_pane::TerminalTitleSetupView;
+use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::legacy_core::DEFAULT_AGENTS_MD_FILENAME;
 use crate::legacy_core::config::Config;
 use crate::legacy_core::config::Constrained;
@@ -2364,7 +2365,7 @@ impl ChatWidget {
         self.current_rollout_path = event.rollout_path.clone();
         self.current_cwd = Some(event.cwd.to_path_buf());
         self.config.cwd = event.cwd.clone();
-        self.effective_service_tier = event.service_tier;
+        self.effective_service_tier = event.service_tier.clone();
         if let Err(err) = self
             .config
             .permissions
@@ -2406,6 +2407,7 @@ impl ChatWidget {
         self.refresh_model_display();
         self.refresh_status_surfaces();
         self.sync_fast_command_enabled();
+        self.sync_service_tier_commands();
         self.sync_personality_command_enabled();
         self.sync_plugins_command_enabled();
         self.sync_goal_command_enabled();
@@ -2413,7 +2415,7 @@ impl ChatWidget {
         if display == SessionConfiguredDisplay::Normal {
             let startup_tooltip_override = self.startup_tooltip_override.take();
             let show_fast_status =
-                self.should_show_fast_status(&model_for_header, event.service_tier);
+                self.should_show_fast_status(&model_for_header, event.service_tier.clone());
             #[cfg(test)]
             let initial_messages = event.initial_messages.clone();
             let session_info_cell = history_cell::new_session_info(
@@ -5270,7 +5272,7 @@ impl ChatWidget {
         let active_cell = Some(Self::placeholder_session_header_cell(&config));
 
         let current_cwd = Some(config.cwd.to_path_buf());
-        let effective_service_tier = config.service_tier;
+        let effective_service_tier = config.service_tier.clone();
         let current_terminal_info = terminal_info();
         let runtime_keymap = RuntimeKeymap::from_config(&config.tui_keymap).ok();
         let default_keymap = RuntimeKeymap::defaults();
@@ -5451,6 +5453,7 @@ impl ChatWidget {
             .bottom_pane
             .set_collaboration_modes_enabled(/*enabled*/ true);
         widget.sync_fast_command_enabled();
+        widget.sync_service_tier_commands();
         widget.sync_personality_command_enabled();
         widget.sync_plugins_command_enabled();
         widget.sync_goal_command_enabled();
@@ -6236,7 +6239,7 @@ impl ChatWidget {
             .personality
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
-        let service_tier = match self.config.service_tier {
+        let service_tier = match self.config.service_tier.clone() {
             Some(service_tier) => Some(Some(service_tier)),
             None if self.config.notices.fast_default_opt_out == Some(true) => Some(None),
             None => None,
@@ -10358,18 +10361,18 @@ impl ChatWidget {
         self.config.personality = Some(personality);
     }
 
-    /// Set Fast mode in the widget's config copy.
+    /// Set the selected service tier in the widget's config copy.
     pub(crate) fn set_service_tier(&mut self, service_tier: Option<ServiceTier>) {
-        self.config.service_tier = service_tier;
+        self.config.service_tier = service_tier.clone();
         self.effective_service_tier = service_tier;
     }
 
     pub(crate) fn current_service_tier(&self) -> Option<ServiceTier> {
-        self.effective_service_tier
+        self.effective_service_tier.clone()
     }
 
     pub(crate) fn configured_service_tier(&self) -> Option<ServiceTier> {
-        self.config.service_tier
+        self.config.service_tier.clone()
     }
 
     pub(crate) fn fast_default_opt_out(&self) -> Option<bool> {
@@ -10412,7 +10415,7 @@ impl ChatWidget {
         service_tier: Option<ServiceTier>,
     ) -> bool {
         self.model_supports_fast_mode(model)
-            && matches!(service_tier, Some(ServiceTier::Fast))
+            && service_tier.as_ref().is_some_and(ServiceTier::is_priority)
             && self.has_chatgpt_account
     }
 
@@ -10505,6 +10508,11 @@ impl ChatWidget {
             .set_fast_command_enabled(self.fast_mode_enabled());
     }
 
+    fn sync_service_tier_commands(&mut self) {
+        self.bottom_pane
+            .set_service_tier_commands(self.available_service_tier_commands());
+    }
+
     fn sync_personality_command_enabled(&mut self) {
         self.bottom_pane
             .set_personality_command_enabled(self.config.features.enabled(Feature::Personality));
@@ -10520,30 +10528,55 @@ impl ChatWidget {
             .set_goal_command_enabled(self.config.features.enabled(Feature::Goals));
     }
 
-    fn current_model_supports_personality(&self) -> bool {
-        let model = self.current_model();
+    fn model_preset(&self, model: &str) -> Option<ModelPreset> {
         self.model_catalog
             .try_list_models()
             .ok()
-            .and_then(|models| {
-                models
-                    .into_iter()
-                    .find(|preset| preset.model == model)
-                    .map(|preset| preset.supports_personality)
+            .and_then(|models| models.into_iter().find(|preset| preset.model == model))
+    }
+
+    fn available_service_tier_commands(&self) -> Vec<ServiceTierCommand> {
+        self.model_preset(self.current_model())
+            .map(|model| {
+                crate::bottom_pane::slash_commands::service_tier_commands_for_model(&model)
             })
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn service_tier_display_name(
+        &self,
+        model: &str,
+        service_tier: &ServiceTier,
+    ) -> String {
+        self.model_preset(model)
+            .and_then(|preset| {
+                preset
+                    .service_tier(service_tier)
+                    .map(|tier| tier.name.clone())
+            })
+            .unwrap_or_else(|| service_tier.to_string())
+    }
+
+    pub(crate) fn current_service_tier_name(&self) -> Option<String> {
+        self.current_service_tier()
+            .map(|tier| self.service_tier_display_name(self.current_model(), &tier))
+    }
+
+    pub(crate) fn current_service_tier_status_label(&self) -> String {
+        self.current_service_tier_name()
+            .map(|name| format!("Tier {name}"))
+            .unwrap_or_else(|| "Tier default".to_string())
+    }
+
+    fn current_model_supports_personality(&self) -> bool {
+        self.model_preset(self.current_model())
+            .map(|preset| preset.supports_personality)
             .unwrap_or(false)
     }
 
     fn model_supports_fast_mode(&self, model: &str) -> bool {
-        self.model_catalog
-            .try_list_models()
-            .ok()
-            .and_then(|models| {
-                models
-                    .into_iter()
-                    .find(|preset| preset.model == model)
-                    .map(|preset| preset.supports_fast_mode())
-            })
+        self.model_preset(model)
+            .map(|preset| preset.supports_service_tier(&ServiceTier::priority()))
             .unwrap_or(false)
     }
 
@@ -10552,16 +10585,8 @@ impl ChatWidget {
     /// We intentionally default to `true` when model metadata cannot be read so transient catalog
     /// failures do not hard-block user input in the UI.
     fn current_model_supports_images(&self) -> bool {
-        let model = self.current_model();
-        self.model_catalog
-            .try_list_models()
-            .ok()
-            .and_then(|models| {
-                models
-                    .into_iter()
-                    .find(|preset| preset.model == model)
-                    .map(|preset| preset.input_modalities.contains(&InputModality::Image))
-            })
+        self.model_preset(self.current_model())
+            .map(|preset| preset.input_modalities.contains(&InputModality::Image))
             .unwrap_or(true)
     }
 
@@ -10699,6 +10724,7 @@ impl ChatWidget {
     /// (`refresh_status_line`).
     fn refresh_model_dependent_surfaces(&mut self) {
         self.refresh_model_display();
+        self.sync_service_tier_commands();
         self.refresh_status_line();
     }
 

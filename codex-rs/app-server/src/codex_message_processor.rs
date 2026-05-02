@@ -10352,7 +10352,7 @@ mod tests {
             path: None,
             model: None,
             model_provider: None,
-            service_tier: Some(Some(codex_protocol::config_types::ServiceTier::Fast)),
+            service_tier: Some(Some(codex_protocol::config_types::ServiceTier::priority())),
             cwd: None,
             approval_policy: None,
             approvals_reviewer: None,
@@ -10368,7 +10368,7 @@ mod tests {
         let config_snapshot = ThreadConfigSnapshot {
             model: "gpt-5".to_string(),
             model_provider_id: "openai".to_string(),
-            service_tier: Some(codex_protocol::config_types::ServiceTier::Flex),
+            service_tier: Some(codex_protocol::config_types::ServiceTier::flex()),
             approval_policy: codex_protocol::protocol::AskForApproval::OnRequest,
             approvals_reviewer: codex_protocol::config_types::ApprovalsReviewer::User,
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,

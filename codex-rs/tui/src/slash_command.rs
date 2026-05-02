@@ -13,7 +13,6 @@ pub enum SlashCommand {
     // DO NOT ALPHA-SORT! Enum order is presentation order in the popup, so
     // more frequently used commands should be listed first.
     Model,
-    Fast,
     Approvals,
     Permissions,
     Keymap,
@@ -101,9 +100,6 @@ impl SlashCommand {
             SlashCommand::MemoryDrop => "DO NOT USE",
             SlashCommand::MemoryUpdate => "DO NOT USE",
             SlashCommand::Model => "choose what model and reasoning effort to use",
-            SlashCommand::Fast => {
-                "toggle Fast mode to enable fastest inference with increased plan usage"
-            }
             SlashCommand::Personality => "choose a communication style for Codex",
             SlashCommand::Realtime => "toggle realtime voice mode (experimental)",
             SlashCommand::Settings => "configure realtime microphone/speaker",
@@ -145,7 +141,6 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Goal
-                | SlashCommand::Fast
                 | SlashCommand::Mcp
                 | SlashCommand::Side
                 | SlashCommand::Resume
@@ -171,7 +166,6 @@ impl SlashCommand {
             | SlashCommand::Compact
             // | SlashCommand::Undo
             | SlashCommand::Model
-            | SlashCommand::Fast
             | SlashCommand::Personality
             | SlashCommand::Approvals
             | SlashCommand::Permissions

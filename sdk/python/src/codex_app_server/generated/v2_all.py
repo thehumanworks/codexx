@@ -3343,9 +3343,16 @@ class ServerRequestResolvedNotification(BaseModel):
     thread_id: Annotated[str, Field(alias="threadId")]
 
 
-class ServiceTier(Enum):
-    fast = "fast"
-    flex = "flex"
+class ServiceTier(RootModel[str]):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: Annotated[
+        str,
+        Field(
+            description="String-backed service tier identifier. Known values include `priority`, `flex`, and `ultrafast`, but other backend-provided ids are allowed."
+        ),
+    ]
 
 
 class SessionSourceValue(Enum):
@@ -5854,13 +5861,19 @@ class MigrationDetails(BaseModel):
     plugins: list[PluginsMigration]
 
 
+class ModelServiceTier(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    description: str
+    id: ServiceTier
+    name: str
+
+
 class Model(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    additional_speed_tiers: Annotated[
-        list[str] | None, Field(alias="additionalSpeedTiers")
-    ] = []
     availability_nux: Annotated[
         ModelAvailabilityNux | None, Field(alias="availabilityNux")
     ] = None
@@ -5876,6 +5889,9 @@ class Model(BaseModel):
     ] = ["text", "image"]
     is_default: Annotated[bool, Field(alias="isDefault")]
     model: str
+    service_tiers: Annotated[
+        list[ModelServiceTier] | None, Field(alias="serviceTiers")
+    ] = []
     supported_reasoning_efforts: Annotated[
         list[ReasoningEffortOption], Field(alias="supportedReasoningEfforts")
     ]
