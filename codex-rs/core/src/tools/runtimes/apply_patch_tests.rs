@@ -1,4 +1,8 @@
 use super::*;
+use crate::guardian::GuardianApprovalRequest;
+use crate::tools::approval::ApprovalRequest;
+use crate::tools::approval::ApprovalRequestKind;
+use crate::tools::approval::PatchApprovalRequest;
 use crate::tools::sandboxing::SandboxAttempt;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -65,7 +69,20 @@ fn guardian_review_request_includes_patch_context() {
         permissions_preapproved: false,
     };
 
-    let guardian_request = ApplyPatchRuntime::build_guardian_review_request(&request, "call-1");
+    let guardian_request = ApprovalRequest::new(
+        "call-1".to_string(),
+        /*user_reason*/ None,
+        /*guardian_retry_reason*/ None,
+        ApprovalRequestKind::Patch(PatchApprovalRequest {
+            id: "call-1".to_string(),
+            cwd: request.action.cwd.clone(),
+            files: request.file_paths.clone(),
+            patch: request.action.patch.clone(),
+            changes: request.changes.clone(),
+            grant_root: None,
+        }),
+    )
+    .into_guardian_request();
 
     assert_eq!(
         guardian_request,
@@ -80,7 +97,6 @@ fn guardian_review_request_includes_patch_context() {
 
 #[test]
 fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
-    let runtime = ApplyPatchRuntime::new();
     let path = std::env::temp_dir()
         .join("apply-patch-permission-request-payload.txt")
         .abs();
@@ -98,9 +114,20 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
         permissions_preapproved: false,
     };
 
-    let payload = runtime
-        .permission_request_payload(&req)
-        .expect("permission request payload");
+    let payload = ApprovalRequest::new(
+        "call-1".to_string(),
+        /*user_reason*/ None,
+        /*guardian_retry_reason*/ None,
+        ApprovalRequestKind::Patch(PatchApprovalRequest {
+            id: "call-1".to_string(),
+            cwd: req.action.cwd.clone(),
+            files: req.file_paths.clone(),
+            patch: req.action.patch.clone(),
+            changes: req.changes,
+            grant_root: None,
+        }),
+    )
+    .permission_request_payload();
 
     assert_eq!(payload.tool_name.name(), "apply_patch");
     assert_eq!(

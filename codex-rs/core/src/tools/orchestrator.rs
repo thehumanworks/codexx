@@ -10,7 +10,6 @@ use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::routes_approval_to_guardian;
-use crate::hook_runtime::run_permission_request_hooks;
 use crate::network_policy_decision::network_approval_context_from_payload;
 use crate::tools::network_approval::ActiveNetworkApproval;
 use crate::tools::network_approval::DeferredNetworkApproval;
@@ -26,7 +25,6 @@ use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::default_exec_approval_requirement;
-use codex_hooks::PermissionRequestDecision;
 use codex_otel::ToolDecisionSource;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
@@ -157,19 +155,12 @@ impl ToolOrchestrator {
                         turn: &tool_ctx.turn,
                         call_id: &tool_ctx.call_id,
                         guardian_review_id: guardian_review_id.clone(),
+                        evaluate_permission_request_hooks: false,
                         retry_reason: None,
                         network_approval_context: None,
                     };
-                    let decision = Self::request_approval(
-                        tool,
-                        req,
-                        tool_ctx.call_id.as_str(),
-                        approval_ctx,
-                        tool_ctx,
-                        /*evaluate_permission_request_hooks*/ false,
-                        &otel,
-                    )
-                    .await?;
+                    let decision =
+                        Self::request_approval(tool, req, approval_ctx, tool_ctx, &otel).await?;
                     Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
                         .await?;
                     already_approved = true;
@@ -192,19 +183,12 @@ impl ToolOrchestrator {
                     turn: &tool_ctx.turn,
                     call_id: &tool_ctx.call_id,
                     guardian_review_id: guardian_review_id.clone(),
+                    evaluate_permission_request_hooks: !strict_auto_review,
                     retry_reason: reason,
                     network_approval_context: None,
                 };
-                let decision = Self::request_approval(
-                    tool,
-                    req,
-                    tool_ctx.call_id.as_str(),
-                    approval_ctx,
-                    tool_ctx,
-                    /*evaluate_permission_request_hooks*/ !strict_auto_review,
-                    &otel,
-                )
-                .await?;
+                let decision =
+                    Self::request_approval(tool, req, approval_ctx, tool_ctx, &otel).await?;
 
                 Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
                     .await?;
@@ -325,21 +309,13 @@ impl ToolOrchestrator {
                         turn: &tool_ctx.turn,
                         call_id: &tool_ctx.call_id,
                         guardian_review_id: guardian_review_id.clone(),
+                        evaluate_permission_request_hooks: !strict_auto_review,
                         retry_reason: Some(retry_reason),
                         network_approval_context: network_approval_context.clone(),
                     };
 
-                    let permission_request_run_id = format!("{}:retry", tool_ctx.call_id);
-                    let decision = Self::request_approval(
-                        tool,
-                        req,
-                        &permission_request_run_id,
-                        approval_ctx,
-                        tool_ctx,
-                        /*evaluate_permission_request_hooks*/ !strict_auto_review,
-                        &otel,
-                    )
-                    .await?;
+                    let decision =
+                        Self::request_approval(tool, req, approval_ctx, tool_ctx, &otel).await?;
 
                     Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
                         .await?;
@@ -379,69 +355,36 @@ impl ToolOrchestrator {
         }
     }
 
-    // PermissionRequest hooks take top precedence for answering approval
-    // prompts. If no matching hook returns a decision, fall back to the
-    // normal guardian or user approval path.
     async fn request_approval<Rq, Out, T>(
         tool: &mut T,
         req: &Rq,
-        permission_request_run_id: &str,
         approval_ctx: ApprovalCtx<'_>,
         tool_ctx: &ToolCtx,
-        evaluate_permission_request_hooks: bool,
         otel: &codex_otel::SessionTelemetry,
     ) -> Result<ReviewDecision, ToolError>
     where
         T: ToolRuntime<Rq, Out>,
     {
-        if evaluate_permission_request_hooks
-            && let Some(permission_request) = tool.permission_request_payload(req)
-        {
-            match run_permission_request_hooks(
-                approval_ctx.session,
-                approval_ctx.turn,
-                permission_request_run_id,
-                permission_request,
-            )
-            .await
-            {
-                Some(PermissionRequestDecision::Allow) => {
-                    let decision = ReviewDecision::Approved;
-                    otel.tool_decision(
-                        &tool_ctx.tool_name,
-                        &tool_ctx.call_id,
-                        &decision,
-                        ToolDecisionSource::Config,
-                    );
-                    return Ok(decision);
-                }
-                Some(PermissionRequestDecision::Deny { message }) => {
-                    let decision = ReviewDecision::Denied;
-                    otel.tool_decision(
-                        &tool_ctx.tool_name,
-                        &tool_ctx.call_id,
-                        &decision,
-                        ToolDecisionSource::Config,
-                    );
-                    return Err(ToolError::Rejected(message));
-                }
-                None => {}
+        let outcome = tool.start_approval_async(req, approval_ctx).await;
+        let otel_source = match outcome.source {
+            crate::tools::approval::ApprovalDecisionSource::PermissionRequestHook => {
+                ToolDecisionSource::Config
             }
-        }
-
-        let otel_source = if approval_ctx.guardian_review_id.is_some() {
-            ToolDecisionSource::AutomatedReviewer
-        } else {
-            ToolDecisionSource::User
+            crate::tools::approval::ApprovalDecisionSource::Guardian { .. } => {
+                ToolDecisionSource::AutomatedReviewer
+            }
+            crate::tools::approval::ApprovalDecisionSource::User => ToolDecisionSource::User,
         };
-        let decision = tool.start_approval_async(req, approval_ctx).await;
         otel.tool_decision(
             &tool_ctx.tool_name,
             &tool_ctx.call_id,
-            &decision,
+            &outcome.decision,
             otel_source,
         );
-        Ok(decision)
+        if let Some(message) = outcome.rejection_message {
+            return Err(ToolError::Rejected(message));
+        }
+        Ok(outcome.decision)
     }
 
     async fn reject_if_not_approved(

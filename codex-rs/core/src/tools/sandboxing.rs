@@ -1,14 +1,10 @@
-//! Shared approvals and sandboxing traits used by tool runtimes.
-//!
-//! Consolidates the approval flow primitives (`ApprovalDecision`, `ApprovalStore`,
-//! `ApprovalCtx`, `Approvable`) together with the sandbox orchestration traits
-//! and helpers (`Sandboxable`, `ToolRuntime`, `SandboxAttempt`, etc.).
+//! Shared sandboxing traits used by tool runtimes.
 
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::state::SessionServices;
+use crate::tools::approval::ApprovalOutcome;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::network_approval::NetworkApprovalSpec;
 use codex_network_proxy::NetworkProxy;
@@ -18,7 +14,6 @@ use codex_protocol::error::CodexErr;
 use codex_protocol::permissions::FileSystemSandboxKind;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
-use codex_protocol::protocol::ReviewDecision;
 #[cfg(test)]
 use codex_protocol::protocol::SandboxPolicy;
 use codex_sandboxing::SandboxCommand;
@@ -28,93 +23,12 @@ use codex_sandboxing::SandboxTransformRequest;
 use codex_sandboxing::SandboxType;
 use codex_sandboxing::SandboxablePreference;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use futures::Future;
 use futures::future::BoxFuture;
 use serde::Serialize;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-
-#[derive(Clone, Default, Debug)]
-pub(crate) struct ApprovalStore {
-    // Store serialized keys for generic caching across requests.
-    map: HashMap<String, ReviewDecision>,
-}
-
-impl ApprovalStore {
-    pub fn get<K>(&self, key: &K) -> Option<ReviewDecision>
-    where
-        K: Serialize,
-    {
-        let s = serde_json::to_string(key).ok()?;
-        self.map.get(&s).cloned()
-    }
-
-    pub fn put<K>(&mut self, key: K, value: ReviewDecision)
-    where
-        K: Serialize,
-    {
-        if let Ok(s) = serde_json::to_string(&key) {
-            self.map.insert(s, value);
-        }
-    }
-}
-
-/// Takes a vector of approval keys and returns a ReviewDecision.
-/// There will be one key in most cases, but apply_patch can modify multiple files at once.
-///
-/// - If all keys are already approved for session, we skip prompting.
-/// - If the user approves for session, we store the decision for each key individually
-///   so future requests touching any subset can also skip prompting.
-pub(crate) async fn with_cached_approval<K, F, Fut>(
-    services: &SessionServices,
-    // Name of the tool, used for metrics collection.
-    tool_name: &str,
-    keys: Vec<K>,
-    fetch: F,
-) -> ReviewDecision
-where
-    K: Serialize,
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = ReviewDecision>,
-{
-    // To be defensive here, don't bother with checking the cache if keys are empty.
-    if keys.is_empty() {
-        return fetch().await;
-    }
-
-    let already_approved = {
-        let store = services.tool_approvals.lock().await;
-        keys.iter()
-            .all(|key| matches!(store.get(key), Some(ReviewDecision::ApprovedForSession)))
-    };
-
-    if already_approved {
-        return ReviewDecision::ApprovedForSession;
-    }
-
-    let decision = fetch().await;
-
-    services.session_telemetry.counter(
-        "codex.approval.requested",
-        /*inc*/ 1,
-        &[
-            ("tool", tool_name),
-            ("approved", decision.to_opaque_string()),
-        ],
-    );
-
-    if matches!(decision, ReviewDecision::ApprovedForSession) {
-        let mut store = services.tool_approvals.lock().await;
-        for key in keys {
-            store.put(key, ReviewDecision::ApprovedForSession);
-        }
-    }
-
-    decision
-}
 
 #[derive(Clone)]
 pub(crate) struct ApprovalCtx<'a> {
@@ -128,6 +42,7 @@ pub(crate) struct ApprovalCtx<'a> {
     /// denial handling, overrides, and app-server notifications refer to the
     /// review without overloading the tool call ID as a review ID.
     pub guardian_review_id: Option<String>,
+    pub evaluate_permission_request_hooks: bool,
     pub retry_reason: Option<String>,
     pub network_approval_context: Option<NetworkApprovalContext>,
 }
@@ -309,12 +224,6 @@ pub(crate) trait Approvable<Req> {
         None
     }
 
-    /// Return hook input for approval-time policy hooks when this runtime wants
-    /// hook evaluation to run before guardian or user approval.
-    fn permission_request_payload(&self, _req: &Req) -> Option<PermissionRequestPayload> {
-        None
-    }
-
     /// Decide we can request an approval for no-sandbox execution.
     fn wants_no_sandbox_approval(&self, policy: AskForApproval) -> bool {
         match policy {
@@ -330,7 +239,7 @@ pub(crate) trait Approvable<Req> {
         &'a mut self,
         req: &'a Req,
         ctx: ApprovalCtx<'a>,
-    ) -> BoxFuture<'a, ReviewDecision>;
+    ) -> BoxFuture<'a, ApprovalOutcome>;
 }
 
 pub(crate) trait Sandboxable {

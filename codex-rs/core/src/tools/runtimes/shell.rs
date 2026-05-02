@@ -10,13 +10,16 @@ pub(crate) mod zsh_fork_backend;
 
 use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
-use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
-use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::SandboxPermissions;
 use crate::sandboxing::execute_env;
 use crate::shell::ShellType;
+use crate::tools::approval::ApprovalOutcome;
+use crate::tools::approval::ApprovalRequest;
+use crate::tools::approval::ApprovalRequestKind;
+use crate::tools::approval::CommandApprovalRequest;
+use crate::tools::approval::request_approval;
 use crate::tools::network_approval::NetworkApprovalMode;
 use crate::tools::network_approval::NetworkApprovalSpec;
 use crate::tools::runtimes::build_sandbox_command;
@@ -25,7 +28,6 @@ use crate::tools::runtimes::maybe_wrap_shell_lc_with_snapshot;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
 use crate::tools::sandboxing::ExecApprovalRequirement;
-use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::SandboxOverride;
 use crate::tools::sandboxing::Sandboxable;
@@ -34,11 +36,9 @@ use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
 use crate::tools::sandboxing::sandbox_override_for_first_attempt;
-use crate::tools::sandboxing::with_cached_approval;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -147,7 +147,7 @@ impl Approvable<ShellRequest> for ShellRuntime {
         &'a mut self,
         req: &'a ShellRequest,
         ctx: ApprovalCtx<'a>,
-    ) -> BoxFuture<'a, ReviewDecision> {
+    ) -> BoxFuture<'a, ApprovalOutcome> {
         let keys = self.approval_keys(req);
         let command = req.command.clone();
         let cwd = req.cwd.clone();
@@ -158,55 +158,47 @@ impl Approvable<ShellRequest> for ShellRuntime {
         let call_id = ctx.call_id.to_string();
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
-            if let Some(review_id) = guardian_review_id {
-                return review_approval_request(
-                    session,
-                    turn,
-                    review_id,
-                    GuardianApprovalRequest::Shell {
-                        id: call_id,
-                        command,
-                        cwd: cwd.clone(),
-                        sandbox_permissions: req.sandbox_permissions,
-                        additional_permissions: req.additional_permissions.clone(),
-                        justification: req.justification.clone(),
-                    },
-                    retry_reason,
-                )
-                .await;
-            }
-            with_cached_approval(&session.services, "shell", keys, move || async move {
-                let available_decisions = None;
-                session
-                    .request_command_approval(
-                        turn,
-                        call_id,
-                        /*approval_id*/ None,
-                        command,
-                        cwd,
-                        reason,
-                        ctx.network_approval_context.clone(),
-                        req.exec_approval_requirement
-                            .proposed_execpolicy_amendment()
-                            .cloned(),
-                        req.additional_permissions.clone(),
-                        available_decisions,
-                    )
-                    .await
-            })
+            let request = ApprovalRequest::new(
+                if ctx.retry_reason.is_some() {
+                    format!("{call_id}:retry")
+                } else {
+                    call_id.clone()
+                },
+                reason,
+                retry_reason,
+                ApprovalRequestKind::Command(CommandApprovalRequest {
+                    id: call_id,
+                    approval_id: None,
+                    source: codex_protocol::approvals::GuardianCommandSource::Shell,
+                    command,
+                    hook_command: req.hook_command.clone(),
+                    cwd,
+                    sandbox_permissions: req.sandbox_permissions,
+                    additional_permissions: req.additional_permissions.clone(),
+                    justification: req.justification.clone(),
+                    network_approval_context: ctx.network_approval_context.clone(),
+                    proposed_execpolicy_amendment: req
+                        .exec_approval_requirement
+                        .proposed_execpolicy_amendment()
+                        .cloned(),
+                    available_decisions: None,
+                    tty: false,
+                }),
+            )
+            .with_session_cache("shell", keys);
+            request_approval(
+                session,
+                turn,
+                guardian_review_id,
+                ctx.evaluate_permission_request_hooks,
+                request,
+            )
             .await
         })
     }
 
     fn exec_approval_requirement(&self, req: &ShellRequest) -> Option<ExecApprovalRequirement> {
         Some(req.exec_approval_requirement.clone())
-    }
-
-    fn permission_request_payload(&self, req: &ShellRequest) -> Option<PermissionRequestPayload> {
-        Some(PermissionRequestPayload::bash(
-            req.hook_command.clone(),
-            req.justification.clone(),
-        ))
     }
 
     fn sandbox_mode_for_first_attempt(&self, req: &ShellRequest) -> SandboxOverride {

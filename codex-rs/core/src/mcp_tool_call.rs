@@ -23,22 +23,21 @@ use crate::guardian::guardian_approval_request_to_json;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
-use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
-use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
 use crate::mcp_tool_approval_templates::render_mcp_tool_approval_template;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
-use crate::tools::hook_names::HookToolName;
-use crate::tools::sandboxing::PermissionRequestPayload;
+use crate::tools::approval::ApprovalRequest;
+use crate::tools::approval::ApprovalRequestKind;
+use crate::tools::approval::McpToolCallApprovalRequest;
+use crate::tools::approval::review_before_user_prompt;
 use codex_analytics::AppInvocation;
 use codex_analytics::InvocationType;
 use codex_analytics::build_track_events_context;
 use codex_config::types::AppToolApproval;
 use codex_features::Feature;
-use codex_hooks::PermissionRequestDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
@@ -1005,55 +1004,79 @@ async fn maybe_request_mcp_tool_approval(
         return Some(McpToolApprovalDecision::Accept);
     }
 
-    match run_permission_request_hooks(
-        sess,
-        turn_context,
-        call_id,
-        PermissionRequestPayload {
-            tool_name: HookToolName::new(hook_tool_name),
-            tool_input: invocation
-                .arguments
-                .clone()
-                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
-        },
-    )
-    .await
-    {
-        Some(PermissionRequestDecision::Allow) => {
-            return Some(McpToolApprovalDecision::Accept);
-        }
-        Some(PermissionRequestDecision::Deny { message }) => {
-            return Some(McpToolApprovalDecision::Decline {
-                message: Some(message),
-            });
-        }
-        None => {}
-    }
-
     let tool_call_mcp_elicitation_enabled = turn_context
         .config
         .features
         .enabled(Feature::ToolCallMcpElicitation);
-
-    if routes_approval_to_guardian(turn_context) {
-        let review_id = new_guardian_review_id();
-        let decision = review_approval_request(
-            sess,
-            turn_context,
-            review_id.clone(),
-            build_guardian_mcp_tool_review_request(call_id, invocation, metadata),
-            monitor_reason.clone(),
-        )
-        .await;
-        let decision = mcp_tool_approval_decision_from_guardian(sess, &review_id, decision).await;
-        apply_mcp_tool_approval_decision(
-            sess,
-            turn_context,
-            &decision,
-            session_approval_key,
-            persistent_approval_key,
-        )
-        .await;
+    let approval_request = ApprovalRequest::new(
+        call_id.to_string(),
+        /*user_reason*/ None,
+        monitor_reason.clone(),
+        ApprovalRequestKind::McpToolCall(McpToolCallApprovalRequest {
+            id: call_id.to_string(),
+            hook_tool_name: hook_tool_name.to_string(),
+            server: invocation.server.clone(),
+            tool_name: invocation.tool.clone(),
+            arguments: invocation.arguments.clone(),
+            connector_id: metadata.and_then(|metadata| metadata.connector_id.clone()),
+            connector_name: metadata.and_then(|metadata| metadata.connector_name.clone()),
+            connector_description: metadata
+                .and_then(|metadata| metadata.connector_description.clone()),
+            tool_title: metadata.and_then(|metadata| metadata.tool_title.clone()),
+            tool_description: metadata.and_then(|metadata| metadata.tool_description.clone()),
+            annotations: metadata
+                .and_then(|metadata| metadata.annotations.as_ref())
+                .map(|annotations| GuardianMcpAnnotations {
+                    destructive_hint: annotations.destructive_hint,
+                    open_world_hint: annotations.open_world_hint,
+                    read_only_hint: annotations.read_only_hint,
+                }),
+        }),
+    );
+    let guardian_review_id = routes_approval_to_guardian(turn_context).then(new_guardian_review_id);
+    if let Some(outcome) = review_before_user_prompt(
+        sess,
+        turn_context,
+        guardian_review_id,
+        /*evaluate_permission_request_hooks*/ true,
+        &approval_request,
+    )
+    .await
+    {
+        let decision = match outcome.source {
+            crate::tools::approval::ApprovalDecisionSource::PermissionRequestHook => {
+                match outcome.decision {
+                    ReviewDecision::Approved
+                    | ReviewDecision::ApprovedExecpolicyAmendment { .. }
+                    | ReviewDecision::ApprovedForSession
+                    | ReviewDecision::NetworkPolicyAmendment { .. } => {
+                        McpToolApprovalDecision::Accept
+                    }
+                    ReviewDecision::Denied | ReviewDecision::TimedOut | ReviewDecision::Abort => {
+                        McpToolApprovalDecision::Decline {
+                            message: outcome.rejection_message,
+                        }
+                    }
+                }
+            }
+            crate::tools::approval::ApprovalDecisionSource::Guardian { review_id } => {
+                let decision =
+                    mcp_tool_approval_decision_from_guardian(sess, &review_id, outcome.decision)
+                        .await;
+                apply_mcp_tool_approval_decision(
+                    sess,
+                    turn_context,
+                    &decision,
+                    session_approval_key,
+                    persistent_approval_key,
+                )
+                .await;
+                decision
+            }
+            crate::tools::approval::ApprovalDecisionSource::User => {
+                unreachable!("review_before_user_prompt never returns user-prompt outcomes")
+            }
+        };
         return Some(decision);
     }
 

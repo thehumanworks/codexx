@@ -1,16 +1,15 @@
-use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
-use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
-use crate::hook_runtime::run_permission_request_hooks;
 use crate::network_policy_decision::denied_network_policy_message;
 use crate::session::session::Session;
-use crate::tools::sandboxing::PermissionRequestPayload;
+use crate::tools::approval::ApprovalRequest;
+use crate::tools::approval::ApprovalRequestKind;
+use crate::tools::approval::NetworkAccessApprovalRequest;
+use crate::tools::approval::request_approval;
 use crate::tools::sandboxing::ToolError;
-use codex_hooks::PermissionRequestDecision;
 use codex_network_proxy::BlockedRequest;
 use codex_network_proxy::BlockedRequestObserver;
 use codex_network_proxy::NetworkDecision;
@@ -460,51 +459,23 @@ impl NetworkApprovalService {
             protocol,
         };
         let guardian_approval_id = Self::approval_id_for_key(&key);
-        let prompt_command = vec!["network-access".to_string(), target.clone()];
-        let command = owner_call
+        let prompt_command = ["network-access".to_string(), target.clone()];
+        let hook_command = owner_call
             .as_ref()
             .map_or_else(|| prompt_command.join(" "), |call| call.command.clone());
-        if let Some(permission_request_decision) = run_permission_request_hooks(
+        let guardian_review_id =
+            routes_approval_to_guardian(&turn_context).then(new_guardian_review_id);
+        let approval_outcome = request_approval(
             &session,
             &turn_context,
-            &guardian_approval_id,
-            PermissionRequestPayload::bash(command, Some(format!("network-access {target}"))),
-        )
-        .await
-        {
-            match permission_request_decision {
-                PermissionRequestDecision::Allow => {
-                    pending
-                        .set_decision(PendingApprovalDecision::AllowOnce)
-                        .await;
-                    let mut pending_approvals = self.pending_host_approvals.lock().await;
-                    pending_approvals.remove(&key);
-                    return NetworkDecision::Allow;
-                }
-                PermissionRequestDecision::Deny { message } => {
-                    if let Some(owner_call) = owner_call.as_ref() {
-                        self.record_call_outcome(
-                            &owner_call.registration_id,
-                            NetworkApprovalOutcome::DeniedByPolicy(message),
-                        )
-                        .await;
-                    }
-                    pending.set_decision(PendingApprovalDecision::Deny).await;
-                    let mut pending_approvals = self.pending_host_approvals.lock().await;
-                    pending_approvals.remove(&key);
-                    return NetworkDecision::deny(REASON_NOT_ALLOWED);
-                }
-            }
-        }
-        let use_guardian = routes_approval_to_guardian(&turn_context);
-        let guardian_review_id = use_guardian.then(new_guardian_review_id);
-        let approval_decision = if let Some(review_id) = guardian_review_id.clone() {
-            review_approval_request(
-                &session,
-                &turn_context,
-                review_id,
-                GuardianApprovalRequest::NetworkAccess {
-                    id: guardian_approval_id.clone(),
+            guardian_review_id,
+            /*evaluate_permission_request_hooks*/ true,
+            ApprovalRequest::new(
+                guardian_approval_id.clone(),
+                Some(prompt_reason),
+                Some(policy_denial_message.clone()),
+                ApprovalRequestKind::NetworkAccess(NetworkAccessApprovalRequest {
+                    id: guardian_approval_id,
                     turn_id: owner_call
                         .as_ref()
                         .map_or_else(|| turn_context.sub_id.clone(), |call| call.turn_id.clone()),
@@ -512,28 +483,31 @@ impl NetworkApprovalService {
                     host: request.host,
                     protocol,
                     port: key.port,
+                    cwd: turn_context.cwd.clone(),
+                    hook_command,
                     trigger: owner_call.as_ref().map(|call| call.trigger.clone()),
-                },
-                Some(policy_denial_message.clone()),
+                }),
+            ),
+        )
+        .await;
+        if let Some(message) = approval_outcome.rejection_message.clone()
+            && let Some(owner_call) = owner_call.as_ref()
+        {
+            self.record_call_outcome(
+                &owner_call.registration_id,
+                NetworkApprovalOutcome::DeniedByPolicy(message),
             )
-            .await
-        } else {
-            let available_decisions = None;
-            session
-                .request_command_approval(
-                    turn_context.as_ref(),
-                    guardian_approval_id,
-                    /*approval_id*/ None,
-                    prompt_command,
-                    turn_context.cwd.clone(),
-                    Some(prompt_reason),
-                    Some(network_approval_context.clone()),
-                    /*proposed_execpolicy_amendment*/ None,
-                    /*additional_permissions*/ None,
-                    available_decisions,
-                )
-                .await
-        };
+            .await;
+        }
+        let rejected_by_hook = matches!(
+            approval_outcome.source,
+            crate::tools::approval::ApprovalDecisionSource::PermissionRequestHook
+        );
+        let guardian_review_id = approval_outcome
+            .source
+            .guardian_review_id()
+            .map(str::to_string);
+        let approval_decision = approval_outcome.decision;
 
         let mut cache_session_deny = false;
         let resolved = match approval_decision {
@@ -614,7 +588,9 @@ impl NetworkApprovalService {
                 }
             },
             ReviewDecision::Denied | ReviewDecision::Abort => {
-                if let Some(review_id) = guardian_review_id.as_deref() {
+                if rejected_by_hook {
+                    // Hook denials were already recorded above with their policy message.
+                } else if let Some(review_id) = guardian_review_id.as_deref() {
                     if let Some(owner_call) = owner_call.as_ref() {
                         let message = guardian_rejection_message(session.as_ref(), review_id).await;
                         self.record_call_outcome(
