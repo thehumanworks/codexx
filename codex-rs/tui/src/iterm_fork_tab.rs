@@ -21,6 +21,7 @@ pub(crate) const ITERM_FORK_HELPER_PYTHON_ENV: &str = "CODEX_ITERM2_HELPER_PYTHO
 const ITERM_FORK_TAB_PYTHON_HELPER: &str = r#"
 import asyncio
 import json
+import shlex
 import sys
 
 def emit(status, **kwargs):
@@ -63,16 +64,16 @@ def tab_index(window, target_tab):
             return index
     return None
 
-async def create_tab_after_source(window, source_tab, fork_command):
+async def create_tab_after_source(window, source_tab):
     index = tab_index(window, source_tab)
     if index is None:
-        return await window.async_create_tab(command=fork_command)
+        return await window.async_create_tab()
 
     try:
-        return await window.async_create_tab(command=fork_command, index=index + 1)
+        return await window.async_create_tab(index=index + 1)
     except Exception as indexed_exc:
         try:
-            return await window.async_create_tab(command=fork_command)
+            return await window.async_create_tab()
         except Exception as fallback_exc:
             raise Exception(
                 "Failed to create iTerm2 tab after source tab "
@@ -95,6 +96,17 @@ def session_exists(app, session_id):
                     return True
     return False
 
+def launch_command_for_session(fork_command, created_session_id, close_tab_on_exit):
+    command = (
+        "/usr/bin/env ITERM_SESSION_ID="
+        + shlex.quote(created_session_id)
+        + " "
+        + fork_command
+    )
+    if close_tab_on_exit:
+        return command + "; exit"
+    return command
+
 async def launch(iterm2_module, connection, payload):
     app = await iterm2_module.async_get_app(connection)
     if app is None:
@@ -115,7 +127,7 @@ async def launch(iterm2_module, connection, payload):
         return {"status": "failed", "reason": "Fork command is missing."}
 
     try:
-        created_tab = await create_tab_after_source(source_window, source_tab, fork_command)
+        created_tab = await create_tab_after_source(source_window, source_tab)
     except Exception as exc:
         return {"status": "failed", "reason": f"Failed to create iTerm2 tab: {exc}"}
 
@@ -132,15 +144,28 @@ async def launch(iterm2_module, connection, payload):
         created_session_id = getattr(current_session, "session_id", None)
     except Exception:
         created_session_id = None
+    if current_session is None or not isinstance(created_session_id, str) or not created_session_id.strip():
+        return {
+            "status": "failed",
+            "reason": "Created tab but could not identify its current iTerm2 session.",
+        }
+
+    try:
+        launch_command = launch_command_for_session(
+            fork_command,
+            created_session_id,
+            payload.get("closeTabOnExit", True),
+        )
+        await current_session.async_send_text(launch_command + "\n")
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "reason": f"Created tab but failed to launch the fork command: {exc}",
+        }
 
     try:
         open_behavior = payload.get("openBehavior", "foreground")
         if open_behavior == "foreground":
-            if current_session is None:
-                return {
-                    "status": "failed",
-                    "reason": "Created tab but could not identify its current session.",
-                }
             await current_session.async_activate(select_tab=True, order_window_front=False)
         elif open_behavior == "background":
             # Restore source focus as soon as the tab exists to minimize visible
@@ -257,8 +282,9 @@ pub(crate) enum ItermForkTabOpenBehavior {
 /// Result of trying to launch an iTerm2 fork tab.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ItermForkTabOutcome {
-    /// The helper created a tab and started the requested command.
-    Launched { created_session_id: Option<String> },
+    /// The helper created a tab, identified its current session, and started
+    /// the requested command in that session.
+    Launched { created_session_id: String },
     /// The environment cannot support this integration right now.
     Unsupported(String),
     /// The integration path was attempted but failed.
@@ -271,19 +297,20 @@ struct PythonHelperRequest {
     source_iterm_session_id: String,
     source_thread_id: String,
     fork_command: String,
+    close_tab_on_exit: bool,
     open_behavior: ItermForkTabOpenBehavior,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 enum PythonHelperResponse {
-    Launched { created_session_id: Option<String> },
+    Launched { created_session_id: String },
     Unsupported { reason: String },
     Failed { reason: String },
 }
 
-/// Join command tokens into a shell-escaped command string for iTerm2's
-/// `async_create_tab(command=...)` API.
+/// Join command tokens into the shell-escaped command string that the helper
+/// sends to the newly created iTerm2 session.
 fn codex_command_text(request: &ItermForkTabRequest) -> Result<String> {
     let codex_invocation = &request.codex_invocation;
     if codex_invocation.is_empty() {
@@ -368,6 +395,7 @@ pub(crate) async fn launch_fork_tab(request: &ItermForkTabRequest) -> Result<Ite
         source_iterm_session_id: request.source_iterm_session_id.clone(),
         source_thread_id: request.source_thread_id.to_string(),
         fork_command: codex_command_text(request)?,
+        close_tab_on_exit: matches!(request.exit_behavior, ItermForkTabExitBehavior::CloseTab),
         open_behavior: request.open_behavior,
     };
     let payload = serde_json::to_string(&helper_request)
@@ -439,6 +467,7 @@ class FakeSession:
     def __init__(self, session_id):
         self.session_id = session_id
         self.activation_calls = []
+        self.sent_texts = []
 
     async def async_activate(self, select_tab=True, order_window_front=False):
         self.activation_calls.append(
@@ -447,6 +476,9 @@ class FakeSession:
                 "order_window_front": order_window_front,
             }}
         )
+
+    async def async_send_text(self, text):
+        self.sent_texts.append(text)
 
 class FakeTab:
     def __init__(self, tab_id, sessions):
@@ -595,10 +627,24 @@ class FakeIterm2Module:
         assert_eq!(
             outcome,
             ItermForkTabOutcome::Launched {
-                created_session_id: Some("w0t1p0".to_string())
+                created_session_id: "w0t1p0".to_string()
             }
         );
         Ok(())
+    }
+
+    #[test]
+    // Verifies: successful helper responses must include the created session id.
+    // Catches: regressions that reintroduce launched outcomes without enough
+    // identity to attach future child state to the correct tab.
+    fn parse_helper_response_rejects_launched_status_without_session_id() {
+        let err = parse_helper_response(br#"{"status":"launched"}"#, b"")
+            .expect_err("missing created session id should fail");
+        let err_chain = format!("{err:#}");
+        assert!(
+            err_chain.contains("created_session_id"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -662,6 +708,7 @@ print(
             "created": window.created,
             "source_activation_calls": source_session.activation_calls,
             "created_activation_calls": created_session.activation_calls,
+            "created_sent_texts": created_session.sent_texts,
         },
         separators=(",", ":"),
     )
@@ -677,7 +724,7 @@ print(
                 },
                 "created": [
                     {
-                        "command": "codex fork thread-1",
+                        "command": null,
                         "index": 1,
                     }
                 ],
@@ -687,6 +734,9 @@ print(
                         "select_tab": true,
                         "order_window_front": false,
                     }
+                ],
+                "created_sent_texts": [
+                    "/usr/bin/env ITERM_SESSION_ID=created-session codex fork thread-1; exit\n",
                 ],
             })
         );
@@ -722,6 +772,7 @@ print(
             "result": result,
             "source_activation_calls": source_session.activation_calls,
             "created_activation_calls": created_session.activation_calls,
+            "created_sent_texts": created_session.sent_texts,
         },
         separators=(",", ":"),
     )
@@ -742,6 +793,9 @@ print(
                     }
                 ],
                 "created_activation_calls": [],
+                "created_sent_texts": [
+                    "/usr/bin/env ITERM_SESSION_ID=created-session codex fork thread-1; exit\n",
+                ],
             })
         );
         Ok(())
@@ -760,7 +814,6 @@ created_tab = asyncio.run(
     namespace["create_tab_after_source"](
         window,
         FakeTab("detached-tab", [FakeSession("detached-session")]),
-        "codex fork thread-1",
     )
 )
 print(
@@ -779,7 +832,7 @@ print(
             json!({
                 "created": [
                     {
-                        "command": "codex fork thread-1",
+                        "command": null,
                         "index": null,
                     }
                 ],
@@ -827,13 +880,63 @@ print(json.dumps({"result": result, "created": window.created}, separators=(",",
                 },
                 "created": [
                     {
-                        "command": "codex fork thread-1",
+                        "command": null,
                         "index": 1,
                     },
                     {
-                        "command": "codex fork thread-1",
+                        "command": null,
                         "index": null,
                     },
+                ],
+            })
+        );
+        Ok(())
+    }
+
+    #[test]
+    // Verifies: keep-open mode launches the fork without exiting the bootstrap shell.
+    // Catches: regressions that preserve tab identity by accidentally converting
+    // return-to-shell launches back into close-tab launches.
+    fn python_helper_keep_open_launch_does_not_exit_bootstrap_shell() -> Result<()> {
+        let value = run_python_helper_test(
+            r#"
+source_session = FakeSession("session-1")
+source_tab = FakeTab("tab-1", [source_session])
+window = FakeWindow([source_tab])
+app = FakeApp([window])
+result = asyncio.run(
+    namespace["launch"](
+        FakeIterm2Module(app),
+        None,
+        {
+            "sourceItermSessionId": "session-1",
+            "sourceThreadId": "thread-1",
+            "forkCommand": "codex fork thread-1",
+            "closeTabOnExit": False,
+        },
+    )
+)
+created_session = window.tabs[1].current_session
+print(
+    json.dumps(
+        {
+            "result": result,
+            "created_sent_texts": created_session.sent_texts,
+        },
+        separators=(",", ":"),
+    )
+)
+"#,
+        )?;
+        assert_eq!(
+            value,
+            json!({
+                "result": {
+                    "status": "launched",
+                    "created_session_id": "created-session",
+                },
+                "created_sent_texts": [
+                    "/usr/bin/env ITERM_SESSION_ID=created-session codex fork thread-1\n",
                 ],
             })
         );
