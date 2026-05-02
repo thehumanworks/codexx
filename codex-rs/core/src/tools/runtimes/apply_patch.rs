@@ -135,20 +135,19 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                 return rx_approve.await.unwrap_or_default();
             }
 
-            with_cached_approval(
-                &session.services,
-                "apply_patch",
-                approval_keys,
-                || async move {
-                    let rx_approve = session
-                        .request_patch_approval(
-                            turn, call_id, changes, /*reason*/ None, /*grant_root*/ None,
-                        )
-                        .await;
-                    rx_approve.await.unwrap_or_default()
-                },
-            )
-            .await
+            let fetch = || async move {
+                let rx_approve = session
+                    .request_patch_approval(
+                        turn, call_id, changes, /*reason*/ None, /*grant_root*/ None,
+                    )
+                    .await;
+                rx_approve.await.unwrap_or_default()
+            };
+            if ctx.bypass_approval_cache {
+                fetch().await
+            } else {
+                with_cached_approval(&session.services, "apply_patch", approval_keys, fetch).await
+            }
         })
     }
 

@@ -16,6 +16,7 @@ use crate::engine::ConfiguredHandler;
 use crate::engine::command_runner::CommandRunResult;
 use crate::engine::dispatcher;
 use crate::engine::output_parser;
+use crate::engine::output_parser::PreToolUsePermissionDecision as ParsedPermissionDecision;
 use crate::schema::PreToolUseCommandInput;
 
 #[derive(Debug, Clone)]
@@ -37,13 +38,25 @@ pub struct PreToolUseOutcome {
     pub hook_events: Vec<HookCompletedEvent>,
     pub should_block: bool,
     pub block_reason: Option<String>,
+    pub permission_decision: Option<PreToolUsePermissionDecision>,
     pub additional_contexts: Vec<String>,
+}
+
+/// Hook-authored approval guidance to apply later at the concrete permission
+/// boundary for the same tool call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PreToolUsePermissionDecision {
+    /// Skip an otherwise-required permission prompt when policy allows it.
+    Allow { reason: Option<String> },
+    /// Require explicit human-user confirmation.
+    Ask { reason: Option<String> },
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct PreToolUseHandlerData {
     should_block: bool,
     block_reason: Option<String>,
+    permission_decision: Option<PreToolUsePermissionDecision>,
     additional_contexts_for_model: Vec<String>,
 }
 
@@ -80,6 +93,7 @@ pub(crate) async fn run(
             hook_events: Vec::new(),
             should_block: false,
             block_reason: None,
+            permission_decision: None,
             additional_contexts: Vec::new(),
         };
     }
@@ -111,6 +125,11 @@ pub(crate) async fn run(
     let block_reason = results
         .iter()
         .find_map(|result| result.data.block_reason.clone());
+    let permission_decision = resolve_permission_decision(
+        results
+            .iter()
+            .filter_map(|result| result.data.permission_decision.as_ref()),
+    );
     let additional_contexts = common::flatten_additional_contexts(
         results
             .iter()
@@ -126,8 +145,31 @@ pub(crate) async fn run(
             .collect(),
         should_block,
         block_reason,
+        permission_decision,
         additional_contexts,
     }
+}
+
+fn resolve_permission_decision<'a>(
+    decisions: impl IntoIterator<Item = &'a PreToolUsePermissionDecision>,
+) -> Option<PreToolUsePermissionDecision> {
+    let mut resolved_allow = None;
+    let mut resolved_ask = None;
+    for decision in decisions {
+        match decision {
+            PreToolUsePermissionDecision::Allow { reason } => {
+                resolved_allow = Some(PreToolUsePermissionDecision::Allow {
+                    reason: reason.clone(),
+                });
+            }
+            PreToolUsePermissionDecision::Ask { reason } => {
+                resolved_ask = Some(PreToolUsePermissionDecision::Ask {
+                    reason: reason.clone(),
+                });
+            }
+        }
+    }
+    resolved_ask.or(resolved_allow)
 }
 
 /// Serializes command stdin for a selected `PreToolUse` hook.
@@ -160,6 +202,7 @@ fn parse_completed(
     let mut status = HookRunStatus::Completed;
     let mut should_block = false;
     let mut block_reason = None;
+    let mut permission_decision = None;
     let mut additional_contexts_for_model = Vec::new();
 
     match run_result.error.as_deref() {
@@ -203,6 +246,29 @@ fn parse_completed(
                                 kind: HookOutputEntryKind::Feedback,
                                 text: reason,
                             });
+                        }
+                        if let Some(parsed_decision) = parsed.permission_decision {
+                            let (decision, reason) = match parsed_decision {
+                                ParsedPermissionDecision::Allow { reason } => (
+                                    PreToolUsePermissionDecision::Allow {
+                                        reason: reason.clone(),
+                                    },
+                                    reason,
+                                ),
+                                ParsedPermissionDecision::Ask { reason } => (
+                                    PreToolUsePermissionDecision::Ask {
+                                        reason: reason.clone(),
+                                    },
+                                    reason,
+                                ),
+                            };
+                            if let Some(reason) = reason {
+                                entries.push(HookOutputEntry {
+                                    kind: HookOutputEntryKind::Feedback,
+                                    text: reason,
+                                });
+                            }
+                            permission_decision = Some(decision);
                         }
                     }
                 } else if trimmed_stdout.starts_with('{') || trimmed_stdout.starts_with('[') {
@@ -257,6 +323,7 @@ fn parse_completed(
         data: PreToolUseHandlerData {
             should_block,
             block_reason,
+            permission_decision,
             additional_contexts_for_model,
         },
     }
@@ -267,6 +334,7 @@ fn serialization_failure_outcome(hook_events: Vec<HookCompletedEvent>) -> PreToo
         hook_events,
         should_block: false,
         block_reason: None,
+        permission_decision: None,
         additional_contexts: Vec::new(),
     }
 }
@@ -283,6 +351,7 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::PreToolUseHandlerData;
+    use super::PreToolUsePermissionDecision;
     use super::command_input_json;
     use super::parse_completed;
     use super::preview;
@@ -319,6 +388,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("do not run that".to_string()),
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
@@ -349,6 +419,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("do not run that".to_string()),
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
@@ -379,6 +450,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("do not run that".to_string()),
+                permission_decision: None,
                 additional_contexts_for_model: vec!["remember this".to_string()],
             }
         );
@@ -399,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_permission_decision_fails_open() {
+    fn permission_decision_ask_is_user_visible_without_model_context() {
         let parsed = parse_completed(
             &handler(),
             run_result(
@@ -415,6 +487,73 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: Some(PreToolUsePermissionDecision::Ask {
+                    reason: Some("please confirm".to_string()),
+                }),
+                additional_contexts_for_model: Vec::new(),
+            }
+        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![HookOutputEntry {
+                kind: HookOutputEntryKind::Feedback,
+                text: "please confirm".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn permission_decision_allow_is_user_visible_without_model_context() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","permissionDecisionReason":"approved by policy"}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(
+            parsed.data,
+            PreToolUseHandlerData {
+                should_block: false,
+                block_reason: None,
+                permission_decision: Some(PreToolUsePermissionDecision::Allow {
+                    reason: Some("approved by policy".to_string()),
+                }),
+                additional_contexts_for_model: Vec::new(),
+            }
+        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![HookOutputEntry {
+                kind: HookOutputEntryKind::Feedback,
+                text: "approved by policy".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn permission_decision_defer_stays_unimplemented() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"defer"}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(
+            parsed.data,
+            PreToolUseHandlerData {
+                should_block: false,
+                block_reason: None,
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
@@ -423,7 +562,7 @@ mod tests {
             parsed.completed.run.entries,
             vec![HookOutputEntry {
                 kind: HookOutputEntryKind::Error,
-                text: "PreToolUse hook returned unsupported permissionDecision:ask".to_string(),
+                text: "PreToolUse hook returned unsupported permissionDecision:defer".to_string(),
             }]
         );
     }
@@ -441,6 +580,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
@@ -471,6 +611,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("do not run that".to_string()),
+                permission_decision: None,
                 additional_contexts_for_model: vec!["nope".to_string()],
             }
         );
@@ -503,6 +644,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
@@ -523,6 +665,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
@@ -549,6 +692,7 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: true,
                 block_reason: Some("blocked by policy".to_string()),
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );

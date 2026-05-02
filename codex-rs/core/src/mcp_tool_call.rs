@@ -39,6 +39,7 @@ use codex_analytics::build_track_events_context;
 use codex_config::types::AppToolApproval;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
@@ -954,20 +955,29 @@ async fn maybe_request_mcp_tool_approval(
     metadata: Option<&McpToolApprovalMetadata>,
     approval_mode: AppToolApproval,
 ) -> Option<McpToolApprovalDecision> {
-    if mcp_permission_prompt_is_auto_approved(
+    let pre_tool_use_permission_decision = turn_context.pre_tool_use_permission_decision(call_id);
+    let pre_tool_use_asks_user = matches!(
+        pre_tool_use_permission_decision.as_ref(),
+        Some(PreToolUsePermissionDecision::Ask { .. })
+    );
+    let pre_tool_use_allows = matches!(
+        pre_tool_use_permission_decision.as_ref(),
+        Some(PreToolUsePermissionDecision::Allow { .. })
+    );
+    let auto_approved_by_permissions = mcp_permission_prompt_is_auto_approved(
         turn_context.approval_policy.value(),
         &turn_context.permission_profile(),
         McpPermissionPromptAutoApproveContext {
             approvals_reviewer: Some(turn_context.config.approvals_reviewer),
             tool_approval_mode: Some(approval_mode),
         },
-    ) {
-        return None;
-    }
+    );
 
     let annotations = metadata.and_then(|metadata| metadata.annotations.as_ref());
     let approval_required = requires_mcp_tool_approval(annotations);
-    if !approval_required && approval_mode != AppToolApproval::Prompt {
+    let approval_required = !auto_approved_by_permissions
+        && (approval_required || approval_mode == AppToolApproval::Prompt);
+    if pre_tool_use_allows || (!approval_required && !pre_tool_use_asks_user) {
         return None;
     }
 
@@ -999,35 +1009,38 @@ async fn maybe_request_mcp_tool_approval(
     let session_approval_key = session_mcp_tool_approval_key(invocation, metadata, approval_mode);
     let persistent_approval_key =
         persistent_mcp_tool_approval_key(invocation, metadata, approval_mode);
-    if let Some(key) = session_approval_key.as_ref()
+    if pre_tool_use_permission_decision.is_none()
+        && let Some(key) = session_approval_key.as_ref()
         && mcp_tool_approval_is_remembered(sess, key).await
     {
         return Some(McpToolApprovalDecision::Accept);
     }
 
-    match run_permission_request_hooks(
-        sess,
-        turn_context,
-        call_id,
-        PermissionRequestPayload {
-            tool_name: HookToolName::new(hook_tool_name),
-            tool_input: invocation
-                .arguments
-                .clone()
-                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
-        },
-    )
-    .await
-    {
-        Some(PermissionRequestDecision::Allow) => {
-            return Some(McpToolApprovalDecision::Accept);
+    if pre_tool_use_permission_decision.is_none() {
+        match run_permission_request_hooks(
+            sess,
+            turn_context,
+            call_id,
+            PermissionRequestPayload {
+                tool_name: HookToolName::new(hook_tool_name),
+                tool_input: invocation
+                    .arguments
+                    .clone()
+                    .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+            },
+        )
+        .await
+        {
+            Some(PermissionRequestDecision::Allow) => {
+                return Some(McpToolApprovalDecision::Accept);
+            }
+            Some(PermissionRequestDecision::Deny { message }) => {
+                return Some(McpToolApprovalDecision::Decline {
+                    message: Some(message),
+                });
+            }
+            None => {}
         }
-        Some(PermissionRequestDecision::Deny { message }) => {
-            return Some(McpToolApprovalDecision::Decline {
-                message: Some(message),
-            });
-        }
-        None => {}
     }
 
     let tool_call_mcp_elicitation_enabled = turn_context
@@ -1035,7 +1048,7 @@ async fn maybe_request_mcp_tool_approval(
         .features
         .enabled(Feature::ToolCallMcpElicitation);
 
-    if routes_approval_to_guardian(turn_context) {
+    if routes_approval_to_guardian(turn_context) && !pre_tool_use_asks_user {
         let review_id = new_guardian_review_id();
         let decision = review_approval_request(
             sess,
@@ -1084,8 +1097,13 @@ async fn maybe_request_mcp_tool_approval(
             .as_ref()
             .map(|rendered_template| rendered_template.question.as_str()),
     );
-    question.question =
-        mcp_tool_approval_question_text(question.question, monitor_reason.as_deref());
+    let prompt_reason = match &pre_tool_use_permission_decision {
+        Some(PreToolUsePermissionDecision::Ask { reason }) => {
+            reason.as_deref().or(monitor_reason.as_deref())
+        }
+        Some(PreToolUsePermissionDecision::Allow { .. }) | None => monitor_reason.as_deref(),
+    };
+    question.question = mcp_tool_approval_question_text(question.question, prompt_reason);
     if tool_call_mcp_elicitation_enabled {
         let request_id = rmcp::model::RequestId::String(
             format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_{call_id}").into(),
@@ -1103,7 +1121,7 @@ async fn maybe_request_mcp_tool_approval(
                 tool_params_display: tool_params_display.as_deref(),
                 question,
                 message_override: rendered_template.as_ref().and_then(|rendered_template| {
-                    monitor_reason
+                    prompt_reason
                         .is_none()
                         .then_some(rendered_template.elicitation_message.as_str())
                 }),

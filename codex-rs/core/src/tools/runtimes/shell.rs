@@ -175,7 +175,7 @@ impl Approvable<ShellRequest> for ShellRuntime {
                 )
                 .await;
             }
-            with_cached_approval(&session.services, "shell", keys, move || async move {
+            let fetch = move || async move {
                 let available_decisions = None;
                 session
                     .request_command_approval(
@@ -193,8 +193,12 @@ impl Approvable<ShellRequest> for ShellRuntime {
                         available_decisions,
                     )
                     .await
-            })
-            .await
+            };
+            if ctx.bypass_approval_cache {
+                fetch().await
+            } else {
+                with_cached_approval(&session.services, "shell", keys, fetch).await
+            }
         })
     }
 
@@ -236,6 +240,9 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
                 tty: None,
             },
             command: req.hook_command.clone(),
+            pre_tool_use_permission_decision: ctx
+                .turn
+                .pre_tool_use_permission_decision(&ctx.call_id),
         })
     }
 

@@ -28,6 +28,7 @@ use codex_execpolicy::Policy;
 use codex_execpolicy::RuleMatch;
 use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
@@ -403,38 +404,61 @@ impl CoreShellActionProvider {
         let call_id = self.call_id.clone();
         let approval_id = Some(Uuid::new_v4().to_string());
         let source = self.tool_name;
-        let guardian_review_id = routes_approval_to_guardian(&turn).then(new_guardian_review_id);
+        let pre_tool_use_permission_decision =
+            self.turn.pre_tool_use_permission_decision(&self.call_id);
+        let pre_tool_use_asks_user = matches!(
+            pre_tool_use_permission_decision.as_ref(),
+            Some(PreToolUsePermissionDecision::Ask { .. })
+        );
+        let pre_tool_use_allows = matches!(
+            pre_tool_use_permission_decision.as_ref(),
+            Some(PreToolUsePermissionDecision::Allow { .. })
+        );
+        let guardian_review_id = (routes_approval_to_guardian(&turn) && !pre_tool_use_asks_user)
+            .then(new_guardian_review_id);
         Ok(stopwatch
             .pause_for(async move {
-                // 1) Run PermissionRequest hooks
-                let permission_request = PermissionRequestPayload::bash(
-                    codex_shell_command::parse_command::shlex_join(&command),
-                    /*description*/ None,
-                );
-                let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
-                match run_permission_request_hooks(
-                    &session,
-                    &turn,
-                    &effective_approval_id,
-                    permission_request,
-                )
-                .await
-                {
-                    Some(PermissionRequestDecision::Allow) => {
-                        return PromptDecision {
-                            decision: ReviewDecision::Approved,
-                            guardian_review_id: None,
-                            rejection_message: None,
-                        };
+                if pre_tool_use_allows {
+                    return PromptDecision {
+                        decision: ReviewDecision::Approved,
+                        guardian_review_id: None,
+                        rejection_message: None,
+                    };
+                }
+
+                // 1) Run PermissionRequest hooks when PreToolUse did not already
+                // provide the approval directive for this tool call.
+                if pre_tool_use_permission_decision.is_none() {
+                    let permission_request = PermissionRequestPayload::bash(
+                        codex_shell_command::parse_command::shlex_join(&command),
+                        /*description*/ None,
+                    );
+                    let effective_approval_id =
+                        approval_id.clone().unwrap_or_else(|| call_id.clone());
+                    match run_permission_request_hooks(
+                        &session,
+                        &turn,
+                        &effective_approval_id,
+                        permission_request,
+                    )
+                    .await
+                    {
+                        Some(PermissionRequestDecision::Allow) => {
+                            return PromptDecision {
+                                decision: ReviewDecision::Approved,
+                                guardian_review_id: None,
+                                rejection_message: None,
+                            };
+                        }
+                        Some(PermissionRequestDecision::Deny { message }) => {
+                            return PromptDecision {
+                                decision: ReviewDecision::Denied,
+                                guardian_review_id: None,
+                                rejection_message: Some(message),
+                            };
+                        }
+                        None => {}
                     }
-                    Some(PermissionRequestDecision::Deny { message }) => {
-                        return PromptDecision {
-                            decision: ReviewDecision::Denied,
-                            guardian_review_id: None,
-                            rejection_message: Some(message),
-                        };
-                    }
-                    None => {}
                 }
 
                 // 2) Route to Guardian if configured
@@ -469,7 +493,10 @@ impl CoreShellActionProvider {
                         approval_id,
                         command,
                         workdir.clone(),
-                        /*reason*/ None,
+                        match pre_tool_use_permission_decision {
+                            Some(PreToolUsePermissionDecision::Ask { reason }) => reason,
+                            Some(PreToolUsePermissionDecision::Allow { .. }) | None => None,
+                        },
                         /*network_approval_context*/ None,
                         /*proposed_execpolicy_amendment*/ None,
                         additional_permissions,

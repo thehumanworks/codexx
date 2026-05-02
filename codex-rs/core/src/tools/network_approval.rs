@@ -11,6 +11,7 @@ use crate::session::session::Session;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::ToolError;
 use codex_hooks::PermissionRequestDecision;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_network_proxy::BlockedRequest;
 use codex_network_proxy::BlockedRequestObserver;
 use codex_network_proxy::NetworkDecision;
@@ -51,6 +52,7 @@ pub(crate) struct NetworkApprovalSpec {
     pub mode: NetworkApprovalMode,
     pub trigger: GuardianNetworkAccessTrigger,
     pub command: String,
+    pub pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
 }
 
 #[derive(Clone, Debug)]
@@ -224,6 +226,7 @@ struct ActiveNetworkApprovalCall {
     turn_id: String,
     trigger: GuardianNetworkAccessTrigger,
     command: String,
+    pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
     cancellation_token: CancellationToken,
 }
 
@@ -267,6 +270,7 @@ impl NetworkApprovalService {
         turn_id: String,
         trigger: GuardianNetworkAccessTrigger,
         command: String,
+        pre_tool_use_permission_decision: Option<codex_hooks::PreToolUsePermissionDecision>,
         cancellation_token: CancellationToken,
     ) {
         let mut calls = self.calls.lock().await;
@@ -278,6 +282,7 @@ impl NetworkApprovalService {
                 turn_id,
                 trigger,
                 command,
+                pre_tool_use_permission_decision,
                 cancellation_token,
             }),
         );
@@ -464,13 +469,25 @@ impl NetworkApprovalService {
         let command = owner_call
             .as_ref()
             .map_or_else(|| prompt_command.join(" "), |call| call.command.clone());
-        if let Some(permission_request_decision) = run_permission_request_hooks(
-            &session,
-            &turn_context,
-            &guardian_approval_id,
-            PermissionRequestPayload::bash(command, Some(format!("network-access {target}"))),
-        )
-        .await
+        let pre_tool_use_permission_decision = owner_call
+            .as_ref()
+            .and_then(|call| call.pre_tool_use_permission_decision.as_ref());
+        let pre_tool_use_asks_user = matches!(
+            pre_tool_use_permission_decision,
+            Some(PreToolUsePermissionDecision::Ask { .. })
+        );
+        let pre_tool_use_allows = matches!(
+            pre_tool_use_permission_decision,
+            Some(PreToolUsePermissionDecision::Allow { .. })
+        );
+        if pre_tool_use_permission_decision.is_none()
+            && let Some(permission_request_decision) = run_permission_request_hooks(
+                &session,
+                &turn_context,
+                &guardian_approval_id,
+                PermissionRequestPayload::bash(command, Some(format!("network-access {target}"))),
+            )
+            .await
         {
             match permission_request_decision {
                 PermissionRequestDecision::Allow => {
@@ -496,8 +513,17 @@ impl NetworkApprovalService {
                 }
             }
         }
-        let use_guardian = routes_approval_to_guardian(&turn_context);
-        let guardian_review_id = use_guardian.then(new_guardian_review_id);
+        if pre_tool_use_allows {
+            pending
+                .set_decision(PendingApprovalDecision::AllowOnce)
+                .await;
+            let mut pending_approvals = self.pending_host_approvals.lock().await;
+            pending_approvals.remove(&key);
+            return NetworkDecision::Allow;
+        }
+        let guardian_review_id = (routes_approval_to_guardian(&turn_context)
+            && !pre_tool_use_asks_user)
+            .then(new_guardian_review_id);
         let approval_decision = if let Some(review_id) = guardian_review_id.clone() {
             review_approval_request(
                 &session,
@@ -526,7 +552,14 @@ impl NetworkApprovalService {
                     /*approval_id*/ None,
                     prompt_command,
                     turn_context.cwd.clone(),
-                    Some(prompt_reason),
+                    match pre_tool_use_permission_decision {
+                        Some(PreToolUsePermissionDecision::Ask { reason }) => {
+                            reason.clone().or(Some(prompt_reason))
+                        }
+                        Some(PreToolUsePermissionDecision::Allow { .. }) | None => {
+                            Some(prompt_reason)
+                        }
+                    },
                     Some(network_approval_context.clone()),
                     /*proposed_execpolicy_amendment*/ None,
                     /*additional_permissions*/ None,
@@ -710,6 +743,7 @@ pub(crate) async fn begin_network_approval(
         mode,
         trigger,
         command,
+        pre_tool_use_permission_decision,
     } = spec?;
     if !managed_network_active || network.is_none() {
         return None;
@@ -725,6 +759,7 @@ pub(crate) async fn begin_network_approval(
             turn_id.to_string(),
             trigger,
             command,
+            pre_tool_use_permission_decision,
             cancellation_token.clone(),
         )
         .await;

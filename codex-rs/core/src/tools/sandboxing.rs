@@ -130,6 +130,7 @@ pub(crate) struct ApprovalCtx<'a> {
     pub guardian_review_id: Option<String>,
     pub retry_reason: Option<String>,
     pub network_approval_context: Option<NetworkApprovalContext>,
+    pub bypass_approval_cache: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

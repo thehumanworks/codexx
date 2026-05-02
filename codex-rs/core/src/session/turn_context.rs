@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::GhostSnapshotConfig;
+use codex_hooks::PreToolUsePermissionDecision;
 use codex_model_provider::SharedModelProvider;
 use codex_model_provider::create_model_provider;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -7,6 +8,8 @@ use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_sandboxing::compatibility_sandbox_policy_for_permission_profile;
 use codex_sandboxing::policy_transforms::effective_file_system_sandbox_policy;
 use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -86,6 +89,8 @@ pub(crate) struct TurnContext {
     pub(crate) tool_call_gate: Arc<ReadinessFlag>,
     pub(crate) truncation_policy: TruncationPolicy,
     pub(crate) dynamic_tools: Vec<DynamicToolSpec>,
+    pub(crate) pre_tool_use_permission_decisions:
+        Arc<StdMutex<HashMap<String, PreToolUsePermissionDecision>>>,
     pub(crate) turn_metadata_state: Arc<TurnMetadataState>,
     pub(crate) turn_skills: TurnSkillsContext,
     pub(crate) turn_timing_state: Arc<TurnTimingState>,
@@ -103,6 +108,28 @@ impl TurnContext {
 
     pub(crate) fn network_sandbox_policy(&self) -> NetworkSandboxPolicy {
         self.permission_profile.network_sandbox_policy()
+    }
+
+    pub(crate) fn record_pre_tool_use_permission_decision(
+        &self,
+        tool_use_id: String,
+        decision: PreToolUsePermissionDecision,
+    ) {
+        self.pre_tool_use_permission_decisions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(tool_use_id, decision);
+    }
+
+    pub(crate) fn pre_tool_use_permission_decision(
+        &self,
+        tool_use_id: &str,
+    ) -> Option<PreToolUsePermissionDecision> {
+        self.pre_tool_use_permission_decisions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(tool_use_id)
+            .cloned()
     }
 
     pub(crate) fn primary_environment(&self) -> Option<&TurnEnvironment> {
@@ -257,6 +284,7 @@ impl TurnContext {
             tool_call_gate: Arc::new(ReadinessFlag::new()),
             truncation_policy,
             dynamic_tools: self.dynamic_tools.clone(),
+            pre_tool_use_permission_decisions: self.pre_tool_use_permission_decisions.clone(),
             turn_metadata_state: self.turn_metadata_state.clone(),
             turn_skills: self.turn_skills.clone(),
             turn_timing_state: Arc::clone(&self.turn_timing_state),
@@ -547,6 +575,7 @@ impl Session {
             tool_call_gate: Arc::new(ReadinessFlag::new()),
             truncation_policy: model_info.truncation_policy.into(),
             dynamic_tools: session_configuration.dynamic_tools.clone(),
+            pre_tool_use_permission_decisions: Arc::new(StdMutex::new(HashMap::new())),
             turn_metadata_state,
             turn_skills: TurnSkillsContext::new(skills_outcome),
             turn_timing_state: Arc::new(TurnTimingState::default()),

@@ -52,12 +52,29 @@
       "type": "object"
     },
     "PreToolUsePermissionDecisionWire": {
-      "enum": [
-        "allow",
-        "deny",
-        "ask"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "allow",
+            "deny"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Always requests explicit human-user confirmation.",
+          "enum": [
+            "ask"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Reserved for the Codex exec integration.\n\nCodex does not implement this decision yet.",
+          "enum": [
+            "defer"
+          ],
+          "type": "string"
+        }
+      ]
     }
   },
   "properties": {

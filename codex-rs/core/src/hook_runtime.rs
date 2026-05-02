@@ -150,7 +150,7 @@ pub(crate) async fn run_pre_tool_use_hooks(
         permission_mode: hook_permission_mode(turn_context),
         tool_name: tool_name.name().to_string(),
         matcher_aliases: tool_name.matcher_aliases().to_vec(),
-        tool_use_id,
+        tool_use_id: tool_use_id.clone(),
         tool_input: tool_input.clone(),
     };
     let hooks = sess.hooks();
@@ -162,9 +162,13 @@ pub(crate) async fn run_pre_tool_use_hooks(
         should_block,
         block_reason,
         additional_contexts,
+        permission_decision,
     } = hooks.run_pre_tool_use(request).await;
     emit_hook_completed_events(sess, turn_context, hook_events).await;
     record_additional_contexts(sess, turn_context, additional_contexts).await;
+    if let Some(permission_decision) = permission_decision {
+        turn_context.record_pre_tool_use_permission_decision(tool_use_id, permission_decision);
+    }
 
     if should_block {
         block_reason.map(|reason| {

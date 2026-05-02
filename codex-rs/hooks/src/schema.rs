@@ -198,8 +198,14 @@ pub(crate) enum PreToolUsePermissionDecisionWire {
     Allow,
     #[serde(rename = "deny")]
     Deny,
+    /// Always requests explicit human-user confirmation.
     #[serde(rename = "ask")]
     Ask,
+    /// Reserved for the Codex exec integration.
+    ///
+    /// Codex does not implement this decision yet.
+    #[serde(rename = "defer")]
+    Defer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
