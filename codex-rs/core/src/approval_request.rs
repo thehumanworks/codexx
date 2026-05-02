@@ -20,8 +20,8 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::GUARDIAN_MAX_ACTION_STRING_TOKENS;
-use super::prompt::guardian_truncate_text;
+use crate::guardian::GUARDIAN_MAX_ACTION_STRING_TOKENS;
+use crate::guardian::guardian_truncate_text;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::PermissionRequestPayload;
 
@@ -31,7 +31,15 @@ use crate::tools::sandboxing::PermissionRequestPayload;
 /// guardian review, approval hooks, and user-prompt transports deriving their
 /// own projections from it.
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum GuardianApprovalRequest {
+pub(crate) enum ApprovalRequest {
+    Command(CommandApprovalRequest),
+    ApplyPatch(ApplyPatchApprovalRequest),
+    McpToolCall(McpToolCallApprovalRequest),
+    RequestPermissions(RequestPermissionsApprovalRequest),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum CommandApprovalRequest {
     Shell {
         id: String,
         command: Vec<String>,
@@ -60,47 +68,65 @@ pub(crate) enum GuardianApprovalRequest {
         cwd: AbsolutePathBuf,
         additional_permissions: Option<AdditionalPermissionProfile>,
     },
-    ApplyPatch {
-        id: String,
-        cwd: AbsolutePathBuf,
-        files: Vec<AbsolutePathBuf>,
-        changes: HashMap<PathBuf, FileChange>,
-        patch: String,
-    },
     NetworkAccess {
         id: String,
         turn_id: String,
         target: String,
         hook_command: String,
+        cwd: AbsolutePathBuf,
         host: String,
         protocol: NetworkApprovalProtocol,
         port: u16,
         trigger: Option<GuardianNetworkAccessTrigger>,
     },
-    McpToolCall {
-        id: String,
-        server: String,
-        tool_name: String,
-        hook_tool_name: String,
-        arguments: Option<Value>,
-        connector_id: Option<String>,
-        connector_name: Option<String>,
-        connector_description: Option<String>,
-        tool_title: Option<String>,
-        tool_description: Option<String>,
-        annotations: Option<GuardianMcpAnnotations>,
-    },
-    RequestPermissions {
-        id: String,
-        turn_id: String,
-        reason: Option<String>,
-        permissions: RequestPermissionProfile,
-        cwd: AbsolutePathBuf,
-    },
 }
 
-impl GuardianApprovalRequest {
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ApplyPatchApprovalRequest {
+    pub(crate) id: String,
+    pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) files: Vec<AbsolutePathBuf>,
+    pub(crate) changes: HashMap<PathBuf, FileChange>,
+    pub(crate) patch: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct McpToolCallApprovalRequest {
+    pub(crate) id: String,
+    pub(crate) server: String,
+    pub(crate) tool_name: String,
+    pub(crate) hook_tool_name: String,
+    pub(crate) arguments: Option<Value>,
+    pub(crate) connector_id: Option<String>,
+    pub(crate) connector_name: Option<String>,
+    pub(crate) connector_description: Option<String>,
+    pub(crate) tool_title: Option<String>,
+    pub(crate) tool_description: Option<String>,
+    pub(crate) annotations: Option<GuardianMcpAnnotations>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct RequestPermissionsApprovalRequest {
+    pub(crate) id: String,
+    pub(crate) turn_id: String,
+    pub(crate) reason: Option<String>,
+    pub(crate) permissions: RequestPermissionProfile,
+    pub(crate) cwd: AbsolutePathBuf,
+}
+
+impl ApprovalRequest {
     pub(crate) fn permission_request_payload(&self) -> Option<PermissionRequestPayload> {
+        match self {
+            Self::Command(request) => Some(request.permission_request_payload()),
+            Self::ApplyPatch(request) => Some(request.permission_request_payload()),
+            Self::McpToolCall(request) => Some(request.permission_request_payload()),
+            Self::RequestPermissions(_) => None,
+        }
+    }
+}
+
+impl CommandApprovalRequest {
+    pub(crate) fn permission_request_payload(&self) -> PermissionRequestPayload {
         match self {
             Self::Shell {
                 hook_command,
@@ -111,44 +137,26 @@ impl GuardianApprovalRequest {
                 hook_command,
                 justification,
                 ..
-            } => Some(PermissionRequestPayload::bash(
-                hook_command.clone(),
-                justification.clone(),
-            )),
+            } => PermissionRequestPayload::bash(hook_command.clone(), justification.clone()),
             #[cfg(unix)]
             Self::Execve { program, argv, .. } => {
                 let mut command = vec![program.clone()];
                 if argv.len() > 1 {
                     command.extend_from_slice(&argv[1..]);
                 }
-                Some(PermissionRequestPayload::bash(
+                PermissionRequestPayload::bash(
                     codex_shell_command::parse_command::shlex_join(&command),
                     /*description*/ None,
-                ))
+                )
             }
-            Self::ApplyPatch { patch, .. } => Some(PermissionRequestPayload {
-                tool_name: HookToolName::apply_patch(),
-                tool_input: serde_json::json!({ "command": patch }),
-            }),
             Self::NetworkAccess {
                 target,
                 hook_command,
                 ..
-            } => Some(PermissionRequestPayload::bash(
+            } => PermissionRequestPayload::bash(
                 hook_command.clone(),
                 Some(format!("network-access {target}")),
-            )),
-            Self::McpToolCall {
-                hook_tool_name,
-                arguments,
-                ..
-            } => Some(PermissionRequestPayload {
-                tool_name: HookToolName::new(hook_tool_name.clone()),
-                tool_input: arguments
-                    .clone()
-                    .unwrap_or_else(|| Value::Object(serde_json::Map::new())),
-            }),
-            Self::RequestPermissions { .. } => None,
+            ),
         }
     }
 
@@ -162,8 +170,7 @@ impl GuardianApprovalRequest {
         proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
         proposed_network_policy_amendments: Option<Vec<NetworkPolicyAmendment>>,
         available_decisions: Option<Vec<ReviewDecision>>,
-        fallback_cwd: Option<AbsolutePathBuf>,
-    ) -> Option<ExecApprovalRequestEvent> {
+    ) -> ExecApprovalRequestEvent {
         match self {
             Self::Shell {
                 id,
@@ -178,7 +185,7 @@ impl GuardianApprovalRequest {
                 cwd,
                 additional_permissions,
                 ..
-            } => Some(ExecApprovalRequestEvent {
+            } => ExecApprovalRequestEvent {
                 call_id: id.clone(),
                 approval_id,
                 turn_id,
@@ -191,7 +198,7 @@ impl GuardianApprovalRequest {
                 additional_permissions: additional_permissions.clone(),
                 available_decisions,
                 parsed_cmd: codex_shell_command::parse_command::parse_command(command),
-            }),
+            },
             #[cfg(unix)]
             Self::Execve {
                 id,
@@ -199,7 +206,7 @@ impl GuardianApprovalRequest {
                 cwd,
                 additional_permissions,
                 ..
-            } => Some(ExecApprovalRequestEvent {
+            } => ExecApprovalRequestEvent {
                 call_id: id.clone(),
                 approval_id,
                 turn_id,
@@ -212,17 +219,17 @@ impl GuardianApprovalRequest {
                 additional_permissions: additional_permissions.clone(),
                 available_decisions,
                 parsed_cmd: codex_shell_command::parse_command::parse_command(argv),
-            }),
+            },
             Self::NetworkAccess {
                 id,
                 turn_id,
                 target,
+                cwd,
                 host,
                 protocol,
                 ..
             } => {
                 let command = vec!["network-access".to_string(), target.clone()];
-                let cwd = fallback_cwd?;
                 let network_approval_context = Some(NetworkApprovalContext {
                     host: host.clone(),
                     protocol: *protocol,
@@ -240,12 +247,12 @@ impl GuardianApprovalRequest {
                             },
                         ])
                     });
-                Some(ExecApprovalRequestEvent {
+                ExecApprovalRequestEvent {
                     call_id: id.clone(),
                     approval_id,
                     turn_id: turn_id.clone(),
                     command: command.clone(),
-                    cwd,
+                    cwd: cwd.clone(),
                     reason,
                     network_approval_context,
                     proposed_execpolicy_amendment: None,
@@ -253,11 +260,17 @@ impl GuardianApprovalRequest {
                     additional_permissions: None,
                     available_decisions,
                     parsed_cmd: codex_shell_command::parse_command::parse_command(&command),
-                })
+                }
             }
-            Self::ApplyPatch { .. }
-            | Self::McpToolCall { .. }
-            | Self::RequestPermissions { .. } => None,
+        }
+    }
+}
+
+impl ApplyPatchApprovalRequest {
+    pub(crate) fn permission_request_payload(&self) -> PermissionRequestPayload {
+        PermissionRequestPayload {
+            tool_name: HookToolName::apply_patch(),
+            tool_input: serde_json::json!({ "command": self.patch }),
         }
     }
 
@@ -266,48 +279,62 @@ impl GuardianApprovalRequest {
         turn_id: String,
         reason: Option<String>,
         grant_root: Option<PathBuf>,
-    ) -> Option<ApplyPatchApprovalRequestEvent> {
-        match self {
-            Self::ApplyPatch { id, changes, .. } => Some(ApplyPatchApprovalRequestEvent {
-                call_id: id.clone(),
-                turn_id,
-                changes: changes.clone(),
-                reason,
-                grant_root,
-            }),
-            Self::Shell { .. }
-            | Self::ExecCommand { .. }
-            | Self::NetworkAccess { .. }
-            | Self::McpToolCall { .. }
-            | Self::RequestPermissions { .. } => None,
-            #[cfg(unix)]
-            Self::Execve { .. } => None,
+    ) -> ApplyPatchApprovalRequestEvent {
+        ApplyPatchApprovalRequestEvent {
+            call_id: self.id.clone(),
+            turn_id,
+            changes: self.changes.clone(),
+            reason,
+            grant_root,
         }
     }
+}
 
-    pub(crate) fn request_permissions_event(&self) -> Option<RequestPermissionsEvent> {
-        match self {
-            Self::RequestPermissions {
-                id,
-                turn_id,
-                reason,
-                permissions,
-                cwd,
-            } => Some(RequestPermissionsEvent {
-                call_id: id.clone(),
-                turn_id: turn_id.clone(),
-                reason: reason.clone(),
-                permissions: permissions.clone(),
-                cwd: Some(cwd.clone()),
-            }),
-            Self::Shell { .. }
-            | Self::ExecCommand { .. }
-            | Self::ApplyPatch { .. }
-            | Self::NetworkAccess { .. }
-            | Self::McpToolCall { .. } => None,
-            #[cfg(unix)]
-            Self::Execve { .. } => None,
+impl McpToolCallApprovalRequest {
+    pub(crate) fn permission_request_payload(&self) -> PermissionRequestPayload {
+        PermissionRequestPayload {
+            tool_name: HookToolName::new(self.hook_tool_name.clone()),
+            tool_input: self
+                .arguments
+                .clone()
+                .unwrap_or_else(|| Value::Object(serde_json::Map::new())),
         }
+    }
+}
+
+impl RequestPermissionsApprovalRequest {
+    pub(crate) fn request_permissions_event(&self) -> RequestPermissionsEvent {
+        RequestPermissionsEvent {
+            call_id: self.id.clone(),
+            turn_id: self.turn_id.clone(),
+            reason: self.reason.clone(),
+            permissions: self.permissions.clone(),
+            cwd: Some(self.cwd.clone()),
+        }
+    }
+}
+
+impl From<CommandApprovalRequest> for ApprovalRequest {
+    fn from(value: CommandApprovalRequest) -> Self {
+        Self::Command(value)
+    }
+}
+
+impl From<ApplyPatchApprovalRequest> for ApprovalRequest {
+    fn from(value: ApplyPatchApprovalRequest) -> Self {
+        Self::ApplyPatch(value)
+    }
+}
+
+impl From<McpToolCallApprovalRequest> for ApprovalRequest {
+    fn from(value: McpToolCallApprovalRequest) -> Self {
+        Self::McpToolCall(value)
+    }
+}
+
+impl From<RequestPermissionsApprovalRequest> for ApprovalRequest {
+    fn from(value: RequestPermissionsApprovalRequest) -> Self {
+        Self::RequestPermissions(value)
     }
 }
 
@@ -492,10 +519,10 @@ pub(crate) struct FormattedGuardianAction {
 }
 
 pub(crate) fn guardian_approval_request_to_json(
-    action: &GuardianApprovalRequest,
+    action: &ApprovalRequest,
 ) -> serde_json::Result<Value> {
     match action {
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Command(CommandApprovalRequest::Shell {
             id: _,
             command,
             cwd,
@@ -503,7 +530,7 @@ pub(crate) fn guardian_approval_request_to_json(
             additional_permissions,
             justification,
             ..
-        } => serialize_command_guardian_action(
+        }) => serialize_command_guardian_action(
             "shell",
             command,
             cwd,
@@ -512,7 +539,7 @@ pub(crate) fn guardian_approval_request_to_json(
             justification.as_ref(),
             /*tty*/ None,
         ),
-        GuardianApprovalRequest::ExecCommand {
+        ApprovalRequest::Command(CommandApprovalRequest::ExecCommand {
             id: _,
             command,
             cwd,
@@ -521,7 +548,7 @@ pub(crate) fn guardian_approval_request_to_json(
             justification,
             tty,
             ..
-        } => serialize_command_guardian_action(
+        }) => serialize_command_guardian_action(
             "exec_command",
             command,
             cwd,
@@ -531,33 +558,33 @@ pub(crate) fn guardian_approval_request_to_json(
             Some(*tty),
         ),
         #[cfg(unix)]
-        GuardianApprovalRequest::Execve {
+        ApprovalRequest::Command(CommandApprovalRequest::Execve {
             id: _,
             source,
             program,
             argv,
             cwd,
             additional_permissions,
-        } => serialize_guardian_action(ExecveApprovalAction {
+        }) => serialize_guardian_action(ExecveApprovalAction {
             tool: guardian_command_source_tool_name(*source),
             program,
             argv,
             cwd,
             additional_permissions: additional_permissions.as_ref(),
         }),
-        GuardianApprovalRequest::ApplyPatch {
+        ApprovalRequest::ApplyPatch(ApplyPatchApprovalRequest {
             id: _,
             cwd,
             files,
             changes: _,
             patch,
-        } => Ok(serde_json::json!({
+        }) => Ok(serde_json::json!({
             "tool": "apply_patch",
             "cwd": cwd,
             "files": files,
             "patch": patch,
         })),
-        GuardianApprovalRequest::NetworkAccess {
+        ApprovalRequest::Command(CommandApprovalRequest::NetworkAccess {
             id: _,
             turn_id: _,
             target,
@@ -566,7 +593,7 @@ pub(crate) fn guardian_approval_request_to_json(
             port,
             trigger,
             ..
-        } => serialize_guardian_action(NetworkAccessApprovalAction {
+        }) => serialize_guardian_action(NetworkAccessApprovalAction {
             tool: "network_access",
             target,
             host,
@@ -574,7 +601,7 @@ pub(crate) fn guardian_approval_request_to_json(
             port: *port,
             trigger: trigger.as_ref(),
         }),
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
             id: _,
             server,
             tool_name,
@@ -586,7 +613,7 @@ pub(crate) fn guardian_approval_request_to_json(
             tool_description,
             annotations,
             ..
-        } => serialize_guardian_action(McpToolCallApprovalAction {
+        }) => serialize_guardian_action(McpToolCallApprovalAction {
             tool: "mcp_tool_call",
             server,
             tool_name,
@@ -598,13 +625,13 @@ pub(crate) fn guardian_approval_request_to_json(
             tool_description: tool_description.as_ref(),
             annotations: annotations.as_ref(),
         }),
-        GuardianApprovalRequest::RequestPermissions {
+        ApprovalRequest::RequestPermissions(RequestPermissionsApprovalRequest {
             id: _,
             turn_id,
             reason,
             permissions,
             ..
-        } => serialize_guardian_action(RequestPermissionsApprovalAction {
+        }) => serialize_guardian_action(RequestPermissionsApprovalAction {
             tool: "request_permissions",
             turn_id,
             reason: reason.as_ref(),
@@ -613,36 +640,34 @@ pub(crate) fn guardian_approval_request_to_json(
     }
 }
 
-pub(crate) fn guardian_assessment_action(
-    action: &GuardianApprovalRequest,
-) -> GuardianAssessmentAction {
+pub(crate) fn guardian_assessment_action(action: &ApprovalRequest) -> GuardianAssessmentAction {
     match action {
-        GuardianApprovalRequest::Shell { command, cwd, .. } => {
+        ApprovalRequest::Command(CommandApprovalRequest::Shell { command, cwd, .. }) => {
             command_assessment_action(GuardianCommandSource::Shell, command, cwd)
         }
-        GuardianApprovalRequest::ExecCommand { command, cwd, .. } => {
+        ApprovalRequest::Command(CommandApprovalRequest::ExecCommand { command, cwd, .. }) => {
             command_assessment_action(GuardianCommandSource::UnifiedExec, command, cwd)
         }
         #[cfg(unix)]
-        GuardianApprovalRequest::Execve {
+        ApprovalRequest::Command(CommandApprovalRequest::Execve {
             source,
             program,
             argv,
             cwd,
             ..
-        } => GuardianAssessmentAction::Execve {
+        }) => GuardianAssessmentAction::Execve {
             source: *source,
             program: program.clone(),
             argv: argv.clone(),
             cwd: cwd.clone(),
         },
-        GuardianApprovalRequest::ApplyPatch { cwd, files, .. } => {
+        ApprovalRequest::ApplyPatch(ApplyPatchApprovalRequest { cwd, files, .. }) => {
             GuardianAssessmentAction::ApplyPatch {
                 cwd: cwd.clone(),
                 files: files.clone(),
             }
         }
-        GuardianApprovalRequest::NetworkAccess {
+        ApprovalRequest::Command(CommandApprovalRequest::NetworkAccess {
             id: _id,
             turn_id: _turn_id,
             target,
@@ -651,128 +676,128 @@ pub(crate) fn guardian_assessment_action(
             port,
             trigger: _trigger,
             ..
-        } => GuardianAssessmentAction::NetworkAccess {
+        }) => GuardianAssessmentAction::NetworkAccess {
             target: target.clone(),
             host: host.clone(),
             protocol: *protocol,
             port: *port,
         },
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
             server,
             tool_name,
             connector_id,
             connector_name,
             tool_title,
             ..
-        } => GuardianAssessmentAction::McpToolCall {
+        }) => GuardianAssessmentAction::McpToolCall {
             server: server.clone(),
             tool_name: tool_name.clone(),
             connector_id: connector_id.clone(),
             connector_name: connector_name.clone(),
             tool_title: tool_title.clone(),
         },
-        GuardianApprovalRequest::RequestPermissions {
+        ApprovalRequest::RequestPermissions(RequestPermissionsApprovalRequest {
             reason,
             permissions,
             ..
-        } => GuardianAssessmentAction::RequestPermissions {
+        }) => GuardianAssessmentAction::RequestPermissions {
             reason: reason.clone(),
             permissions: permissions.clone(),
         },
     }
 }
 
-pub(crate) fn guardian_reviewed_action(
-    request: &GuardianApprovalRequest,
-) -> GuardianReviewedAction {
+pub(crate) fn guardian_reviewed_action(request: &ApprovalRequest) -> GuardianReviewedAction {
     match request {
-        GuardianApprovalRequest::Shell {
+        ApprovalRequest::Command(CommandApprovalRequest::Shell {
             sandbox_permissions,
             additional_permissions,
             ..
-        } => GuardianReviewedAction::Shell {
+        }) => GuardianReviewedAction::Shell {
             sandbox_permissions: *sandbox_permissions,
             additional_permissions: additional_permissions.clone(),
         },
-        GuardianApprovalRequest::ExecCommand {
+        ApprovalRequest::Command(CommandApprovalRequest::ExecCommand {
             sandbox_permissions,
             additional_permissions,
             tty,
             ..
-        } => GuardianReviewedAction::UnifiedExec {
+        }) => GuardianReviewedAction::UnifiedExec {
             sandbox_permissions: *sandbox_permissions,
             additional_permissions: additional_permissions.clone(),
             tty: *tty,
         },
         #[cfg(unix)]
-        GuardianApprovalRequest::Execve {
+        ApprovalRequest::Command(CommandApprovalRequest::Execve {
             source,
             program,
             additional_permissions,
             ..
-        } => GuardianReviewedAction::Execve {
+        }) => GuardianReviewedAction::Execve {
             source: *source,
             program: program.clone(),
             additional_permissions: additional_permissions.clone(),
         },
-        GuardianApprovalRequest::ApplyPatch { .. } => GuardianReviewedAction::ApplyPatch {},
-        GuardianApprovalRequest::NetworkAccess { protocol, port, .. } => {
-            GuardianReviewedAction::NetworkAccess {
-                protocol: *protocol,
-                port: *port,
-            }
-        }
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::ApplyPatch(..) => GuardianReviewedAction::ApplyPatch {},
+        ApprovalRequest::Command(CommandApprovalRequest::NetworkAccess {
+            protocol, port, ..
+        }) => GuardianReviewedAction::NetworkAccess {
+            protocol: *protocol,
+            port: *port,
+        },
+        ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
             server,
             tool_name,
             connector_id,
             connector_name,
             tool_title,
             ..
-        } => GuardianReviewedAction::McpToolCall {
+        }) => GuardianReviewedAction::McpToolCall {
             server: server.clone(),
             tool_name: tool_name.clone(),
             connector_id: connector_id.clone(),
             connector_name: connector_name.clone(),
             tool_title: tool_title.clone(),
         },
-        GuardianApprovalRequest::RequestPermissions { .. } => {
-            GuardianReviewedAction::RequestPermissions {}
-        }
+        ApprovalRequest::RequestPermissions(..) => GuardianReviewedAction::RequestPermissions {},
     }
 }
 
-pub(crate) fn guardian_request_target_item_id(request: &GuardianApprovalRequest) -> Option<&str> {
+pub(crate) fn guardian_request_target_item_id(request: &ApprovalRequest) -> Option<&str> {
     match request {
-        GuardianApprovalRequest::Shell { id, .. }
-        | GuardianApprovalRequest::ExecCommand { id, .. }
-        | GuardianApprovalRequest::ApplyPatch { id, .. }
-        | GuardianApprovalRequest::McpToolCall { id, .. }
-        | GuardianApprovalRequest::RequestPermissions { id, .. } => Some(id),
-        GuardianApprovalRequest::NetworkAccess { .. } => None,
+        ApprovalRequest::Command(CommandApprovalRequest::Shell { id, .. })
+        | ApprovalRequest::Command(CommandApprovalRequest::ExecCommand { id, .. })
+        | ApprovalRequest::ApplyPatch(ApplyPatchApprovalRequest { id, .. })
+        | ApprovalRequest::McpToolCall(McpToolCallApprovalRequest { id, .. })
+        | ApprovalRequest::RequestPermissions(RequestPermissionsApprovalRequest { id, .. }) => {
+            Some(id)
+        }
+        ApprovalRequest::Command(CommandApprovalRequest::NetworkAccess { .. }) => None,
         #[cfg(unix)]
-        GuardianApprovalRequest::Execve { id, .. } => Some(id),
+        ApprovalRequest::Command(CommandApprovalRequest::Execve { id, .. }) => Some(id),
     }
 }
 
 pub(crate) fn guardian_request_turn_id<'a>(
-    request: &'a GuardianApprovalRequest,
+    request: &'a ApprovalRequest,
     default_turn_id: &'a str,
 ) -> &'a str {
     match request {
-        GuardianApprovalRequest::NetworkAccess { turn_id, .. }
-        | GuardianApprovalRequest::RequestPermissions { turn_id, .. } => turn_id,
-        GuardianApprovalRequest::Shell { .. }
-        | GuardianApprovalRequest::ExecCommand { .. }
-        | GuardianApprovalRequest::ApplyPatch { .. }
-        | GuardianApprovalRequest::McpToolCall { .. } => default_turn_id,
+        ApprovalRequest::Command(CommandApprovalRequest::NetworkAccess { turn_id, .. })
+        | ApprovalRequest::RequestPermissions(RequestPermissionsApprovalRequest {
+            turn_id, ..
+        }) => turn_id,
+        ApprovalRequest::Command(CommandApprovalRequest::Shell { .. })
+        | ApprovalRequest::Command(CommandApprovalRequest::ExecCommand { .. })
+        | ApprovalRequest::ApplyPatch(..)
+        | ApprovalRequest::McpToolCall(..) => default_turn_id,
         #[cfg(unix)]
-        GuardianApprovalRequest::Execve { .. } => default_turn_id,
+        ApprovalRequest::Command(CommandApprovalRequest::Execve { .. }) => default_turn_id,
     }
 }
 
 pub(crate) fn format_guardian_action_pretty(
-    action: &GuardianApprovalRequest,
+    action: &ApprovalRequest,
 ) -> serde_json::Result<FormattedGuardianAction> {
     let value = guardian_approval_request_to_json(action)?;
     let (value, truncated) = truncate_guardian_action_value(value);
@@ -792,7 +817,7 @@ mod tests {
 
     #[test]
     fn exec_approval_event_is_projected_from_shell_request() {
-        let request = GuardianApprovalRequest::Shell {
+        let request = CommandApprovalRequest::Shell {
             id: "call-1".to_string(),
             command: vec!["echo".to_string(), "hi".to_string()],
             hook_command: "echo hi".to_string(),
@@ -802,18 +827,15 @@ mod tests {
             justification: Some("because".to_string()),
         };
 
-        let event = request
-            .exec_approval_event(
-                "turn-1".to_string(),
-                Some("approval-1".to_string()),
-                Some("retry".to_string()),
-                /*network_approval_context*/ None,
-                /*proposed_execpolicy_amendment*/ None,
-                /*proposed_network_policy_amendments*/ None,
-                Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
-                /*fallback_cwd*/ None,
-            )
-            .expect("exec approval event");
+        let event = request.exec_approval_event(
+            "turn-1".to_string(),
+            Some("approval-1".to_string()),
+            Some("retry".to_string()),
+            /*network_approval_context*/ None,
+            /*proposed_execpolicy_amendment*/ None,
+            /*proposed_network_policy_amendments*/ None,
+            Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
+        );
 
         assert_eq!(event.call_id, "call-1");
         assert_eq!(event.approval_id.as_deref(), Some("approval-1"));
@@ -830,7 +852,7 @@ mod tests {
     fn apply_patch_approval_event_is_projected_from_request() {
         let path = test_path_buf("/tmp/file.txt");
         let abs_path = path.abs();
-        let request = GuardianApprovalRequest::ApplyPatch {
+        let request = ApplyPatchApprovalRequest {
             id: "call-1".to_string(),
             cwd: test_path_buf("/tmp").abs(),
             files: vec![abs_path],
@@ -843,13 +865,11 @@ mod tests {
             patch: "*** Begin Patch".to_string(),
         };
 
-        let event = request
-            .apply_patch_approval_event(
-                "turn-1".to_string(),
-                Some("needs write".to_string()),
-                /*grant_root*/ None,
-            )
-            .expect("apply_patch approval event");
+        let event = request.apply_patch_approval_event(
+            "turn-1".to_string(),
+            Some("needs write".to_string()),
+            /*grant_root*/ None,
+        );
 
         assert_eq!(event.call_id, "call-1");
         assert_eq!(event.turn_id, "turn-1");
@@ -867,7 +887,7 @@ mod tests {
 
     #[test]
     fn request_permissions_event_is_projected_from_request() {
-        let request = GuardianApprovalRequest::RequestPermissions {
+        let request = RequestPermissionsApprovalRequest {
             id: "call-1".to_string(),
             turn_id: "turn-1".to_string(),
             reason: Some("need outbound network".to_string()),
@@ -880,9 +900,7 @@ mod tests {
             cwd: test_path_buf("/tmp").abs(),
         };
 
-        let event = request
-            .request_permissions_event()
-            .expect("request_permissions event");
+        let event = request.request_permissions_event();
 
         assert_eq!(event.call_id, "call-1");
         assert_eq!(event.turn_id, "turn-1");
@@ -901,29 +919,27 @@ mod tests {
 
     #[test]
     fn network_exec_approval_event_is_projected_from_request() {
-        let request = GuardianApprovalRequest::NetworkAccess {
+        let request = CommandApprovalRequest::NetworkAccess {
             id: "network-1".to_string(),
             turn_id: "turn-1".to_string(),
             target: "https://example.com:443".to_string(),
             hook_command: "curl https://example.com".to_string(),
+            cwd: test_path_buf("/tmp").abs(),
             host: "example.com".to_string(),
             protocol: NetworkApprovalProtocol::Https,
             port: 443,
             trigger: None,
         };
 
-        let event = request
-            .exec_approval_event(
-                "ignored-turn".to_string(),
-                /*approval_id*/ None,
-                Some("need network".to_string()),
-                /*network_approval_context*/ None,
-                /*proposed_execpolicy_amendment*/ None,
-                /*proposed_network_policy_amendments*/ None,
-                /*available_decisions*/ None,
-                Some(test_path_buf("/tmp").abs()),
-            )
-            .expect("network exec approval event");
+        let event = request.exec_approval_event(
+            "ignored-turn".to_string(),
+            /*approval_id*/ None,
+            Some("need network".to_string()),
+            /*network_approval_context*/ None,
+            /*proposed_execpolicy_amendment*/ None,
+            /*proposed_network_policy_amendments*/ None,
+            /*available_decisions*/ None,
+        );
 
         assert_eq!(event.call_id, "network-1");
         assert_eq!(event.turn_id, "turn-1");

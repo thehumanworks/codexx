@@ -8,10 +8,11 @@ builds sandbox transform inputs, and runs them under the current SandboxAttempt.
 pub(crate) mod unix_escalation;
 pub(crate) mod zsh_fork_backend;
 
+use crate::approval_request::ApprovalRequest;
+use crate::approval_request::CommandApprovalRequest;
+use crate::approval_request::GuardianNetworkAccessTrigger;
 use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
-use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::SandboxPermissions;
@@ -120,8 +121,8 @@ impl ShellRuntime {
         })
     }
 
-    fn build_approval_request(req: &ShellRequest, call_id: String) -> GuardianApprovalRequest {
-        GuardianApprovalRequest::Shell {
+    fn build_approval_request(req: &ShellRequest, call_id: String) -> CommandApprovalRequest {
+        CommandApprovalRequest::Shell {
             id: call_id,
             command: req.command.clone(),
             hook_command: req.hook_command.clone(),
@@ -172,7 +173,7 @@ impl Approvable<ShellRequest> for ShellRuntime {
                     session,
                     turn,
                     review_id,
-                    approval_request.clone(),
+                    approval_request.clone().into(),
                     retry_reason,
                 )
                 .await;
@@ -190,7 +191,6 @@ impl Approvable<ShellRequest> for ShellRuntime {
                             .proposed_execpolicy_amendment()
                             .cloned(),
                         available_decisions,
-                        /*fallback_cwd*/ None,
                     )
                     .await
             })
@@ -206,8 +206,8 @@ impl Approvable<ShellRequest> for ShellRuntime {
         &self,
         req: &ShellRequest,
         ctx: &ApprovalCtx<'_>,
-    ) -> Option<GuardianApprovalRequest> {
-        Some(Self::build_approval_request(req, ctx.call_id.to_string()))
+    ) -> Option<ApprovalRequest> {
+        Some(Self::build_approval_request(req, ctx.call_id.to_string()).into())
     }
 
     fn sandbox_mode_for_first_attempt(&self, req: &ShellRequest) -> SandboxOverride {

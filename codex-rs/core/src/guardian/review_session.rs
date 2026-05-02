@@ -46,12 +46,14 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 
 use super::GUARDIAN_REVIEW_TIMEOUT;
 use super::GUARDIAN_REVIEWER_NAME;
-use super::GuardianApprovalRequest;
 use super::prompt::GuardianPromptMode;
 use super::prompt::GuardianTranscriptCursor;
 use super::prompt::build_guardian_prompt_items;
 use super::prompt::guardian_policy_prompt;
 use super::prompt::guardian_policy_prompt_with_config;
+use crate::approval_request::ApprovalRequest;
+#[cfg(test)]
+use crate::approval_request::CommandApprovalRequest;
 
 const GUARDIAN_INTERRUPT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Debug)]
@@ -67,7 +69,7 @@ pub(crate) struct GuardianReviewSessionParams {
     pub(crate) parent_session: Arc<Session>,
     pub(crate) parent_turn: Arc<TurnContext>,
     pub(crate) spawn_config: Config,
-    pub(crate) request: GuardianApprovalRequest,
+    pub(crate) request: ApprovalRequest,
     pub(crate) retry_reason: Option<String>,
     pub(crate) schema: Value,
     pub(crate) model: String,
@@ -1101,7 +1103,7 @@ mod tests {
             parent_session: Arc::new(session),
             parent_turn: Arc::new(turn),
             spawn_config,
-            request: GuardianApprovalRequest::Shell {
+            request: ApprovalRequest::Command(CommandApprovalRequest::Shell {
                 id: "shell-1".to_string(),
                 command: vec!["git".to_string(), "status".to_string()],
                 hook_command: "git status".to_string(),
@@ -1109,7 +1111,7 @@ mod tests {
                 sandbox_permissions: crate::sandboxing::SandboxPermissions::UseDefault,
                 additional_permissions: None,
                 justification: Some("Inspect repo state.".to_string()),
-            },
+            }),
             retry_reason: None,
             schema: super::super::prompt::guardian_output_schema(),
             model,

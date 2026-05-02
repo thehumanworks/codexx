@@ -1,5 +1,5 @@
-use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::GuardianNetworkAccessTrigger;
+use crate::approval_request::CommandApprovalRequest;
+use crate::approval_request::GuardianNetworkAccessTrigger;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
@@ -463,13 +463,14 @@ impl NetworkApprovalService {
             || format!("network-access {target}"),
             |call| call.command.clone(),
         );
-        let approval_request = GuardianApprovalRequest::NetworkAccess {
+        let approval_request = CommandApprovalRequest::NetworkAccess {
             id: guardian_approval_id.clone(),
             turn_id: owner_call
                 .as_ref()
                 .map_or_else(|| turn_context.sub_id.clone(), |call| call.turn_id.clone()),
             target: target.clone(),
             hook_command: command,
+            cwd: turn_context.cwd.clone(),
             host: request.host.clone(),
             protocol,
             port: key.port,
@@ -477,10 +478,7 @@ impl NetworkApprovalService {
         };
         if let Some(permission_request_decision) =
             run_permission_request_hooks(&session, &turn_context, &guardian_approval_id, {
-                let Some(payload) = approval_request.permission_request_payload() else {
-                    unreachable!("network approvals always project a permission request payload");
-                };
-                payload
+                approval_request.permission_request_payload()
             })
             .await
         {
@@ -515,7 +513,7 @@ impl NetworkApprovalService {
                 &session,
                 &turn_context,
                 review_id,
-                approval_request,
+                approval_request.clone().into(),
                 Some(policy_denial_message.clone()),
             )
             .await
@@ -530,7 +528,6 @@ impl NetworkApprovalService {
                     /*network_approval_context*/ None,
                     /*proposed_execpolicy_amendment*/ None,
                     available_decisions,
-                    Some(turn_context.cwd.clone()),
                 )
                 .await
         };

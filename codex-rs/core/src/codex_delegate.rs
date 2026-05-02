@@ -29,9 +29,10 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
+use crate::approval_request::ApplyPatchApprovalRequest;
+use crate::approval_request::CommandApprovalRequest;
 use crate::config::Config;
 use crate::environment_selection::ResolvedTurnEnvironments;
-use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::routes_approval_to_guardian;
 use crate::guardian::spawn_approval_request_review;
@@ -451,7 +452,7 @@ async fn handle_exec_approval(
         ..
     } = event;
     let hook_command = shlex_join(&command);
-    let approval_request = GuardianApprovalRequest::Shell {
+    let approval_request = CommandApprovalRequest::Shell {
         id: call_id.clone(),
         command,
         hook_command,
@@ -470,7 +471,7 @@ async fn handle_exec_approval(
             Arc::clone(parent_session),
             Arc::clone(parent_ctx),
             new_guardian_review_id(),
-            approval_request.clone(),
+            approval_request.clone().into(),
             reason.clone(),
             GuardianApprovalRequestSource::DelegatedSubagent,
             review_cancel.clone(),
@@ -493,7 +494,6 @@ async fn handle_exec_approval(
                 network_approval_context,
                 proposed_execpolicy_amendment,
                 available_decisions,
-                /*fallback_cwd*/ None,
             ),
             parent_session,
             &approval_id_for_op,
@@ -556,7 +556,7 @@ async fn handle_patch_approval(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let approval_request = GuardianApprovalRequest::ApplyPatch {
+    let approval_request = ApplyPatchApprovalRequest {
         id: approval_id.clone(),
         cwd: parent_ctx.cwd.clone(),
         files: changes
@@ -572,7 +572,7 @@ async fn handle_patch_approval(
             Arc::clone(parent_session),
             Arc::clone(parent_ctx),
             new_guardian_review_id(),
-            approval_request.clone(),
+            approval_request.clone().into(),
             reason.clone(),
             GuardianApprovalRequestSource::DelegatedSubagent,
             review_cancel.clone(),

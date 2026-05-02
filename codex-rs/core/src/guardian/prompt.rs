@@ -20,10 +20,11 @@ use super::GUARDIAN_MAX_MESSAGE_TRANSCRIPT_TOKENS;
 use super::GUARDIAN_MAX_TOOL_ENTRY_TOKENS;
 use super::GUARDIAN_MAX_TOOL_TRANSCRIPT_TOKENS;
 use super::GUARDIAN_RECENT_ENTRY_LIMIT;
-use super::GuardianApprovalRequest;
 use super::GuardianAssessment;
 use super::TRUNCATION_TAG;
-use super::approval_request::format_guardian_action_pretty;
+use crate::approval_request::ApprovalRequest;
+use crate::approval_request::CommandApprovalRequest;
+use crate::approval_request::format_guardian_action_pretty;
 
 /// Transcript entry retained for guardian review after filtering.
 #[derive(Debug, PartialEq, Eq)]
@@ -89,7 +90,7 @@ pub(crate) enum GuardianPromptMode {
 pub(crate) async fn build_guardian_prompt_items(
     session: &Session,
     retry_reason: Option<String>,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     mode: GuardianPromptMode,
 ) -> serde_json::Result<GuardianPromptItems> {
     let history = session.clone_history().await;
@@ -173,7 +174,7 @@ pub(crate) async fn build_guardian_prompt_items(
         push_text(format!("\n{note}\n"));
     }
     match &request {
-        GuardianApprovalRequest::NetworkAccess { trigger, .. } => {
+        ApprovalRequest::Command(CommandApprovalRequest::NetworkAccess { trigger, .. }) => {
             push_text(">>> APPROVAL REQUEST START\n".to_string());
             push_text("Below is a proposed network access request under review.\n".to_string());
             if trigger.is_some() {

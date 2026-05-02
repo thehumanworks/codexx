@@ -1,5 +1,5 @@
 use super::*;
-use crate::guardian::GuardianApprovalRequest;
+use crate::approval_request::ApplyPatchApprovalRequest;
 use crate::tools::sandboxing::SandboxAttempt;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -70,7 +70,7 @@ fn guardian_review_request_includes_patch_context() {
 
     assert_eq!(
         guardian_request,
-        GuardianApprovalRequest::ApplyPatch {
+        ApplyPatchApprovalRequest {
             id: "call-1".to_string(),
             cwd: expected_cwd,
             files: request.file_paths,
@@ -99,9 +99,8 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
         permissions_preapproved: false,
     };
 
-    let payload = ApplyPatchRuntime::build_approval_request(&req, "call-1")
-        .permission_request_payload()
-        .expect("permission request payload");
+    let payload =
+        ApplyPatchRuntime::build_approval_request(&req, "call-1").permission_request_payload();
 
     assert_eq!(payload.tool_name.name(), "apply_patch");
     assert_eq!(

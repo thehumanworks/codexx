@@ -4,7 +4,7 @@
 //! `ApprovalCtx`, `Approvable`) together with the sandbox orchestration traits
 //! and helpers (`Sandboxable`, `ToolRuntime`, `SandboxAttempt`, etc.).
 
-use crate::guardian::GuardianApprovalRequest;
+use crate::approval_request::ApprovalRequest;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
@@ -312,11 +312,7 @@ pub(crate) trait Approvable<Req> {
 
     /// Return the canonical approval action for this request when the runtime
     /// participates in approval hooks and/or guardian review.
-    fn approval_request(
-        &self,
-        _req: &Req,
-        _ctx: &ApprovalCtx<'_>,
-    ) -> Option<GuardianApprovalRequest> {
+    fn approval_request(&self, _req: &Req, _ctx: &ApprovalCtx<'_>) -> Option<ApprovalRequest> {
         None
     }
 

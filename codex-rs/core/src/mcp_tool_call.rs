@@ -10,6 +10,9 @@ use codex_app_server_protocol::McpServerElicitationRequest;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
 use tracing::error;
 
+use crate::approval_request::ApprovalRequest;
+use crate::approval_request::GuardianMcpAnnotations;
+use crate::approval_request::McpToolCallApprovalRequest;
 use crate::arc_monitor::ArcMonitorOutcome;
 use crate::arc_monitor::monitor_action;
 use crate::config::Config;
@@ -17,8 +20,6 @@ use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
 use crate::config::load_global_mcp_servers;
 use crate::connectors;
-use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::GuardianMcpAnnotations;
 use crate::guardian::guardian_approval_request_to_json;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
@@ -883,7 +884,7 @@ struct McpToolApprovalPromptOptions {
 
 struct McpToolApprovalElicitationRequest<'a> {
     server: &'a str,
-    approval_request: &'a GuardianApprovalRequest,
+    approval_request: &'a ApprovalRequest,
     tool_params: Option<&'a serde_json::Value>,
     tool_params_display: Option<&'a [RenderedMcpToolApprovalParam]>,
     question: RequestUserInputQuestion,
@@ -942,12 +943,12 @@ struct McpToolApprovalKey {
 
 /// Builds the user-facing MCP approval prompt from the canonical approval request.
 fn mcp_tool_approval_prompt(
-    approval_request: &GuardianApprovalRequest,
+    approval_request: &ApprovalRequest,
     question_id: String,
     prompt_options: McpToolApprovalPromptOptions,
     monitor_reason: Option<&str>,
 ) -> Option<McpToolApprovalPrompt> {
-    let GuardianApprovalRequest::McpToolCall {
+    let ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
         server,
         tool_name,
         arguments,
@@ -955,7 +956,7 @@ fn mcp_tool_approval_prompt(
         connector_name,
         tool_title,
         ..
-    } = approval_request
+    }) = approval_request
     else {
         return None;
     };
@@ -1002,11 +1003,11 @@ fn mcp_tool_approval_prompt(
 /// Converts a guardian MCP approval decision into the legacy RequestUserInput
 /// response shape used by delegated compatibility flows.
 pub(crate) fn mcp_tool_approval_compat_response(
-    approval_request: &GuardianApprovalRequest,
+    approval_request: &ApprovalRequest,
     question: &RequestUserInputQuestion,
     decision: ReviewDecision,
 ) -> Option<RequestUserInputResponse> {
-    let GuardianApprovalRequest::McpToolCall { .. } = approval_request else {
+    let ApprovalRequest::McpToolCall(..) = approval_request else {
         return None;
     };
 
@@ -1293,8 +1294,8 @@ pub(crate) fn build_mcp_tool_approval_request(
     hook_tool_name: &str,
     invocation: &McpInvocation,
     metadata: Option<&McpToolApprovalMetadata>,
-) -> GuardianApprovalRequest {
-    GuardianApprovalRequest::McpToolCall {
+) -> ApprovalRequest {
+    McpToolCallApprovalRequest {
         id: call_id.to_string(),
         server: invocation.server.clone(),
         tool_name: invocation.tool.clone(),
@@ -1313,6 +1314,7 @@ pub(crate) fn build_mcp_tool_approval_request(
                 read_only_hint: annotations.read_only_hint,
             }),
     }
+    .into()
 }
 
 async fn mcp_tool_approval_decision_from_guardian(
@@ -1588,12 +1590,12 @@ fn build_mcp_tool_approval_elicitation_request(
 }
 
 fn build_mcp_tool_approval_elicitation_meta(
-    approval_request: &GuardianApprovalRequest,
+    approval_request: &ApprovalRequest,
     tool_params: Option<&JsonValue>,
     tool_params_display: Option<&[RenderedMcpToolApprovalParam]>,
     prompt_options: McpToolApprovalPromptOptions,
 ) -> Option<JsonValue> {
-    let GuardianApprovalRequest::McpToolCall {
+    let ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
         server,
         connector_id,
         connector_name,
@@ -1601,7 +1603,7 @@ fn build_mcp_tool_approval_elicitation_meta(
         tool_title,
         tool_description,
         ..
-    } = approval_request
+    }) = approval_request
     else {
         return None;
     };

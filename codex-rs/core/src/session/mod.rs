@@ -14,6 +14,9 @@ use crate::agent::Mailbox;
 use crate::agent::MailboxReceiver;
 use crate::agent::agent_status_from_event;
 use crate::agent::status::is_final;
+use crate::approval_request::ApplyPatchApprovalRequest;
+use crate::approval_request::CommandApprovalRequest;
+use crate::approval_request::RequestPermissionsApprovalRequest;
 use crate::build_available_skills;
 use crate::commit_attribution::commit_message_trailer_instruction;
 use crate::compact;
@@ -32,7 +35,6 @@ use crate::context::PersonalitySpecInstructions;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
-use crate::guardian::GuardianApprovalRequest;
 use crate::installation_id::resolve_installation_id;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
@@ -1845,13 +1847,12 @@ impl Session {
     pub async fn request_command_approval_for_request(
         &self,
         turn_context: &TurnContext,
-        approval_request: GuardianApprovalRequest,
+        approval_request: CommandApprovalRequest,
         approval_id: Option<String>,
         reason: Option<String>,
         network_approval_context: Option<NetworkApprovalContext>,
         proposed_execpolicy_amendment: Option<ExecPolicyAmendment>,
         available_decisions: Option<Vec<ReviewDecision>>,
-        fallback_cwd: Option<AbsolutePathBuf>,
     ) -> ReviewDecision {
         let proposed_network_policy_amendments = network_approval_context.as_ref().map(|context| {
             vec![
@@ -1865,7 +1866,7 @@ impl Session {
                 },
             ]
         });
-        let Some(event) = approval_request.exec_approval_event(
+        let event = approval_request.exec_approval_event(
             turn_context.sub_id.clone(),
             approval_id,
             reason,
@@ -1873,10 +1874,7 @@ impl Session {
             proposed_execpolicy_amendment,
             proposed_network_policy_amendments,
             available_decisions,
-            fallback_cwd,
-        ) else {
-            unreachable!("request_command_approval_for_request requires command-like approvals");
-        };
+        );
         self.request_exec_approval_event(turn_context, event).await
     }
 
@@ -1930,17 +1928,15 @@ impl Session {
     pub async fn request_patch_approval_for_request(
         &self,
         turn_context: &TurnContext,
-        approval_request: GuardianApprovalRequest,
+        approval_request: ApplyPatchApprovalRequest,
         reason: Option<String>,
         grant_root: Option<PathBuf>,
     ) -> oneshot::Receiver<ReviewDecision> {
-        let Some(event) = approval_request.apply_patch_approval_event(
+        let event = approval_request.apply_patch_approval_event(
             turn_context.sub_id.clone(),
             reason,
             grant_root,
-        ) else {
-            unreachable!("request_patch_approval_for_request requires apply_patch approvals");
-        };
+        );
         self.request_apply_patch_approval_event(turn_context, event)
             .await
     }
@@ -2029,7 +2025,7 @@ impl Session {
         }
 
         let requested_permissions = args.permissions;
-        let approval_request = GuardianApprovalRequest::RequestPermissions {
+        let approval_request = RequestPermissionsApprovalRequest {
             id: call_id.clone(),
             turn_id: turn_context.sub_id.clone(),
             reason: args.reason.clone(),
@@ -2049,7 +2045,7 @@ impl Session {
                 session,
                 turn,
                 review_id,
-                approval_request.clone(),
+                approval_request.clone().into(),
                 /*retry_reason*/ None,
                 codex_analytics::GuardianApprovalRequestSource::MainTurn,
                 cancellation_token.clone(),
@@ -2129,9 +2125,7 @@ impl Session {
             warn!("Overwriting existing pending request_permissions for call_id: {call_id}");
         }
 
-        let Some(event) = approval_request.request_permissions_event() else {
-            unreachable!("request_permissions event projection must exist");
-        };
+        let event = approval_request.request_permissions_event();
         self.send_event(turn_context.as_ref(), EventMsg::RequestPermissions(event))
             .await;
         tokio::select! {

@@ -1,7 +1,7 @@
 use super::*;
+use crate::approval_request::ApprovalRequest;
+use crate::approval_request::GuardianMcpAnnotations;
 use crate::config::ConfigBuilder;
-use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::GuardianMcpAnnotations;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
 use crate::state::ActiveTurn;
@@ -110,7 +110,7 @@ fn approval_prompt_request(
     tool_name: &str,
     arguments: Option<serde_json::Value>,
     metadata: Option<&McpToolApprovalMetadata>,
-) -> GuardianApprovalRequest {
+) -> ApprovalRequest {
     build_mcp_tool_approval_request(
         "call-1",
         tool_name,
@@ -1314,7 +1314,7 @@ fn guardian_mcp_review_request_includes_invocation_metadata() {
 
     assert_eq!(
         request,
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
             id: "call-1".to_string(),
             server: CODEX_APPS_MCP_SERVER_NAME.to_string(),
             tool_name: "browser_navigate".to_string(),
@@ -1328,7 +1328,7 @@ fn guardian_mcp_review_request_includes_invocation_metadata() {
             tool_title: Some("Navigate".to_string()),
             tool_description: Some("Open a page".to_string()),
             annotations: None,
-        }
+        })
     );
 }
 
@@ -1356,7 +1356,7 @@ fn guardian_mcp_review_request_includes_annotations_when_present() {
 
     assert_eq!(
         request,
-        GuardianApprovalRequest::McpToolCall {
+        ApprovalRequest::McpToolCall(McpToolCallApprovalRequest {
             id: "call-1".to_string(),
             server: "custom_server".to_string(),
             tool_name: "dangerous_tool".to_string(),
@@ -1372,7 +1372,7 @@ fn guardian_mcp_review_request_includes_annotations_when_present() {
                 open_world_hint: Some(true),
                 read_only_hint: Some(false),
             }),
-        }
+        })
     );
 }
 

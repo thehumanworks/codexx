@@ -1,9 +1,9 @@
 use super::ShellRequest;
+use crate::approval_request::CommandApprovalRequest;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
 use crate::exec::cancel_when_either;
 use crate::exec::is_likely_sandbox_denied;
-use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::guardian_rejection_message;
 use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
@@ -406,7 +406,7 @@ impl CoreShellActionProvider {
             .pause_for(async move {
                 // 1) Run PermissionRequest hooks
                 let effective_approval_id = approval_id.clone().unwrap_or_else(|| call_id.clone());
-                let approval_request = GuardianApprovalRequest::Execve {
+                let approval_request = CommandApprovalRequest::Execve {
                     id: call_id.clone(),
                     source,
                     program: program.to_string_lossy().into_owned(),
@@ -414,14 +414,12 @@ impl CoreShellActionProvider {
                     cwd: workdir.clone(),
                     additional_permissions: additional_permissions.clone(),
                 };
-                match run_permission_request_hooks(&session, &turn, &effective_approval_id, {
-                    let Some(payload) = approval_request.permission_request_payload() else {
-                        unreachable!(
-                            "execve approvals always project a permission request payload"
-                        );
-                    };
-                    payload
-                })
+                match run_permission_request_hooks(
+                    &session,
+                    &turn,
+                    &effective_approval_id,
+                    approval_request.permission_request_payload(),
+                )
                 .await
                 {
                     Some(PermissionRequestDecision::Allow) => {
@@ -447,7 +445,7 @@ impl CoreShellActionProvider {
                         &session,
                         &turn,
                         review_id.clone(),
-                        approval_request,
+                        approval_request.clone().into(),
                         /*retry_reason*/ None,
                     )
                     .await;
@@ -468,7 +466,6 @@ impl CoreShellActionProvider {
                         /*network_approval_context*/ None,
                         /*proposed_execpolicy_amendment*/ None,
                         Some(vec![ReviewDecision::Approved, ReviewDecision::Abort]),
-                        /*fallback_cwd*/ None,
                     )
                     .await;
                 PromptDecision {

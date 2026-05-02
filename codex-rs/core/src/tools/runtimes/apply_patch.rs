@@ -3,8 +3,9 @@
 //! Assumes `apply_patch` verification/approval happened upstream. Reuses the
 //! selected turn environment filesystem for both local and remote turns, with
 //! sandboxing enforced by the explicit filesystem sandbox context.
+use crate::approval_request::ApplyPatchApprovalRequest;
+use crate::approval_request::ApprovalRequest;
 use crate::exec::is_likely_sandbox_denied;
-use crate::guardian::GuardianApprovalRequest;
 use crate::guardian::review_approval_request;
 use crate::tools::sandboxing::Approvable;
 use crate::tools::sandboxing::ApprovalCtx;
@@ -51,8 +52,8 @@ impl ApplyPatchRuntime {
         Self
     }
 
-    fn build_approval_request(req: &ApplyPatchRequest, call_id: &str) -> GuardianApprovalRequest {
-        GuardianApprovalRequest::ApplyPatch {
+    fn build_approval_request(req: &ApplyPatchRequest, call_id: &str) -> ApplyPatchApprovalRequest {
+        ApplyPatchApprovalRequest {
             id: call_id.to_string(),
             cwd: req.action.cwd.clone(),
             files: req.file_paths.clone(),
@@ -114,7 +115,7 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
                     session,
                     turn,
                     review_id,
-                    approval_request.clone(),
+                    approval_request.clone().into(),
                     retry_reason,
                 )
                 .await;
@@ -179,8 +180,8 @@ impl Approvable<ApplyPatchRequest> for ApplyPatchRuntime {
         &self,
         req: &ApplyPatchRequest,
         ctx: &ApprovalCtx<'_>,
-    ) -> Option<GuardianApprovalRequest> {
-        Some(Self::build_approval_request(req, ctx.call_id))
+    ) -> Option<ApprovalRequest> {
+        Some(Self::build_approval_request(req, ctx.call_id).into())
     }
 }
 

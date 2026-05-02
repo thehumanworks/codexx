@@ -4,11 +4,12 @@ Runtime: unified exec
 Handles approval + sandbox orchestration for unified exec requests, delegating to
 the process manager to spawn PTYs once an ExecRequest is prepared.
 */
+use crate::approval_request::ApprovalRequest;
+use crate::approval_request::CommandApprovalRequest;
+use crate::approval_request::GuardianNetworkAccessTrigger;
 use crate::command_canonicalization::canonicalize_command_for_approval;
 use crate::exec::ExecCapturePolicy;
 use crate::exec::ExecExpiration;
-use crate::guardian::GuardianApprovalRequest;
-use crate::guardian::GuardianNetworkAccessTrigger;
 use crate::guardian::review_approval_request;
 use crate::sandboxing::ExecOptions;
 use crate::sandboxing::ExecServerEnvConfig;
@@ -110,11 +111,8 @@ impl<'a> UnifiedExecRuntime<'a> {
         }
     }
 
-    fn build_approval_request(
-        req: &UnifiedExecRequest,
-        call_id: String,
-    ) -> GuardianApprovalRequest {
-        GuardianApprovalRequest::ExecCommand {
+    fn build_approval_request(req: &UnifiedExecRequest, call_id: String) -> CommandApprovalRequest {
+        CommandApprovalRequest::ExecCommand {
             id: call_id,
             command: req.command.clone(),
             hook_command: req.hook_command.clone(),
@@ -168,7 +166,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
                     session,
                     turn,
                     review_id,
-                    approval_request.clone(),
+                    approval_request.clone().into(),
                     retry_reason,
                 )
                 .await;
@@ -186,7 +184,6 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
                             .proposed_execpolicy_amendment()
                             .cloned(),
                         available_decisions,
-                        /*fallback_cwd*/ None,
                     )
                     .await
             })
@@ -205,8 +202,8 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         &self,
         req: &UnifiedExecRequest,
         ctx: &ApprovalCtx<'_>,
-    ) -> Option<GuardianApprovalRequest> {
-        Some(Self::build_approval_request(req, ctx.call_id.to_string()))
+    ) -> Option<ApprovalRequest> {
+        Some(Self::build_approval_request(req, ctx.call_id.to_string()).into())
     }
 
     fn sandbox_mode_for_first_attempt(&self, req: &UnifiedExecRequest) -> SandboxOverride {

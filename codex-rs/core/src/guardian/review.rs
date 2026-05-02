@@ -26,20 +26,20 @@ use crate::session::turn_context::TurnContext;
 
 use super::GUARDIAN_REVIEW_TIMEOUT;
 use super::GUARDIAN_REVIEWER_NAME;
-use super::GuardianApprovalRequest;
 use super::GuardianAssessment;
 use super::GuardianAssessmentOutcome;
 use super::GuardianRejection;
 use super::GuardianRejectionCircuitBreakerAction;
-use super::approval_request::guardian_assessment_action;
-use super::approval_request::guardian_request_target_item_id;
-use super::approval_request::guardian_request_turn_id;
-use super::approval_request::guardian_reviewed_action;
 use super::prompt::guardian_output_schema;
 use super::prompt::parse_guardian_assessment;
 use super::review_session::GuardianReviewSessionOutcome;
 use super::review_session::GuardianReviewSessionParams;
 use super::review_session::build_guardian_review_session_config;
+use crate::approval_request::ApprovalRequest;
+use crate::approval_request::guardian_assessment_action;
+use crate::approval_request::guardian_request_target_item_id;
+use crate::approval_request::guardian_request_turn_id;
+use crate::approval_request::guardian_reviewed_action;
 
 const GUARDIAN_REJECTION_INSTRUCTIONS: &str = concat!(
     "The agent must not attempt to achieve the same outcome via workaround, ",
@@ -234,7 +234,7 @@ async fn run_guardian_review(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     review_id: String,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     external_cancel: Option<CancellationToken>,
@@ -523,7 +523,7 @@ pub(crate) async fn review_approval_request(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     review_id: String,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     retry_reason: Option<String>,
 ) -> ReviewDecision {
     // Box the delegated review future so callers do not inline the entire
@@ -544,7 +544,7 @@ pub(crate) async fn review_approval_request_with_cancel(
     session: &Arc<Session>,
     turn: &Arc<TurnContext>,
     review_id: String,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     cancel_token: CancellationToken,
@@ -565,7 +565,7 @@ pub(crate) fn spawn_approval_request_review(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     review_id: String,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     retry_reason: Option<String>,
     approval_request_source: GuardianApprovalRequestSource,
     cancel_token: CancellationToken,
@@ -610,7 +610,7 @@ pub(crate) fn spawn_approval_request_review(
 pub(super) async fn run_guardian_review_session(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
-    request: GuardianApprovalRequest,
+    request: ApprovalRequest,
     retry_reason: Option<String>,
     schema: serde_json::Value,
     external_cancel: Option<CancellationToken>,

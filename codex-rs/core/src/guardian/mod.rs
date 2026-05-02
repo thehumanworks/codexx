@@ -11,7 +11,6 @@
 //! 3. Fail closed on timeout, execution failure, or malformed output.
 //! 4. Apply the guardian's explicit allow/deny outcome.
 
-mod approval_request;
 mod prompt;
 mod review;
 mod review_session;
@@ -23,10 +22,7 @@ use codex_protocol::protocol::GuardianAssessmentOutcome;
 use serde::Deserialize;
 use serde::Serialize;
 
-pub(crate) use approval_request::GuardianApprovalRequest;
-pub(crate) use approval_request::GuardianMcpAnnotations;
-pub(crate) use approval_request::GuardianNetworkAccessTrigger;
-pub(crate) use approval_request::guardian_approval_request_to_json;
+pub(crate) use crate::approval_request::guardian_approval_request_to_json;
 pub(crate) use review::guardian_rejection_message;
 pub(crate) use review::guardian_timeout_message;
 pub(crate) use review::is_guardian_reviewer_source;
@@ -51,7 +47,7 @@ const GUARDIAN_MAX_MESSAGE_TRANSCRIPT_TOKENS: usize = 10_000;
 const GUARDIAN_MAX_TOOL_TRANSCRIPT_TOKENS: usize = 10_000;
 const GUARDIAN_MAX_MESSAGE_ENTRY_TOKENS: usize = 2_000;
 const GUARDIAN_MAX_TOOL_ENTRY_TOKENS: usize = 1_000;
-const GUARDIAN_MAX_ACTION_STRING_TOKENS: usize = 16_000;
+pub(crate) const GUARDIAN_MAX_ACTION_STRING_TOKENS: usize = 16_000;
 const GUARDIAN_RECENT_ENTRY_LIMIT: usize = 40;
 const TRUNCATION_TAG: &str = "truncated";
 
@@ -121,11 +117,11 @@ impl GuardianRejectionCircuitBreaker {
 }
 
 #[cfg(test)]
-use approval_request::format_guardian_action_pretty;
+use crate::approval_request::format_guardian_action_pretty;
 #[cfg(test)]
-use approval_request::guardian_assessment_action;
+use crate::approval_request::guardian_assessment_action;
 #[cfg(test)]
-use approval_request::guardian_request_turn_id;
+use crate::approval_request::guardian_request_turn_id;
 #[cfg(test)]
 use prompt::GuardianPromptMode;
 #[cfg(test)]
@@ -144,8 +140,7 @@ use prompt::guardian_output_schema;
 pub(crate) use prompt::guardian_policy_prompt;
 #[cfg(test)]
 pub(crate) use prompt::guardian_policy_prompt_with_config;
-#[cfg(test)]
-use prompt::guardian_truncate_text;
+pub(crate) use prompt::guardian_truncate_text;
 #[cfg(test)]
 use prompt::parse_guardian_assessment;
 #[cfg(test)]
