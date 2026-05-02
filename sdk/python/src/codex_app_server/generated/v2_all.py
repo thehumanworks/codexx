@@ -3524,6 +3524,13 @@ class ServiceTier(Enum):
     flex = "flex"
 
 
+class ServiceTierId(RootModel[str]):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    root: str
+
+
 class SessionMigration(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
@@ -6314,13 +6321,19 @@ class MigrationDetails(BaseModel):
     subagents: list[SubagentMigration] | None = []
 
 
+class ModelServiceTier(BaseModel):
+    model_config = ConfigDict(
+        populate_by_name=True,
+    )
+    description: str
+    id: ServiceTierId
+    name: str
+
+
 class Model(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
     )
-    additional_speed_tiers: Annotated[
-        list[str] | None, Field(alias="additionalSpeedTiers")
-    ] = []
     availability_nux: Annotated[
         ModelAvailabilityNux | None, Field(alias="availabilityNux")
     ] = None
@@ -6336,6 +6349,17 @@ class Model(BaseModel):
     ] = ["text", "image"]
     is_default: Annotated[bool, Field(alias="isDefault")]
     model: str
+    additional_speed_tiers: Annotated[
+        list[str] | None,
+        Field(
+            alias="additionalSpeedTiers",
+            description="Deprecated: use `serviceTiers` for structured service-tier metadata.\n\n@deprecated use `serviceTiers` instead.",
+            json_schema_extra={"deprecated": True},
+        ),
+    ] = []
+    service_tiers: Annotated[
+        list[ModelServiceTier] | None, Field(alias="serviceTiers")
+    ] = []
     supported_reasoning_efforts: Annotated[
         list[ReasoningEffortOption], Field(alias="supportedReasoningEfforts")
     ]
