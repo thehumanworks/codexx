@@ -27,7 +27,9 @@ use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::record_pending_input;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
+use crate::session_extension::SessionIdleReason;
 use crate::session_extension::SessionRuntimeEvent;
+use crate::session_extension::SessionRuntimeHandle;
 use crate::state::ActiveTurn;
 use crate::state::RunningTask;
 use crate::state::TaskKind;
@@ -491,6 +493,40 @@ impl Session {
             .await
     }
 
+    /// Asks the installed runtime extension for idle background work and starts
+    /// it only if user-visible pending work has not won the race.
+    pub(crate) async fn maybe_start_extension_background_turn(
+        self: &Arc<Self>,
+        reason: SessionIdleReason,
+    ) -> bool {
+        self.maybe_start_turn_for_pending_work().await;
+
+        if self.active_turn.lock().await.is_some()
+            || self.has_queued_response_items_for_next_turn().await
+            || self.has_trigger_turn_mailbox_items().await
+        {
+            return false;
+        }
+
+        let Some(extension) = self.runtime_extension() else {
+            return false;
+        };
+        let handle = SessionRuntimeHandle::new(Arc::clone(self));
+        let background_turn = match extension.next_idle_background_turn(handle, reason).await {
+            Ok(background_turn) => background_turn,
+            Err(err) => {
+                warn!("runtime extension idle background provider failed: {err}");
+                return false;
+            }
+        };
+        let Some(background_turn) = background_turn else {
+            return false;
+        };
+
+        self.try_start_idle_background_turn(background_turn.items)
+            .await
+    }
+
     async fn submit_pending_work_wakeup(&self, sub_id: String) -> bool {
         self.tx_sub
             .send(Submission {
@@ -816,13 +852,8 @@ impl Session {
             }
             let sess = Arc::clone(self);
             tokio::spawn(async move {
-                sess.maybe_start_turn_for_pending_work().await;
-                if let Err(err) = sess
-                    .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
-                    .await
-                {
-                    warn!("failed to apply runtime extension maybe-continue event: {err}");
-                }
+                sess.maybe_start_extension_background_turn(SessionIdleReason::TurnCompleted)
+                    .await;
             });
         }
     }

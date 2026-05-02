@@ -43,7 +43,6 @@ pub(super) struct GoalWallClockAccountingSnapshot {
 }
 
 pub(super) struct GoalContinuationCandidate {
-    pub(super) goal_id: String,
     pub(super) items: Vec<ResponseInputItem>,
 }
 

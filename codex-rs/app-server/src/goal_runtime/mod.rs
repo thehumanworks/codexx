@@ -7,6 +7,8 @@ mod state;
 mod tests;
 mod tools;
 
+use codex_core::SessionBackgroundTurn;
+use codex_core::SessionIdleReason;
 use codex_core::SessionRuntimeEvent;
 use codex_core::SessionRuntimeExtension;
 use codex_core::SessionRuntimeHandle;
@@ -106,5 +108,13 @@ impl SessionRuntimeExtension for GoalRuntime {
         event: SessionRuntimeEvent,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async move { self.apply_event(handle, event).await })
+    }
+
+    fn next_idle_background_turn<'a>(
+        &'a self,
+        handle: SessionRuntimeHandle,
+        reason: SessionIdleReason,
+    ) -> BoxFuture<'a, anyhow::Result<Option<SessionBackgroundTurn>>> {
+        Box::pin(async move { self.provide_idle_background_turn(handle, reason).await })
     }
 }

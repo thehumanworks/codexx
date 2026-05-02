@@ -48,12 +48,19 @@ pub enum SessionRuntimeEvent {
         mode: ModeKind,
         turn_completed: bool,
     },
-    MaybeContinueIfIdle,
     TaskAborted {
         turn_id: Option<String>,
         reason: TurnAbortReason,
     },
     ThreadResumed,
+}
+
+/// Reason core is asking the extension whether idle background work is ready.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionIdleReason {
+    TurnCompleted,
+    ThreadResumed,
+    HostRequest,
 }
 
 /// Tool invocation delivered to a host extension.
@@ -87,6 +94,15 @@ pub enum SessionToolError {
     Fatal(String),
 }
 
+/// Hidden input for an extension-provided background turn.
+///
+/// Extensions should return this only when the thread is idle and host-owned
+/// work is ready to continue. Core performs final pending-work and active-turn
+/// checks before starting the turn.
+pub struct SessionBackgroundTurn {
+    pub items: Vec<ResponseInputItem>,
+}
+
 /// Host extension installed into a core session.
 ///
 /// Implementations should keep their own state outside core, keyed by
@@ -118,6 +134,21 @@ pub trait SessionRuntimeExtension: Send + Sync {
         _event: SessionRuntimeEvent,
     ) -> BoxFuture<'a, anyhow::Result<()>> {
         Box::pin(async { Ok(()) })
+    }
+
+    /// Offer hidden input for a background turn when core observes an idle
+    /// thread.
+    ///
+    /// Implementations should return `Ok(None)` unless the extension has
+    /// process-owned work that should continue without a user-visible request.
+    /// Core owns the final start decision, so a returned turn may still be
+    /// discarded if user work appears or another turn starts concurrently.
+    fn next_idle_background_turn<'a>(
+        &'a self,
+        _handle: SessionRuntimeHandle,
+        _reason: SessionIdleReason,
+    ) -> BoxFuture<'a, anyhow::Result<Option<SessionBackgroundTurn>>> {
+        Box::pin(async { Ok(None) })
     }
 }
 
@@ -174,14 +205,6 @@ impl SessionRuntimeHandle {
 
     pub async fn has_trigger_turn_mailbox_items(&self) -> bool {
         self.session.has_trigger_turn_mailbox_items().await
-    }
-
-    pub async fn maybe_start_turn_for_pending_work(&self) {
-        self.session.maybe_start_turn_for_pending_work().await;
-    }
-
-    pub async fn try_start_idle_background_turn(&self, items: Vec<ResponseInputItem>) -> bool {
-        self.session.try_start_idle_background_turn(items).await
     }
 
     /// Open the state DB for a persisted local thread, materializing and

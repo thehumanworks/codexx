@@ -509,6 +509,7 @@ struct RecordingRuntimeExtension {
     events: tokio::sync::Mutex<Vec<String>>,
     notify: tokio::sync::Notify,
     tool_specs: Vec<codex_tools::ToolSpec>,
+    idle_background_turn: tokio::sync::Mutex<Option<Vec<ResponseInputItem>>>,
 }
 
 impl RecordingRuntimeExtension {
@@ -517,6 +518,16 @@ impl RecordingRuntimeExtension {
             events: tokio::sync::Mutex::new(Vec::new()),
             notify: tokio::sync::Notify::new(),
             tool_specs,
+            idle_background_turn: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    fn with_idle_background_turn(items: Vec<ResponseInputItem>) -> Self {
+        Self {
+            events: tokio::sync::Mutex::new(Vec::new()),
+            notify: tokio::sync::Notify::new(),
+            tool_specs: Vec::new(),
+            idle_background_turn: tokio::sync::Mutex::new(Some(items)),
         }
     }
 
@@ -601,9 +612,6 @@ impl crate::session_extension::SessionRuntimeExtension for RecordingRuntimeExten
                 } => {
                     format!("turn_finished:{turn_id}:{turn_completed}")
                 }
-                crate::session_extension::SessionRuntimeEvent::MaybeContinueIfIdle => {
-                    "maybe_continue_if_idle".to_string()
-                }
                 crate::session_extension::SessionRuntimeEvent::TaskAborted { turn_id, reason } => {
                     format!("task_aborted:{turn_id:?}:{reason:?}")
                 }
@@ -613,6 +621,25 @@ impl crate::session_extension::SessionRuntimeExtension for RecordingRuntimeExten
             };
             self.record(event).await;
             Ok(())
+        })
+    }
+
+    fn next_idle_background_turn<'a>(
+        &'a self,
+        _handle: crate::session_extension::SessionRuntimeHandle,
+        reason: crate::session_extension::SessionIdleReason,
+    ) -> futures::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<crate::session_extension::SessionBackgroundTurn>>,
+    > {
+        Box::pin(async move {
+            self.record(format!("idle_provider:{reason:?}")).await;
+            Ok(self
+                .idle_background_turn
+                .lock()
+                .await
+                .take()
+                .map(|items| crate::session_extension::SessionBackgroundTurn { items }))
         })
     }
 }
@@ -7122,13 +7149,12 @@ async fn runtime_extension_receives_turn_lifecycle_events_in_order() {
     )
     .await;
 
-    let events = extension.wait_for_events(/*count*/ 3).await;
+    let events = extension.wait_for_events(/*count*/ 2).await;
     assert_eq!(
-        &events[..3],
+        &events[..2],
         &[
             format!("turn_started:{}", turn_context.sub_id),
             format!("turn_finished:{}:true", turn_context.sub_id),
-            "maybe_continue_if_idle".to_string(),
         ]
     );
 }
@@ -7163,7 +7189,7 @@ async fn runtime_extension_hidden_item_injection_reaches_active_turn() {
 
 #[tokio::test]
 async fn idle_background_turn_refuses_to_race_pending_user_work() {
-    let (sess, _tc, _rx) = make_session_and_context_with_rx().await;
+    let (mut session, _turn_context) = make_session_and_context().await;
     let existing_item = ResponseInputItem::Message {
         role: "user".to_string(),
         content: vec![ContentItem::InputText {
@@ -7178,11 +7204,20 @@ async fn idle_background_turn_refuses_to_race_pending_user_work() {
         }],
         phase: None,
     };
+    let extension = Arc::new(RecordingRuntimeExtension::with_idle_background_turn(vec![
+        background_item,
+    ]));
+    let runtime_extension: Arc<dyn crate::session_extension::SessionRuntimeExtension> =
+        extension.clone();
+    session.services.runtime_extension = Some(runtime_extension);
+    let sess = Arc::new(session);
     sess.queue_response_items_for_next_turn(vec![existing_item.clone()])
         .await;
 
-    let started = crate::session_extension::SessionRuntimeHandle::new(Arc::clone(&sess))
-        .try_start_idle_background_turn(vec![background_item])
+    let started = sess
+        .maybe_start_extension_background_turn(
+            crate::session_extension::SessionIdleReason::HostRequest,
+        )
         .await;
 
     assert!(!started);

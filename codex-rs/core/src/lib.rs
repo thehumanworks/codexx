@@ -197,6 +197,8 @@ pub use exec_policy::format_exec_policy_error_with_source;
 pub use exec_policy::load_exec_policy;
 pub use file_watcher::FileWatcherEvent;
 pub use installation_id::resolve_installation_id;
+pub use session_extension::SessionBackgroundTurn;
+pub use session_extension::SessionIdleReason;
 pub use session_extension::SessionRuntimeEvent;
 pub use session_extension::SessionRuntimeExtension;
 pub use session_extension::SessionRuntimeHandle;

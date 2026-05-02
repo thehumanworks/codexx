@@ -184,6 +184,11 @@ impl CodexMessageProcessor {
             runtime
                 .apply_external_goal_set(thread.runtime_handle(), goal_status)
                 .await;
+            if goal_status == codex_state::ThreadGoalStatus::Active {
+                thread
+                    .maybe_start_extension_background_turn(SessionIdleReason::HostRequest)
+                    .await;
+            }
         }
     }
 

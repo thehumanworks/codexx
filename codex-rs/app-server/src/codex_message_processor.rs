@@ -255,6 +255,7 @@ use codex_core::CodexThreadTurnContextOverrides;
 use codex_core::ForkSnapshot;
 use codex_core::NewThread;
 use codex_core::RolloutRecorder;
+use codex_core::SessionIdleReason;
 use codex_core::SessionMeta;
 use codex_core::SessionRuntimeEvent;
 use codex_core::SessionRuntimeExtension;
@@ -4562,12 +4563,9 @@ impl CodexMessageProcessor {
                     self.emit_goal_snapshot(thread_id).await;
                     // App-server owns resume response and snapshot ordering, so wait
                     // until those are sent before letting the goal runtime continue.
-                    if let Err(err) = codex_thread
-                        .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
-                        .await
-                    {
-                        tracing::warn!("failed to continue active goal after resume: {err}");
-                    }
+                    codex_thread
+                        .maybe_start_extension_background_turn(SessionIdleReason::ThreadResumed)
+                        .await;
                 }
             }
             Err(err) => {
@@ -8584,12 +8582,10 @@ async fn handle_pending_thread_resume_request(
         .await;
     // App-server owns resume response and snapshot ordering, so wait until
     // replay completes before letting the goal runtime start continuation.
-    if pending.emit_goal_update
-        && let Err(err) = conversation
-            .apply_runtime_extension_event(SessionRuntimeEvent::MaybeContinueIfIdle)
-            .await
-    {
-        tracing::warn!("failed to continue active goal after running-thread resume: {err}");
+    if pending.emit_goal_update {
+        conversation
+            .maybe_start_extension_background_turn(SessionIdleReason::ThreadResumed)
+            .await;
     }
 }
 

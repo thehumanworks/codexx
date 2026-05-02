@@ -4,6 +4,7 @@ use crate::file_watcher::WatchRegistration;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
 use crate::session::SteerInputError;
+use crate::session_extension::SessionIdleReason;
 use crate::session_extension::SessionRuntimeEvent;
 use crate::session_extension::SessionRuntimeHandle;
 use codex_features::Feature;
@@ -145,6 +146,13 @@ impl CodexThread {
         self.codex
             .session
             .apply_runtime_extension_event(event)
+            .await
+    }
+
+    pub async fn maybe_start_extension_background_turn(&self, reason: SessionIdleReason) -> bool {
+        self.codex
+            .session
+            .maybe_start_extension_background_turn(reason)
             .await
     }
 

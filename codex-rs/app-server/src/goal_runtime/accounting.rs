@@ -9,6 +9,8 @@ use super::state::BudgetLimitSteering;
 use super::state::GoalContinuationCandidate;
 use super::state::GoalTurnAccountingSnapshot;
 use anyhow::Context;
+use codex_core::SessionBackgroundTurn;
+use codex_core::SessionIdleReason;
 use codex_core::SessionRuntimeEvent;
 use codex_core::SessionRuntimeHandle;
 use codex_protocol::ThreadId;
@@ -65,10 +67,6 @@ impl GoalRuntime {
                     .await;
                 Ok(())
             }
-            SessionRuntimeEvent::MaybeContinueIfIdle => {
-                self.maybe_continue_goal_if_idle_runtime(&handle).await;
-                Ok(())
-            }
             SessionRuntimeEvent::TaskAborted { turn_id, reason } => {
                 self.handle_goal_task_abort(&handle, turn_id, reason).await;
                 Ok(())
@@ -117,7 +115,6 @@ impl GoalRuntime {
                     }
                     Ok(None) => {}
                 }
-                self.maybe_continue_goal_if_idle_runtime(handle).await;
             }
             codex_state::ThreadGoalStatus::BudgetLimited => {
                 if !handle.has_active_turn().await {
@@ -590,45 +587,22 @@ impl GoalRuntime {
         Ok(true)
     }
 
-    async fn maybe_continue_goal_if_idle_runtime(&self, handle: &SessionRuntimeHandle) {
-        self.maybe_start_goal_continuation_turn(handle).await;
-    }
-
-    async fn maybe_start_goal_continuation_turn(&self, handle: &SessionRuntimeHandle) {
+    pub(super) async fn provide_idle_background_turn(
+        &self,
+        handle: SessionRuntimeHandle,
+        _reason: SessionIdleReason,
+    ) -> anyhow::Result<Option<SessionBackgroundTurn>> {
         let state = self.state(handle.thread_id()).await;
         let Ok(_continuation_guard) = state.continuation_lock.acquire().await else {
             tracing::warn!("goal continuation semaphore closed");
-            return;
+            return Ok(None);
         };
-        let Some(candidate) = self.goal_continuation_candidate_if_active(handle).await else {
-            return;
-        };
-        let started = handle
-            .try_start_idle_background_turn(candidate.items.clone())
-            .await;
-        if !started {
-            return;
-        }
-
-        match handle.state_db_for_persisted_thread().await {
-            Ok(Some(state_db)) => match state_db.get_thread_goal(handle.thread_id()).await {
-                Ok(Some(goal))
-                    if goal.goal_id == candidate.goal_id
-                        && goal.status == codex_state::ThreadGoalStatus::Active => {}
-                Ok(Some(_)) | Ok(None) => {
-                    tracing::debug!(
-                        "active goal changed after continuation launch; next idle event will settle state"
-                    );
-                }
-                Err(err) => {
-                    tracing::warn!("failed to re-read goal after continuation: {err}");
-                }
-            },
-            Ok(None) => {}
-            Err(err) => {
-                tracing::warn!("failed to open state db after goal continuation: {err}");
-            }
-        }
+        Ok(self
+            .goal_continuation_candidate_if_active(&handle)
+            .await
+            .map(|candidate| SessionBackgroundTurn {
+                items: candidate.items,
+            }))
     }
 
     async fn goal_continuation_candidate_if_active(
@@ -686,10 +660,8 @@ impl GoalRuntime {
             tracing::debug!("skipping active goal continuation because pending work appeared");
             return None;
         }
-        let goal_id = goal.goal_id.clone();
         let goal = protocol_goal_from_state(goal);
         Some(GoalContinuationCandidate {
-            goal_id,
             items: vec![ResponseInputItem::Message {
                 role: "developer".to_string(),
                 content: vec![ContentItem::InputText {
