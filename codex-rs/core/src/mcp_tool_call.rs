@@ -881,6 +881,16 @@ struct McpToolApprovalPromptOptions {
     allow_persistent_approval: bool,
 }
 
+struct McpToolApprovalElicitationRequest<'a> {
+    server: &'a str,
+    approval_request: &'a GuardianApprovalRequest,
+    tool_params: Option<&'a serde_json::Value>,
+    tool_params_display: Option<&'a [RenderedMcpToolApprovalParam]>,
+    question: RequestUserInputQuestion,
+    message_override: Option<&'a str>,
+    prompt_options: McpToolApprovalPromptOptions,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 struct McpToolApprovalPrompt {
     question: RequestUserInputQuestion,
@@ -914,30 +924,20 @@ const MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY: &str = "tool_description";
 const MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY: &str = "tool_params";
 const MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY: &str = "tool_params_display";
 
-struct McpToolApprovalElicitationRequest<'a> {
-    server: &'a str,
-    approval_request: &'a GuardianApprovalRequest,
-    tool_params: Option<&'a serde_json::Value>,
-    tool_params_display: Option<&'a [RenderedMcpToolApprovalParam]>,
-    question: RequestUserInputQuestion,
-    message_override: Option<&'a str>,
-    prompt_options: McpToolApprovalPromptOptions,
-}
-
 const MCP_TOOL_CALL_ARC_MONITOR_CALLSITE_DEFAULT: &str = "mcp_tool_call__default";
 const MCP_TOOL_CALL_ARC_MONITOR_CALLSITE_ALWAYS_ALLOW: &str = "mcp_tool_call__always_allow";
+
+pub(crate) fn is_mcp_tool_approval_question_id(question_id: &str) -> bool {
+    question_id
+        .strip_prefix(MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX)
+        .is_some_and(|suffix| suffix.starts_with('_'))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 struct McpToolApprovalKey {
     server: String,
     connector_id: Option<String>,
     tool_name: String,
-}
-
-pub(crate) fn is_mcp_tool_approval_question_id(question_id: &str) -> bool {
-    question_id
-        .strip_prefix(MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX)
-        .is_some_and(|suffix| suffix.starts_with('_'))
 }
 
 fn mcp_tool_approval_prompt(
@@ -998,113 +998,6 @@ fn mcp_tool_approval_prompt(
     })
 }
 
-fn mcp_tool_approval_elicitation_meta(
-    approval_request: &GuardianApprovalRequest,
-    tool_params: Option<&JsonValue>,
-    tool_params_display: Option<&[RenderedMcpToolApprovalParam]>,
-    prompt_options: McpToolApprovalPromptOptions,
-) -> Option<JsonValue> {
-    let GuardianApprovalRequest::McpToolCall {
-        server,
-        connector_id,
-        connector_name,
-        connector_description,
-        tool_title,
-        tool_description,
-        ..
-    } = approval_request
-    else {
-        return None;
-    };
-
-    let mut meta = serde_json::Map::new();
-    meta.insert(
-        MCP_TOOL_APPROVAL_KIND_KEY.to_string(),
-        JsonValue::String(MCP_TOOL_APPROVAL_KIND_MCP_TOOL_CALL.to_string()),
-    );
-    match (
-        prompt_options.allow_session_remember,
-        prompt_options.allow_persistent_approval,
-    ) {
-        (true, true) => {
-            meta.insert(
-                MCP_TOOL_APPROVAL_PERSIST_KEY.to_string(),
-                serde_json::json!([
-                    MCP_TOOL_APPROVAL_PERSIST_SESSION,
-                    MCP_TOOL_APPROVAL_PERSIST_ALWAYS,
-                ]),
-            );
-        }
-        (true, false) => {
-            meta.insert(
-                MCP_TOOL_APPROVAL_PERSIST_KEY.to_string(),
-                JsonValue::String(MCP_TOOL_APPROVAL_PERSIST_SESSION.to_string()),
-            );
-        }
-        (false, true) => {
-            meta.insert(
-                MCP_TOOL_APPROVAL_PERSIST_KEY.to_string(),
-                JsonValue::String(MCP_TOOL_APPROVAL_PERSIST_ALWAYS.to_string()),
-            );
-        }
-        (false, false) => {}
-    }
-    if let Some(tool_title) = tool_title.as_ref() {
-        meta.insert(
-            MCP_TOOL_APPROVAL_TOOL_TITLE_KEY.to_string(),
-            JsonValue::String(tool_title.clone()),
-        );
-    }
-    if let Some(tool_description) = tool_description.as_ref() {
-        meta.insert(
-            MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY.to_string(),
-            JsonValue::String(tool_description.clone()),
-        );
-    }
-    if server == "codex_apps"
-        && (connector_id.is_some() || connector_name.is_some() || connector_description.is_some())
-    {
-        meta.insert(
-            MCP_TOOL_APPROVAL_SOURCE_KEY.to_string(),
-            JsonValue::String(MCP_TOOL_APPROVAL_SOURCE_CONNECTOR.to_string()),
-        );
-        if let Some(connector_id) = connector_id.as_deref() {
-            meta.insert(
-                MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY.to_string(),
-                JsonValue::String(connector_id.to_string()),
-            );
-        }
-        if let Some(connector_name) = connector_name.as_ref() {
-            meta.insert(
-                MCP_TOOL_APPROVAL_CONNECTOR_NAME_KEY.to_string(),
-                JsonValue::String(connector_name.clone()),
-            );
-        }
-        if let Some(connector_description) = connector_description.as_ref() {
-            meta.insert(
-                MCP_TOOL_APPROVAL_CONNECTOR_DESCRIPTION_KEY.to_string(),
-                JsonValue::String(connector_description.clone()),
-            );
-        }
-    }
-    if let Some(tool_params) = tool_params {
-        meta.insert(
-            MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY.to_string(),
-            tool_params.clone(),
-        );
-    }
-    if let Some(tool_params_display) = tool_params_display
-        && let Ok(tool_params_display) = serde_json::to_value(tool_params_display)
-    {
-        meta.insert(
-            MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY.to_string(),
-            tool_params_display,
-        );
-    }
-
-    (!meta.is_empty()).then_some(JsonValue::Object(meta))
-}
-
 pub(crate) fn mcp_tool_approval_compat_response(
     approval_request: &GuardianApprovalRequest,
     question: &RequestUserInputQuestion,
@@ -1141,96 +1034,6 @@ pub(crate) fn mcp_tool_approval_compat_response(
             },
         )]),
     })
-}
-
-fn build_mcp_tool_approval_question(
-    question_id: String,
-    server: &str,
-    tool_name: &str,
-    connector_name: Option<&str>,
-    prompt_options: McpToolApprovalPromptOptions,
-    question_override: Option<&str>,
-) -> RequestUserInputQuestion {
-    let question = question_override
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            build_mcp_tool_approval_fallback_message(server, tool_name, connector_name)
-        });
-    let question = format!("{}?", question.trim_end_matches('?'));
-
-    let mut options = vec![RequestUserInputQuestionOption {
-        label: MCP_TOOL_APPROVAL_ACCEPT.to_string(),
-        description: "Run the tool and continue.".to_string(),
-    }];
-    if prompt_options.allow_session_remember {
-        options.push(RequestUserInputQuestionOption {
-            label: MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION.to_string(),
-            description: "Run the tool and remember this choice for this session.".to_string(),
-        });
-    }
-    if prompt_options.allow_persistent_approval {
-        options.push(RequestUserInputQuestionOption {
-            label: MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER.to_string(),
-            description: "Run the tool and remember this choice for future tool calls.".to_string(),
-        });
-    }
-    options.push(RequestUserInputQuestionOption {
-        label: MCP_TOOL_APPROVAL_CANCEL.to_string(),
-        description: "Cancel this tool call.".to_string(),
-    });
-
-    RequestUserInputQuestion {
-        id: question_id,
-        header: "Approve app tool call?".to_string(),
-        question,
-        is_other: false,
-        is_secret: false,
-        options: Some(options),
-    }
-}
-
-fn build_mcp_tool_approval_fallback_message(
-    server: &str,
-    tool_name: &str,
-    connector_name: Option<&str>,
-) -> String {
-    let actor = connector_name
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-        .map(ToString::to_string)
-        .unwrap_or_else(|| {
-            if server == "codex_apps" {
-                "this app".to_string()
-            } else {
-                format!("the {server} MCP server")
-            }
-        });
-    format!("Allow {actor} to run tool \"{tool_name}\"?")
-}
-
-fn mcp_tool_approval_question_text(question: String, monitor_reason: Option<&str>) -> String {
-    match monitor_reason.map(str::trim) {
-        Some(reason) if !reason.is_empty() => {
-            format!("Tool call needs your approval. Reason: {reason}")
-        }
-        _ => question,
-    }
-}
-
-fn build_mcp_tool_approval_display_params(
-    tool_params: Option<&JsonValue>,
-) -> Option<Vec<RenderedMcpToolApprovalParam>> {
-    let tool_params = tool_params?.as_object()?;
-    let mut display_params = tool_params
-        .iter()
-        .map(|(name, value)| RenderedMcpToolApprovalParam {
-            name: name.clone(),
-            value: value.clone(),
-            display_name: name.clone(),
-        })
-        .collect::<Vec<_>>();
-    display_params.sort_by(|left, right| left.name.cmp(&right.name));
-    Some(display_params)
 }
 
 fn mcp_tool_approval_prompt_options(
@@ -1705,6 +1508,203 @@ fn build_mcp_tool_approval_elicitation_request(
             },
         },
     }
+}
+
+fn mcp_tool_approval_elicitation_meta(
+    approval_request: &GuardianApprovalRequest,
+    tool_params: Option<&JsonValue>,
+    tool_params_display: Option<&[RenderedMcpToolApprovalParam]>,
+    prompt_options: McpToolApprovalPromptOptions,
+) -> Option<JsonValue> {
+    let GuardianApprovalRequest::McpToolCall {
+        server,
+        connector_id,
+        connector_name,
+        connector_description,
+        tool_title,
+        tool_description,
+        ..
+    } = approval_request
+    else {
+        return None;
+    };
+
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        MCP_TOOL_APPROVAL_KIND_KEY.to_string(),
+        JsonValue::String(MCP_TOOL_APPROVAL_KIND_MCP_TOOL_CALL.to_string()),
+    );
+    match (
+        prompt_options.allow_session_remember,
+        prompt_options.allow_persistent_approval,
+    ) {
+        (true, true) => {
+            meta.insert(
+                MCP_TOOL_APPROVAL_PERSIST_KEY.to_string(),
+                serde_json::json!([
+                    MCP_TOOL_APPROVAL_PERSIST_SESSION,
+                    MCP_TOOL_APPROVAL_PERSIST_ALWAYS,
+                ]),
+            );
+        }
+        (true, false) => {
+            meta.insert(
+                MCP_TOOL_APPROVAL_PERSIST_KEY.to_string(),
+                JsonValue::String(MCP_TOOL_APPROVAL_PERSIST_SESSION.to_string()),
+            );
+        }
+        (false, true) => {
+            meta.insert(
+                MCP_TOOL_APPROVAL_PERSIST_KEY.to_string(),
+                JsonValue::String(MCP_TOOL_APPROVAL_PERSIST_ALWAYS.to_string()),
+            );
+        }
+        (false, false) => {}
+    }
+    if let Some(tool_title) = tool_title.as_ref() {
+        meta.insert(
+            MCP_TOOL_APPROVAL_TOOL_TITLE_KEY.to_string(),
+            JsonValue::String(tool_title.clone()),
+        );
+    }
+    if let Some(tool_description) = tool_description.as_ref() {
+        meta.insert(
+            MCP_TOOL_APPROVAL_TOOL_DESCRIPTION_KEY.to_string(),
+            JsonValue::String(tool_description.clone()),
+        );
+    }
+    if server == CODEX_APPS_MCP_SERVER_NAME
+        && (connector_id.is_some() || connector_name.is_some() || connector_description.is_some())
+    {
+        meta.insert(
+            MCP_TOOL_APPROVAL_SOURCE_KEY.to_string(),
+            JsonValue::String(MCP_TOOL_APPROVAL_SOURCE_CONNECTOR.to_string()),
+        );
+        if let Some(connector_id) = connector_id.as_deref() {
+            meta.insert(
+                MCP_TOOL_APPROVAL_CONNECTOR_ID_KEY.to_string(),
+                JsonValue::String(connector_id.to_string()),
+            );
+        }
+        if let Some(connector_name) = connector_name.as_ref() {
+            meta.insert(
+                MCP_TOOL_APPROVAL_CONNECTOR_NAME_KEY.to_string(),
+                JsonValue::String(connector_name.clone()),
+            );
+        }
+        if let Some(connector_description) = connector_description.as_ref() {
+            meta.insert(
+                MCP_TOOL_APPROVAL_CONNECTOR_DESCRIPTION_KEY.to_string(),
+                JsonValue::String(connector_description.clone()),
+            );
+        }
+    }
+    if let Some(tool_params) = tool_params {
+        meta.insert(
+            MCP_TOOL_APPROVAL_TOOL_PARAMS_KEY.to_string(),
+            tool_params.clone(),
+        );
+    }
+    if let Some(tool_params_display) = tool_params_display
+        && let Ok(tool_params_display) = serde_json::to_value(tool_params_display)
+    {
+        meta.insert(
+            MCP_TOOL_APPROVAL_TOOL_PARAMS_DISPLAY_KEY.to_string(),
+            tool_params_display,
+        );
+    }
+
+    (!meta.is_empty()).then_some(JsonValue::Object(meta))
+}
+
+fn build_mcp_tool_approval_question(
+    question_id: String,
+    server: &str,
+    tool_name: &str,
+    connector_name: Option<&str>,
+    prompt_options: McpToolApprovalPromptOptions,
+    question_override: Option<&str>,
+) -> RequestUserInputQuestion {
+    let question = question_override
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            build_mcp_tool_approval_fallback_message(server, tool_name, connector_name)
+        });
+    let question = format!("{}?", question.trim_end_matches('?'));
+
+    let mut options = vec![RequestUserInputQuestionOption {
+        label: MCP_TOOL_APPROVAL_ACCEPT.to_string(),
+        description: "Run the tool and continue.".to_string(),
+    }];
+    if prompt_options.allow_session_remember {
+        options.push(RequestUserInputQuestionOption {
+            label: MCP_TOOL_APPROVAL_ACCEPT_FOR_SESSION.to_string(),
+            description: "Run the tool and remember this choice for this session.".to_string(),
+        });
+    }
+    if prompt_options.allow_persistent_approval {
+        options.push(RequestUserInputQuestionOption {
+            label: MCP_TOOL_APPROVAL_ACCEPT_AND_REMEMBER.to_string(),
+            description: "Run the tool and remember this choice for future tool calls.".to_string(),
+        });
+    }
+    options.push(RequestUserInputQuestionOption {
+        label: MCP_TOOL_APPROVAL_CANCEL.to_string(),
+        description: "Cancel this tool call.".to_string(),
+    });
+
+    RequestUserInputQuestion {
+        id: question_id,
+        header: "Approve app tool call?".to_string(),
+        question,
+        is_other: false,
+        is_secret: false,
+        options: Some(options),
+    }
+}
+
+fn build_mcp_tool_approval_fallback_message(
+    server: &str,
+    tool_name: &str,
+    connector_name: Option<&str>,
+) -> String {
+    let actor = connector_name
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| {
+            if server == CODEX_APPS_MCP_SERVER_NAME {
+                "this app".to_string()
+            } else {
+                format!("the {server} MCP server")
+            }
+        });
+    format!("Allow {actor} to run tool \"{tool_name}\"?")
+}
+
+fn mcp_tool_approval_question_text(question: String, monitor_reason: Option<&str>) -> String {
+    match monitor_reason.map(str::trim) {
+        Some(reason) if !reason.is_empty() => {
+            format!("Tool call needs your approval. Reason: {reason}")
+        }
+        _ => question,
+    }
+}
+
+fn build_mcp_tool_approval_display_params(
+    tool_params: Option<&JsonValue>,
+) -> Option<Vec<RenderedMcpToolApprovalParam>> {
+    let tool_params = tool_params?.as_object()?;
+    let mut display_params = tool_params
+        .iter()
+        .map(|(name, value)| RenderedMcpToolApprovalParam {
+            name: name.clone(),
+            value: value.clone(),
+            display_name: name.clone(),
+        })
+        .collect::<Vec<_>>();
+    display_params.sort_by(|left, right| left.name.cmp(&right.name));
+    Some(display_params)
 }
 
 fn parse_mcp_tool_approval_elicitation_response(
