@@ -817,6 +817,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: turn_id.clone(),
                 item,
+                started_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemStarted(notification))
@@ -963,6 +964,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
                 item: item.clone(),
+                started_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemStarted(started))
@@ -971,6 +973,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
                 item,
+                completed_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
@@ -988,6 +991,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
                 item: item.clone(),
+                started_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemStarted(started))
@@ -996,6 +1000,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
                 item,
+                completed_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
@@ -1045,6 +1050,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
                 item: item.clone(),
+                started_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemStarted(started))
@@ -1053,6 +1059,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                 thread_id: conversation_id.to_string(),
                 turn_id: event_turn_id.clone(),
                 item,
+                completed_at_ms: None,
             };
             outgoing
                 .send_server_notification(ServerNotification::ItemCompleted(completed))
@@ -1399,6 +1406,7 @@ async fn start_command_execution_item(
                 exit_code: None,
                 duration_ms: None,
             },
+            started_at_ms: None,
         };
         outgoing
             .send_server_notification(ServerNotification::ItemStarted(notification))
@@ -1447,6 +1455,7 @@ async fn complete_command_execution_item(
         thread_id: conversation_id.to_string(),
         turn_id,
         item,
+        completed_at_ms: None,
     };
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))
@@ -1501,6 +1510,7 @@ pub(crate) async fn maybe_emit_hook_prompt_item_completed(
                 .map(codex_app_server_protocol::HookPromptFragment::from)
                 .collect(),
         },
+        completed_at_ms: None,
     };
     outgoing
         .send_server_notification(ServerNotification::ItemCompleted(notification))

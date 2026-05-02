@@ -1352,6 +1352,7 @@ mod tests {
                     id: "user-item-id".to_string(),
                     content: Vec::new(),
                 }),
+                started_at_ms: None,
             }),
             EventMsg::TurnComplete(TurnCompleteEvent {
                 turn_id: turn_id.to_string(),

@@ -73,6 +73,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id: response.turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::McpToolCallBegin(begin_event) => {
@@ -91,6 +92,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                started_at_ms: None,
             })
         }
         EventMsg::McpToolCallEnd(end_event) => {
@@ -131,6 +133,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::CollabAgentSpawnBegin(begin_event) => {
@@ -149,6 +152,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                started_at_ms: None,
             })
         }
         EventMsg::CollabAgentSpawnEnd(end_event) => {
@@ -187,6 +191,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::CollabAgentInteractionBegin(begin_event) => {
@@ -206,6 +211,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                started_at_ms: None,
             })
         }
         EventMsg::CollabAgentInteractionEnd(end_event) => {
@@ -233,6 +239,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::CollabWaitingBegin(begin_event) => {
@@ -256,6 +263,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                started_at_ms: None,
             })
         }
         EventMsg::CollabWaitingEnd(end_event) => {
@@ -291,6 +299,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::CollabCloseBegin(begin_event) => {
@@ -309,6 +318,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                started_at_ms: None,
             })
         }
         EventMsg::CollabCloseEnd(end_event) => {
@@ -341,6 +351,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::CollabResumeBegin(begin_event) => {
@@ -359,6 +370,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                started_at_ms: None,
             })
         }
         EventMsg::CollabResumeEnd(end_event) => {
@@ -391,6 +403,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item,
+                completed_at_ms: None,
             })
         }
         EventMsg::AgentMessageContentDelta(event) => {
@@ -440,6 +453,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item: item_started_event.item.into(),
+                started_at_ms: item_started_event.started_at_ms,
             })
         }
         EventMsg::ItemCompleted(item_completed_event) => {
@@ -447,6 +461,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item: item_completed_event.item.into(),
+                completed_at_ms: item_completed_event.completed_at_ms,
             })
         }
         EventMsg::PatchApplyUpdated(event) => {
@@ -462,6 +477,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item: build_command_execution_begin_item(&exec_command_begin_event),
+                started_at_ms: None,
             })
         }
         EventMsg::ExecCommandOutputDelta(exec_command_output_delta_event) => {
@@ -490,6 +506,7 @@ pub fn item_event_to_server_notification(
                 thread_id,
                 turn_id,
                 item: build_command_execution_end_item(&exec_command_end_event),
+                completed_at_ms: None,
             })
         }
         _ => unreachable!("unsupported item event"),
@@ -564,6 +581,7 @@ mod tests {
             ItemStartedNotification {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn-1".to_string(),
+                started_at_ms: None,
                 item: ThreadItem::CollabAgentToolCall {
                     id: event.call_id,
                     tool: CollabAgentTool::ResumeAgent,
@@ -601,6 +619,7 @@ mod tests {
             ItemCompletedNotification {
                 thread_id: "thread-2".to_string(),
                 turn_id: "turn-2".to_string(),
+                completed_at_ms: None,
                 item: ThreadItem::CollabAgentToolCall {
                     id: event.call_id,
                     tool: CollabAgentTool::ResumeAgent,
@@ -643,6 +662,7 @@ mod tests {
             ItemStartedNotification {
                 thread_id: "thread-1".to_string(),
                 turn_id: "turn_1".to_string(),
+                started_at_ms: None,
                 item: ThreadItem::McpToolCall {
                     id: begin_event.call_id,
                     server: begin_event.invocation.server,
@@ -680,6 +700,7 @@ mod tests {
             ItemStartedNotification {
                 thread_id: "thread-2".to_string(),
                 turn_id: "turn_2".to_string(),
+                started_at_ms: None,
                 item: ThreadItem::McpToolCall {
                     id: begin_event.call_id,
                     server: begin_event.invocation.server,
@@ -732,6 +753,7 @@ mod tests {
             ItemCompletedNotification {
                 thread_id: "thread-3".to_string(),
                 turn_id: "turn_3".to_string(),
+                completed_at_ms: None,
                 item: ThreadItem::McpToolCall {
                     id: end_event.call_id,
                     server: end_event.invocation.server,
@@ -777,6 +799,7 @@ mod tests {
             ItemCompletedNotification {
                 thread_id: "thread-4".to_string(),
                 turn_id: "turn_4".to_string(),
+                completed_at_ms: None,
                 item: ThreadItem::McpToolCall {
                     id: end_event.call_id,
                     server: end_event.invocation.server,

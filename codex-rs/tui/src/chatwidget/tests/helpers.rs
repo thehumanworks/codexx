@@ -654,6 +654,7 @@ pub(super) fn handle_agent_reasoning_final(chat: &mut ChatWidget) {
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
+            completed_at_ms: None,
             item: AppServerThreadItem::Reasoning {
                 id: "reasoning-1".to_string(),
                 summary: Vec::new(),
@@ -672,6 +673,7 @@ pub(super) fn handle_entered_review_mode(chat: &mut ChatWidget, review: impl Int
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
+            started_at_ms: None,
             item: AppServerThreadItem::EnteredReviewMode {
                 id: "review-start".to_string(),
                 review: review.into(),
@@ -700,6 +702,7 @@ pub(super) fn handle_exited_review_mode(chat: &mut ChatWidget) {
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
+            completed_at_ms: None,
             item: AppServerThreadItem::ExitedReviewMode {
                 id: "review-end".to_string(),
                 review: String::new(),
@@ -756,6 +759,7 @@ pub(super) fn handle_patch_apply_begin(
         ServerNotification::ItemStarted(ItemStartedNotification {
             thread_id: thread_id(chat),
             turn_id: turn_id.into(),
+            started_at_ms: None,
             item: AppServerThreadItem::FileChange {
                 id: call_id.into(),
                 changes: file_update_changes_from_tui(changes),
@@ -777,6 +781,7 @@ pub(super) fn handle_patch_apply_end(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
             turn_id: turn_id.into(),
+            completed_at_ms: None,
             item: AppServerThreadItem::FileChange {
                 id: call_id.into(),
                 changes: file_update_changes_from_tui(changes),
@@ -796,6 +801,7 @@ pub(super) fn handle_view_image_tool_call(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
             turn_id: "turn-1".to_string(),
+            completed_at_ms: None,
             item: AppServerThreadItem::ImageView {
                 id: call_id.into(),
                 path,
@@ -815,6 +821,7 @@ pub(super) fn handle_image_generation_end(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: thread_id(chat),
             turn_id: "turn-1".to_string(),
+            completed_at_ms: None,
             item: AppServerThreadItem::ImageGeneration {
                 id: call_id.into(),
                 status: "completed".to_string(),
@@ -972,6 +979,7 @@ pub(super) fn handle_exec_begin(chat: &mut ChatWidget, item: AppServerThreadItem
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
+            started_at_ms: None,
             item,
         }),
         /*replay_kind*/ None,
@@ -1011,6 +1019,7 @@ pub(super) fn complete_assistant_message(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: chat.thread_id.map(|id| id.to_string()).unwrap_or_default(),
             turn_id: "turn-1".to_string(),
+            completed_at_ms: None,
             item: AppServerThreadItem::AgentMessage {
                 id: item_id.to_string(),
                 text: text.to_string(),
@@ -1053,6 +1062,7 @@ pub(super) fn complete_user_message_for_inputs(
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: chat.thread_id.map(|id| id.to_string()).unwrap_or_default(),
             turn_id: "turn-1".to_string(),
+            completed_at_ms: None,
             item: AppServerThreadItem::UserMessage {
                 id: item_id.to_string(),
                 content,
@@ -1194,6 +1204,7 @@ pub(super) fn handle_exec_end(chat: &mut ChatWidget, item: AppServerThreadItem) 
                 .last_turn_id
                 .clone()
                 .unwrap_or_else(|| "turn-1".to_string()),
+            completed_at_ms: None,
             item,
         }),
         /*replay_kind*/ None,
