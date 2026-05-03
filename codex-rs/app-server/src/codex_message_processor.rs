@@ -8665,9 +8665,13 @@ fn collect_resume_override_mismatches(
     if let Some(requested_service_tier) = request.service_tier.as_ref()
         && requested_service_tier != &config_snapshot.service_tier
     {
+        let requested_service_tier = requested_service_tier.as_ref().map(ToString::to_string);
+        let active_service_tier = config_snapshot
+            .service_tier
+            .as_ref()
+            .map(ToString::to_string);
         mismatch_details.push(format!(
-            "service_tier requested={requested_service_tier:?} active={:?}",
-            config_snapshot.service_tier
+            "service_tier requested={requested_service_tier:?} active={active_service_tier:?}"
         ));
     }
     if let Some(requested_cwd) = request.cwd.as_deref() {
@@ -10562,7 +10566,9 @@ mod tests {
 
         assert_eq!(
             collect_resume_override_mismatches(&request, &config_snapshot),
-            vec!["service_tier requested=Some(Fast) active=Some(Flex)".to_string()]
+            vec![format!(
+                "service_tier requested=Some(\"{SERVICE_TIER_PRIORITY}\") active=Some(\"{SERVICE_TIER_FLEX}\")"
+            )]
         );
     }
 

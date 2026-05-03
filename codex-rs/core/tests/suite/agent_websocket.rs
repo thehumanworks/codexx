@@ -1,7 +1,6 @@
 use anyhow::Result;
 use codex_features::Feature;
 use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
-use codex_protocol::config_types::ServiceTier;
 use core_test_support::responses::WebSocketConnectionConfig;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
