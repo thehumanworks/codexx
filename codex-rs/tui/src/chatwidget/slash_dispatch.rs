@@ -9,6 +9,8 @@ use super::*;
 use crate::app_event::ThreadGoalSetMode;
 use crate::bottom_pane::prompt_args::parse_slash_name;
 use crate::bottom_pane::slash_commands;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
+use codex_protocol::config_types::ServiceTier;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -178,10 +180,14 @@ impl ChatWidget {
                 self.open_model_popup();
             }
             SlashCommand::Fast => {
-                let next_tier = if matches!(self.current_service_tier(), Some(ServiceTier::Fast)) {
+                let next_tier = if self
+                    .current_service_tier()
+                    .as_ref()
+                    .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
+                {
                     None
                 } else {
-                    Some(ServiceTier::Fast)
+                    Some(ServiceTier::from(SERVICE_TIER_PRIORITY))
                 };
                 self.set_service_tier_selection(next_tier);
             }
@@ -556,15 +562,19 @@ impl ChatWidget {
         match cmd {
             SlashCommand::Fast => {
                 match trimmed.to_ascii_lowercase().as_str() {
-                    "on" => self.set_service_tier_selection(Some(ServiceTier::Fast)),
+                    "on" => self
+                        .set_service_tier_selection(Some(ServiceTier::from(SERVICE_TIER_PRIORITY))),
                     "off" => self.set_service_tier_selection(/*service_tier*/ None),
                     "status" => {
-                        let status =
-                            if matches!(self.current_service_tier(), Some(ServiceTier::Fast)) {
-                                "on"
-                            } else {
-                                "off"
-                            };
+                        let status = if self
+                            .current_service_tier()
+                            .as_ref()
+                            .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
+                        {
+                            "on"
+                        } else {
+                            "off"
+                        };
                         self.add_info_message(
                             format!("Fast mode is {status}."),
                             /*hint*/ None,

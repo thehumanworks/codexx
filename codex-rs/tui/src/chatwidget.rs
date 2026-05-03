@@ -150,6 +150,7 @@ use codex_protocol::config_types::CollaborationMode;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::Settings;
 #[cfg(target_os = "windows")]
@@ -158,6 +159,7 @@ use codex_protocol::items::AgentMessageContent;
 use codex_protocol::items::AgentMessageItem;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::models::local_image_label_text;
+use codex_protocol::openai_models::model_supports_service_tier;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::plan_tool::PlanItemArg as UpdatePlanItemArg;
 use codex_protocol::plan_tool::StepStatus as UpdatePlanItemStatus;
@@ -2025,7 +2027,7 @@ impl ChatWidget {
         self.current_rollout_path = session.rollout_path.clone();
         self.current_cwd = Some(session.cwd.to_path_buf());
         self.config.cwd = session.cwd.clone();
-        self.effective_service_tier = session.service_tier;
+        self.effective_service_tier = session.service_tier.clone();
         if let Err(err) = self
             .config
             .permissions
@@ -2074,7 +2076,7 @@ impl ChatWidget {
         if display == SessionConfiguredDisplay::Normal {
             let startup_tooltip_override = self.startup_tooltip_override.take();
             let show_fast_status =
-                self.should_show_fast_status(&model_for_header, session.service_tier);
+                self.should_show_fast_status(&model_for_header, session.service_tier.clone());
             let session_info_cell = history_cell::new_session_info(
                 &self.config,
                 &model_for_header,
@@ -4816,7 +4818,7 @@ impl ChatWidget {
         let active_cell = Some(Self::placeholder_session_header_cell(&config));
 
         let current_cwd = Some(config.cwd.to_path_buf());
-        let effective_service_tier = config.service_tier;
+        let effective_service_tier = config.service_tier.clone();
         let current_terminal_info = terminal_info();
         let runtime_keymap = RuntimeKeymap::from_config(&config.tui_keymap).ok();
         let default_keymap = RuntimeKeymap::defaults();
@@ -5795,7 +5797,7 @@ impl ChatWidget {
             .personality
             .filter(|_| self.config.features.enabled(Feature::Personality))
             .filter(|_| self.current_model_supports_personality());
-        let service_tier = match self.config.service_tier {
+        let service_tier = match self.config.service_tier.clone() {
             Some(service_tier) => Some(Some(service_tier)),
             None if self.config.notices.fast_default_opt_out == Some(true) => Some(None),
             None => None,
@@ -9203,16 +9205,16 @@ impl ChatWidget {
 
     /// Set Fast mode in the widget's config copy.
     pub(crate) fn set_service_tier(&mut self, service_tier: Option<ServiceTier>) {
-        self.config.service_tier = service_tier;
+        self.config.service_tier = service_tier.clone();
         self.effective_service_tier = service_tier;
     }
 
     pub(crate) fn current_service_tier(&self) -> Option<ServiceTier> {
-        self.effective_service_tier
+        self.effective_service_tier.clone()
     }
 
     pub(crate) fn configured_service_tier(&self) -> Option<ServiceTier> {
-        self.config.service_tier
+        self.config.service_tier.clone()
     }
 
     pub(crate) fn fast_default_opt_out(&self) -> Option<bool> {
@@ -9259,7 +9261,9 @@ impl ChatWidget {
         service_tier: Option<ServiceTier>,
     ) -> bool {
         self.model_supports_fast_mode(model)
-            && matches!(service_tier, Some(ServiceTier::Fast))
+            && service_tier
+                .as_ref()
+                .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
             && self.has_chatgpt_account
     }
 
@@ -9302,7 +9306,7 @@ impl ChatWidget {
         if service_tier.is_none() {
             self.config.notices.fast_default_opt_out = Some(true);
         }
-        self.set_service_tier(service_tier);
+        self.set_service_tier(service_tier.clone());
         self.app_event_tx
             .send(AppEvent::CodexOp(AppCommand::override_turn_context(
                 /*cwd*/ None,
@@ -9313,7 +9317,7 @@ impl ChatWidget {
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
-                Some(service_tier),
+                Some(service_tier.clone()),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));
@@ -9382,6 +9386,7 @@ impl ChatWidget {
     }
 
     fn model_supports_fast_mode(&self, model: &str) -> bool {
+        let service_tier = ServiceTier::from(SERVICE_TIER_PRIORITY);
         self.model_catalog
             .try_list_models()
             .ok()
@@ -9389,7 +9394,7 @@ impl ChatWidget {
                 models
                     .into_iter()
                     .find(|preset| preset.model == model)
-                    .map(|preset| preset.supports_fast_mode())
+                    .map(|preset| model_supports_service_tier(&preset, &service_tier))
             })
             .unwrap_or(false)
     }

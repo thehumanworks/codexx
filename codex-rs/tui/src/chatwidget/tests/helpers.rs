@@ -1,5 +1,8 @@
 use super::*;
 use codex_app_server_protocol::PluginAvailability;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
+use codex_protocol::config_types::ServiceTier;
+use codex_protocol::openai_models::model_supports_service_tier;
 use pretty_assertions::assert_eq;
 
 pub(super) async fn test_config() -> Config {
@@ -182,7 +185,7 @@ pub(super) async fn make_chatwidget_manual(
     };
     let current_collaboration_mode = base_mode;
     let active_collaboration_mask = collaboration_modes::default_mask(model_catalog.as_ref());
-    let effective_service_tier = cfg.service_tier;
+    let effective_service_tier = cfg.service_tier.clone();
     let mut widget = ChatWidget {
         app_event_tx,
         codex_op_target: super::CodexOpTarget::Direct(op_tx),
@@ -381,8 +384,12 @@ pub(crate) fn set_chatgpt_auth(chat: &mut ChatWidget) {
 }
 
 fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> ModelInfo {
-    let additional_speed_tiers = if supports_fast_mode {
-        vec![codex_protocol::openai_models::SPEED_TIER_FAST]
+    let service_tiers = if supports_fast_mode {
+        vec![json!({
+            "id": SERVICE_TIER_PRIORITY,
+            "name": "Fast",
+            "description": "Run this model with faster responses.",
+        })]
     } else {
         Vec::new()
     };
@@ -396,7 +403,7 @@ fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> Model
         "visibility": "list",
         "supported_in_api": true,
         "priority": priority,
-        "additional_speed_tiers": additional_speed_tiers,
+        "service_tiers": service_tiers,
         "availability_nux": null,
         "upgrade": null,
         "base_instructions": "base instructions",
@@ -1248,6 +1255,13 @@ pub(super) fn get_available_model(chat: &ChatWidget, model: &str) -> ModelPreset
         .find(|&preset| preset.model == model)
         .cloned()
         .unwrap_or_else(|| panic!("{model} preset not found"))
+}
+
+pub(super) fn model_supports_fast_mode(chat: &ChatWidget, model: &str) -> bool {
+    model_supports_service_tier(
+        &get_available_model(chat, model),
+        &ServiceTier::from(SERVICE_TIER_PRIORITY),
+    )
 }
 
 pub(super) async fn assert_shift_left_edits_most_recent_queued_message_for_terminal(

@@ -6,6 +6,7 @@
 use super::*;
 use crate::bottom_pane::status_line_from_segments;
 use crate::status::format_tokens_compact;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: activity indicator + project name.
@@ -558,7 +559,11 @@ impl ChatWidget {
             )),
             StatusLineItem::SessionId => self.thread_id.map(|id| id.to_string()),
             StatusLineItem::FastMode => Some(
-                if matches!(self.current_service_tier(), Some(ServiceTier::Fast)) {
+                if self
+                    .current_service_tier()
+                    .as_ref()
+                    .is_some_and(|tier| tier.as_ref() == SERVICE_TIER_PRIORITY)
+                {
                     "Fast on".to_string()
                 } else {
                     "Fast off".to_string()

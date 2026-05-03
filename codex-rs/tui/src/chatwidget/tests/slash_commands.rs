@@ -1697,13 +1697,14 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
     chat.dispatch_command(SlashCommand::Fast);
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    let expected_service_tier = ServiceTier::from(SERVICE_TIER_PRIORITY);
     assert!(
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
+                service_tier: Some(Some(service_tier)),
                 ..
-            })
+            }) if service_tier == &expected_service_tier
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -1711,8 +1712,8 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::PersistServiceTierSelection {
-                service_tier: Some(ServiceTier::Fast),
-            }
+                service_tier: Some(service_tier),
+            } if service_tier == &expected_service_tier
         )),
         "expected fast-mode persistence app event; events: {events:?}"
     );
@@ -1737,9 +1738,9 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            service_tier: Some(Some(ServiceTier::Fast)),
+            service_tier: Some(Some(service_tier)),
             ..
-        } => {}
+        } if service_tier == ServiceTier::from(SERVICE_TIER_PRIORITY) => {}
         other => panic!("expected Op::UserTurn with fast service tier, got {other:?}"),
     }
 }
@@ -1758,13 +1759,14 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
     complete_turn_with_message(&mut chat, "turn-1", Some("done"));
 
     let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    let expected_service_tier = ServiceTier::from(SERVICE_TIER_PRIORITY);
     assert!(
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
+                service_tier: Some(Some(service_tier)),
                 ..
-            })
+            }) if service_tier == &expected_service_tier
         )),
         "expected queued /fast to update service tier before next turn; events: {events:?}"
     );
@@ -1772,9 +1774,9 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             items,
-            service_tier: Some(Some(ServiceTier::Fast)),
+            service_tier: Some(Some(service_tier)),
             ..
-        } => assert_eq!(
+        } if service_tier == expected_service_tier => assert_eq!(
             items,
             vec![UserInput::Text {
                 text: "hello after fast".to_string(),
