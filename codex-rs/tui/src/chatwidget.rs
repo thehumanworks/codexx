@@ -9214,6 +9214,7 @@ impl ChatWidget {
     pub(crate) fn set_service_tier(&mut self, service_tier: Option<ServiceTier>) {
         self.config.service_tier = service_tier.clone();
         self.effective_service_tier = service_tier;
+        self.sync_service_tier_commands();
     }
 
     pub(crate) fn current_service_tier(&self) -> Option<ServiceTier> {

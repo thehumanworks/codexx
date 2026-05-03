@@ -6,6 +6,7 @@ use codex_protocol::openai_models::model_supports_service_tier;
 
 use super::ChatWidget;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
+use crate::bottom_pane::slash_commands::service_tier_command_for_unlisted_selection;
 use crate::bottom_pane::slash_commands::service_tier_commands_for_model;
 
 pub(super) fn model_preset(chat: &ChatWidget, model: &str) -> Option<ModelPreset> {
@@ -16,9 +17,20 @@ pub(super) fn model_preset(chat: &ChatWidget, model: &str) -> Option<ModelPreset
 }
 
 pub(crate) fn available_service_tier_commands(chat: &ChatWidget) -> Vec<ServiceTierCommand> {
-    model_preset(chat, chat.current_model())
+    let mut commands = model_preset(chat, chat.current_model())
         .map(|model| service_tier_commands_for_model(&model))
-        .unwrap_or_default()
+        .unwrap_or_default();
+
+    if let Some(service_tier) = chat.current_service_tier()
+        && !commands
+            .iter()
+            .any(|command| command.service_tier == service_tier)
+        && let Some(command) = service_tier_command_for_unlisted_selection(service_tier, &commands)
+    {
+        commands.push(command);
+    }
+
+    commands
 }
 
 pub(crate) fn service_tier_display_name(

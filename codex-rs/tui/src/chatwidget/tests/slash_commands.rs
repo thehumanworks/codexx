@@ -1065,6 +1065,34 @@ async fn usage_error_slash_command_is_available_from_local_recall() {
 }
 
 #[tokio::test]
+async fn selected_service_tier_can_be_cleared_when_model_lacks_tier_metadata() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.3-codex")).await;
+    set_fast_mode_test_catalog(&mut chat);
+    chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
+    chat.set_service_tier(Some(SERVICE_TIER_PRIORITY.into()));
+
+    submit_composer_text(&mut chat, "/priority off");
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    let service_tier_events = events
+        .iter()
+        .filter_map(|event| match event {
+            AppEvent::CodexOp(AppCommand::OverrideTurnContext { service_tier, .. }) => {
+                Some(("override", service_tier.clone()))
+            }
+            AppEvent::PersistServiceTierSelection { service_tier } => {
+                Some(("persist", Some(service_tier.clone())))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        service_tier_events,
+        vec![("override", Some(None)), ("persist", Some(None))]
+    );
+}
+
+#[tokio::test]
 async fn unrecognized_slash_command_is_not_added_to_local_recall() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

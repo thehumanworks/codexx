@@ -36,15 +36,26 @@ pub(crate) struct ServiceTierCommand {
     pub(crate) description: String,
 }
 
-fn service_tier_command_from_model_tier(
-    service_tier: &ModelServiceTier,
-    command: String,
-) -> ServiceTierCommand {
-    ServiceTierCommand {
-        service_tier: service_tier.id.clone(),
-        command,
-        name: service_tier.name.clone(),
-        description: service_tier.description.clone(),
+impl From<(&ModelServiceTier, String)> for ServiceTierCommand {
+    fn from((model_tier, command): (&ModelServiceTier, String)) -> Self {
+        Self {
+            service_tier: model_tier.id.clone(),
+            command,
+            name: model_tier.name.clone(),
+            description: model_tier.description.clone(),
+        }
+    }
+}
+
+impl From<(ServiceTier, String)> for ServiceTierCommand {
+    fn from((service_tier, command): (ServiceTier, String)) -> Self {
+        let name = service_tier.to_string();
+        Self {
+            service_tier,
+            command,
+            name,
+            description: "Clear the selected service tier override.".to_string(),
+        }
     }
 }
 
@@ -196,9 +207,21 @@ pub(crate) fn service_tier_commands_for_model(model: &ModelPreset) -> Vec<Servic
             continue;
         };
         reserved_names.insert(command.clone());
-        commands.push(service_tier_command_from_model_tier(service_tier, command));
+        commands.push((service_tier, command).into());
     }
     commands
+}
+
+pub(crate) fn service_tier_command_for_unlisted_selection(
+    service_tier: ServiceTier,
+    existing_commands: &[ServiceTierCommand],
+) -> Option<ServiceTierCommand> {
+    let reserved_names = existing_commands
+        .iter()
+        .map(|command| command.command.clone())
+        .collect::<HashSet<_>>();
+    let command = command_token_for_service_tier_id(&service_tier, &reserved_names)?;
+    Some((service_tier, command).into())
 }
 
 fn command_token_for_service_tier(
@@ -212,6 +235,14 @@ fn command_token_for_service_tier(
     .into_iter()
     .flatten()
     .find(|candidate| !command_token_conflicts(candidate, reserved_names))
+}
+
+fn command_token_for_service_tier_id(
+    service_tier: &ServiceTier,
+    reserved_names: &HashSet<String>,
+) -> Option<String> {
+    let candidate = service_tier.to_string();
+    (!command_token_conflicts(&candidate, reserved_names)).then_some(candidate)
 }
 
 fn command_token_conflicts(candidate: &str, reserved_names: &HashSet<String>) -> bool {
@@ -453,6 +484,29 @@ mod tests {
                 name: "Priority Boost".to_string(),
                 description: "Priority tier".to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn unlisted_service_tier_command_uses_selected_tier_id() {
+        let command = service_tier_command_for_unlisted_selection(
+            ServiceTier::from("priority"),
+            &[ServiceTierCommand {
+                service_tier: ServiceTier::from("express"),
+                command: "express".to_string(),
+                name: "Express".to_string(),
+                description: "Express tier".to_string(),
+            }],
+        );
+
+        assert_eq!(
+            command,
+            Some(ServiceTierCommand {
+                service_tier: ServiceTier::from("priority"),
+                command: "priority".to_string(),
+                name: "priority".to_string(),
+                description: "Clear the selected service tier override.".to_string(),
+            })
         );
     }
 }
