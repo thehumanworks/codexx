@@ -556,11 +556,12 @@ impl ConfigDocument {
                                 .as_ref()
                                 .map(|service_tier| value(service_tier.to_string())),
                         );
-                        mutated |= self.write_profile_value(&["service_tier"], None);
+                        mutated |= self.write_profile_value(&["service_tier"], /*value*/ None);
                     }
                     None => {
-                        mutated |= self.write_profile_value(&["service_tier_id"], None);
-                        mutated |= self.write_profile_value(&["service_tier"], None);
+                        mutated |=
+                            self.write_profile_value(&["service_tier_id"], /*value*/ None);
+                        mutated |= self.write_profile_value(&["service_tier"], /*value*/ None);
                     }
                 }
                 Ok(mutated)

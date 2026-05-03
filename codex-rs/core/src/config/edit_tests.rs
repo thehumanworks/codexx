@@ -109,7 +109,7 @@ service_tier = "flex"
     .expect("seed config");
 
     ConfigEditsBuilder::new(codex_home)
-        .set_service_tier(None)
+        .set_service_tier(/*service_tier*/ None)
         .apply_blocking()
         .expect("persist");
 
