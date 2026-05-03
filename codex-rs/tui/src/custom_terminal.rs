@@ -509,6 +509,62 @@ where
         Ok(())
     }
 
+    /// Insert fully-rendered rows above the inline viewport without using scroll regions.
+    pub(crate) fn insert_buffer_before_viewport_without_scroll_region(
+        &mut self,
+        buffer: Buffer,
+    ) -> io::Result<()> {
+        let height = buffer.area.height;
+        if height == 0 {
+            return Ok(());
+        }
+
+        let screen_height = self.size()?.height;
+        if screen_height == 0 {
+            return Ok(());
+        }
+
+        if self.viewport_area.bottom().saturating_add(height) <= screen_height {
+            self.draw_buffer_lines(
+                self.viewport_area.top(),
+                height,
+                buffer.area.width,
+                buffer.content.as_slice(),
+            )?;
+            self.set_viewport_area(Rect {
+                y: self.viewport_area.y.saturating_add(height),
+                ..self.viewport_area
+            });
+            self.clear()?;
+            return Ok(());
+        }
+
+        let mut cells = buffer.content.as_slice();
+        let bottom = screen_height.saturating_sub(1);
+        // VTE records scrollback when a row scrolls offscreen, not when that row is later
+        // repainted by absolute cursor movement. Stream each rendered row through the bottom
+        // line so the terminal saves the row's actual cells into history.
+        while !cells.is_empty() {
+            cells =
+                self.draw_buffer_lines(bottom, /*lines_to_draw*/ 1, buffer.area.width, cells)?;
+            self.scroll_up_with_append_lines(/*lines_to_scroll*/ 1)?;
+        }
+
+        let viewport_height = self.viewport_area.height.min(screen_height);
+        for _ in 1..viewport_height {
+            self.scroll_up_with_append_lines(/*lines_to_scroll*/ 1)?;
+        }
+
+        self.set_viewport_area(Rect {
+            y: screen_height.saturating_sub(viewport_height),
+            height: viewport_height,
+            ..self.viewport_area
+        });
+        self.clear()?;
+
+        Ok(())
+    }
+
     /// Clear the entire visible screen (not just the viewport) and force a full redraw.
     pub fn clear_visible_screen(&mut self) -> io::Result<()> {
         let home = Position { x: 0, y: 0 };
@@ -563,6 +619,37 @@ where
     /// Queries the real size of the backend.
     pub fn size(&self) -> io::Result<Size> {
         self.backend.size()
+    }
+
+    fn draw_buffer_lines<'a>(
+        &mut self,
+        y_offset: u16,
+        lines_to_draw: u16,
+        width: u16,
+        cells: &'a [Cell],
+    ) -> io::Result<&'a [Cell]> {
+        let width = usize::from(width);
+        let (to_draw, remainder) = cells.split_at(width * lines_to_draw as usize);
+        if lines_to_draw > 0 {
+            let iter = to_draw
+                .iter()
+                .enumerate()
+                .map(|(i, cell)| ((i % width) as u16, y_offset + (i / width) as u16, cell));
+            self.backend.draw(iter)?;
+            Backend::flush(&mut self.backend)?;
+        }
+        Ok(remainder)
+    }
+
+    fn scroll_up_with_append_lines(&mut self, lines_to_scroll: u16) -> io::Result<()> {
+        if lines_to_scroll > 0 {
+            self.backend.set_cursor_position(Position::new(
+                /*x*/ 0,
+                /*y*/ self.size()?.height.saturating_sub(1),
+            ))?;
+            self.backend.append_lines(lines_to_scroll)?;
+        }
+        Ok(())
     }
 }
 

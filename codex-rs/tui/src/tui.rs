@@ -50,6 +50,9 @@ use crate::tui::event_stream::TuiEventStream;
 use crate::tui::job_control::SuspendContext;
 use codex_config::types::NotificationCondition;
 use codex_config::types::NotificationMethod;
+use codex_terminal_detection::Multiplexer;
+use codex_terminal_detection::TerminalInfo;
+use codex_terminal_detection::TerminalName;
 
 mod event_stream;
 mod frame_rate_limiter;
@@ -75,17 +78,42 @@ fn should_emit_notification(condition: NotificationCondition, terminal_focused: 
     }
 }
 
+fn insert_history_mode_for_terminal(
+    terminal_info: &TerminalInfo,
+) -> crate::insert_history::InsertHistoryMode {
+    let use_newline_insert = matches!(terminal_info.multiplexer, Some(Multiplexer::Zellij {}))
+        || matches!(
+            terminal_info.name,
+            TerminalName::GnomeTerminal | TerminalName::Vte
+        );
+    crate::insert_history::InsertHistoryMode::new(use_newline_insert)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write as _;
 
     use super::clear_for_viewport_change;
+    use super::insert_history_mode_for_terminal;
     use super::should_emit_notification;
     use crate::custom_terminal::Terminal as CustomTerminal;
     use crate::test_backend::VT100Backend;
     use codex_config::types::NotificationCondition;
     use ratatui::layout::Position;
     use ratatui::layout::Rect;
+    use codex_terminal_detection::Multiplexer;
+    use codex_terminal_detection::TerminalInfo;
+    use codex_terminal_detection::TerminalName;
+
+    fn terminal_info(name: TerminalName, multiplexer: Option<Multiplexer>) -> TerminalInfo {
+        TerminalInfo {
+            name,
+            term_program: None,
+            version: None,
+            term: None,
+            multiplexer,
+        }
+    }
 
     #[test]
     fn unfocused_notification_condition_is_suppressed_when_focused() {
@@ -149,6 +177,46 @@ mod tests {
         assert!(
             !rows.iter().skip(1).any(|row| row.contains("stale")),
             "expected stale cells inside the new viewport to be cleared, rows: {rows:?}"
+        );
+    }
+
+    #[test]
+    fn vte_backed_terminals_use_newline_history_insert() {
+        assert_eq!(
+            insert_history_mode_for_terminal(&terminal_info(
+                TerminalName::Vte,
+                /*multiplexer*/ None
+            )),
+            crate::insert_history::InsertHistoryMode::Newline
+        );
+        assert_eq!(
+            insert_history_mode_for_terminal(&terminal_info(
+                TerminalName::GnomeTerminal,
+                /*multiplexer*/ None
+            )),
+            crate::insert_history::InsertHistoryMode::Newline
+        );
+    }
+
+    #[test]
+    fn zellij_uses_newline_history_insert() {
+        assert_eq!(
+            insert_history_mode_for_terminal(&terminal_info(
+                TerminalName::Unknown,
+                Some(Multiplexer::Zellij {})
+            )),
+            crate::insert_history::InsertHistoryMode::Newline
+        );
+    }
+
+    #[test]
+    fn regular_terminals_keep_standard_history_insert() {
+        assert_eq!(
+            insert_history_mode_for_terminal(&terminal_info(
+                TerminalName::Iterm2,
+                /*multiplexer*/ None
+            )),
+            crate::insert_history::InsertHistoryMode::Standard
         );
     }
 }
@@ -432,6 +500,7 @@ pub struct Tui {
     notification_backend: Option<DesktopNotificationBackend>,
     notification_condition: NotificationCondition,
     is_zellij: bool,
+    history_insert_mode: crate::insert_history::InsertHistoryMode,
     // When false, enter_alt_screen() becomes a no-op (for Zellij scrollback support)
     alt_screen_enabled: bool,
 }
@@ -465,10 +534,9 @@ impl Tui {
         // Cache this to avoid contention with the event reader.
         supports_color::on_cached(supports_color::Stream::Stdout);
         let _ = crate::terminal_palette::default_colors();
-        let is_zellij = matches!(
-            codex_terminal_detection::terminal_info().multiplexer,
-            Some(codex_terminal_detection::Multiplexer::Zellij {})
-        );
+        let terminal_info = codex_terminal_detection::terminal_info();
+        let is_zellij = matches!(terminal_info.multiplexer, Some(Multiplexer::Zellij {}));
+        let history_insert_mode = insert_history_mode_for_terminal(&terminal_info);
 
         Self {
             frame_requester,
@@ -486,6 +554,7 @@ impl Tui {
             notification_backend: Some(detect_backend(NotificationMethod::default())),
             notification_condition: NotificationCondition::default(),
             is_zellij,
+            history_insert_mode,
             alt_screen_enabled: true,
         }
     }
@@ -803,7 +872,7 @@ impl Tui {
     fn flush_pending_history_lines(
         terminal: &mut Terminal,
         pending_history_lines: &mut Vec<PendingHistoryLines>,
-        is_zellij: bool,
+        history_insert_mode: crate::insert_history::InsertHistoryMode,
     ) -> Result<bool> {
         if pending_history_lines.is_empty() {
             return Ok(false);
@@ -813,12 +882,12 @@ impl Tui {
             crate::insert_history::insert_history_lines_with_mode_and_wrap_policy(
                 terminal,
                 batch.lines.clone(),
-                crate::insert_history::InsertHistoryMode::new(is_zellij),
+                history_insert_mode,
                 batch.wrap_policy,
             )?;
         }
         pending_history_lines.clear();
-        Ok(is_zellij)
+        Ok(history_insert_mode == crate::insert_history::InsertHistoryMode::Newline)
     }
 
     fn flush_pending_resize_replay(
@@ -873,7 +942,7 @@ impl Tui {
             needs_full_repaint |= Self::flush_pending_history_lines(
                 terminal,
                 &mut self.pending_history_lines,
-                self.is_zellij,
+                self.history_insert_mode,
             )?;
 
             if needs_full_repaint {
@@ -937,7 +1006,7 @@ impl Tui {
                 needs_full_repaint |= Self::flush_pending_history_lines(
                     terminal,
                     &mut self.pending_history_lines,
-                    self.is_zellij,
+                    self.history_insert_mode,
                 )?;
             }
             needs_full_repaint |= replayed_history;
