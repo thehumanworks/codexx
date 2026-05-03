@@ -663,7 +663,16 @@
               "$ref": "#/definitions/ServiceTier"
             }
           ],
-          "description": "Optional explicit service tier preference for new turns (`fast` or `flex`)."
+          "deprecated": true,
+          "description": "Deprecated legacy service tier preference for new turns (`fast` or `flex`)."
+        },
+        "service_tier_id": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/ServiceTier"
+            }
+          ],
+          "description": "Optional explicit service tier id preference for new turns.\n\nTakes precedence over deprecated `service_tier`."
         },
         "tools": {
           "$ref": "#/definitions/ToolsToml"
@@ -4391,7 +4400,16 @@
           "$ref": "#/definitions/ServiceTier"
         }
       ],
-      "description": "Optional explicit service tier preference for new turns (`fast` or `flex`)."
+      "deprecated": true,
+      "description": "Deprecated legacy service tier preference for new turns (`fast` or `flex`)."
+    },
+    "service_tier_id": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/ServiceTier"
+        }
+      ],
+      "description": "Optional explicit service tier id preference for new turns.\n\nTakes precedence over deprecated `service_tier`."
     },
     "shell_environment_policy": {
       "allOf": [

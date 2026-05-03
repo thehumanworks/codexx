@@ -6,6 +6,9 @@ use codex_config::types::McpServerConfig;
 use codex_config::types::ToolSuggestDisabledTool;
 use codex_features::FEATURES;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::SERVICE_TIER_FAST_LEGACY;
+use codex_protocol::config_types::SERVICE_TIER_FLEX;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -525,12 +528,43 @@ impl ConfigDocument {
                 );
                 mutated
             }),
-            ConfigEdit::SetServiceTier { service_tier } => Ok(self.write_profile_value(
-                &["service_tier"],
-                service_tier
-                    .as_ref()
-                    .map(|service_tier| value(service_tier.to_string())),
-            )),
+            ConfigEdit::SetServiceTier { service_tier } => {
+                let mut mutated = false;
+                match service_tier.as_ref().map(AsRef::as_ref) {
+                    Some(service_tier_id) if service_tier_id == SERVICE_TIER_PRIORITY => {
+                        mutated |= self.write_profile_value(
+                            &["service_tier_id"],
+                            Some(value(SERVICE_TIER_PRIORITY)),
+                        );
+                        mutated |= self.write_profile_value(
+                            &["service_tier"],
+                            Some(value(SERVICE_TIER_FAST_LEGACY)),
+                        );
+                    }
+                    Some(service_tier_id) if service_tier_id == SERVICE_TIER_FLEX => {
+                        mutated |= self.write_profile_value(
+                            &["service_tier_id"],
+                            Some(value(SERVICE_TIER_FLEX)),
+                        );
+                        mutated |= self
+                            .write_profile_value(&["service_tier"], Some(value(SERVICE_TIER_FLEX)));
+                    }
+                    Some(_) => {
+                        mutated |= self.write_profile_value(
+                            &["service_tier_id"],
+                            service_tier
+                                .as_ref()
+                                .map(|service_tier| value(service_tier.to_string())),
+                        );
+                        mutated |= self.write_profile_value(&["service_tier"], None);
+                    }
+                    None => {
+                        mutated |= self.write_profile_value(&["service_tier_id"], None);
+                        mutated |= self.write_profile_value(&["service_tier"], None);
+                    }
+                }
+                Ok(mutated)
+            }
             ConfigEdit::SetModelPersonality { personality } => Ok(self.write_profile_value(
                 &["personality"],
                 personality.map(|personality| value(personality.to_string())),

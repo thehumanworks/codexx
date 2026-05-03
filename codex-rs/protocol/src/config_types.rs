@@ -349,6 +349,9 @@ impl From<WebSearchToolConfig> for WebSearchConfig {
 
 pub const SERVICE_TIER_PRIORITY: &str = "priority";
 pub const SERVICE_TIER_FLEX: &str = "flex";
+/// Legacy config value accepted by older clients. New clients map this to
+/// `priority` when reading deprecated `service_tier`.
+pub const SERVICE_TIER_FAST_LEGACY: &str = "fast";
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, TS)]
 #[serde(transparent)]

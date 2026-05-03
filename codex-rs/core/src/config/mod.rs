@@ -81,6 +81,7 @@ use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::SERVICE_TIER_FAST_LEGACY;
 use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
@@ -1991,6 +1992,14 @@ pub(crate) fn resolve_web_search_mode_for_turn(
     WebSearchMode::Disabled
 }
 
+fn normalize_deprecated_service_tier(service_tier: ServiceTier) -> ServiceTier {
+    if service_tier.as_ref() == SERVICE_TIER_FAST_LEGACY {
+        SERVICE_TIER_PRIORITY.into()
+    } else {
+        service_tier
+    }
+}
+
 impl Config {
     #[cfg(test)]
     async fn load_from_base_config_with_overrides(
@@ -2649,6 +2658,14 @@ impl Config {
 
         let model = model.or(config_profile.model).or(cfg.model);
         let mut notices = cfg.notice.unwrap_or_default();
+        #[allow(deprecated)]
+        let deprecated_profile_service_tier = config_profile
+            .service_tier
+            .clone()
+            .map(normalize_deprecated_service_tier);
+        #[allow(deprecated)]
+        let deprecated_config_service_tier =
+            cfg.service_tier.clone().map(normalize_deprecated_service_tier);
         let service_tier = match service_tier_override {
             Some(Some(service_tier)) => Some(service_tier),
             Some(None) => {
@@ -2657,7 +2674,11 @@ impl Config {
                 notices.fast_default_opt_out = Some(true);
                 None
             }
-            None => config_profile.service_tier.or(cfg.service_tier),
+            None => config_profile
+                .service_tier_id
+                .or(cfg.service_tier_id)
+                .or(deprecated_profile_service_tier)
+                .or(deprecated_config_service_tier),
         };
         let service_tier = match service_tier {
             Some(service_tier)

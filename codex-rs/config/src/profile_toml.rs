@@ -23,7 +23,12 @@ use codex_protocol::protocol::AskForApproval;
 #[schemars(deny_unknown_fields)]
 pub struct ConfigProfile {
     pub model: Option<String>,
-    /// Optional explicit service tier preference for new turns (`fast` or `flex`).
+    /// Optional explicit service tier id preference for new turns.
+    ///
+    /// Takes precedence over deprecated `service_tier`.
+    pub service_tier_id: Option<ServiceTier>,
+    /// Deprecated legacy service tier preference for new turns (`fast` or `flex`).
+    #[deprecated(note = "use service_tier_id instead")]
     pub service_tier: Option<ServiceTier>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.

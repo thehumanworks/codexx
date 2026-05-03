@@ -17,6 +17,7 @@ use ts_rs::TS;
 
 use crate::config_types::Personality;
 use crate::config_types::ReasoningSummary;
+#[cfg(test)]
 use crate::config_types::SERVICE_TIER_PRIORITY;
 use crate::config_types::ServiceTier;
 use crate::config_types::Verbosity;

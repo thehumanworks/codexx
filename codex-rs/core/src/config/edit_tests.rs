@@ -2,6 +2,9 @@ use super::*;
 use codex_config::types::AppToolApproval;
 use codex_config::types::McpServerToolConfig;
 use codex_config::types::McpServerTransportConfig;
+use codex_protocol::config_types::SERVICE_TIER_FLEX;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::openai_models::ReasoningEffort;
 use pretty_assertions::assert_eq;
 #[cfg(unix)]
@@ -29,6 +32,89 @@ fn blocking_set_model_top_level() {
 model_reasoning_effort = "high"
 "#;
     assert_eq!(contents, expected);
+}
+
+#[test]
+fn set_service_tier_writes_legacy_fast_for_priority_id() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"service_tier_id = "premium"
+"#,
+    )
+    .expect("seed config");
+
+    ConfigEditsBuilder::new(codex_home)
+        .set_service_tier(Some(SERVICE_TIER_PRIORITY.into()))
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"service_tier_id = "priority"
+service_tier = "fast"
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
+fn set_service_tier_writes_both_keys_for_flex_id() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+
+    ConfigEditsBuilder::new(codex_home)
+        .set_service_tier(Some(SERVICE_TIER_FLEX.into()))
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"service_tier_id = "flex"
+service_tier = "flex"
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
+fn set_service_tier_writes_service_tier_id_for_arbitrary_id() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"service_tier = "fast"
+"#,
+    )
+    .expect("seed config");
+
+    ConfigEditsBuilder::new(codex_home)
+        .set_service_tier(Some(ServiceTier::from("premium")))
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    let expected = r#"service_tier_id = "premium"
+"#;
+    assert_eq!(contents, expected);
+}
+
+#[test]
+fn clear_service_tier_removes_legacy_and_id_keys() {
+    let tmp = tempdir().expect("tmpdir");
+    let codex_home = tmp.path();
+    std::fs::write(
+        codex_home.join(CONFIG_TOML_FILE),
+        r#"service_tier_id = "premium"
+service_tier = "flex"
+"#,
+    )
+    .expect("seed config");
+
+    ConfigEditsBuilder::new(codex_home)
+        .set_service_tier(None)
+        .apply_blocking()
+        .expect("persist");
+
+    let contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+    assert_eq!(contents, "");
 }
 
 #[test]

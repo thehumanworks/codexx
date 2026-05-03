@@ -60,6 +60,9 @@ use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::config_types::SERVICE_TIER_FAST_LEGACY;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::ManagedFileSystemPermissions;
@@ -6503,6 +6506,56 @@ async fn explicit_null_service_tier_override_sets_fast_default_opt_out() -> std:
 
     assert_eq!(config.service_tier, None);
     assert_eq!(config.notices.fast_default_opt_out, Some(true));
+    Ok(())
+}
+
+#[tokio::test]
+async fn service_tier_id_takes_precedence_over_deprecated_service_tier() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+    let mut cfg = fixture.cfg.clone();
+    cfg.service_tier_id = Some(ServiceTier::from("premium"));
+    #[allow(deprecated)]
+    {
+        cfg.service_tier = Some(ServiceTier::from(SERVICE_TIER_FAST_LEGACY));
+    }
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(config.service_tier, Some(ServiceTier::from("premium")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn deprecated_fast_service_tier_maps_to_priority_id() -> std::io::Result<()> {
+    let fixture = create_test_fixture()?;
+    let mut cfg = fixture.cfg.clone();
+    #[allow(deprecated)]
+    {
+        cfg.service_tier = Some(ServiceTier::from(SERVICE_TIER_FAST_LEGACY));
+    }
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.service_tier,
+        Some(ServiceTier::from(SERVICE_TIER_PRIORITY))
+    );
     Ok(())
 }
 
