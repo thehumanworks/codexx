@@ -8,6 +8,9 @@ use codex_features::FeatureToml;
 use codex_features::FeaturesToml;
 use codex_features::MultiAgentV2ConfigToml;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::SERVICE_TIER_FAST_LEGACY;
+use codex_protocol::config_types::SERVICE_TIER_FLEX;
+use codex_protocol::config_types::SERVICE_TIER_PRIORITY;
 
 use crate::config::Config;
 use crate::config_lock::ConfigLockReplayOptions;
@@ -109,7 +112,19 @@ fn save_session_resolved_fields(sc: &SessionConfiguration, lock_config: &mut Con
     lock_config.model = Some(sc.collaboration_mode.model().to_string());
     lock_config.model_reasoning_effort = sc.collaboration_mode.reasoning_effort();
     lock_config.model_reasoning_summary = sc.model_reasoning_summary;
-    lock_config.service_tier = sc.service_tier;
+    lock_config.service_tier_id = sc.service_tier.clone();
+    #[allow(deprecated)]
+    {
+        lock_config.service_tier = match sc.service_tier.as_ref().map(AsRef::as_ref) {
+            Some(service_tier_id) if service_tier_id == SERVICE_TIER_PRIORITY => {
+                Some(SERVICE_TIER_FAST_LEGACY.into())
+            }
+            Some(service_tier_id) if service_tier_id == SERVICE_TIER_FLEX => {
+                Some(SERVICE_TIER_FLEX.into())
+            }
+            Some(_) | None => None,
+        };
+    }
     lock_config.instructions = Some(sc.base_instructions.clone());
     lock_config.developer_instructions = sc.developer_instructions.clone();
     lock_config.compact_prompt = sc.compact_prompt.clone();
@@ -217,6 +232,7 @@ mod tests {
         sc.base_instructions = "resolved instructions".to_string();
         sc.developer_instructions = Some("resolved developer instructions".to_string());
         sc.compact_prompt = Some("resolved compact prompt".to_string());
+        sc.service_tier = Some(SERVICE_TIER_PRIORITY.into());
 
         let lockfile = sc.to_config_lockfile_toml().expect("lock should serialize");
         let lock = &lockfile.config;
@@ -224,6 +240,11 @@ mod tests {
         assert_eq!(lock.instructions, Some(sc.base_instructions.clone()));
         assert_eq!(lock.developer_instructions, sc.developer_instructions);
         assert_eq!(lock.compact_prompt, sc.compact_prompt);
+        assert_eq!(lock.service_tier_id, Some(SERVICE_TIER_PRIORITY.into()));
+        #[allow(deprecated)]
+        {
+            assert_eq!(lock.service_tier, Some(SERVICE_TIER_FAST_LEGACY.into()));
+        }
         assert_eq!(lock.model, Some(sc.collaboration_mode.model().to_string()));
         assert_eq!(
             lock.model_reasoning_effort,
@@ -280,7 +301,7 @@ mod tests {
         sc.base_instructions = "catalog instructions".to_string();
         sc.developer_instructions = Some("catalog developer instructions".to_string());
         sc.compact_prompt = Some("catalog compact prompt".to_string());
-        sc.service_tier = Some(codex_protocol::config_types::ServiceTier::Flex);
+        sc.service_tier = Some(SERVICE_TIER_FLEX.into());
 
         let lockfile = sc.to_config_lockfile_toml().expect("lock should serialize");
         let lock = &lockfile.config;
@@ -288,7 +309,11 @@ mod tests {
         assert_eq!(lock.model, None);
         assert_eq!(lock.model_reasoning_effort, None);
         assert_eq!(lock.model_reasoning_summary, None);
-        assert_eq!(lock.service_tier, None);
+        assert_eq!(lock.service_tier_id, None);
+        #[allow(deprecated)]
+        {
+            assert_eq!(lock.service_tier, None);
+        }
         assert_eq!(lock.instructions, None);
         assert_eq!(lock.developer_instructions, None);
         assert_eq!(lock.compact_prompt, None);
