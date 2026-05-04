@@ -17,6 +17,7 @@ pub use crate::config::OtelSettings;
 pub use crate::config::OtelTlsConfig;
 pub use crate::config::StatsigMetricsSettings;
 pub use crate::config::validate_span_attributes;
+pub use crate::events::image_input_telemetry::ModelInputImageTelemetry;
 pub use crate::events::session_telemetry::AuthEnvTelemetryMetadata;
 pub use crate::events::session_telemetry::SessionTelemetry;
 pub use crate::events::session_telemetry::SessionTelemetryMetadata;
