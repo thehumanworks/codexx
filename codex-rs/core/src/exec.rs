@@ -1164,6 +1164,13 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         return Ok(None);
     }
 
+    if matches!(sandbox_policy, SandboxPolicy::WorkspaceWrite { .. }) {
+        return Err(
+            "windows elevated sandbox cannot enforce workspace-write filesystem boundaries directly; refusing to run unsandboxed"
+                .to_string(),
+        );
+    }
+
     if !should_use_windows_restricted_token_sandbox(
         sandbox,
         sandbox_policy,
