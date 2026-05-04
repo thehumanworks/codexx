@@ -268,13 +268,14 @@ async fn disabled_permissions_do_not_auto_accept_elicitation_with_requested_fiel
 
 #[tokio::test]
 async fn codex_apps_only_custom_server_elicitation_is_declined_without_event() {
-    let manager = ElicitationRequestManager::new_with_compatibility(
-        AskForApproval::OnRequest,
-        PermissionProfile::default(),
-        McpElicitationCompatibility::CodexAppsOnly,
-    );
+    let approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+    let permission_profile = Constrained::allow_any(PermissionProfile::default());
+    let manager = McpConnectionManager::new_uninitialized(&approval_policy, &permission_profile);
+    manager.set_elicitation_compatibility(McpElicitationCompatibility::CodexAppsOnly);
     let (tx_event, rx_event) = async_channel::bounded(1);
-    let sender = manager.make_sender("custom_mcp".to_string(), tx_event);
+    let sender = manager
+        .elicitation_requests
+        .make_sender("custom_mcp".to_string(), tx_event);
 
     let response = sender(
         NumberOrString::Number(1),

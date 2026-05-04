@@ -129,6 +129,12 @@ impl McpConnectionManager {
         }
     }
 
+    pub fn set_elicitation_compatibility(&self, compatibility: McpElicitationCompatibility) {
+        if let Ok(mut manager_compatibility) = self.elicitation_requests.compatibility.lock() {
+            *manager_compatibility = compatibility;
+        }
+    }
+
     #[allow(clippy::new_ret_no_self, clippy::too_many_arguments)]
     pub async fn new(
         mcp_servers: &HashMap<String, McpServerConfig>,

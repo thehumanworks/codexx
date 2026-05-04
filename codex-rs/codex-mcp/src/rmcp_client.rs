@@ -466,8 +466,12 @@ async fn start_server_task(
         elicitation_requests,
         codex_apps_tools_cache_context,
     } = params;
-    let elicitation =
-        elicitation_capability_for_server(&server_name, elicitation_requests.compatibility);
+    let compatibility = elicitation_requests
+        .compatibility
+        .lock()
+        .map(|compatibility| *compatibility)
+        .unwrap_or_default();
+    let elicitation = elicitation_capability_for_server(&server_name, compatibility);
     let params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
