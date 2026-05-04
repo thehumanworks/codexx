@@ -235,7 +235,7 @@ fn client_compatibility_flags_for_app_server_client(
     //
     // TODO: Remove this Xcode 26.4 compatibility path once that client version
     // has aged out of support.
-    if client_name == "Xcode" && client_version.starts_with("26.4") {
+    if client_name.eq_ignore_ascii_case("xcode") && client_version.starts_with("26.4") {
         flags.mcp_elicitation = McpElicitationCompatibility::CodexAppsOnly;
     }
 
@@ -1333,9 +1333,14 @@ mod client_compatibility_tests {
 
     #[test]
     fn xcode_26_4_uses_legacy_mcp_elicitation_compatibility() {
-        for version in ["26.4", "26.4.1", "26.4-beta"] {
+        for (name, version) in [
+            ("Xcode", "26.4"),
+            ("xcode", "26.4"),
+            ("Xcode", "26.4.1"),
+            ("Xcode", "26.4-beta"),
+        ] {
             assert_eq!(
-                client_compatibility_flags_for_app_server_client("Xcode", version),
+                client_compatibility_flags_for_app_server_client(name, version),
                 ClientCompatibilityFlags {
                     mcp_elicitation: McpElicitationCompatibility::CodexAppsOnly,
                 }
