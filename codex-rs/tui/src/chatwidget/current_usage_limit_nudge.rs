@@ -8,7 +8,14 @@ pub(super) const WORKSPACE_OWNER_USAGE_LIMIT_NUDGE_URL: &str = "https://chatgpt.
 pub(super) const UPGRADE_USAGE_LIMIT_NUDGE_URL: &str = "https://chatgpt.com/explore/pro";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum UsageNudgePrefetchWindow {
+    Primary,
+    Secondary,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 struct UsageNudgePrefetchKey {
+    window: UsageNudgePrefetchWindow,
     window_duration_mins: Option<i64>,
     resets_at: Option<i64>,
 }
@@ -36,7 +43,7 @@ pub(super) struct CurrentUsageLimitNudgePromptState {
     active: bool,
     pending: Option<UsageLimitNudge>,
     has_shown: bool,
-    last_prefetch: Option<(UsageNudgePrefetchKey, UsageNudgePrefetchThreshold)>,
+    last_prefetches: Vec<(UsageNudgePrefetchKey, UsageNudgePrefetchThreshold)>,
 }
 
 impl CurrentUsageLimitNudgePromptState {
@@ -59,32 +66,50 @@ impl CurrentUsageLimitNudgePromptState {
         self.pending.is_some()
     }
 
-    pub(super) fn should_prefetch(&mut self, primary: Option<&RateLimitWindow>) -> bool {
-        let Some(primary) = primary else {
-            return false;
-        };
-        let Some(threshold) = UsageNudgePrefetchThreshold::from_used_percent(primary.used_percent)
-        else {
-            // Keep the per-window watermark across transient downward or sparse
-            // live updates so stale events cannot re-arm a threshold we already
-            // refreshed for in this window.
-            return false;
-        };
+    pub(super) fn should_prefetch(
+        &mut self,
+        primary: Option<&RateLimitWindow>,
+        secondary: Option<&RateLimitWindow>,
+    ) -> bool {
+        let mut should_prefetch = false;
 
-        let key = UsageNudgePrefetchKey {
-            window_duration_mins: primary.window_duration_mins,
-            resets_at: primary.resets_at,
-        };
-        if self
-            .last_prefetch
-            .is_some_and(|(last_key, last_threshold)| {
-                last_key == key && last_threshold >= threshold
-            })
-        {
-            return false;
+        for (window_kind, window) in [
+            (UsageNudgePrefetchWindow::Primary, primary),
+            (UsageNudgePrefetchWindow::Secondary, secondary),
+        ] {
+            let Some(window) = window else {
+                continue;
+            };
+            let Some(threshold) =
+                UsageNudgePrefetchThreshold::from_used_percent(window.used_percent)
+            else {
+                // Keep the per-window watermark across transient downward or
+                // sparse live updates so stale events cannot re-arm a
+                // threshold we already refreshed for in this window.
+                continue;
+            };
+
+            let key = UsageNudgePrefetchKey {
+                window: window_kind,
+                window_duration_mins: window.window_duration_mins,
+                resets_at: window.resets_at,
+            };
+            if let Some((_, last_threshold)) = self
+                .last_prefetches
+                .iter_mut()
+                .find(|(last_key, _)| *last_key == key)
+            {
+                if *last_threshold >= threshold {
+                    continue;
+                }
+                *last_threshold = threshold;
+            } else {
+                self.last_prefetches.push((key, threshold));
+            }
+            should_prefetch = true;
         }
-        self.last_prefetch = Some((key, threshold));
-        true
+
+        should_prefetch
     }
 }
 

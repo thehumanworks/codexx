@@ -8,6 +8,17 @@ fn snapshot_with_nudge(threshold: u8, action: UsageLimitNudgeAction) -> RateLimi
     }
 }
 
+fn snapshot_with_windows(primary_percent: f64, secondary_percent: f64) -> RateLimitSnapshot {
+    RateLimitSnapshot {
+        secondary: Some(RateLimitWindow {
+            used_percent: secondary_percent.round() as i32,
+            window_duration_mins: Some(300),
+            resets_at: None,
+        }),
+        ..snapshot(primary_percent)
+    }
+}
+
 fn next_open_url_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> Option<String> {
     while let Ok(event) = rx.try_recv() {
         if let AppEvent::OpenUrlInBrowser { url } = event {
@@ -76,6 +87,32 @@ async fn proactive_usage_prompt_empty_snapshot_does_not_queue_prompt() {
 }
 
 #[tokio::test]
+async fn proactive_usage_prompt_live_snapshot_does_not_clear_authoritative_pending_nudge() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.on_rate_limit_snapshot(Some(snapshot_with_nudge(
+        /*threshold*/ 75,
+        UsageLimitNudgeAction::AddCredits,
+    )));
+    chat.on_live_rate_limit_snapshot(snapshot(/*percent*/ 80.0));
+
+    assert!(chat.maybe_show_pending_current_usage_limit_nudge_prompt());
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_authoritative_empty_snapshot_clears_pending_nudge() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.on_rate_limit_snapshot(Some(snapshot_with_nudge(
+        /*threshold*/ 75,
+        UsageLimitNudgeAction::AddCredits,
+    )));
+    chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 75.0)));
+
+    assert!(!chat.maybe_show_pending_current_usage_limit_nudge_prompt());
+}
+
+#[tokio::test]
 async fn proactive_usage_prompt_prefetches_snapshot_at_each_live_threshold_crossing() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -102,6 +139,74 @@ async fn proactive_usage_prompt_prefetches_snapshot_at_each_live_threshold_cross
 }
 
 #[tokio::test]
+async fn proactive_usage_prompt_prefetches_snapshot_at_secondary_live_threshold_crossings() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 50.0, /*secondary_percent*/ 74.0,
+    ));
+    assert_eq!(next_rate_limit_refresh_origin(&mut rx), None);
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 50.0, /*secondary_percent*/ 75.0,
+    ));
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 50.0, /*secondary_percent*/ 80.0,
+    ));
+    assert_eq!(next_rate_limit_refresh_origin(&mut rx), None);
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 50.0, /*secondary_percent*/ 90.0,
+    ));
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_prefetches_each_window_independently() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 75.0, /*secondary_percent*/ 74.0,
+    ));
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 80.0, /*secondary_percent*/ 75.0,
+    ));
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 90.0, /*secondary_percent*/ 80.0,
+    ));
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+
+    chat.on_live_rate_limit_snapshot(snapshot_with_windows(
+        /*primary_percent*/ 95.0, /*secondary_percent*/ 90.0,
+    ));
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+}
+
+#[tokio::test]
 async fn proactive_usage_prompt_prefetches_once_when_first_live_update_is_above_90() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
@@ -122,6 +227,39 @@ async fn proactive_usage_prompt_prefetches_again_after_primary_window_rolls_over
     first_window.primary.as_mut().expect("primary").resets_at = Some(100);
     let mut second_window = snapshot(/*percent*/ 75.0);
     second_window.primary.as_mut().expect("primary").resets_at = Some(200);
+
+    chat.on_live_rate_limit_snapshot(first_window);
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+
+    chat.on_live_rate_limit_snapshot(second_window);
+    assert_eq!(
+        next_rate_limit_refresh_origin(&mut rx),
+        Some(RateLimitRefreshOrigin::UsageNudgePrefetch)
+    );
+}
+
+#[tokio::test]
+async fn proactive_usage_prompt_prefetches_again_after_secondary_window_rolls_over() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let mut first_window = snapshot_with_windows(
+        /*primary_percent*/ 50.0, /*secondary_percent*/ 75.0,
+    );
+    first_window
+        .secondary
+        .as_mut()
+        .expect("secondary")
+        .resets_at = Some(100);
+    let mut second_window = snapshot_with_windows(
+        /*primary_percent*/ 50.0, /*secondary_percent*/ 75.0,
+    );
+    second_window
+        .secondary
+        .as_mut()
+        .expect("secondary")
+        .resets_at = Some(200);
 
     chat.on_live_rate_limit_snapshot(first_window);
     assert_eq!(

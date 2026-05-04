@@ -220,6 +220,40 @@ async fn account_rate_limits_updated_prefetches_authoritative_usage_nudge_snapsh
     ));
 }
 
+#[tokio::test]
+async fn account_rate_limits_updated_does_not_clear_authoritative_usage_nudge_state() {
+    let mut app = make_test_app().await;
+    let app_server = crate::start_embedded_app_server_for_picker(app.chat_widget.config_ref())
+        .await
+        .expect("embedded app server");
+
+    app.handle_rate_limits_loaded(
+        /*refresh_generation*/ 0,
+        RateLimitRefreshOrigin::UsageNudgePrefetch,
+        Ok(vec![codex_rate_limit_snapshot(
+            /*used_percent*/ 75,
+            Some(UsageLimitNudge {
+                threshold: 75,
+                action: UsageLimitNudgeAction::AddCredits,
+            }),
+        )]),
+    );
+    app.handle_app_server_event(
+        &app_server,
+        codex_app_server_client::AppServerEvent::ServerNotification(
+            ServerNotification::AccountRateLimitsUpdated(AccountRateLimitsUpdatedNotification {
+                rate_limits: codex_rate_limit_snapshot(/*used_percent*/ 80, None),
+            }),
+        ),
+    )
+    .await;
+
+    assert!(
+        app.chat_widget
+            .has_active_current_usage_limit_nudge_for_test()
+    );
+}
+
 #[test]
 fn startup_waiting_gate_is_only_for_fresh_or_exit_session_selection() {
     assert_eq!(

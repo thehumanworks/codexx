@@ -478,6 +478,12 @@ struct RateLimitWarningState {
     primary_index: usize,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RateLimitSnapshotSource {
+    LiveUpdate,
+    AuthoritativeRead,
+}
+
 impl RateLimitWarningState {
     fn take_warnings(
         &mut self,
@@ -2847,7 +2853,7 @@ impl ChatWidget {
                 origin: RateLimitRefreshOrigin::UsageNudgePrefetch,
             });
         }
-        self.on_rate_limit_snapshot(Some(snapshot));
+        self.apply_rate_limit_snapshot(Some(snapshot), RateLimitSnapshotSource::LiveUpdate);
     }
 
     fn should_prefetch_current_usage_limit_nudge(&mut self, snapshot: &RateLimitSnapshot) -> bool {
@@ -2860,10 +2866,18 @@ impl ChatWidget {
             && self.current_usage_limit_nudge_enabled()
             && self
                 .current_usage_limit_nudge_prompt
-                .should_prefetch(snapshot.primary.as_ref())
+                .should_prefetch(snapshot.primary.as_ref(), snapshot.secondary.as_ref())
     }
 
     pub(crate) fn on_rate_limit_snapshot(&mut self, snapshot: Option<RateLimitSnapshot>) {
+        self.apply_rate_limit_snapshot(snapshot, RateLimitSnapshotSource::AuthoritativeRead);
+    }
+
+    fn apply_rate_limit_snapshot(
+        &mut self,
+        snapshot: Option<RateLimitSnapshot>,
+        source: RateLimitSnapshotSource,
+    ) {
         if let Some(mut snapshot) = snapshot {
             let limit_id = snapshot
                 .limit_id
@@ -2888,7 +2902,7 @@ impl ChatWidget {
             self.plan_type = snapshot.plan_type.or(self.plan_type);
 
             let is_codex_limit = limit_id.eq_ignore_ascii_case("codex");
-            if is_codex_limit {
+            if is_codex_limit && matches!(source, RateLimitSnapshotSource::AuthoritativeRead) {
                 let nudge = if self.current_usage_limit_nudge_enabled() {
                     snapshot.current_usage_limit_nudge.clone()
                 } else {
