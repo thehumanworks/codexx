@@ -191,13 +191,8 @@ mod tests {
         let cwd = PathBuf::from(std::path::MAIN_SEPARATOR.to_string())
             .join("codex-secrets-test-missing-cwd");
         let env_id = environment_id_from_cwd(&cwd);
-        let canonical = cwd
-            .canonicalize()
-            .unwrap_or_else(|_| cwd.clone())
-            .to_string_lossy()
-            .into_owned();
         let mut hasher = Sha256::new();
-        hasher.update(canonical.as_bytes());
+        hasher.update(cwd.to_string_lossy().as_bytes());
         let digest = hasher.finalize();
         let hex = format!("{digest:x}");
         let short = hex.get(..12).expect("digest has at least 12 chars");

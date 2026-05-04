@@ -3,21 +3,6 @@ use codex_app_server_protocol::PluginAvailability;
 use pretty_assertions::assert_eq;
 use std::sync::OnceLock;
 
-fn isolated_test_project_path() -> &'static PathBuf {
-    static TEST_PROJECT_PATH: OnceLock<PathBuf> = OnceLock::new();
-    TEST_PROJECT_PATH.get_or_init(|| {
-        let root = tempfile::Builder::new()
-            .prefix("chatwidget-project-")
-            .tempdir()
-            .expect("tempdir")
-            .keep();
-        let project = root.join("project");
-        std::fs::create_dir_all(&project).expect("create test project dir");
-        std::fs::write(project.join(".git"), "gitdir: fake\n").expect("mark test project as git");
-        project
-    })
-}
-
 pub(super) async fn test_config() -> Config {
     // Start from the built-in defaults so tests do not inherit host/system config.
     let codex_home = tempfile::Builder::new()
@@ -32,7 +17,7 @@ pub(super) async fn test_config() -> Config {
     config.codex_home = codex_home.abs();
     config.sqlite_home = codex_home.clone();
     config.log_dir = codex_home.join("log");
-    config.cwd = isolated_test_project_path().clone().abs();
+    config.cwd = test_project_path().abs();
     config.config_layer_stack = ConfigLayerStack::default();
     config.startup_warnings.clear();
     config.user_instructions = None;
@@ -40,7 +25,19 @@ pub(super) async fn test_config() -> Config {
 }
 
 pub(super) fn test_project_path() -> PathBuf {
-    isolated_test_project_path().clone()
+    static TEST_PROJECT_PATH: OnceLock<PathBuf> = OnceLock::new();
+    TEST_PROJECT_PATH
+        .get_or_init(|| {
+            let root = tempfile::Builder::new()
+                .prefix("chatwidget-project-")
+                .tempdir()
+                .expect("tempdir")
+                .keep();
+            let project = root.join("project");
+            std::fs::create_dir_all(project.join(".git")).expect("create test project git marker");
+            project
+        })
+        .clone()
 }
 
 pub(super) fn truncated_path_variants(path: &str) -> Vec<String> {
@@ -53,7 +50,7 @@ pub(super) fn truncated_path_variants(path: &str) -> Vec<String> {
 pub(super) fn normalize_snapshot_paths(text: impl Into<String>) -> String {
     let mut text = text.into();
 
-    let isolated_project = isolated_test_project_path().to_string_lossy().into_owned();
+    let isolated_project = test_project_path().to_string_lossy().into_owned();
     text = text.replace(&isolated_project, "/tmp/project");
 
     for unix_path in ["/tmp/project", "/tmp/hooks.json"] {

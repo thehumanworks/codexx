@@ -80,20 +80,14 @@ fn project_layers_for_cwd(cwd: &Path) -> Vec<ConfigLayerEntry> {
 }
 
 async fn make_config_for_cwd(codex_home: &TempDir, cwd: PathBuf) -> TestConfig {
-    make_config_for_cwd_inner(
-        codex_home,
-        cwd,
-        TomlValue::Table(toml::map::Map::new()),
-        /*include_project_layers*/ true,
-    )
-    .await
+    make_config_for_cwd_with_system_config(codex_home, cwd, TomlValue::Table(toml::map::Map::new()))
+        .await
 }
 
-async fn make_config_for_cwd_inner(
+async fn make_config_for_cwd_with_system_config(
     codex_home: &TempDir,
     cwd: PathBuf,
     system_config: TomlValue,
-    include_project_layers: bool,
 ) -> TestConfig {
     let user_config_path = codex_home.path().join(CONFIG_TOML_FILE);
     let system_config_path = codex_home.path().join("etc/codex/config.toml");
@@ -118,9 +112,7 @@ async fn make_config_for_cwd_inner(
             TomlValue::Table(toml::map::Map::new()),
         ),
     ];
-    if include_project_layers {
-        layers.extend(project_layers_for_cwd(&cwd));
-    }
+    layers.extend(project_layers_for_cwd(&cwd));
 
     let cwd_abs = cwd.abs();
     TestConfig {
@@ -1708,12 +1700,10 @@ async fn non_git_repo_skills_search_does_not_walk_parents() {
     let outer_dir = tempfile::tempdir().expect("tempdir");
     let nested_dir = outer_dir.path().join("nested/inner");
     fs::create_dir_all(&nested_dir).unwrap();
+    mark_as_git_repo(&nested_dir);
 
     write_skill_at(
-        &outer_dir
-            .path()
-            .join(REPO_ROOT_CONFIG_DIR_NAME)
-            .join(SKILLS_DIR_NAME),
+        &outer_dir.path().join(AGENTS_DIR_NAME).join(SKILLS_DIR_NAME),
         "outer",
         "outer-skill",
         "from outer",
@@ -1726,11 +1716,10 @@ async fn non_git_repo_skills_search_does_not_walk_parents() {
             "__codex_test_project_root_marker_that_does_not_exist__".to_string(),
         )]),
     );
-    let cfg = make_config_for_cwd_inner(
+    let cfg = make_config_for_cwd_with_system_config(
         &codex_home,
         nested_dir,
         TomlValue::Table(system_config),
-        /*include_project_layers*/ false,
     )
     .await;
 
