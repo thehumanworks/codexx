@@ -420,6 +420,23 @@ pub const NO_PROXY_ENV_KEYS: &[&str] = &[
     "BUNDLE_NO_PROXY",
 ];
 
+#[cfg(target_os = "windows")]
+pub const DEFAULT_NO_PROXY_VALUE: &str = concat!(
+    "localhost,127.0.0.1,::1,",
+    "10.0.0.0/8,",
+    "172.16.0.0/12,",
+    "192.168.0.0/16,",
+    // Some Windows HTTP stacks do not reliably honor CIDR-only NO_PROXY entries for LAN
+    // destinations. Keep the CIDRs for clients that understand them, and add wildcard forms for
+    // the common RFC1918 ranges so direct LAN access stays off the managed proxy path.
+    "10.*,",
+    "172.16.*,172.17.*,172.18.*,172.19.*,172.20.*,172.21.*,172.22.*,172.23.*,",
+    "172.24.*,172.25.*,172.26.*,172.27.*,172.28.*,172.29.*,172.30.*,172.31.*,",
+    "192.168.*,",
+    ".local,*.local"
+);
+
+#[cfg(not(target_os = "windows"))]
 pub const DEFAULT_NO_PROXY_VALUE: &str = concat!(
     "localhost,127.0.0.1,::1,",
     "10.0.0.0/8,",
@@ -1010,6 +1027,13 @@ mod tests {
         assert!(no_proxy.contains("172.16.0.0/12"));
         assert!(no_proxy.contains("192.168.0.0/16"));
         assert!(!no_proxy.contains("169.254.0.0/16"));
+        #[cfg(target_os = "windows")]
+        {
+            assert!(no_proxy.contains("10.*"));
+            assert!(no_proxy.contains("172.31.*"));
+            assert!(no_proxy.contains("192.168.*"));
+            assert!(no_proxy.contains(".local"));
+        }
         assert_eq!(env.get(PROXY_ACTIVE_ENV_KEY), Some(&"1".to_string()));
         assert_eq!(env.get(ALLOW_LOCAL_BINDING_ENV_KEY), Some(&"0".to_string()));
         assert_eq!(
