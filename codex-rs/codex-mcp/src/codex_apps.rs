@@ -12,6 +12,7 @@ use std::time::Instant;
 use crate::runtime::emit_duration;
 use crate::tools::MCP_TOOLS_CACHE_WRITE_DURATION_METRIC;
 use crate::tools::ToolInfo;
+use codex_config::McpServerProvenance;
 use codex_login::CodexAuth;
 use codex_utils_plugins::mcp_connector::is_connector_id_allowed;
 use codex_utils_plugins::mcp_connector::sanitize_name;
@@ -206,7 +207,11 @@ pub(crate) fn load_cached_codex_apps_tools(
     if cache.schema_version != CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION {
         return CachedCodexAppsToolsLoad::Invalid;
     }
-    CachedCodexAppsToolsLoad::Hit(filter_disallowed_codex_apps_tools(cache.tools))
+    let mut tools = filter_disallowed_codex_apps_tools(cache.tools);
+    for tool in &mut tools {
+        tool.server_provenance = McpServerProvenance::HostOwnedCodexApps;
+    }
+    CachedCodexAppsToolsLoad::Hit(tools)
 }
 
 pub(crate) fn write_cached_codex_apps_tools(

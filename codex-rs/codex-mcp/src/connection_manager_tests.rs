@@ -641,6 +641,10 @@ fn startup_cached_codex_apps_tools_loads_from_disk_cache() {
 
     assert_eq!(startup_tools.len(), 1);
     assert_eq!(startup_tools[0].server_name, CODEX_APPS_MCP_SERVER_NAME);
+    assert_eq!(
+        startup_tools[0].server_provenance,
+        McpServerProvenance::HostOwnedCodexApps
+    );
     assert_eq!(startup_tools[0].callable_name, "calendar_search");
 }
 
