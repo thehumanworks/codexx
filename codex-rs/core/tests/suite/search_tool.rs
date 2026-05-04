@@ -1079,6 +1079,7 @@ async fn tool_search_uses_non_app_mcp_server_instructions_as_namespace_descripti
                     enabled: true,
                     required: false,
                     disabled_reason: None,
+                    provenance: Default::default(),
                     startup_timeout_sec: Some(Duration::from_secs(10)),
                     tool_timeout_sec: None,
                     default_tools_approval_mode: None,
