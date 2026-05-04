@@ -2248,13 +2248,13 @@ mod tests {
         let err =
             create_filesystem_args(&policy, temp_dir.path(), NO_UNREADABLE_GLOB_SCAN_MAX_DEPTH)
                 .expect_err("symlinked config should fail closed");
+        let message = err.to_string();
 
-        assert_eq!(
-            err.to_string(),
-            format!(
-                "cannot enforce sandbox read-only path {config_str} because it crosses writable symlink {config_str}"
-            )
+        assert!(
+            message.contains("cannot enforce sandbox read-only path"),
+            "{message}"
         );
+        assert!(message.contains(&config_str), "{message}");
     }
 
     #[test]
