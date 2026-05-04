@@ -48,6 +48,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use wiremock::Match;
@@ -456,6 +457,7 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
+    let sideband_accept_delay = Duration::from_millis(1000);
     let capture = RealtimeCallRequestCapture::new();
     Mock::given(method("POST"))
         .and(path_regex(".*/realtime/calls$"))
@@ -468,12 +470,15 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
         .mount(&server)
         .await;
     let realtime_server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
-        requests: vec![vec![json!({
-            "type": "session.updated",
-            "session": { "id": "sess_webrtc", "instructions": "backend prompt" }
-        })]],
+        requests: vec![
+            vec![json!({
+                "type": "session.updated",
+                "session": { "id": "sess_webrtc", "instructions": "backend prompt" }
+            })],
+            vec![],
+        ],
         response_headers: Vec::new(),
-        accept_delay: Some(Duration::from_millis(250)),
+        accept_delay: Some(sideband_accept_delay),
         close_after_requests: false,
     }])
     .await;
@@ -488,6 +493,7 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
     });
     let test = builder.build(&server).await?;
 
+    let start = Instant::now();
     test.codex
         .submit(Op::RealtimeConversationStart(ConversationStartParams {
             output_modality: RealtimeOutputModality::Audio,
@@ -509,7 +515,12 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
     })
     .await
     .unwrap_or_else(|err: ErrorEvent| panic!("conversation call create failed: {err:?}"));
+    let sdp_elapsed = start.elapsed();
     assert_eq!(created.sdp, "v=answer\r\n");
+    assert!(
+        sdp_elapsed < sideband_accept_delay,
+        "SDP answer should arrive before sideband accept delay; elapsed={sdp_elapsed:?}, delay={sideband_accept_delay:?}"
+    );
     assert!(realtime_server.handshakes().is_empty());
 
     test.codex
