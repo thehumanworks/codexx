@@ -48,6 +48,13 @@ const RUNNER_SPAWN_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const RUNNER_ERROR_MODE_FLAGS: u32 = 0x0001 | 0x0002;
 const WAIT_OBJECT_0: u32 = 0;
 
+fn runner_launch_cwd<'a>(codex_home: &'a Path, log_dir: Option<&'a Path>) -> &'a Path {
+    // The elevated runner receives the real command cwd in the spawn request, so its own process
+    // cwd only needs to be a stable local directory. Using the target workspace here can break
+    // startup for mapped drives or other paths that the logon session cannot resolve directly.
+    log_dir.filter(|path| path.exists()).unwrap_or(codex_home)
+}
+
 pub(crate) struct RunnerTransport {
     pipe_write: File,
     pipe_read: File,
@@ -241,7 +248,8 @@ pub(crate) fn spawn_runner_transport(
     );
     let mut cmdline_vec = to_wide(&runner_full_cmd);
     let exe_w = to_wide(&runner_cmdline);
-    let cwd_w = to_wide(cwd);
+    let launch_cwd = runner_launch_cwd(codex_home, log_dir);
+    let cwd_w = to_wide(launch_cwd);
     let user_w = to_wide(&sandbox_creds.username);
     let domain_w = to_wide(".");
     let password_w = to_wide(&sandbox_creds.password);
@@ -345,6 +353,34 @@ pub(crate) fn spawn_runner_transport(
     }
 
     Ok(transport)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runner_launch_cwd;
+    use std::path::Path;
+
+    #[test]
+    fn prefers_existing_log_dir_for_runner_launch_cwd() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let codex_home = temp.path().join("codex-home");
+        let log_dir = codex_home.join(".sandbox");
+        std::fs::create_dir_all(&log_dir).expect("create log dir");
+
+        assert_eq!(runner_launch_cwd(&codex_home, Some(&log_dir)), log_dir.as_path());
+    }
+
+    #[test]
+    fn falls_back_to_codex_home_when_log_dir_is_missing() {
+        let codex_home = Path::new(r"C:\Users\tester\.codex");
+        let missing_log_dir = Path::new(r"C:\Users\tester\.codex\.sandbox");
+
+        assert_eq!(
+            runner_launch_cwd(codex_home, Some(missing_log_dir)),
+            codex_home
+        );
+        assert_eq!(runner_launch_cwd(codex_home, None), codex_home);
+    }
 }
 
 fn wait_for_complete_frame(pipe_read: &File, timeout: Duration) -> Result<()> {
