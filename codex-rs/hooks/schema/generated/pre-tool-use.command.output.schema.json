@@ -55,8 +55,14 @@
       "oneOf": [
         {
           "enum": [
-            "allow",
             "deny"
+          ],
+          "type": "string"
+        },
+        {
+          "description": "Accepted for compatibility.",
+          "enum": [
+            "allow"
           ],
           "type": "string"
         },

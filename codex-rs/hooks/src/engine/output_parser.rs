@@ -23,7 +23,6 @@ pub(crate) struct PreToolUseOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PreToolUsePermissionDecision {
-    Allow { reason: Option<String> },
     Ask { reason: Option<String> },
 }
 
@@ -357,9 +356,9 @@ fn unsupported_pre_tool_use_hook_specific_output(
         Some("PreToolUse hook returned unsupported updatedInput".to_string())
     } else {
         match output.permission_decision.as_ref() {
+            Some(PreToolUsePermissionDecisionWire::Allow) => None,
             Some(
-                decision @ (PreToolUsePermissionDecisionWire::Allow
-                | PreToolUsePermissionDecisionWire::Ask
+                decision @ (PreToolUsePermissionDecisionWire::Ask
                 | PreToolUsePermissionDecisionWire::Deny),
             ) => {
                 if output
@@ -428,14 +427,7 @@ fn pre_tool_use_permission_decision(
     output: &crate::schema::PreToolUseHookSpecificOutputWire,
 ) -> Option<PreToolUsePermissionDecision> {
     match output.permission_decision {
-        Some(PreToolUsePermissionDecisionWire::Allow) => {
-            Some(PreToolUsePermissionDecision::Allow {
-                reason: output
-                    .permission_decision_reason
-                    .as_deref()
-                    .and_then(trimmed_reason),
-            })
-        }
+        Some(PreToolUsePermissionDecisionWire::Allow) => None,
         Some(PreToolUsePermissionDecisionWire::Ask) => Some(PreToolUsePermissionDecision::Ask {
             reason: output
                 .permission_decision_reason
@@ -535,7 +527,7 @@ mod tests {
 
     #[test]
     fn pre_tool_use_permission_decisions_require_reason() {
-        for decision in ["allow", "ask", "deny"] {
+        for decision in ["ask", "deny"] {
             let parsed = parse_pre_tool_use(
                 &json!({
                     "hookSpecificOutput": {
@@ -553,6 +545,32 @@ mod tests {
                     "PreToolUse hook returned permissionDecision:{decision} without a non-empty permissionDecisionReason"
                 ))
             );
+        }
+    }
+
+    #[test]
+    fn pre_tool_use_allow_is_ignored() {
+        for stdout in [
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow"
+                }
+            })
+            .to_string(),
+            json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "allow",
+                    "permissionDecisionReason": "approved by hook"
+                }
+            })
+            .to_string(),
+        ] {
+            let parsed =
+                parse_pre_tool_use(&stdout).expect("pre tool use hook output should parse");
+            assert_eq!(parsed.invalid_reason, None);
+            assert_eq!(parsed.permission_decision, None);
         }
     }
 }

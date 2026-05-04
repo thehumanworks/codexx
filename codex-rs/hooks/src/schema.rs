@@ -194,6 +194,7 @@ pub(crate) struct PreToolUseHookSpecificOutputWire {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub(crate) enum PreToolUsePermissionDecisionWire {
+    /// Accepted for compatibility.
     #[serde(rename = "allow")]
     Allow,
     #[serde(rename = "deny")]

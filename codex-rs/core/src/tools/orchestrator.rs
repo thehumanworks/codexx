@@ -148,7 +148,7 @@ impl ToolOrchestrator {
         );
         let pre_tool_use_reason = match &pre_tool_use_permission_decision {
             Some(PreToolUsePermissionDecision::Ask { reason }) => reason.clone(),
-            Some(PreToolUsePermissionDecision::Allow { .. }) | None => None,
+            None => None,
         };
         let use_guardian = (routes_approval_to_guardian(turn_ctx) || strict_auto_review)
             && !pre_tool_use_asks_user;

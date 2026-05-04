@@ -483,7 +483,7 @@ impl CoreShellActionProvider {
                         workdir.clone(),
                         match pre_tool_use_permission_decision {
                             Some(PreToolUsePermissionDecision::Ask { reason }) => reason,
-                            Some(PreToolUsePermissionDecision::Allow { .. }) | None => None,
+                            None => None,
                         },
                         /*network_approval_context*/ None,
                         /*proposed_execpolicy_amendment*/ None,

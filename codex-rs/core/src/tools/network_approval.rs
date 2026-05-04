@@ -544,9 +544,7 @@ impl NetworkApprovalService {
                         Some(PreToolUsePermissionDecision::Ask { reason }) => {
                             reason.clone().or(Some(prompt_reason))
                         }
-                        Some(PreToolUsePermissionDecision::Allow { .. }) | None => {
-                            Some(prompt_reason)
-                        }
+                        None => Some(prompt_reason),
                     },
                     Some(network_approval_context.clone()),
                     /*proposed_execpolicy_amendment*/ None,

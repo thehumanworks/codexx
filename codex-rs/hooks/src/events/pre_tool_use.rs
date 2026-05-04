@@ -46,8 +46,6 @@ pub struct PreToolUseOutcome {
 /// boundaries for the same tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreToolUsePermissionDecision {
-    /// Record hook-level approval without waiving later concrete permission checks.
-    Allow { reason: Option<String> },
     /// Require explicit human-user confirmation.
     Ask { reason: Option<String> },
 }
@@ -153,23 +151,7 @@ pub(crate) async fn run(
 fn resolve_permission_decision<'a>(
     decisions: impl IntoIterator<Item = &'a PreToolUsePermissionDecision>,
 ) -> Option<PreToolUsePermissionDecision> {
-    let mut resolved_allow = None;
-    let mut resolved_ask = None;
-    for decision in decisions {
-        match decision {
-            PreToolUsePermissionDecision::Allow { reason } => {
-                resolved_allow = Some(PreToolUsePermissionDecision::Allow {
-                    reason: reason.clone(),
-                });
-            }
-            PreToolUsePermissionDecision::Ask { reason } => {
-                resolved_ask = Some(PreToolUsePermissionDecision::Ask {
-                    reason: reason.clone(),
-                });
-            }
-        }
-    }
-    resolved_ask.or(resolved_allow)
+    decisions.into_iter().last().cloned()
 }
 
 /// Serializes command stdin for a selected `PreToolUse` hook.
@@ -248,19 +230,9 @@ fn parse_completed(
                             });
                         }
                         if let Some(parsed_decision) = parsed.permission_decision {
-                            let (decision, reason) = match parsed_decision {
-                                ParsedPermissionDecision::Allow { reason } => (
-                                    PreToolUsePermissionDecision::Allow {
-                                        reason: reason.clone(),
-                                    },
-                                    reason,
-                                ),
-                                ParsedPermissionDecision::Ask { reason } => (
-                                    PreToolUsePermissionDecision::Ask {
-                                        reason: reason.clone(),
-                                    },
-                                    reason,
-                                ),
+                            let ParsedPermissionDecision::Ask { reason } = parsed_decision;
+                            let decision = PreToolUsePermissionDecision::Ask {
+                                reason: reason.clone(),
                             };
                             if let Some(reason) = reason {
                                 entries.push(HookOutputEntry {
@@ -504,7 +476,7 @@ mod tests {
     }
 
     #[test]
-    fn permission_decision_allow_is_user_visible_without_model_context() {
+    fn permission_decision_allow_is_ignored() {
         let parsed = parse_completed(
             &handler(),
             run_result(
@@ -520,20 +492,12 @@ mod tests {
             PreToolUseHandlerData {
                 should_block: false,
                 block_reason: None,
-                permission_decision: Some(PreToolUsePermissionDecision::Allow {
-                    reason: Some("approved by policy".to_string()),
-                }),
+                permission_decision: None,
                 additional_contexts_for_model: Vec::new(),
             }
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
-        assert_eq!(
-            parsed.completed.run.entries,
-            vec![HookOutputEntry {
-                kind: HookOutputEntryKind::Reason,
-                text: "approved by policy".to_string(),
-            }]
-        );
+        assert_eq!(parsed.completed.run.entries, Vec::new());
     }
 
     #[test]

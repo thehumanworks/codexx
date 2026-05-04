@@ -1171,7 +1171,7 @@ async fn maybe_request_mcp_tool_approval(
     );
     let pre_tool_use_reason = match &pre_tool_use_permission_decision {
         Some(PreToolUsePermissionDecision::Ask { reason }) => reason.as_deref(),
-        Some(PreToolUsePermissionDecision::Allow { .. }) | None => None,
+        None => None,
     };
     let prompt_reason = monitor_reason.as_deref().or(pre_tool_use_reason);
     question.question = mcp_tool_approval_question_text(question.question, prompt_reason);
