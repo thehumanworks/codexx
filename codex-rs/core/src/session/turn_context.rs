@@ -37,6 +37,7 @@ pub(crate) struct TurnEnvironment {
     pub(crate) environment_id: String,
     pub(crate) environment: Arc<Environment>,
     pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) shell: String,
 }
 
 impl TurnEnvironment {
