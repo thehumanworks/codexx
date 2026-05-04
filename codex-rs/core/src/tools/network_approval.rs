@@ -417,7 +417,7 @@ impl NetworkApprovalService {
 
         {
             let denied_hosts = self.session_denied_hosts.lock().await;
-            if denied_hosts.contains(&key) {
+            if denied_hosts.contains(&key) && !pre_tool_use_asks_user {
                 return NetworkDecision::deny(REASON_NOT_ALLOWED);
             }
         }
