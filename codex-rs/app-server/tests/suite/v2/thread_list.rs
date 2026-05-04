@@ -18,6 +18,8 @@ use codex_app_server_protocol::SortDirection;
 use codex_app_server_protocol::ThreadListCwdFilter;
 use codex_app_server_protocol::ThreadListResponse;
 use codex_app_server_protocol::ThreadListSearchMode;
+use codex_app_server_protocol::ThreadSetNameParams;
+use codex_app_server_protocol::ThreadSetNameResponse;
 use codex_app_server_protocol::ThreadSortKey;
 use codex_app_server_protocol::ThreadSourceKind;
 use codex_app_server_protocol::ThreadStartParams;
@@ -631,15 +633,26 @@ sqlite = true
     )
     .await?;
     assert_eq!(repaired_page.items.len(), 3);
-    let exact_thread_id = ThreadId::from_string(&newer_match)?;
-    let mut exact_metadata = state_db
-        .get_thread(exact_thread_id)
-        .await?
-        .expect("exact match metadata should be present");
-    exact_metadata.title = "needle exact".to_string();
-    state_db.upsert_thread(&exact_metadata).await?;
 
     let mut mcp = init_mcp(codex_home.path()).await?;
+    let set_name_id = mcp
+        .send_thread_set_name_request(ThreadSetNameParams {
+            thread_id: newer_match.clone(),
+            name: "needle exact".to_string(),
+        })
+        .await?;
+    let set_name_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(set_name_id)),
+    )
+    .await??;
+    let _: ThreadSetNameResponse = to_response::<ThreadSetNameResponse>(set_name_resp)?;
+    let _ = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/name/updated"),
+    )
+    .await??;
+
     let request_id = mcp
         .send_thread_list_request(codex_app_server_protocol::ThreadListParams {
             cursor: None,
@@ -666,7 +679,7 @@ sqlite = true
 
     assert_eq!(next_cursor, None);
     let ids: Vec<_> = data.iter().map(|thread| thread.id.as_str()).collect();
-    assert_eq!(ids, vec![newer_match, older_match]);
+    assert_eq!(ids, vec![newer_match.as_str(), older_match.as_str()]);
 
     let exact_request_id = mcp
         .send_thread_list_request(codex_app_server_protocol::ThreadListParams {
@@ -696,7 +709,7 @@ sqlite = true
 
     assert_eq!(exact_next_cursor, None);
     let exact_ids: Vec<_> = exact_data.iter().map(|thread| thread.id.as_str()).collect();
-    assert_eq!(exact_ids, vec![newer_match]);
+    assert_eq!(exact_ids, vec![newer_match.as_str()]);
 
     Ok(())
 }
