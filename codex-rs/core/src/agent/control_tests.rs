@@ -2419,6 +2419,7 @@ async fn spawn_agent_fork_last_n_turns_keeps_only_recent_turns() {
                 agent_role: None,
             })),
             SpawnAgentOptions {
+                fork_parent_spawn_call_id: Some(parent_spawn_call_id.clone()),
                 fork_mode: Some(SpawnAgentForkMode::LastNTurns(2)),
                 ..Default::default()
             },
