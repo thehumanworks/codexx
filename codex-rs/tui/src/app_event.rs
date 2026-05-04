@@ -241,6 +241,8 @@ pub(crate) enum AppEvent {
 
     /// Result of refreshing rate limits.
     RateLimitsLoaded {
+        /// Monotonic request generation assigned when the background refresh starts.
+        refresh_generation: u64,
         origin: RateLimitRefreshOrigin,
         result: Result<Vec<RateLimitSnapshot>, String>,
     },

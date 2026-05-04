@@ -504,6 +504,10 @@ pub(crate) struct App {
     // Serialize hook enablement writes per hook so stale completions cannot
     // persist an older toggle after a newer one.
     pending_hook_enabled_writes: HashMap<String, Option<bool>>,
+    // Background rate-limit reads can complete out of order. Track request
+    // generations so stale snapshots never overwrite newer account state.
+    next_rate_limit_refresh_generation: u64,
+    latest_applied_rate_limit_refresh_generation: Option<u64>,
 }
 
 fn active_turn_not_steerable_turn_error(error: &TypedRequestError) -> Option<AppServerTurnError> {
@@ -887,6 +891,8 @@ See the Codex keymap documentation for supported actions and examples."
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            next_rate_limit_refresh_generation: 0,
+            latest_applied_rate_limit_refresh_generation: None,
         };
         if let Some(started) = initial_started_thread {
             app.enqueue_primary_thread_session(started.session, started.turns)

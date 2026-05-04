@@ -648,29 +648,15 @@ impl App {
                 self.chat_widget
                     .finish_add_credits_nudge_email_request(result);
             }
-            AppEvent::RateLimitsLoaded { origin, result } => match result {
-                Ok(snapshots) => {
-                    for snapshot in snapshots {
-                        self.chat_widget.on_rate_limit_snapshot(Some(snapshot));
-                    }
-                    match origin {
-                        RateLimitRefreshOrigin::StartupPrefetch => {
-                            tui.frame_requester().schedule_frame();
-                        }
-                        RateLimitRefreshOrigin::StatusCommand { request_id } => {
-                            self.chat_widget
-                                .finish_status_rate_limit_refresh(request_id);
-                        }
-                    }
+            AppEvent::RateLimitsLoaded {
+                refresh_generation,
+                origin,
+                result,
+            } => {
+                if self.handle_rate_limits_loaded(refresh_generation, origin, result) {
+                    tui.frame_requester().schedule_frame();
                 }
-                Err(err) => {
-                    tracing::warn!("account/rateLimits/read failed during TUI refresh: {err}");
-                    if let RateLimitRefreshOrigin::StatusCommand { request_id } = origin {
-                        self.chat_widget
-                            .finish_status_rate_limit_refresh(request_id);
-                    }
-                }
-            },
+            }
             AppEvent::ConnectorsLoaded { result, is_final } => {
                 self.chat_widget.on_connectors_loaded(result, is_final);
             }
@@ -1908,6 +1894,40 @@ impl App {
             }
         }
         Ok(AppRunControl::Continue)
+    }
+
+    pub(super) fn handle_rate_limits_loaded(
+        &mut self,
+        refresh_generation: u64,
+        origin: RateLimitRefreshOrigin,
+        result: std::result::Result<Vec<RateLimitSnapshot>, String>,
+    ) -> bool {
+        let mut should_schedule_frame = false;
+        match result {
+            Ok(snapshots) => {
+                let is_stale = self
+                    .latest_applied_rate_limit_refresh_generation
+                    .is_some_and(|latest_generation| latest_generation >= refresh_generation);
+                if !is_stale {
+                    self.latest_applied_rate_limit_refresh_generation = Some(refresh_generation);
+                    for snapshot in snapshots {
+                        self.chat_widget.on_rate_limit_snapshot(Some(snapshot));
+                    }
+                    should_schedule_frame =
+                        matches!(origin, RateLimitRefreshOrigin::StartupPrefetch);
+                }
+            }
+            Err(err) => {
+                tracing::warn!("account/rateLimits/read failed during TUI refresh: {err}");
+            }
+        }
+
+        if let RateLimitRefreshOrigin::StatusCommand { request_id } = origin {
+            self.chat_widget
+                .finish_status_rate_limit_refresh(request_id);
+        }
+
+        should_schedule_frame
     }
 
     async fn apply_keymap_capture(

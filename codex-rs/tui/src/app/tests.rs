@@ -122,6 +122,24 @@ async fn handle_mcp_inventory_result_clears_committed_loading_cell() {
     assert_eq!(app.transcript_cells.len(), 0);
 }
 
+#[tokio::test]
+async fn stale_rate_limit_refresh_generations_do_not_move_backward() {
+    let mut app = make_test_app().await;
+
+    app.handle_rate_limits_loaded(
+        /*refresh_generation*/ 2,
+        RateLimitRefreshOrigin::StartupPrefetch,
+        Ok(vec![]),
+    );
+    app.handle_rate_limits_loaded(
+        /*refresh_generation*/ 1,
+        RateLimitRefreshOrigin::StartupPrefetch,
+        Ok(vec![]),
+    );
+
+    assert_eq!(app.latest_applied_rate_limit_refresh_generation, Some(2));
+}
+
 #[test]
 fn startup_waiting_gate_is_only_for_fresh_or_exit_session_selection() {
     assert_eq!(
@@ -3775,6 +3793,8 @@ async fn make_test_app() -> App {
         pending_app_server_requests: PendingAppServerRequests::default(),
         pending_plugin_enabled_writes: HashMap::new(),
         pending_hook_enabled_writes: HashMap::new(),
+        next_rate_limit_refresh_generation: 0,
+        latest_applied_rate_limit_refresh_generation: None,
     }
 }
 
@@ -3836,6 +3856,8 @@ async fn make_test_app_with_channels() -> (
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
+            next_rate_limit_refresh_generation: 0,
+            latest_applied_rate_limit_refresh_generation: None,
         },
         rx,
         op_rx,

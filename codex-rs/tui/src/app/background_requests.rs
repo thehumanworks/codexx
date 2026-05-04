@@ -40,13 +40,20 @@ impl App {
         app_server: &AppServerSession,
         origin: RateLimitRefreshOrigin,
     ) {
+        let refresh_generation = self.next_rate_limit_refresh_generation;
+        self.next_rate_limit_refresh_generation =
+            self.next_rate_limit_refresh_generation.saturating_add(1);
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let result = fetch_account_rate_limits(request_handle)
                 .await
                 .map_err(|err| err.to_string());
-            app_event_tx.send(AppEvent::RateLimitsLoaded { origin, result });
+            app_event_tx.send(AppEvent::RateLimitsLoaded {
+                refresh_generation,
+                origin,
+                result,
+            });
         });
     }
 
