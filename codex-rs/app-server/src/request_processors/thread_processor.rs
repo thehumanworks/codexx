@@ -246,6 +246,7 @@ fn validate_dynamic_tools(tools: &[ApiDynamicToolSpec]) -> Result<(), String> {
 
 #[derive(Clone)]
 pub(crate) struct ThreadRequestProcessor {
+    pub(super) auth_manager: Arc<AuthManager>,
     pub(super) thread_manager: Arc<ThreadManager>,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
     pub(super) analytics_events_client: AnalyticsEventsClient,
@@ -264,6 +265,7 @@ pub(crate) struct ThreadRequestProcessor {
 impl ThreadRequestProcessor {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         analytics_events_client: AnalyticsEventsClient,
@@ -278,6 +280,7 @@ impl ThreadRequestProcessor {
         thread_goal_processor: ThreadGoalRequestProcessor,
     ) -> Self {
         Self {
+            auth_manager,
             thread_manager,
             outgoing,
             analytics_events_client,
@@ -964,6 +967,7 @@ impl ThreadRequestProcessor {
                 .collect()
         };
         let core_dynamic_tool_count = core_dynamic_tools.len();
+        config.client_compatibility_flags = client_compatibility_flags;
 
         let NewThread {
             thread_id,
@@ -984,7 +988,6 @@ impl ThreadRequestProcessor {
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history,
                 metrics_service_name: service_name,
-                client_compatibility_flags,
                 parent_trace: request_trace,
                 environments,
             })
@@ -2406,7 +2409,7 @@ impl ThreadRequestProcessor {
         .await;
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = match self
+        let mut config = match self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
@@ -2418,25 +2421,20 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        config.client_compatibility_flags = client_compatibility_flags;
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
 
         match self
             .thread_manager
-            .start_thread_with_options(StartThreadOptions {
-                config: config.clone(),
-                initial_history: thread_history,
-                session_source: None,
-                dynamic_tools: Vec::new(),
+            .resume_thread_with_history(
+                config.clone(),
+                thread_history,
+                self.auth_manager.clone(),
                 persist_extended_history,
-                metrics_service_name: None,
-                client_compatibility_flags,
-                parent_trace: self.request_trace_context(&request_id).await,
-                environments: self
-                    .thread_manager
-                    .default_environment_selections(&config.cwd),
-            })
+                self.request_trace_context(&request_id).await,
+            )
             .await
         {
             Ok(NewThread {
@@ -3022,11 +3020,12 @@ impl ThreadRequestProcessor {
         );
         typesafe_overrides.ephemeral = ephemeral.then_some(true);
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = self
+        let mut config = self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.client_compatibility_flags = client_compatibility_flags;
 
         let fallback_model_provider = config.model_provider_id.clone();
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
@@ -3038,7 +3037,7 @@ impl ThreadRequestProcessor {
             ..
         } = self
             .thread_manager
-            .fork_thread_from_history_with_client_compatibility_flags(
+            .fork_thread_from_history(
                 ForkSnapshot::Interrupted,
                 config,
                 InitialHistory::Resumed(ResumedHistory {
@@ -3048,7 +3047,6 @@ impl ThreadRequestProcessor {
                 }),
                 persist_extended_history,
                 self.request_trace_context(&request_id).await,
-                client_compatibility_flags,
             )
             .await
             .map_err(|err| match err {

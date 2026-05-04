@@ -139,7 +139,6 @@ impl AsyncManagedClient {
         cancel_token: CancellationToken,
         tx_event: Sender<Event>,
         elicitation_requests: ElicitationRequestManager,
-        elicitation_compatibility: McpElicitationCompatibility,
         codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
         tool_plugin_provenance: Arc<ToolPluginProvenance>,
         runtime_environment: McpRuntimeEnvironment,
@@ -182,7 +181,6 @@ impl AsyncManagedClient {
                         tool_filter: startup_tool_filter,
                         tx_event,
                         elicitation_requests,
-                        elicitation_compatibility,
                         codex_apps_tools_cache_context,
                     },
                 )
@@ -466,10 +464,10 @@ async fn start_server_task(
         tool_filter,
         tx_event,
         elicitation_requests,
-        elicitation_compatibility,
         codex_apps_tools_cache_context,
     } = params;
-    let elicitation = elicitation_capability_for_server(&server_name, elicitation_compatibility);
+    let elicitation =
+        elicitation_capability_for_server(&server_name, elicitation_requests.compatibility());
     let params = InitializeRequestParams {
         meta: None,
         capabilities: ClientCapabilities {
@@ -552,7 +550,6 @@ struct StartServerTaskParams {
     tool_filter: ToolFilter,
     tx_event: Sender<Event>,
     elicitation_requests: ElicitationRequestManager,
-    elicitation_compatibility: McpElicitationCompatibility,
     codex_apps_tools_cache_context: Option<CodexAppsToolsCacheContext>,
 }
 

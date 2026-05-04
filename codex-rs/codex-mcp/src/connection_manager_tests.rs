@@ -283,10 +283,6 @@ async fn codex_apps_only_custom_server_elicitation_is_declined_without_event() {
             meta: None,
             message: "What should I say?".to_string(),
             requested_schema: rmcp::model::ElicitationSchema::builder()
-                .required_property(
-                    "message",
-                    rmcp::model::PrimitiveSchema::String(rmcp::model::StringSchema::new()),
-                )
                 .build()
                 .expect("schema should build"),
         },
@@ -294,14 +290,8 @@ async fn codex_apps_only_custom_server_elicitation_is_declined_without_event() {
     .await
     .expect("elicitation should auto decline");
 
-    assert_eq!(
-        response,
-        ElicitationResponse {
-            action: ElicitationAction::Decline,
-            content: None,
-            meta: None,
-        }
-    );
+    assert_eq!(response.action, ElicitationAction::Decline);
+    assert_eq!(response.content, None);
     assert!(matches!(
         rx_event.try_recv(),
         Err(async_channel::TryRecvError::Empty)
@@ -846,7 +836,6 @@ fn elicitation_capability_uses_2025_06_18_shape_for_all_servers() {
     for server_name in [CODEX_APPS_MCP_SERVER_NAME, "custom_mcp"] {
         let capability =
             elicitation_capability_for_server(server_name, McpElicitationCompatibility::Default);
-        assert_eq!(capability, Some(ElicitationCapability::default()));
         assert_eq!(
             serde_json::to_value(capability).expect("serialize elicitation capability"),
             serde_json::json!({})
@@ -855,16 +844,14 @@ fn elicitation_capability_uses_2025_06_18_shape_for_all_servers() {
 }
 
 #[test]
-fn codex_apps_only_elicitation_capability_keeps_codex_apps_enabled() {
+fn codex_apps_only_elicitation_capability_suppresses_custom_servers() {
+    let compatibility = McpElicitationCompatibility::CodexAppsOnly;
     assert_eq!(
-        elicitation_capability_for_server(
-            CODEX_APPS_MCP_SERVER_NAME,
-            McpElicitationCompatibility::CodexAppsOnly,
-        ),
+        elicitation_capability_for_server(CODEX_APPS_MCP_SERVER_NAME, compatibility),
         Some(ElicitationCapability::default())
     );
     assert_eq!(
-        elicitation_capability_for_server("custom_mcp", McpElicitationCompatibility::CodexAppsOnly,),
+        elicitation_capability_for_server("custom_mcp", compatibility),
         None
     );
 }

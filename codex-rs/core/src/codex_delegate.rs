@@ -62,7 +62,7 @@ use crate::session::completed_session_loop_termination;
 /// The returned `ops_tx` allows the caller to submit additional `Op`s to the sub-agent.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_codex_thread_interactive(
-    config: Config,
+    mut config: Config,
     auth_manager: Arc<AuthManager>,
     models_manager: SharedModelsManager,
     parent_session: Arc<Session>,
@@ -73,7 +73,7 @@ pub(crate) async fn run_codex_thread_interactive(
 ) -> Result<Codex, CodexErr> {
     let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_ops, rx_ops) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
-    let client_compatibility_flags = parent_session.client_compatibility_flags().await;
+    config.client_compatibility_flags = parent_session.client_compatibility_flags().await;
     let CodexSpawnOk { codex, .. } = Box::pin(Codex::spawn(CodexSpawnArgs {
         config,
         auth_manager,
@@ -89,7 +89,6 @@ pub(crate) async fn run_codex_thread_interactive(
         dynamic_tools: Vec::new(),
         persist_extended_history: false,
         metrics_service_name: None,
-        client_compatibility_flags,
         inherited_shell_snapshot: None,
         user_shell_override: None,
         inherited_exec_policy: Some(Arc::clone(&parent_session.services.exec_policy)),

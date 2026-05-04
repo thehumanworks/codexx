@@ -1099,7 +1099,11 @@ async fn maybe_request_mcp_tool_approval(
     let tool_call_mcp_elicitation_enabled = turn_context
         .config
         .features
-        .enabled(Feature::ToolCallMcpElicitation);
+        .enabled(Feature::ToolCallMcpElicitation)
+        && turn_context
+            .client_compatibility_flags
+            .mcp_elicitation
+            .allows_server_elicitation(&invocation.server);
 
     if routes_approval_to_guardian(turn_context) {
         let review_id = new_guardian_review_id();

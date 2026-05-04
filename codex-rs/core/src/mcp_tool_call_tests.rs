@@ -1,4 +1,6 @@
 use super::*;
+use crate::ClientCompatibilityFlags;
+use crate::McpElicitationCompatibility;
 use crate::config::ConfigBuilder;
 use crate::session::tests::make_session_and_context;
 use crate::session::tests::make_session_and_context_with_rx;
@@ -18,6 +20,7 @@ use codex_hooks::HooksConfig;
 use codex_model_provider::create_model_provider;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::GranularApprovalConfig;
 use core_test_support::PathExt;
 use core_test_support::responses::ev_assistant_message;
@@ -2276,7 +2279,19 @@ async fn guardian_mode_mcp_denial_returns_rationale_message() {
 
 #[tokio::test]
 async fn prompt_mode_waits_for_approval_when_annotations_do_not_require_approval() {
-    let (session, turn_context, _rx_event) = make_session_and_context_with_rx().await;
+    let (session, mut turn_context, rx_event) = make_session_and_context_with_rx().await;
+    {
+        let turn_context = Arc::get_mut(&mut turn_context).expect("single turn context ref");
+        let mut config = (*turn_context.config).clone();
+        config
+            .features
+            .enable(Feature::ToolCallMcpElicitation)
+            .expect("test setup should allow enabling tool call MCP elicitation");
+        turn_context.config = Arc::new(config);
+        turn_context.client_compatibility_flags = ClientCompatibilityFlags {
+            mcp_elicitation: McpElicitationCompatibility::CodexAppsOnly,
+        };
+    }
     {
         let mut active_turn = session.active_turn.lock().await;
         *active_turn = Some(ActiveTurn::default());
@@ -2302,7 +2317,7 @@ async fn prompt_mode_waits_for_approval_when_annotations_do_not_require_approval
         openai_file_input_params: None,
     };
 
-    let mut approval_task = {
+    let approval_task = {
         let session = Arc::clone(&session);
         let turn_context = Arc::clone(&turn_context);
         tokio::spawn(async move {
@@ -2319,12 +2334,11 @@ async fn prompt_mode_waits_for_approval_when_annotations_do_not_require_approval
         })
     };
 
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(200), &mut approval_task)
-            .await
-            .is_err(),
-        "prompt mode should wait for approval instead of auto-allowing"
-    );
+    let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx_event.recv())
+        .await
+        .expect("approval request should emit an event")
+        .expect("event channel should stay open");
+    assert!(matches!(event.msg, EventMsg::RequestUserInput(_)));
     approval_task.abort();
 }
 

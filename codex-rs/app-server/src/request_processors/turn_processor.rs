@@ -904,6 +904,7 @@ impl TurnRequestProcessor {
         };
 
         let mut config = self.config.as_ref().clone();
+        config.client_compatibility_flags = parent_thread.client_compatibility_flags().await;
         if let Some(review_model) = &config.review_model {
             config.model = Some(review_model.clone());
         }
@@ -915,13 +916,12 @@ impl TurnRequestProcessor {
             ..
         } = self
             .thread_manager
-            .fork_thread_with_client_compatibility_flags(
+            .fork_thread(
                 ForkSnapshot::Interrupted,
                 config.clone(),
                 rollout_path,
                 /*persist_extended_history*/ false,
                 self.request_trace_context(request_id).await,
-                parent_thread.client_compatibility_flags().await,
             )
             .await
             .map_err(|err| {

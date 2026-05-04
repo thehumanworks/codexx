@@ -1,3 +1,4 @@
+use crate::ClientCompatibilityFlags;
 use crate::agents_md::AgentsMdManager;
 use crate::config::edit::ConfigEdit;
 use crate::config::edit::ConfigEditsBuilder;
@@ -504,6 +505,10 @@ pub struct Config {
 
     /// TUI notification settings, including enabled events, delivery method, and focus condition.
     pub tui_notifications: TuiNotificationSettings,
+
+    /// Runtime-only client compatibility flags selected by the app server
+    /// before creating a session. These are not loaded from config.toml.
+    pub client_compatibility_flags: ClientCompatibilityFlags,
 
     /// Enable ASCII animations and shimmer effects in the TUI.
     pub animations: bool,
@@ -3135,6 +3140,7 @@ impl Config {
                 .as_ref()
                 .map(|t| t.notification_settings.clone())
                 .unwrap_or_default(),
+            client_compatibility_flags: ClientCompatibilityFlags::default(),
             animations: cfg.tui.as_ref().map(|t| t.animations).unwrap_or(true),
             show_tooltips: cfg.tui.as_ref().map(|t| t.show_tooltips).unwrap_or(true),
             model_availability_nux: cfg

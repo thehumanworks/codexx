@@ -401,7 +401,6 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) dynamic_tools: Vec<DynamicToolSpec>,
     pub(crate) persist_extended_history: bool,
     pub(crate) metrics_service_name: Option<String>,
-    pub(crate) client_compatibility_flags: ClientCompatibilityFlags,
     pub(crate) inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
     pub(crate) inherited_exec_policy: Option<Arc<ExecPolicyManager>>,
     /// Parent rollout trace used only to derive fresh spawned child traces.
@@ -463,7 +462,6 @@ impl Codex {
             dynamic_tools,
             persist_extended_history,
             metrics_service_name,
-            client_compatibility_flags,
             inherited_shell_snapshot,
             user_shell_override,
             inherited_exec_policy,
@@ -615,7 +613,6 @@ impl Codex {
             environments: environment_selections.to_selections(),
             original_config_do_not_use: Arc::clone(&config),
             metrics_service_name,
-            client_compatibility_flags,
             app_server_client_name: None,
             app_server_client_version: None,
             session_source,
@@ -843,6 +840,7 @@ impl Session {
             .lock()
             .await
             .session_configuration
+            .original_config_do_not_use
             .client_compatibility_flags
     }
 

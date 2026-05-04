@@ -1,5 +1,4 @@
 use super::*;
-use crate::ClientCompatibilityFlags;
 use crate::goals::GoalRuntimeState;
 use codex_otel::LEGACY_NOTIFY_CONFIGURED_METRIC;
 use codex_protocol::permissions::FileSystemPath;
@@ -84,8 +83,6 @@ pub(crate) struct SessionConfiguration {
     pub(super) original_config_do_not_use: Arc<Config>,
     /// Optional service name tag for session metrics.
     pub(super) metrics_service_name: Option<String>,
-    /// App-server client compatibility behavior selected at session creation.
-    pub(super) client_compatibility_flags: ClientCompatibilityFlags,
     pub(super) app_server_client_name: Option<String>,
     pub(super) app_server_client_version: Option<String>,
     /// Source of the session (cli, vscode, exec, mcp, ...)
@@ -1001,6 +998,7 @@ impl Session {
                 tool_plugin_provenance,
                 auth,
                 session_configuration
+                    .original_config_do_not_use
                     .client_compatibility_flags
                     .mcp_elicitation,
             )

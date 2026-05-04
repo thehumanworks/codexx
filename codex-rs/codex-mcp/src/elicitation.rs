@@ -191,14 +191,15 @@ impl ElicitationRequestManager {
             .boxed()
         })
     }
+
+    pub(crate) fn compatibility(&self) -> McpElicitationCompatibility {
+        self.compatibility
+    }
 }
 
 /// Compatibility policy for the MCP elicitation capability surface.
-///
-/// The default behavior advertises MCP elicitation support to every server.
-/// `CodexAppsOnly` preserves the pre-PR #17043 capability surface by keeping
-/// support for the built-in `codex_apps` server while suppressing support for
-/// custom MCP servers.
+/// `CodexAppsOnly` preserves the pre-PR #17043 behavior for old clients by
+/// keeping support for `codex_apps` while suppressing custom MCP servers.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum McpElicitationCompatibility {
     #[default]
@@ -207,7 +208,7 @@ pub enum McpElicitationCompatibility {
 }
 
 impl McpElicitationCompatibility {
-    pub(crate) fn allows_server_elicitation(self, server_name: &str) -> bool {
+    pub fn allows_server_elicitation(self, server_name: &str) -> bool {
         match self {
             Self::Default => true,
             Self::CodexAppsOnly => server_name == CODEX_APPS_MCP_SERVER_NAME,

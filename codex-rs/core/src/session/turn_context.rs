@@ -530,7 +530,9 @@ impl Session {
             current_date: Some(current_date),
             timezone: Some(timezone),
             app_server_client_name: session_configuration.app_server_client_name.clone(),
-            client_compatibility_flags: session_configuration.client_compatibility_flags,
+            client_compatibility_flags: session_configuration
+                .original_config_do_not_use
+                .client_compatibility_flags,
             developer_instructions: session_configuration.developer_instructions.clone(),
             compact_prompt: session_configuration.compact_prompt.clone(),
             user_instructions: session_configuration.user_instructions.clone(),
