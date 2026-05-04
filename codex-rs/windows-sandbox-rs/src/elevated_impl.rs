@@ -39,6 +39,7 @@ mod windows_impl {
     use crate::logging::log_success;
     use crate::policy::SandboxPolicy;
     use crate::policy::parse_policy;
+    use crate::protected_metadata::prepare_protected_metadata_targets;
     use crate::runner_client::spawn_runner_transport;
     use crate::sandbox_utils::ensure_codex_home_exists;
     use crate::sandbox_utils::inject_git_safe_directory;
@@ -80,6 +81,8 @@ mod windows_impl {
 
         let logs_base_dir: Option<&Path> = Some(sandbox_base.as_path());
         log_start(&command, logs_base_dir);
+        let protected_metadata_guard =
+            prepare_protected_metadata_targets(protected_metadata_targets);
         let sandbox_creds = require_logon_sandbox_creds(
             &policy,
             sandbox_policy_cwd,
@@ -154,7 +157,7 @@ mod windows_impl {
 
             let mut stdout = Vec::new();
             let mut stderr = Vec::new();
-            let (exit_code, timed_out) = loop {
+            let (mut exit_code, timed_out) = loop {
                 let msg = read_frame(&mut pipe_read)?
                     .ok_or_else(|| anyhow::anyhow!("runner pipe closed before exit"))?;
                 match msg.message {
@@ -177,6 +180,12 @@ mod windows_impl {
                     }
                 }
             };
+
+            let protected_metadata_violations =
+                protected_metadata_guard.cleanup_created_monitored_paths()?;
+            if !protected_metadata_violations.is_empty() && exit_code == 0 {
+                exit_code = 1;
+            }
 
             if exit_code == 0 {
                 log_success(&command, logs_base_dir);

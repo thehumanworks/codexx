@@ -212,6 +212,7 @@ pub(crate) fn allow_null_device_for_workspace_write(is_workspace_write: bool) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_legacy_session_acl_rules(
     policy: &SandboxPolicy,
     sandbox_policy_cwd: &Path,
@@ -220,9 +221,11 @@ pub(crate) fn apply_legacy_session_acl_rules(
     psid_generic: &LocalSid,
     psid_workspace: Option<&LocalSid>,
     persist_aces: bool,
+    additional_deny_paths: &[PathBuf],
 ) -> Vec<PathBuf> {
-    let AllowDenyPaths { allow, deny } =
+    let AllowDenyPaths { allow, mut deny } =
         compute_allow_paths(policy, sandbox_policy_cwd, current_dir, env_map);
+    deny.extend(additional_deny_paths.iter().cloned());
     let mut guards: Vec<PathBuf> = Vec::new();
     let canonical_cwd = canonicalize_path(current_dir);
     unsafe {
