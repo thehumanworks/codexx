@@ -1,3 +1,4 @@
+use codex_config::types::ApprovalsReviewer;
 use codex_core::config::Constrained;
 use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
@@ -20,6 +21,7 @@ use core_test_support::responses::ev_reasoning_text_delta;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_response_once;
 use core_test_support::responses::mount_sse_once;
+use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_response;
 use core_test_support::responses::start_mock_server;
@@ -1166,6 +1168,25 @@ fn tool_decision_assertion<'a>(
     }
 }
 
+fn auto_review_denial(response_id: &str) -> String {
+    sse(vec![
+        ev_response_created(response_id),
+        ev_assistant_message(
+            &format!("{response_id}-message"),
+            "{\"risk_level\":\"low\",\"user_authorization\":\"unknown\",\"outcome\":\"deny\",\"rationale\":\"guardian test denial\"}",
+        ),
+        ev_completed(response_id),
+    ])
+}
+
+fn escalated_exec_command_call(call_id: &str) -> serde_json::Value {
+    ev_function_call(
+        call_id,
+        "exec_command",
+        r#"{"cmd":"/usr/bin/touch codex-otel-escalation-test","sandbox_permissions":"require_escalated","justification":"Exercise Auto-review escalation telemetry."}"#,
+    )
+}
+
 #[tokio::test]
 #[traced_test]
 async fn handle_container_exec_autoapprove_from_config_records_tool_decision() {
@@ -1296,6 +1317,102 @@ async fn handle_container_exec_user_approved_records_tool_decision() {
         "approved",
         "user",
     ));
+}
+
+#[tokio::test]
+#[traced_test]
+async fn escalated_auto_review_denial_records_auto_review_then_user_tool_decisions() {
+    let server = start_mock_server().await;
+    mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-main-1"),
+                escalated_exec_command_call("auto_review_call_1"),
+                ev_completed("resp-main-1"),
+            ]),
+            auto_review_denial("resp-guardian-1"),
+            sse(vec![
+                ev_response_created("resp-main-2"),
+                escalated_exec_command_call("auto_review_call_2"),
+                ev_completed("resp-main-2"),
+            ]),
+            auto_review_denial("resp-guardian-2"),
+            sse(vec![
+                ev_response_created("resp-main-3"),
+                escalated_exec_command_call("auto_review_call_3"),
+                ev_completed("resp-main-3"),
+            ]),
+            auto_review_denial("resp-guardian-3"),
+            sse(vec![
+                ev_response_created("resp-main-4"),
+                ev_assistant_message("msg-main-4", "done"),
+                ev_completed("resp-main-4"),
+            ]),
+        ],
+    )
+    .await;
+
+    let TestCodex { codex, .. } = test_codex()
+        .with_config(|config| {
+            config.permissions.approval_policy = Constrained::allow_any(AskForApproval::OnRequest);
+            config.approvals_reviewer = ApprovalsReviewer::AutoReview;
+        })
+        .build(&server)
+        .await
+        .unwrap();
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "retry until Auto-review escalates".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await
+        .unwrap();
+
+    let approval_event =
+        wait_for_event(&codex, |ev| matches!(ev, EventMsg::ExecApprovalRequest(_))).await;
+    let EventMsg::ExecApprovalRequest(approval) = approval_event else {
+        panic!("expected ExecApprovalRequest event");
+    };
+    assert_eq!(approval.call_id, "auto_review_call_3");
+
+    codex
+        .submit(Op::ExecApproval {
+            id: approval.effective_approval_id(),
+            turn_id: None,
+            decision: ReviewDecision::Approved,
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+
+    logs_assert(|lines: &[&str]| {
+        let decisions = lines
+            .iter()
+            .filter(|line| {
+                line.contains("codex.tool_decision") && line.contains("call_id=auto_review_call_3")
+            })
+            .collect::<Vec<_>>();
+        if decisions.len() != 2 {
+            return Err(format!("expected 2 tool decisions, got {decisions:?}"));
+        }
+        let first = decisions[0].to_lowercase();
+        if !first.contains("decision=denied") || !first.contains("source=automatedreviewer") {
+            return Err(format!("unexpected first tool decision: {}", decisions[0]));
+        }
+        let second = decisions[1].to_lowercase();
+        if !second.contains("decision=approved") || !second.contains("source=user") {
+            return Err(format!("unexpected second tool decision: {}", decisions[1]));
+        }
+        Ok(())
+    });
 }
 
 #[tokio::test]

@@ -20,8 +20,11 @@ use crate::tools::network_approval::finish_deferred_network_approval;
 use crate::tools::network_approval::finish_immediate_network_approval;
 use crate::tools::sandboxing::ApprovalCtx;
 use crate::tools::sandboxing::ExecApprovalRequirement;
+use crate::tools::sandboxing::FinalApprovalDecisionSource;
+use crate::tools::sandboxing::PriorApprovalDecision;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::SandboxOverride;
+use crate::tools::sandboxing::ToolApprovalOutcome;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
@@ -160,7 +163,7 @@ impl ToolOrchestrator {
                         retry_reason: None,
                         network_approval_context: None,
                     };
-                    let decision = Self::request_approval(
+                    let (decision, source) = Self::request_approval(
                         tool,
                         req,
                         tool_ctx.call_id.as_str(),
@@ -170,7 +173,7 @@ impl ToolOrchestrator {
                         &otel,
                     )
                     .await?;
-                    Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
+                    Self::reject_if_not_approved(tool_ctx, source.guardian_review_id(), decision)
                         .await?;
                     already_approved = true;
                 } else {
@@ -195,7 +198,7 @@ impl ToolOrchestrator {
                     retry_reason: reason,
                     network_approval_context: None,
                 };
-                let decision = Self::request_approval(
+                let (decision, source) = Self::request_approval(
                     tool,
                     req,
                     tool_ctx.call_id.as_str(),
@@ -206,7 +209,7 @@ impl ToolOrchestrator {
                 )
                 .await?;
 
-                Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
+                Self::reject_if_not_approved(tool_ctx, source.guardian_review_id(), decision)
                     .await?;
                 already_approved = true;
             }
@@ -330,7 +333,7 @@ impl ToolOrchestrator {
                     };
 
                     let permission_request_run_id = format!("{}:retry", tool_ctx.call_id);
-                    let decision = Self::request_approval(
+                    let (decision, source) = Self::request_approval(
                         tool,
                         req,
                         &permission_request_run_id,
@@ -341,7 +344,7 @@ impl ToolOrchestrator {
                     )
                     .await?;
 
-                    Self::reject_if_not_approved(tool_ctx, guardian_review_id.as_deref(), decision)
+                    Self::reject_if_not_approved(tool_ctx, source.guardian_review_id(), decision)
                         .await?;
                 }
 
@@ -390,7 +393,7 @@ impl ToolOrchestrator {
         tool_ctx: &ToolCtx,
         evaluate_permission_request_hooks: bool,
         otel: &codex_otel::SessionTelemetry,
-    ) -> Result<ReviewDecision, ToolError>
+    ) -> Result<(ReviewDecision, FinalApprovalDecisionSource), ToolError>
     where
         T: ToolRuntime<Rq, Out>,
     {
@@ -413,7 +416,7 @@ impl ToolOrchestrator {
                         &decision,
                         ToolDecisionSource::Config,
                     );
-                    return Ok(decision);
+                    return Ok((decision, FinalApprovalDecisionSource::Config));
                 }
                 Some(PermissionRequestDecision::Deny { message }) => {
                     let decision = ReviewDecision::Denied;
@@ -429,19 +432,34 @@ impl ToolOrchestrator {
             }
         }
 
-        let otel_source = if approval_ctx.guardian_review_id.is_some() {
-            ToolDecisionSource::AutomatedReviewer
-        } else {
-            ToolDecisionSource::User
+        let ToolApprovalOutcome {
+            decision,
+            source,
+            prior_decision,
+        } = tool.start_approval_async(req, approval_ctx).await;
+        if matches!(
+            prior_decision,
+            Some(PriorApprovalDecision::AutoReviewDenied)
+        ) {
+            otel.tool_decision(
+                &tool_ctx.tool_name,
+                &tool_ctx.call_id,
+                &ReviewDecision::Denied,
+                ToolDecisionSource::AutomatedReviewer,
+            );
+        }
+        let otel_source = match &source {
+            FinalApprovalDecisionSource::AutoReview { .. } => ToolDecisionSource::AutomatedReviewer,
+            FinalApprovalDecisionSource::Config => ToolDecisionSource::Config,
+            FinalApprovalDecisionSource::User => ToolDecisionSource::User,
         };
-        let decision = tool.start_approval_async(req, approval_ctx).await;
         otel.tool_decision(
             &tool_ctx.tool_name,
             &tool_ctx.call_id,
             &decision,
             otel_source,
         );
-        Ok(decision)
+        Ok((decision, source))
     }
 
     async fn reject_if_not_approved(

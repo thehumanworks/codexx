@@ -960,7 +960,7 @@ async fn maybe_request_mcp_tool_approval(
         .features
         .enabled(Feature::ToolCallMcpElicitation);
 
-    let mut escalated_from_guardian = false;
+    let mut escalated_from_auto_review = false;
     if routes_approval_to_guardian(turn_context) {
         let review_id = new_guardian_review_id();
         let decision = review_approval_request(
@@ -971,9 +971,9 @@ async fn maybe_request_mcp_tool_approval(
             monitor_reason.clone(),
         )
         .await;
-        escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+        escalated_from_auto_review = matches!(decision, ReviewDecision::Denied)
             && take_pending_auto_review_escalation(sess, &turn_context.sub_id).await;
-        if !escalated_from_guardian {
+        if !escalated_from_auto_review {
             let decision =
                 mcp_tool_approval_decision_from_guardian(sess, &review_id, decision).await;
             apply_mcp_tool_approval_decision(
@@ -1017,7 +1017,7 @@ async fn maybe_request_mcp_tool_approval(
     );
     question.question =
         mcp_tool_approval_question_text(question.question, monitor_reason.as_deref());
-    if tool_call_mcp_elicitation_enabled {
+    let decision = if tool_call_mcp_elicitation_enabled {
         let request_id = rmcp::model::RequestId::String(
             format!("{MCP_TOOL_APPROVAL_QUESTION_ID_PREFIX}_{call_id}").into(),
         );
@@ -1046,32 +1046,20 @@ async fn maybe_request_mcp_tool_approval(
                 .await,
             &question_id,
         );
-        let decision = normalize_approval_decision_for_mode(decision, approval_mode);
-        if escalated_from_guardian {
-            reset_auto_review_rejection_circuit_breaker(sess, &turn_context.sub_id).await;
-        }
-        apply_mcp_tool_approval_decision(
-            sess,
-            turn_context,
-            &decision,
-            session_approval_key,
-            persistent_approval_key,
+        normalize_approval_decision_for_mode(decision, approval_mode)
+    } else {
+        let args = RequestUserInputArgs {
+            questions: vec![question],
+        };
+        let response = sess
+            .request_user_input(turn_context.as_ref(), call_id.to_string(), args)
+            .await;
+        normalize_approval_decision_for_mode(
+            parse_mcp_tool_approval_response(response, &question_id),
+            approval_mode,
         )
-        .await;
-        return Some(decision);
-    }
-
-    let args = RequestUserInputArgs {
-        questions: vec![question],
     };
-    let response = sess
-        .request_user_input(turn_context.as_ref(), call_id.to_string(), args)
-        .await;
-    let decision = normalize_approval_decision_for_mode(
-        parse_mcp_tool_approval_response(response, &question_id),
-        approval_mode,
-    );
-    if escalated_from_guardian {
+    if escalated_from_auto_review {
         reset_auto_review_rejection_circuit_breaker(sess, &turn_context.sub_id).await;
     }
     apply_mcp_tool_approval_decision(

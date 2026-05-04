@@ -70,7 +70,7 @@ fn fixed_guardian_parent_session_id() -> ThreadId {
 }
 
 #[test]
-fn guardian_rejection_circuit_breaker_interrupts_after_three_consecutive_denials() {
+fn guardian_rejection_circuit_breaker_escalates_after_three_consecutive_denials() {
     let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
     assert_eq!(
         circuit_breaker.record_denial("turn-1"),
@@ -82,7 +82,7 @@ fn guardian_rejection_circuit_breaker_interrupts_after_three_consecutive_denials
     );
     assert_eq!(
         circuit_breaker.record_denial("turn-1"),
-        GuardianRejectionCircuitBreakerAction::InterruptTurn {
+        GuardianRejectionCircuitBreakerAction::EscalateToUser {
             consecutive_denials: 3,
             total_denials: 3,
         }
@@ -111,7 +111,7 @@ fn guardian_rejection_circuit_breaker_resets_consecutive_denials_on_non_denial()
     );
     assert_eq!(
         circuit_breaker.record_denial("turn-1"),
-        GuardianRejectionCircuitBreakerAction::InterruptTurn {
+        GuardianRejectionCircuitBreakerAction::EscalateToUser {
             consecutive_denials: 3,
             total_denials: 4,
         }
@@ -119,7 +119,7 @@ fn guardian_rejection_circuit_breaker_resets_consecutive_denials_on_non_denial()
 }
 
 #[test]
-fn guardian_rejection_circuit_breaker_interrupts_after_ten_total_denials() {
+fn guardian_rejection_circuit_breaker_escalates_after_ten_total_denials() {
     let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
     for _ in 0..9 {
         assert_eq!(
@@ -130,11 +130,31 @@ fn guardian_rejection_circuit_breaker_interrupts_after_ten_total_denials() {
     }
     assert_eq!(
         circuit_breaker.record_denial("turn-1"),
-        GuardianRejectionCircuitBreakerAction::InterruptTurn {
+        GuardianRejectionCircuitBreakerAction::EscalateToUser {
             consecutive_denials: 1,
             total_denials: 10,
         }
     );
+}
+
+#[test]
+fn guardian_rejection_circuit_breaker_tracks_pending_escalation_once() {
+    let mut circuit_breaker = GuardianRejectionCircuitBreaker::default();
+    for _ in 0..2 {
+        assert_eq!(
+            circuit_breaker.record_denial("turn-1"),
+            GuardianRejectionCircuitBreakerAction::Continue
+        );
+    }
+    assert_eq!(
+        circuit_breaker.record_denial("turn-1"),
+        GuardianRejectionCircuitBreakerAction::EscalateToUser {
+            consecutive_denials: 3,
+            total_denials: 3,
+        }
+    );
+    assert!(circuit_breaker.take_pending_auto_review_escalation("turn-1"));
+    assert!(!circuit_breaker.take_pending_auto_review_escalation("turn-1"));
 }
 
 async fn guardian_test_session_and_turn(

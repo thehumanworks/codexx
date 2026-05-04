@@ -31,6 +31,7 @@ use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::SandboxOverride;
 use crate::tools::sandboxing::Sandboxable;
+use crate::tools::sandboxing::ToolApprovalOutcome;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
@@ -149,7 +150,7 @@ impl Approvable<ShellRequest> for ShellRuntime {
         &'a mut self,
         req: &'a ShellRequest,
         ctx: ApprovalCtx<'a>,
-    ) -> BoxFuture<'a, ReviewDecision> {
+    ) -> BoxFuture<'a, ToolApprovalOutcome> {
         let mut keys = self.approval_keys(req);
         let command = req.command.clone();
         let cwd = req.cwd.clone();
@@ -160,12 +161,11 @@ impl Approvable<ShellRequest> for ShellRuntime {
         let call_id = ctx.call_id.to_string();
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
-            let mut escalated_from_guardian = false;
-            if let Some(review_id) = guardian_review_id {
+            let escalated_from_auto_review = if let Some(review_id) = guardian_review_id {
                 let decision = review_approval_request(
                     session,
                     turn,
-                    review_id,
+                    review_id.clone(),
                     GuardianApprovalRequest::Shell {
                         id: call_id.clone(),
                         command: command.clone(),
@@ -177,13 +177,16 @@ impl Approvable<ShellRequest> for ShellRuntime {
                     retry_reason.clone(),
                 )
                 .await;
-                escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                let escalated_from_auto_review = matches!(decision, ReviewDecision::Denied)
                     && take_pending_auto_review_escalation(session, &turn.sub_id).await;
-                if !escalated_from_guardian {
-                    return decision;
+                if !escalated_from_auto_review {
+                    return ToolApprovalOutcome::from_auto_review(decision, review_id);
                 }
                 keys.clear();
-            }
+                true
+            } else {
+                false
+            };
             let decision =
                 with_cached_approval(&session.services, "shell", keys, move || async move {
                     let available_decisions = None;
@@ -205,10 +208,12 @@ impl Approvable<ShellRequest> for ShellRuntime {
                         .await
                 })
                 .await;
-            if escalated_from_guardian {
+            if escalated_from_auto_review {
                 reset_auto_review_rejection_circuit_breaker(session, &turn.sub_id).await;
+                ToolApprovalOutcome::from_user_after_auto_review_denial(decision)
+            } else {
+                ToolApprovalOutcome::from_user(decision)
             }
-            decision
         })
     }
 

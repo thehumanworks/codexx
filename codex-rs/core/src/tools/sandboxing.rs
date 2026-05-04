@@ -132,6 +132,60 @@ pub(crate) struct ApprovalCtx<'a> {
     pub network_approval_context: Option<NetworkApprovalContext>,
 }
 
+#[derive(Debug)]
+pub(crate) enum FinalApprovalDecisionSource {
+    AutoReview { review_id: String },
+    Config,
+    User,
+}
+
+#[derive(Debug)]
+pub(crate) enum PriorApprovalDecision {
+    AutoReviewDenied,
+}
+
+#[derive(Debug)]
+pub(crate) struct ToolApprovalOutcome {
+    pub(crate) decision: ReviewDecision,
+    pub(crate) source: FinalApprovalDecisionSource,
+    pub(crate) prior_decision: Option<PriorApprovalDecision>,
+}
+
+impl FinalApprovalDecisionSource {
+    pub(crate) fn guardian_review_id(&self) -> Option<&str> {
+        match self {
+            Self::AutoReview { review_id } => Some(review_id),
+            Self::Config | Self::User => None,
+        }
+    }
+}
+
+impl ToolApprovalOutcome {
+    pub(crate) fn from_auto_review(decision: ReviewDecision, review_id: String) -> Self {
+        Self {
+            decision,
+            source: FinalApprovalDecisionSource::AutoReview { review_id },
+            prior_decision: None,
+        }
+    }
+
+    pub(crate) fn from_user(decision: ReviewDecision) -> Self {
+        Self {
+            decision,
+            source: FinalApprovalDecisionSource::User,
+            prior_decision: None,
+        }
+    }
+
+    pub(crate) fn from_user_after_auto_review_denial(decision: ReviewDecision) -> Self {
+        Self {
+            decision,
+            source: FinalApprovalDecisionSource::User,
+            prior_decision: Some(PriorApprovalDecision::AutoReviewDenied),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PermissionRequestPayload {
     pub tool_name: HookToolName,
@@ -330,7 +384,7 @@ pub(crate) trait Approvable<Req> {
         &'a mut self,
         req: &'a Req,
         ctx: ApprovalCtx<'a>,
-    ) -> BoxFuture<'a, ReviewDecision>;
+    ) -> BoxFuture<'a, ToolApprovalOutcome>;
 }
 
 pub(crate) trait Sandboxable {

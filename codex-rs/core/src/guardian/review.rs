@@ -184,7 +184,7 @@ async fn record_guardian_denial(session: &Arc<Session>, turn: &Arc<TurnContext>,
         .lock()
         .await
         .record_denial(turn_id);
-    let GuardianRejectionCircuitBreakerAction::InterruptTurn {
+    let GuardianRejectionCircuitBreakerAction::EscalateToUser {
         consecutive_denials,
         total_denials,
     } = action

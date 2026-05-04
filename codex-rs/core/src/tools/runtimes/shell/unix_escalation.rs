@@ -18,6 +18,7 @@ use crate::sandboxing::SandboxPermissions;
 use crate::shell::ShellType;
 use crate::tools::runtimes::build_sandbox_command;
 use crate::tools::runtimes::exec_env_for_sandbox_permissions;
+use crate::tools::sandboxing::FinalApprovalDecisionSource;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::ToolCtx;
@@ -334,7 +335,7 @@ enum DecisionSource {
 
 struct PromptDecision {
     decision: ReviewDecision,
-    guardian_review_id: Option<String>,
+    source: FinalApprovalDecisionSource,
     rejection_message: Option<String>,
 }
 
@@ -425,14 +426,14 @@ impl CoreShellActionProvider {
                     Some(PermissionRequestDecision::Allow) => {
                         return PromptDecision {
                             decision: ReviewDecision::Approved,
-                            guardian_review_id: None,
+                            source: FinalApprovalDecisionSource::Config,
                             rejection_message: None,
                         };
                     }
                     Some(PermissionRequestDecision::Deny { message }) => {
                         return PromptDecision {
                             decision: ReviewDecision::Denied,
-                            guardian_review_id: None,
+                            source: FinalApprovalDecisionSource::Config,
                             rejection_message: Some(message),
                         };
                     }
@@ -456,12 +457,12 @@ impl CoreShellActionProvider {
                         /*retry_reason*/ None,
                     )
                     .await;
-                    let escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                    let escalated_from_auto_review = matches!(decision, ReviewDecision::Denied)
                         && take_pending_auto_review_escalation(&session, &turn.sub_id).await;
-                    if !escalated_from_guardian {
+                    if !escalated_from_auto_review {
                         return PromptDecision {
                             decision,
-                            guardian_review_id,
+                            source: FinalApprovalDecisionSource::AutoReview { review_id },
                             rejection_message: None,
                         };
                     }
@@ -487,7 +488,7 @@ impl CoreShellActionProvider {
                 }
                 PromptDecision {
                     decision,
-                    guardian_review_id: None,
+                    source: FinalApprovalDecisionSource::User,
                     rejection_message: None,
                 }
             })
@@ -549,7 +550,7 @@ impl CoreShellActionProvider {
                             {
                                 message
                             } else if let Some(review_id) =
-                                prompt_decision.guardian_review_id.as_deref()
+                                prompt_decision.source.guardian_review_id()
                             {
                                 guardian_rejection_message(self.session.as_ref(), review_id).await
                             } else {

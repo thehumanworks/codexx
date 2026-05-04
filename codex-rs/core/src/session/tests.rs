@@ -893,8 +893,10 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             &'a mut self,
             _req: &'a (),
             _ctx: crate::tools::sandboxing::ApprovalCtx<'a>,
-        ) -> futures::future::BoxFuture<'a, ReviewDecision> {
-            Box::pin(async { ReviewDecision::Approved })
+        ) -> futures::future::BoxFuture<'a, crate::tools::sandboxing::ToolApprovalOutcome> {
+            Box::pin(async {
+                crate::tools::sandboxing::ToolApprovalOutcome::from_user(ReviewDecision::Approved)
+            })
         }
     }
 
@@ -6406,7 +6408,7 @@ async fn guardian_helper_review_warns_after_three_consecutive_denials() {
     assert!(
         warning
             .message
-            .contains("escalating the current request to the user")
+            .contains("requesting manual approval for the current request")
     );
 }
 

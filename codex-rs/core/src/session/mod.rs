@@ -1990,7 +1990,7 @@ impl Session {
         let requested_permissions = args.permissions;
         let request_reason = args.reason;
 
-        let mut escalated_from_guardian = false;
+        let mut escalated_from_auto_review = false;
         if crate::guardian::routes_approval_to_guardian(turn_context.as_ref()) {
             let originating_turn_state = {
                 let active = self.active_turn.lock().await;
@@ -2019,10 +2019,10 @@ impl Session {
                 _ = cancellation_token.cancelled() => return None,
                 decision = review_rx => decision.unwrap_or(ReviewDecision::Denied),
             };
-            escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+            escalated_from_auto_review = matches!(decision, ReviewDecision::Denied)
                 && crate::guardian::take_pending_auto_review_escalation(self, &turn_context.sub_id)
                     .await;
-            if !escalated_from_guardian {
+            if !escalated_from_auto_review {
                 let response = match decision {
                     ReviewDecision::Approved
                     | ReviewDecision::ApprovedExecpolicyAmendment { .. } => {
@@ -2115,7 +2115,7 @@ impl Session {
             }
             response = rx_response => response.ok(),
         };
-        if escalated_from_guardian {
+        if escalated_from_auto_review {
             crate::guardian::reset_auto_review_rejection_circuit_breaker(
                 self,
                 &turn_context.sub_id,

@@ -10,6 +10,7 @@ use crate::guardian::take_pending_auto_review_escalation;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::network_policy_decision::denied_network_policy_message;
 use crate::session::session::Session;
+use crate::tools::sandboxing::FinalApprovalDecisionSource;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::ToolError;
 use codex_hooks::PermissionRequestDecision;
@@ -500,12 +501,12 @@ impl NetworkApprovalService {
         }
         let use_guardian = routes_approval_to_guardian(&turn_context);
         let guardian_review_id = use_guardian.then(new_guardian_review_id);
-        let mut escalated_from_guardian = false;
-        let approval_decision = if let Some(review_id) = guardian_review_id.clone() {
+        let mut escalated_from_auto_review = false;
+        let (approval_decision, final_source) = if let Some(review_id) = guardian_review_id {
             let decision = review_approval_request(
                 &session,
                 &turn_context,
-                review_id,
+                review_id.clone(),
                 GuardianApprovalRequest::NetworkAccess {
                     id: guardian_approval_id.clone(),
                     turn_id: owner_call
@@ -520,10 +521,36 @@ impl NetworkApprovalService {
                 Some(policy_denial_message.clone()),
             )
             .await;
-            escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+            escalated_from_auto_review = matches!(decision, ReviewDecision::Denied)
                 && take_pending_auto_review_escalation(&session, &turn_context.sub_id).await;
-            if escalated_from_guardian {
+            if escalated_from_auto_review {
                 let available_decisions = None;
+                (
+                    session
+                        .request_command_approval(
+                            turn_context.as_ref(),
+                            guardian_approval_id,
+                            /*approval_id*/ None,
+                            prompt_command,
+                            turn_context.cwd.clone(),
+                            Some(prompt_reason),
+                            Some(network_approval_context.clone()),
+                            /*proposed_execpolicy_amendment*/ None,
+                            /*additional_permissions*/ None,
+                            available_decisions,
+                        )
+                        .await,
+                    FinalApprovalDecisionSource::User,
+                )
+            } else {
+                (
+                    decision,
+                    FinalApprovalDecisionSource::AutoReview { review_id },
+                )
+            }
+        } else {
+            let available_decisions = None;
+            (
                 session
                     .request_command_approval(
                         turn_context.as_ref(),
@@ -537,28 +564,11 @@ impl NetworkApprovalService {
                         /*additional_permissions*/ None,
                         available_decisions,
                     )
-                    .await
-            } else {
-                decision
-            }
-        } else {
-            let available_decisions = None;
-            session
-                .request_command_approval(
-                    turn_context.as_ref(),
-                    guardian_approval_id,
-                    /*approval_id*/ None,
-                    prompt_command,
-                    turn_context.cwd.clone(),
-                    Some(prompt_reason),
-                    Some(network_approval_context.clone()),
-                    /*proposed_execpolicy_amendment*/ None,
-                    /*additional_permissions*/ None,
-                    available_decisions,
-                )
-                .await
+                    .await,
+                FinalApprovalDecisionSource::User,
+            )
         };
-        if escalated_from_guardian {
+        if escalated_from_auto_review {
             reset_auto_review_rejection_circuit_breaker(&session, &turn_context.sub_id).await;
         }
 
@@ -641,7 +651,7 @@ impl NetworkApprovalService {
                 }
             },
             ReviewDecision::Denied | ReviewDecision::Abort => {
-                if let Some(review_id) = guardian_review_id.as_deref() {
+                if let Some(review_id) = final_source.guardian_review_id() {
                     if let Some(owner_call) = owner_call.as_ref() {
                         let message = guardian_rejection_message(session.as_ref(), review_id).await;
                         self.record_call_outcome(

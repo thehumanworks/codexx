@@ -29,6 +29,7 @@ use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
 use crate::tools::sandboxing::SandboxOverride;
 use crate::tools::sandboxing::Sandboxable;
+use crate::tools::sandboxing::ToolApprovalOutcome;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
@@ -141,7 +142,7 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         &'b mut self,
         req: &'b UnifiedExecRequest,
         ctx: ApprovalCtx<'b>,
-    ) -> BoxFuture<'b, ReviewDecision> {
+    ) -> BoxFuture<'b, ToolApprovalOutcome> {
         let mut keys = self.approval_keys(req);
         let session = ctx.session;
         let turn = ctx.turn;
@@ -152,12 +153,11 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         let reason = retry_reason.clone().or_else(|| req.justification.clone());
         let guardian_review_id = ctx.guardian_review_id.clone();
         Box::pin(async move {
-            let mut escalated_from_guardian = false;
-            if let Some(review_id) = guardian_review_id {
+            let escalated_from_auto_review = if let Some(review_id) = guardian_review_id {
                 let decision = review_approval_request(
                     session,
                     turn,
-                    review_id,
+                    review_id.clone(),
                     GuardianApprovalRequest::ExecCommand {
                         id: call_id.clone(),
                         command: command.clone(),
@@ -170,13 +170,16 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
                     retry_reason.clone(),
                 )
                 .await;
-                escalated_from_guardian = matches!(decision, ReviewDecision::Denied)
+                let escalated_from_auto_review = matches!(decision, ReviewDecision::Denied)
                     && take_pending_auto_review_escalation(session, &turn.sub_id).await;
-                if !escalated_from_guardian {
-                    return decision;
+                if !escalated_from_auto_review {
+                    return ToolApprovalOutcome::from_auto_review(decision, review_id);
                 }
                 keys.clear();
-            }
+                true
+            } else {
+                false
+            };
             let decision =
                 with_cached_approval(&session.services, "unified_exec", keys, || async move {
                     let available_decisions = None;
@@ -198,10 +201,12 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
                         .await
                 })
                 .await;
-            if escalated_from_guardian {
+            if escalated_from_auto_review {
                 reset_auto_review_rejection_circuit_breaker(session, &turn.sub_id).await;
+                ToolApprovalOutcome::from_user_after_auto_review_denial(decision)
+            } else {
+                ToolApprovalOutcome::from_user(decision)
             }
-            decision
         })
     }
 

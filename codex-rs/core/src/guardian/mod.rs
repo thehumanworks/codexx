@@ -81,13 +81,13 @@ pub(crate) struct GuardianRejectionCircuitBreaker {
 struct GuardianRejectionCircuitBreakerTurn {
     consecutive_denials: u32,
     total_denials: u32,
-    interrupt_triggered: bool,
+    pending_auto_review_escalation: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GuardianRejectionCircuitBreakerAction {
     Continue,
-    InterruptTurn {
+    EscalateToUser {
         consecutive_denials: u32,
         total_denials: u32,
     },
@@ -102,12 +102,12 @@ impl GuardianRejectionCircuitBreaker {
         let turn = self.turns.entry(turn_id.to_string()).or_default();
         turn.consecutive_denials = turn.consecutive_denials.saturating_add(1);
         turn.total_denials = turn.total_denials.saturating_add(1);
-        if !turn.interrupt_triggered
+        if !turn.pending_auto_review_escalation
             && (turn.consecutive_denials >= MAX_CONSECUTIVE_GUARDIAN_DENIALS_PER_TURN
                 || turn.total_denials >= MAX_TOTAL_GUARDIAN_DENIALS_PER_TURN)
         {
-            turn.interrupt_triggered = true;
-            GuardianRejectionCircuitBreakerAction::InterruptTurn {
+            turn.pending_auto_review_escalation = true;
+            GuardianRejectionCircuitBreakerAction::EscalateToUser {
                 consecutive_denials: turn.consecutive_denials,
                 total_denials: turn.total_denials,
             }
@@ -124,7 +124,7 @@ impl GuardianRejectionCircuitBreaker {
     pub(crate) fn take_pending_auto_review_escalation(&mut self, turn_id: &str) -> bool {
         self.turns
             .get_mut(turn_id)
-            .is_some_and(|turn| std::mem::take(&mut turn.interrupt_triggered))
+            .is_some_and(|turn| std::mem::take(&mut turn.pending_auto_review_escalation))
     }
 }
 
