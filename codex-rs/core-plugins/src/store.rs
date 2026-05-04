@@ -260,6 +260,10 @@ fn replace_plugin_root_atomically(
     target_root: &Path,
     plugin_version: &str,
 ) -> Result<(), PluginStoreError> {
+    if cfg!(windows) {
+        return replace_plugin_root_on_windows(source, target_root, plugin_version);
+    }
+
     let Some(parent) = target_root.parent() else {
         return Err(PluginStoreError::Invalid(format!(
             "plugin cache path has no parent: {}",
@@ -320,6 +324,133 @@ fn replace_plugin_root_atomically(
     }
 
     Ok(())
+}
+
+fn replace_plugin_root_on_windows(
+    source: &Path,
+    target_root: &Path,
+    plugin_version: &str,
+) -> Result<(), PluginStoreError> {
+    let Some(parent) = target_root.parent() else {
+        return Err(PluginStoreError::Invalid(format!(
+            "plugin cache path has no parent: {}",
+            target_root.display()
+        )));
+    };
+
+    fs::create_dir_all(parent)
+        .map_err(|err| PluginStoreError::io("failed to create plugin cache directory", err))?;
+
+    let Some(plugin_dir_name) = target_root.file_name() else {
+        return Err(PluginStoreError::Invalid(format!(
+            "plugin cache path has no directory name: {}",
+            target_root.display()
+        )));
+    };
+
+    let target_version_root = target_root.join(plugin_version);
+    let staged_dir = tempfile::Builder::new()
+        .prefix("plugin-install-")
+        .tempdir_in(parent)
+        .map_err(|err| {
+            PluginStoreError::io("failed to create temporary plugin cache directory", err)
+        })?;
+    let staged_root = staged_dir.path().join(plugin_dir_name);
+    let staged_version_root = staged_root.join(plugin_version);
+    copy_dir_recursive(source, &staged_version_root)?;
+
+    if !target_root.exists() {
+        fs::rename(&staged_root, target_root)
+            .map_err(|err| PluginStoreError::io("failed to activate plugin cache entry", err))?;
+        return Ok(());
+    }
+
+    if !target_root.is_dir() {
+        return Err(PluginStoreError::Invalid(format!(
+            "plugin cache entry is not a directory: {}",
+            target_root.display()
+        )));
+    }
+
+    replace_plugin_version_root_atomically_on_windows(&staged_version_root, &target_version_root)?;
+    remove_stale_plugin_versions_best_effort(target_root, plugin_version);
+
+    Ok(())
+}
+
+fn replace_plugin_version_root_atomically_on_windows(
+    staged_version_root: &Path,
+    target_version_root: &Path,
+) -> Result<(), PluginStoreError> {
+    if !target_version_root.exists() {
+        fs::rename(staged_version_root, target_version_root)
+            .map_err(|err| PluginStoreError::io("failed to activate plugin cache version", err))?;
+        return Ok(());
+    }
+
+    let Some(parent) = target_version_root.parent() else {
+        return Err(PluginStoreError::Invalid(format!(
+            "plugin cache version path has no parent: {}",
+            target_version_root.display()
+        )));
+    };
+    let backup_dir = tempfile::Builder::new()
+        .prefix("plugin-version-backup-")
+        .tempdir_in(parent)
+        .map_err(|err| {
+            PluginStoreError::io(
+                "failed to create plugin cache version backup directory",
+                err,
+            )
+        })?;
+    let Some(version_dir_name) = target_version_root.file_name() else {
+        return Err(PluginStoreError::Invalid(format!(
+            "plugin cache version path has no directory name: {}",
+            target_version_root.display()
+        )));
+    };
+    let backup_version_root = backup_dir.path().join(version_dir_name);
+    fs::rename(target_version_root, &backup_version_root)
+        .map_err(|err| PluginStoreError::io("failed to back up plugin cache version", err))?;
+
+    if let Err(err) = fs::rename(staged_version_root, target_version_root) {
+        let rollback_result = fs::rename(&backup_version_root, target_version_root);
+        return match rollback_result {
+            Ok(()) => Err(PluginStoreError::io(
+                "failed to activate updated plugin cache version",
+                err,
+            )),
+            Err(rollback_err) => {
+                let backup_path = backup_dir.keep().join(version_dir_name);
+                Err(PluginStoreError::Invalid(format!(
+                    "failed to activate updated plugin cache version at {}: {err}; failed to restore previous cache version (left at {}): {rollback_err}",
+                    target_version_root.display(),
+                    backup_path.display()
+                )))
+            }
+        };
+    }
+
+    Ok(())
+}
+
+fn remove_stale_plugin_versions_best_effort(target_root: &Path, active_version: &str) {
+    let Ok(entries) = fs::read_dir(target_root) else {
+        return;
+    };
+
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        if entry.file_name() == std::ffi::OsStr::new(active_version) {
+            continue;
+        }
+        let _ = fs::remove_dir_all(entry.path());
+    }
 }
 
 fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), PluginStoreError> {

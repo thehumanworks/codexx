@@ -183,6 +183,75 @@ fn install_uses_manifest_version_when_present() {
     assert!(installed_path.join(".codex-plugin/plugin.json").is_file());
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_install_reuses_valid_existing_version_without_renaming_plugin_root() {
+    let tmp = tempdir().unwrap();
+    write_plugin_with_version(tmp.path(), "sample-plugin", "sample-plugin", Some("1.0.0"));
+    let plugin_id = PluginId::new("sample-plugin".to_string(), "debug".to_string()).unwrap();
+    let store = PluginStore::new(tmp.path().to_path_buf());
+
+    let first_result = store
+        .install(
+            AbsolutePathBuf::try_from(tmp.path().join("sample-plugin")).unwrap(),
+            plugin_id.clone(),
+        )
+        .unwrap();
+    let plugin_base_root = tmp.path().join("plugins/cache/debug/sample-plugin");
+    let previous_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&plugin_base_root).unwrap();
+    let second_result = store.install(
+        AbsolutePathBuf::try_from(tmp.path().join("sample-plugin")).unwrap(),
+        plugin_id,
+    );
+    std::env::set_current_dir(previous_dir).unwrap();
+    let second_result = second_result.unwrap();
+
+    assert_eq!(second_result, first_result);
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_install_adds_new_version_without_renaming_plugin_root() {
+    let tmp = tempdir().unwrap();
+    write_plugin_with_version(tmp.path(), "source-v1", "sample-plugin", Some("1.0.0"));
+    write_plugin_with_version(tmp.path(), "source-v2", "sample-plugin", Some("2.0.0"));
+    let plugin_id = PluginId::new("sample-plugin".to_string(), "debug".to_string()).unwrap();
+    let store = PluginStore::new(tmp.path().to_path_buf());
+
+    store
+        .install(
+            AbsolutePathBuf::try_from(tmp.path().join("source-v1")).unwrap(),
+            plugin_id.clone(),
+        )
+        .unwrap();
+    let plugin_base_root = tmp.path().join("plugins/cache/debug/sample-plugin");
+    let previous_dir = std::env::current_dir().unwrap();
+    std::env::set_current_dir(&plugin_base_root).unwrap();
+    let result = store.install(
+        AbsolutePathBuf::try_from(tmp.path().join("source-v2")).unwrap(),
+        plugin_id.clone(),
+    );
+    std::env::set_current_dir(previous_dir).unwrap();
+    let result = result.unwrap();
+
+    let installed_path = tmp.path().join("plugins/cache/debug/sample-plugin/2.0.0");
+    assert_eq!(
+        result,
+        PluginInstallResult {
+            plugin_id,
+            plugin_version: "2.0.0".to_string(),
+            installed_path: AbsolutePathBuf::try_from(installed_path.clone()).unwrap(),
+        }
+    );
+    assert!(
+        !tmp.path()
+            .join("plugins/cache/debug/sample-plugin/1.0.0")
+            .exists()
+    );
+    assert!(installed_path.join(".codex-plugin/plugin.json").is_file());
+}
+
 #[test]
 fn install_rejects_blank_manifest_version() {
     let tmp = tempdir().unwrap();
