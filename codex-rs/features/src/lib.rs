@@ -99,6 +99,8 @@ pub enum Feature {
     ApplyPatchFreeform,
     /// Stream structured progress while apply_patch input is being generated.
     ApplyPatchStreamingEvents,
+    /// Use the streaming apply_patch parser for completed patch verification and application.
+    ApplyPatchStreamingParser,
     /// Allow exec tools to request additional permissions while staying sandboxed.
     ExecPermissionApprovals,
     /// Expose the built-in request_permissions tool.
@@ -812,6 +814,12 @@ pub const FEATURES: &[FeatureSpec] = &[
     FeatureSpec {
         id: Feature::ApplyPatchStreamingEvents,
         key: "apply_patch_streaming_events",
+        stage: Stage::UnderDevelopment,
+        default_enabled: false,
+    },
+    FeatureSpec {
+        id: Feature::ApplyPatchStreamingParser,
+        key: "apply_patch_streaming_parser",
         stage: Stage::UnderDevelopment,
         default_enabled: false,
     },

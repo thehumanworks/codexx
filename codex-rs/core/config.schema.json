@@ -364,6 +364,9 @@
             "apply_patch_streaming_events": {
               "type": "boolean"
             },
+            "apply_patch_streaming_parser": {
+              "type": "boolean"
+            },
             "apps": {
               "type": "boolean"
             },
@@ -3831,6 +3834,9 @@
           "type": "boolean"
         },
         "apply_patch_streaming_events": {
+          "type": "boolean"
+        },
+        "apply_patch_streaming_parser": {
           "type": "boolean"
         },
         "apps": {

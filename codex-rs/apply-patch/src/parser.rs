@@ -123,7 +123,24 @@ pub struct UpdateFileChunk {
     pub is_end_of_file: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParsePatchMode {
+    Legacy,
+    Streaming,
+}
+
 pub fn parse_patch(patch: &str) -> Result<ApplyPatchArgs, ParseError> {
+    parse_patch_with_mode(patch, ParsePatchMode::Legacy)
+}
+
+pub fn parse_patch_with_mode(
+    patch: &str,
+    mode: ParsePatchMode,
+) -> Result<ApplyPatchArgs, ParseError> {
+    if mode == ParsePatchMode::Streaming {
+        return crate::streaming_parser::parse_patch(patch);
+    }
+
     let mode = if PARSE_IN_STRICT_MODE {
         ParseMode::Strict
     } else {

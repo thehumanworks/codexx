@@ -111,6 +111,19 @@ fn request_permissions_is_under_development() {
 }
 
 #[test]
+fn apply_patch_streaming_parser_is_under_development() {
+    assert_eq!(
+        feature_for_key("apply_patch_streaming_parser"),
+        Some(Feature::ApplyPatchStreamingParser)
+    );
+    assert_eq!(
+        Feature::ApplyPatchStreamingParser.stage(),
+        Stage::UnderDevelopment
+    );
+    assert_eq!(Feature::ApplyPatchStreamingParser.default_enabled(), false);
+}
+
+#[test]
 fn request_permissions_tool_is_under_development() {
     assert_eq!(
         Feature::RequestPermissionsTool.stage(),

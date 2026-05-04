@@ -35,6 +35,7 @@ use crate::tools::sandboxing::ToolCtx;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
 use codex_apply_patch::Hunk;
+use codex_apply_patch::ParsePatchMode;
 use codex_apply_patch::StreamingPatchParser;
 use codex_exec_server::ExecutorFileSystem;
 use codex_features::Feature;
@@ -255,6 +256,14 @@ fn apply_patch_payload_command(payload: &ToolPayload) -> Option<String> {
     }
 }
 
+fn apply_patch_mode(turn: &TurnContext) -> ParsePatchMode {
+    if turn.features.enabled(Feature::ApplyPatchStreamingParser) {
+        ParsePatchMode::Streaming
+    } else {
+        ParsePatchMode::Legacy
+    }
+}
+
 async fn effective_patch_permissions(
     session: &Session,
     turn: &TurnContext,
@@ -373,8 +382,10 @@ impl ToolHandler for ApplyPatchHandler {
             .environment
             .is_remote()
             .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
-        match codex_apply_patch::maybe_parse_apply_patch_verified(
+        let parse_mode = apply_patch_mode(turn.as_ref());
+        match codex_apply_patch::maybe_parse_apply_patch_verified_with_mode(
             &command,
+            parse_mode,
             &cwd,
             fs.as_ref(),
             sandbox.as_ref(),
@@ -478,8 +489,15 @@ pub(crate) async fn intercept_apply_patch(
         .primary_environment()
         .filter(|env| env.environment.is_remote())
         .map(|_| turn.file_system_sandbox_context(/*additional_permissions*/ None));
-    match codex_apply_patch::maybe_parse_apply_patch_verified(command, cwd, fs, sandbox.as_ref())
-        .await
+    let parse_mode = apply_patch_mode(turn.as_ref());
+    match codex_apply_patch::maybe_parse_apply_patch_verified_with_mode(
+        command,
+        parse_mode,
+        cwd,
+        fs,
+        sandbox.as_ref(),
+    )
+    .await
     {
         codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
             session

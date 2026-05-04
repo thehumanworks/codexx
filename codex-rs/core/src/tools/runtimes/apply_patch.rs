@@ -199,8 +199,8 @@ impl ToolRuntime<ApplyPatchRequest, ExecToolCallOutput> for ApplyPatchRuntime {
         let sandbox = Self::file_system_sandbox_context_for_attempt(req, attempt);
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
-        let result = codex_apply_patch::apply_patch(
-            &req.action.patch,
+        let result = codex_apply_patch::apply_hunks(
+            req.action.hunks(),
             &req.action.cwd,
             &mut stdout,
             &mut stderr,

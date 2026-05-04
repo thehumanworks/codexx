@@ -19,6 +19,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 pub use parser::Hunk;
 pub use parser::ParseError;
 use parser::ParseError::*;
+pub use parser::ParsePatchMode;
 pub use parser::UpdateFileChunk;
 pub use parser::parse_patch;
 use similar::TextDiff;
@@ -26,6 +27,7 @@ pub use streaming_parser::StreamingPatchParser;
 use thiserror::Error;
 
 pub use invocation::maybe_parse_apply_patch_verified;
+pub use invocation::maybe_parse_apply_patch_verified_with_mode;
 pub use standalone_executable::main;
 
 use crate::invocation::ExtractHeredocError;
@@ -135,6 +137,7 @@ pub enum MaybeApplyPatchVerified {
 #[derive(Debug, PartialEq)]
 pub struct ApplyPatchAction {
     changes: HashMap<PathBuf, ApplyPatchFileChange>,
+    hunks: Vec<Hunk>,
 
     /// The raw patch argument that can be used to apply the patch. i.e., if the
     /// original arg was parsed in "lenient" mode with a
@@ -155,6 +158,10 @@ impl ApplyPatchAction {
         &self.changes
     }
 
+    pub fn hunks(&self) -> &[Hunk] {
+        &self.hunks
+    }
+
     /// Should be used exclusively for testing. (Not worth the overhead of
     /// creating a feature flag for this.)
     pub fn new_add_for_test(path: &AbsolutePathBuf, content: String) -> Self {
@@ -170,10 +177,15 @@ impl ApplyPatchAction {
 + {content}
 *** End Patch"#,
         );
+        let hunk = Hunk::AddFile {
+            path: path.to_path_buf(),
+            contents: content.clone(),
+        };
         let changes = HashMap::from([(path.to_path_buf(), ApplyPatchFileChange::Add { content })]);
         #[expect(clippy::expect_used)]
         Self {
             changes,
+            hunks: vec![hunk],
             cwd: path.parent().expect("path should have parent"),
             patch,
         }

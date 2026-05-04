@@ -99,6 +99,18 @@ async fn post_tool_use_payload_uses_patch_input_and_tool_output() {
     );
 }
 
+#[tokio::test]
+async fn apply_patch_mode_follows_streaming_parser_feature() {
+    let (_, mut turn) = make_session_and_context().await;
+    assert_eq!(apply_patch_mode(&turn), ParsePatchMode::Legacy);
+
+    turn.features
+        .enable(Feature::ApplyPatchStreamingParser)
+        .expect("enable feature");
+
+    assert_eq!(apply_patch_mode(&turn), ParsePatchMode::Streaming);
+}
+
 #[test]
 fn diff_consumer_does_not_stream_json_tool_call_arguments() {
     let mut consumer = ApplyPatchArgumentDiffConsumer::default();
