@@ -482,7 +482,11 @@ async fn get_raw_output_result(
     >,
 ) -> Result<RawExecToolCallOutput> {
     #[cfg(target_os = "windows")]
-    if sandbox == SandboxType::WindowsRestrictedToken {
+    if should_use_windows_restricted_token_sandbox(
+        sandbox,
+        sandbox_policy,
+        &FileSystemSandboxPolicy::from(sandbox_policy),
+    ) {
         return exec_windows_sandbox(params, sandbox_policy, windows_sandbox_filesystem_overrides)
             .await;
     }
