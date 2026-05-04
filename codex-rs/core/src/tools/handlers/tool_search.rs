@@ -393,7 +393,7 @@ mod tests {
             server_provenance: Default::default(),
             callable_name: tool_name.to_string(),
             callable_namespace: format!("mcp__{server_name}__"),
-            server_instructions: None,
+            namespace_description: None,
             tool: Tool {
                 name: tool_name.to_string().into(),
                 title: None,
@@ -412,7 +412,6 @@ mod tests {
             connector_id: None,
             connector_name: None,
             plugin_display_names: Vec::new(),
-            connector_description: None,
         }
     }
 
