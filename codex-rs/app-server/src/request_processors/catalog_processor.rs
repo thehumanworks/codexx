@@ -284,8 +284,28 @@ impl CatalogRequestProcessor {
         &self,
         params: ExperimentalFeatureListParams,
     ) -> Result<ExperimentalFeatureListResponse, JSONRPCErrorError> {
-        let ExperimentalFeatureListParams { cursor, limit } = params;
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let ExperimentalFeatureListParams {
+            cursor,
+            limit,
+            cwd,
+            profile,
+        } = params;
+        let request_overrides = profile.map(|profile| {
+            HashMap::from([("profile".to_string(), serde_json::Value::String(profile))])
+        });
+        let config = self
+            .config_manager
+            .load_for_cwd(
+                request_overrides,
+                ConfigOverrides::default(),
+                cwd.map(PathBuf::from),
+            )
+            .await
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to reload config: {err}"),
+                data: None,
+            })?;
         let auth = self.auth_manager.auth().await;
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())

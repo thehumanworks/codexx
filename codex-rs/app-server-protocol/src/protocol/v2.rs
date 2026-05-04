@@ -2611,6 +2611,12 @@ pub struct ExperimentalFeatureListParams {
     /// Optional page size; defaults to a reasonable server-side value.
     #[ts(optional = nullable)]
     pub limit: Option<u32>,
+    /// Optional working directory used to resolve project config layers.
+    #[ts(optional = nullable)]
+    pub cwd: Option<String>,
+    /// Optional config profile used to compute effective feature enablement.
+    #[ts(optional = nullable)]
+    pub profile: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]

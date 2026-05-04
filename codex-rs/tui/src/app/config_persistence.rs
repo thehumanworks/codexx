@@ -87,6 +87,108 @@ impl App {
         self.chat_widget.set_approvals_reviewer(reviewer);
     }
 
+    pub(super) async fn open_experimental_popup_with_app_server(
+        &mut self,
+        app_server: &mut AppServerSession,
+    ) {
+        let cwd = if app_server.is_remote() {
+            app_server.remote_cwd_override().map(Path::to_path_buf)
+        } else {
+            Some(self.chat_widget.config_ref().cwd.to_path_buf())
+        };
+        match app_server
+            .experimental_feature_list(cwd.as_deref(), self.active_profile.as_deref())
+            .await
+        {
+            Ok(response) => {
+                let features = response
+                    .data
+                    .into_iter()
+                    .filter_map(ExperimentalFeatureItem::from_api)
+                    .collect();
+                self.chat_widget.show_experimental_popup(features);
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "failed to load experimental features");
+                self.chat_widget
+                    .add_error_message(format!("Failed to load experimental features: {err}"));
+            }
+        }
+    }
+
+    pub(super) async fn update_feature_flags_with_app_server(
+        &mut self,
+        app_server: &mut AppServerSession,
+        updates: Vec<(Feature, bool)>,
+    ) {
+        if updates.is_empty() {
+            return;
+        }
+
+        let memory_tool_was_enabled = self.config.features.enabled(Feature::MemoryTool);
+        let requested_keys = updates
+            .iter()
+            .map(|(feature, _)| feature.key().to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        if let Err(err) = app_server
+            .write_feature_flags(&updates, self.active_profile.as_deref())
+            .await
+        {
+            tracing::error!(error = %err, "failed to persist remote feature flags");
+            self.chat_widget
+                .add_error_message(format!("Failed to update experimental features: {err}"));
+            return;
+        }
+
+        let cwd = if app_server.is_remote() {
+            app_server.remote_cwd_override().map(Path::to_path_buf)
+        } else {
+            Some(self.chat_widget.config_ref().cwd.to_path_buf())
+        };
+        let response = match app_server
+            .experimental_feature_list(cwd.as_deref(), self.active_profile.as_deref())
+            .await
+        {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::error!(error = %err, "failed to refresh remote feature flags");
+                self.chat_widget.add_error_message(format!(
+                    "Updated experimental features, but failed to refresh local state: {err}"
+                ));
+                return;
+            }
+        };
+
+        let mut memory_tool_is_enabled = memory_tool_was_enabled;
+        for feature in response.data {
+            if !requested_keys.contains(&feature.name) {
+                continue;
+            }
+            let Some(core_feature) = codex_features::feature_for_key(&feature.name) else {
+                continue;
+            };
+
+            let enabled = self
+                .chat_widget
+                .set_feature_enabled(core_feature, feature.enabled);
+            if let Err(err) = self.config.features.set_enabled(core_feature, enabled) {
+                tracing::warn!(
+                    error = %err,
+                    feature = feature.name,
+                    "failed to sync constrained app feature state from remote app-server"
+                );
+            }
+            if core_feature == Feature::MemoryTool {
+                memory_tool_is_enabled = enabled;
+            }
+        }
+
+        if memory_tool_is_enabled && !memory_tool_was_enabled {
+            self.chat_widget.add_memories_enable_notice();
+        }
+    }
+
     pub(super) fn try_set_approval_policy_on_config(
         &mut self,
         config: &mut Config,

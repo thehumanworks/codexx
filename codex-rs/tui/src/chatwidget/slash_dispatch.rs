@@ -297,7 +297,8 @@ impl ChatWidget {
                 );
             }
             SlashCommand::Experimental => {
-                self.open_experimental_popup();
+                self.app_event_tx
+                    .send(AppEvent::OpenExperimentalFeaturesPopup);
             }
             SlashCommand::AutoReview => {
                 self.open_auto_review_denials_popup();

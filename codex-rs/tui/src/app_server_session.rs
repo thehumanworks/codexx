@@ -21,7 +21,10 @@ use codex_app_server_protocol::AskForApproval;
 use codex_app_server_protocol::AuthMode;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigBatchWriteParams;
+use codex_app_server_protocol::ConfigEdit as AppServerConfigEdit;
 use codex_app_server_protocol::ConfigWriteResponse;
+use codex_app_server_protocol::ExperimentalFeatureListParams;
+use codex_app_server_protocol::ExperimentalFeatureListResponse;
 use codex_app_server_protocol::ExternalAgentConfigDetectParams;
 use codex_app_server_protocol::ExternalAgentConfigDetectResponse;
 use codex_app_server_protocol::ExternalAgentConfigImportParams;
@@ -33,6 +36,7 @@ use codex_app_server_protocol::GetAccountResponse;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::LogoutAccountResponse;
 use codex_app_server_protocol::MemoryResetResponse;
+use codex_app_server_protocol::MergeStrategy;
 use codex_app_server_protocol::Model as ApiModel;
 use codex_app_server_protocol::ModelListParams;
 use codex_app_server_protocol::ModelListResponse;
@@ -102,6 +106,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
+use codex_features::Feature;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
@@ -887,6 +892,68 @@ impl AppServerSession {
         Ok(())
     }
 
+    pub(crate) async fn write_feature_flags(
+        &mut self,
+        updates: &[(Feature, bool)],
+        active_profile: Option<&str>,
+    ) -> Result<ConfigWriteResponse> {
+        let request_id = self.next_request_id();
+        self.client
+            .request_typed(ClientRequest::ConfigBatchWrite {
+                request_id,
+                params: ConfigBatchWriteParams {
+                    edits: updates
+                        .iter()
+                        .map(|(feature, enabled)| AppServerConfigEdit {
+                            key_path: feature_config_key_path(*feature, active_profile),
+                            value: serde_json::json!(enabled),
+                            merge_strategy: MergeStrategy::Upsert,
+                        })
+                        .collect(),
+                    file_path: None,
+                    expected_version: None,
+                    reload_user_config: true,
+                },
+            })
+            .await
+            .wrap_err("config/batchWrite failed while updating feature flags in TUI")
+    }
+
+    pub(crate) async fn experimental_feature_list(
+        &mut self,
+        cwd: Option<&std::path::Path>,
+        active_profile: Option<&str>,
+    ) -> Result<ExperimentalFeatureListResponse> {
+        let mut cursor = None;
+        let mut data = Vec::new();
+        loop {
+            let request_id = self.next_request_id();
+            let response: ExperimentalFeatureListResponse = self
+                .client
+                .request_typed(ClientRequest::ExperimentalFeatureList {
+                    request_id,
+                    params: ExperimentalFeatureListParams {
+                        cursor,
+                        limit: Some(100),
+                        cwd: cwd.map(|cwd| cwd.to_string_lossy().to_string()),
+                        profile: active_profile.map(ToOwned::to_owned),
+                    },
+                })
+                .await
+                .wrap_err("experimentalFeature/list failed in TUI")?;
+            data.extend(response.data);
+            match response.next_cursor {
+                Some(next_cursor) => cursor = Some(next_cursor),
+                None => {
+                    return Ok(ExperimentalFeatureListResponse {
+                        data,
+                        next_cursor: None,
+                    });
+                }
+            }
+        }
+    }
+
     pub(crate) async fn thread_realtime_start(
         &mut self,
         thread_id: ThreadId,
@@ -967,6 +1034,44 @@ impl AppServerSession {
         self.next_request_id += 1;
         RequestId::Integer(request_id)
     }
+}
+
+fn feature_config_key_path(feature: Feature, active_profile: Option<&str>) -> String {
+    match active_profile {
+        Some(profile) => format!(
+            "profiles.{}.features.{}",
+            key_path_segment(profile),
+            feature.key()
+        ),
+        None => format!("features.{}", feature.key()),
+    }
+}
+
+fn key_path_segment(segment: &str) -> String {
+    if !segment.is_empty()
+        && segment
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return segment.to_string();
+    }
+
+    let mut quoted = String::with_capacity(segment.len() + 2);
+    quoted.push('"');
+    for ch in segment.chars() {
+        match ch {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            '\n' => quoted.push_str("\\n"),
+            '\r' => quoted.push_str("\\r"),
+            '\t' => quoted.push_str("\\t"),
+            '\u{08}' => quoted.push_str("\\b"),
+            '\u{0c}' => quoted.push_str("\\f"),
+            ch => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
 }
 
 fn thread_realtime_start_params(

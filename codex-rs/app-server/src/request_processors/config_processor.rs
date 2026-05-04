@@ -40,7 +40,9 @@ use codex_config::MatcherGroup as CoreMatcherGroup;
 use codex_config::ResidencyRequirement as CoreResidencyRequirement;
 use codex_config::SandboxModeRequirement as CoreSandboxModeRequirement;
 use codex_core::ThreadManager;
+use codex_features::FEATURES;
 use codex_features::Feature;
+use codex_features::Stage;
 use codex_features::canonical_feature_for_key;
 use codex_features::feature_for_key;
 use codex_login::AuthManager;
@@ -51,7 +53,7 @@ use codex_protocol::protocol::Op;
 use serde_json::json;
 use std::path::PathBuf;
 
-const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
+const ALWAYS_SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
     "apps",
     "memories",
     "plugins",
@@ -59,7 +61,25 @@ const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
     "tool_search",
     "tool_suggest",
     "tool_call_mcp_elicitation",
+    "workspace_dependencies",
 ];
+
+fn supported_experimental_feature_enablement_keys() -> Vec<&'static str> {
+    let mut keys = ALWAYS_SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT.to_vec();
+    for spec in FEATURES {
+        if matches!(spec.stage, Stage::Experimental { .. }) && !keys.contains(&spec.key) {
+            keys.push(spec.key);
+        }
+    }
+    keys
+}
+
+fn experimental_feature_enablement_supported(key: &str) -> bool {
+    ALWAYS_SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT.contains(&key)
+        || FEATURES
+            .iter()
+            .any(|spec| spec.key == key && matches!(spec.stage, Stage::Experimental { .. }))
+}
 
 #[derive(Clone)]
 pub(crate) struct ConfigRequestProcessor {
@@ -97,7 +117,7 @@ impl ConfigRequestProcessor {
         let fallback_cwd = params.cwd.as_ref().map(PathBuf::from);
         let mut response = self.config_manager.read(params).await.map_err(map_error)?;
         let config = self.load_latest_config(fallback_cwd).await?;
-        for feature_key in SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT {
+        for feature_key in supported_experimental_feature_enablement_keys() {
             let Some(feature) = feature_for_key(feature_key) else {
                 continue;
             };
@@ -339,13 +359,13 @@ impl ConfigRequestProcessor {
         let ExperimentalFeatureEnablementSetParams { enablement } = params;
         for key in enablement.keys() {
             if canonical_feature_for_key(key).is_some() {
-                if SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT.contains(&key.as_str()) {
+                if experimental_feature_enablement_supported(key) {
                     continue;
                 }
 
                 return Err(invalid_request(format!(
                     "unsupported feature enablement `{key}`: currently supported features are {}",
-                    SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT.join(", ")
+                    supported_experimental_feature_enablement_keys().join(", ")
                 )));
             }
 

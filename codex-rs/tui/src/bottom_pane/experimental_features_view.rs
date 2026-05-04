@@ -1,3 +1,5 @@
+use codex_app_server_protocol::ExperimentalFeature;
+use codex_app_server_protocol::ExperimentalFeatureStage;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -20,6 +22,7 @@ use crate::render::renderable::Renderable;
 use crate::style::user_message_style;
 
 use codex_features::Feature;
+use codex_features::feature_for_key;
 
 use super::CancellationEvent;
 use super::bottom_pane_view::BottomPaneView;
@@ -31,9 +34,26 @@ use super::selection_popup_common::render_rows;
 
 pub(crate) struct ExperimentalFeatureItem {
     pub feature: Feature,
-    pub name: String,
+    pub display_name: String,
     pub description: String,
+    pub original_enabled: bool,
     pub enabled: bool,
+}
+
+impl ExperimentalFeatureItem {
+    pub(crate) fn from_api(feature: ExperimentalFeature) -> Option<Self> {
+        if feature.stage != ExperimentalFeatureStage::Beta {
+            return None;
+        }
+        let core_feature = feature_for_key(&feature.name)?;
+        Some(Self {
+            feature: core_feature,
+            display_name: feature.display_name?,
+            description: feature.description?,
+            original_enabled: feature.enabled,
+            enabled: feature.enabled,
+        })
+    }
 }
 
 pub(crate) struct ExperimentalFeaturesView {
@@ -90,7 +110,7 @@ impl ExperimentalFeaturesView {
                 ' '
             };
             let marker = if item.enabled { 'x' } else { ' ' };
-            let name = format!("{prefix} [{marker}] {}", item.name);
+            let name = format!("{prefix} [{marker}] {}", item.display_name);
             rows.push(GenericDisplayRow {
                 name,
                 description: Some(item.description.clone()),
@@ -198,13 +218,13 @@ impl BottomPaneView for ExperimentalFeaturesView {
     }
 
     fn on_ctrl_c(&mut self) -> CancellationEvent {
-        // Save the updates
-        if !self.features.is_empty() {
-            let updates = self
-                .features
-                .iter()
-                .map(|item| (item.feature, item.enabled))
-                .collect();
+        let updates: Vec<_> = self
+            .features
+            .iter()
+            .filter(|item| item.enabled != item.original_enabled)
+            .map(|item| (item.feature, item.enabled))
+            .collect();
+        if !updates.is_empty() {
             self.app_event_tx
                 .send(AppEvent::UpdateFeatureFlags { updates });
         }

@@ -27,6 +27,7 @@ use serde_json::json;
 use std::collections::BTreeMap;
 use tempfile::TempDir;
 use tokio::time::timeout;
+use toml::Value as TomlValue;
 use wiremock::Mock;
 use wiremock::MockServer;
 use wiremock::ResponseTemplate;
@@ -39,8 +40,16 @@ const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 #[tokio::test]
 async fn experimental_feature_list_returns_feature_metadata_with_stage() -> Result<()> {
     let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join("config.toml"),
+        "[features]\ngoals = false\n\n[profiles.dev.features]\ngoals = true\n",
+    )?;
     let config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
+        .cli_overrides(vec![(
+            "profile".to_string(),
+            TomlValue::String("dev".to_string()),
+        )])
         .fallback_cwd(Some(codex_home.path().to_path_buf()))
         .loader_overrides(LoaderOverrides::with_managed_config_path_for_tests(
             codex_home.path().join("managed_config.toml"),
@@ -52,7 +61,10 @@ async fn experimental_feature_list_returns_feature_metadata_with_stage() -> Resu
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
 
     let request_id = mcp
-        .send_experimental_feature_list_request(ExperimentalFeatureListParams::default())
+        .send_experimental_feature_list_request(ExperimentalFeatureListParams {
+            profile: Some("dev".to_string()),
+            ..Default::default()
+        })
         .await?;
 
     let actual = read_response::<ExperimentalFeatureListResponse>(&mut mcp, request_id).await?;
@@ -239,6 +251,7 @@ async fn experimental_feature_enablement_set_only_updates_named_features() -> Re
         BTreeMap::from([
             ("memories".to_string(), true),
             ("plugins".to_string(), true),
+            ("goals".to_string(), true),
             ("tool_search".to_string(), true),
             ("tool_suggest".to_string(), true),
             ("tool_call_mcp_elicitation".to_string(), false),
@@ -252,6 +265,7 @@ async fn experimental_feature_enablement_set_only_updates_named_features() -> Re
             enablement: BTreeMap::from([
                 ("memories".to_string(), true),
                 ("plugins".to_string(), true),
+                ("goals".to_string(), true),
                 ("tool_search".to_string(), true),
                 ("tool_suggest".to_string(), true),
                 ("tool_call_mcp_elicitation".to_string(), false),
@@ -286,6 +300,13 @@ async fn experimental_feature_enablement_set_only_updates_named_features() -> Re
         config
             .additional
             .get("features")
+            .and_then(|features| features.get("goals")),
+        Some(&json!(true))
+    );
+    assert_eq!(
+        config
+            .additional
+            .get("features")
             .and_then(|features| features.get("tool_search")),
         Some(&json!(true))
     );
@@ -308,12 +329,14 @@ async fn experimental_feature_enablement_set_only_updates_named_features() -> Re
 }
 
 #[tokio::test]
-async fn experimental_feature_enablement_set_allows_remote_control() -> Result<()> {
+async fn experimental_feature_enablement_set_allows_electron_app_runtime_toggles() -> Result<()> {
     let codex_home = TempDir::new()?;
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-    let remote_control_enabled = false;
-    let enablement = BTreeMap::from([("remote_control".to_string(), remote_control_enabled)]);
+    let enablement = BTreeMap::from([
+        ("remote_control".to_string(), false),
+        ("workspace_dependencies".to_string(), true),
+    ]);
 
     let actual = set_experimental_feature_enablement(&mut mcp, enablement.clone()).await?;
 

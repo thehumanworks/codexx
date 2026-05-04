@@ -16,6 +16,20 @@
         "integer",
         "null"
       ]
+    },
+    "cwd": {
+      "description": "Optional working directory used to resolve project config layers.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "profile": {
+      "description": "Optional config profile used to compute effective feature enablement.",
+      "type": [
+        "string",
+        "null"
+      ]
     }
   },
   "title": "ExperimentalFeatureListParams",

@@ -10,4 +10,12 @@ cursor?: string | null,
 /**
  * Optional page size; defaults to a reasonable server-side value.
  */
-limit?: number | null, };
+limit?: number | null,
+/**
+ * Optional working directory used to resolve project config layers.
+ */
+cwd?: string | null,
+/**
+ * Optional config profile used to compute effective feature enablement.
+ */
+profile?: string | null, };

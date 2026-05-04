@@ -669,6 +669,10 @@ impl App {
             AppEvent::ClearThreadGoal { thread_id } => {
                 self.clear_thread_goal(app_server, thread_id).await;
             }
+            AppEvent::OpenExperimentalFeaturesPopup => {
+                self.open_experimental_popup_with_app_server(app_server)
+                    .await;
+            }
             AppEvent::SendAddCreditsNudgeEmail { credit_type } => {
                 if self
                     .chat_widget
@@ -1458,7 +1462,12 @@ impl App {
                 }
             }
             AppEvent::UpdateFeatureFlags { updates } => {
-                self.update_feature_flags(updates).await;
+                if self.remote_app_server_url.is_some() {
+                    self.update_feature_flags_with_app_server(app_server, updates)
+                        .await;
+                } else {
+                    self.update_feature_flags(updates).await;
+                }
             }
             AppEvent::UpdateMemorySettings {
                 use_memories,

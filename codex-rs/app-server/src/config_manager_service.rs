@@ -401,10 +401,64 @@ fn parse_key_path(path: &str) -> Result<Vec<String>, String> {
     if path.trim().is_empty() {
         return Err("keyPath must not be empty".to_string());
     }
-    Ok(path
-        .split('.')
-        .map(std::string::ToString::to_string)
-        .collect())
+
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut chars = path.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '.' => segments.push(std::mem::take(&mut current)),
+            '"' if current.is_empty() => {
+                parse_quoted_key_path_segment(&mut chars, &mut current)?;
+                if let Some(next) = chars.peek()
+                    && *next != '.'
+                {
+                    return Err(
+                        "quoted keyPath segment must be followed by `.` or end of path".to_string(),
+                    );
+                }
+            }
+            ch => current.push(ch),
+        }
+    }
+    segments.push(current);
+    Ok(segments)
+}
+
+fn parse_quoted_key_path_segment<I>(
+    chars: &mut std::iter::Peekable<I>,
+    output: &mut String,
+) -> Result<(), String>
+where
+    I: Iterator<Item = char>,
+{
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => return Ok(()),
+            '\\' => output.push(parse_key_path_escape(chars)?),
+            ch => output.push(ch),
+        }
+    }
+    Err("unterminated quoted keyPath segment".to_string())
+}
+
+fn parse_key_path_escape<I>(chars: &mut std::iter::Peekable<I>) -> Result<char, String>
+where
+    I: Iterator<Item = char>,
+{
+    match chars.next() {
+        Some('"') => Ok('"'),
+        Some('\\') => Ok('\\'),
+        Some('n') => Ok('\n'),
+        Some('r') => Ok('\r'),
+        Some('t') => Ok('\t'),
+        Some('b') => Ok('\u{08}'),
+        Some('f') => Ok('\u{0c}'),
+        Some(other) => Err(format!(
+            "unsupported escape in quoted keyPath segment: \\{other}"
+        )),
+        None => Err("unterminated escape in quoted keyPath segment".to_string()),
+    }
 }
 
 #[derive(Debug)]

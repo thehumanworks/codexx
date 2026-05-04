@@ -1,10 +1,11 @@
 use super::*;
 use codex_app_server_protocol::AppInfo;
+use codex_app_server_protocol::ExperimentalFeature;
+use codex_app_server_protocol::ExperimentalFeatureStage;
 use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::MarketplaceRemoveResponse;
-use codex_features::Stage;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
@@ -2159,14 +2160,16 @@ async fn experimental_features_popup_snapshot() {
     let features = vec![
         ExperimentalFeatureItem {
             feature: Feature::JsRepl,
-            name: "JavaScript REPL".to_string(),
+            display_name: "JavaScript REPL".to_string(),
             description: "Enable a persistent Node-backed JavaScript REPL for interactive website debugging and other inline JavaScript execution capabilities.".to_string(),
+            original_enabled: false,
             enabled: false,
         },
         ExperimentalFeatureItem {
             feature: Feature::ShellTool,
-            name: "Shell tool".to_string(),
+            display_name: "Shell tool".to_string(),
             description: "Allow the model to run shell commands.".to_string(),
+            original_enabled: true,
             enabled: true,
         },
     ];
@@ -2183,12 +2186,22 @@ async fn experimental_features_toggle_saves_on_exit() {
 
     let expected_feature = Feature::JsRepl;
     let view = ExperimentalFeaturesView::new(
-        vec![ExperimentalFeatureItem {
-            feature: expected_feature,
-            name: "JavaScript REPL".to_string(),
-            description: "Enable a persistent Node-backed JavaScript REPL for interactive website debugging and other inline JavaScript execution capabilities.".to_string(),
-            enabled: false,
-        }],
+        vec![
+            ExperimentalFeatureItem {
+                feature: expected_feature,
+                display_name: "JavaScript REPL".to_string(),
+                description: "Enable a persistent Node-backed JavaScript REPL for interactive website debugging and other inline JavaScript execution capabilities.".to_string(),
+                original_enabled: false,
+                enabled: false,
+            },
+            ExperimentalFeatureItem {
+                feature: Feature::ShellTool,
+                display_name: "Shell tool".to_string(),
+                description: "Allow the model to run shell commands.".to_string(),
+                original_enabled: true,
+                enabled: true,
+            },
+        ],
         chat.app_event_tx.clone(),
     );
     chat.bottom_pane.show_view(Box::new(view));
@@ -2220,15 +2233,33 @@ async fn experimental_features_toggle_saves_on_exit() {
 #[tokio::test]
 async fn experimental_popup_omits_stable_guardian_approval() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
-    let guardian_stage = FEATURES
-        .iter()
-        .find(|spec| spec.id == Feature::GuardianApproval)
-        .map(|spec| spec.stage)
-        .expect("expected guardian approval feature metadata");
+    let features = vec![
+        ExperimentalFeature {
+            name: "guardian_approval".to_string(),
+            stage: ExperimentalFeatureStage::Stable,
+            display_name: None,
+            description: None,
+            announcement: None,
+            enabled: true,
+            default_enabled: true,
+        },
+        ExperimentalFeature {
+            name: "memories".to_string(),
+            stage: ExperimentalFeatureStage::Beta,
+            display_name: Some("Memories".to_string()),
+            description: Some("Allow Codex to create and use memories.".to_string()),
+            announcement: None,
+            enabled: false,
+            default_enabled: false,
+        },
+    ];
 
-    assert_eq!(guardian_stage, Stage::Stable);
-
-    chat.open_experimental_popup();
+    chat.show_experimental_popup(
+        features
+            .into_iter()
+            .filter_map(ExperimentalFeatureItem::from_api)
+            .collect(),
+    );
 
     let popup = render_bottom_popup(&chat, /*width*/ 120);
     assert!(

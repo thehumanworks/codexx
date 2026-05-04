@@ -88,6 +88,16 @@ unified_exec = true
         })
         .await
         .expect("write succeeds");
+    service
+        .write_value(ConfigValueWriteParams {
+            file_path: Some(tmp.path().join(CONFIG_TOML_FILE).display().to_string()),
+            key_path: "profiles.\"team.prod\".features.goals".to_string(),
+            value: serde_json::json!(true),
+            merge_strategy: MergeStrategy::Replace,
+            expected_version: None,
+        })
+        .await
+        .expect("quoted profile write succeeds");
 
     let updated = std::fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE)).expect("read config");
     let expected = r#"# Codex user configuration
@@ -101,6 +111,9 @@ hide_full_access_warning = true
 [features]
 unified_exec = true
 personality = true
+
+[profiles."team.prod".features]
+goals = true
 "#;
     assert_eq!(updated, expected);
     Ok(())

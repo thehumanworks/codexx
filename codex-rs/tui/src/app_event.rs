@@ -240,6 +240,9 @@ pub(crate) enum AppEvent {
         thread_id: ThreadId,
     },
 
+    /// Load the experimental-features popup from the app-server catalog.
+    OpenExperimentalFeaturesPopup,
+
     /// Result of refreshing rate limits.
     RateLimitsLoaded {
         origin: RateLimitRefreshOrigin,
