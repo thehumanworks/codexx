@@ -552,13 +552,58 @@ impl App {
             tracing::warn!(
                 loaded_thread_count = loaded_threads.data.len(),
                 loaded_summary_count = loaded_threads.summaries.len(),
-                "loaded thread summary response omitted entries"
+                "loaded thread summary response omitted entries; falling back to thread/read"
             );
         }
 
-        for thread in
-            find_loaded_subagent_threads_for_primary(loaded_threads.summaries, primary_thread_id)
-        {
+        let (summaries, backfill_complete) = if had_summary_gap {
+            let mut summaries = Vec::new();
+            let mut had_read_error = false;
+            for thread_id in loaded_threads.data {
+                let Ok(thread_id) = ThreadId::from_string(&thread_id) else {
+                    tracing::warn!(
+                        "ignoring loaded thread with invalid id during subagent backfill"
+                    );
+                    continue;
+                };
+
+                if thread_id == primary_thread_id {
+                    continue;
+                }
+
+                match app_server
+                    .thread_read(thread_id, /*include_turns*/ false)
+                    .await
+                {
+                    Ok(thread) => {
+                        let parent_thread_id = match &thread.source {
+                            codex_app_server_protocol::SessionSource::SubAgent(
+                                codex_protocol::protocol::SubAgentSource::ThreadSpawn {
+                                    parent_thread_id,
+                                    ..
+                                },
+                            ) => Some(parent_thread_id.to_string()),
+                            _ => None,
+                        };
+                        summaries.push(codex_app_server_protocol::ThreadLoadedSummary {
+                            id: thread.id,
+                            parent_thread_id,
+                            agent_nickname: thread.agent_nickname,
+                            agent_role: thread.agent_role,
+                        });
+                    }
+                    Err(err) => {
+                        had_read_error = true;
+                        tracing::warn!(thread_id = %thread_id, %err, "failed to read loaded thread");
+                    }
+                }
+            }
+            (summaries, !had_read_error)
+        } else {
+            (loaded_threads.summaries, true)
+        };
+
+        for thread in find_loaded_subagent_threads_for_primary(summaries, primary_thread_id) {
             self.upsert_agent_picker_thread(
                 thread.thread_id,
                 thread.agent_nickname,
@@ -567,7 +612,7 @@ impl App {
             );
         }
 
-        !had_summary_gap
+        backfill_complete
     }
 
     /// Returns the adjacent thread id for keyboard navigation, backfilling from the server if the
