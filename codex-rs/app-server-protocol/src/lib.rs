@@ -1,6 +1,8 @@
 mod experimental_api;
 mod export;
 mod jsonrpc_lite;
+#[doc(hidden)]
+pub mod proto;
 mod protocol;
 mod schema_fixtures;
 
@@ -13,6 +15,8 @@ pub use export::generate_ts;
 pub use export::generate_ts_with_options;
 pub use export::generate_types;
 pub use jsonrpc_lite::*;
+pub use proto::domain::*;
+pub use proto::registry as proto_registry;
 pub use protocol::common::*;
 pub use protocol::event_mapping::*;
 pub use protocol::item_builders::*;
@@ -40,7 +44,6 @@ pub use protocol::v1::Profile;
 pub use protocol::v1::SandboxSettings;
 pub use protocol::v1::Tools;
 pub use protocol::v1::UserSavedConfig;
-pub use protocol::v2::*;
 pub use schema_fixtures::SchemaFixtureOptions;
 #[doc(hidden)]
 pub use schema_fixtures::generate_typescript_schema_fixture_subtree_for_tests;

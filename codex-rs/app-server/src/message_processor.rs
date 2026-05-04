@@ -395,9 +395,7 @@ impl MessageProcessor {
             request_context.clone(),
             async {
                 let result = async {
-                    let request_json = serde_json::to_value(&request)
-                        .map_err(|err| invalid_request(format!("Invalid request: {err}")))?;
-                    let codex_request = serde_json::from_value::<ClientRequest>(request_json)
+                    let codex_request = ClientRequest::from_jsonrpc_request(request.clone())
                         .map_err(|err| invalid_request(format!("Invalid request: {err}")))?;
                     // Websocket callers finalize outbound readiness in lib.rs after mirroring
                     // session state into outbound state and sending initialize notifications to

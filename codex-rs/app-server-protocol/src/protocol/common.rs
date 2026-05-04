@@ -3,11 +3,12 @@ use std::path::PathBuf;
 
 use crate::JSONRPCNotification;
 use crate::JSONRPCRequest;
+use crate::JSONRPCResponse;
 use crate::RequestId;
 use crate::export::GeneratedSchema;
 use crate::export::write_json_schema;
+use crate::proto::domain as v2;
 use crate::protocol::v1;
-use crate::protocol::v2;
 use codex_experimental_api_macros::ExperimentalApi;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -185,7 +186,20 @@ macro_rules! client_request_definitions {
                 }
             }
 
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant { .. } => stringify!($variant),)*
+                }
+            }
+
             pub fn method(&self) -> String {
+                if let Some(descriptor) = crate::proto_registry::descriptor_by_variant(
+                    crate::proto_registry::RpcService::ClientToServer,
+                    self.variant_name(),
+                ) {
+                    return descriptor.jsonrpc_method.clone();
+                }
+
                 serde_json::to_value(self)
                     .ok()
                     .and_then(|value| {
@@ -195,6 +209,23 @@ macro_rules! client_request_definitions {
                             .map(str::to_owned)
                     })
                     .unwrap_or_else(|| "<unknown>".to_string())
+            }
+
+            pub fn from_jsonrpc_request(
+                request: JSONRPCRequest,
+            ) -> std::result::Result<Self, serde_json::Error> {
+                let _descriptor = crate::proto_registry::descriptor_by_method(
+                    crate::proto_registry::RpcService::ClientToServer,
+                    request.method.as_str(),
+                );
+                serde_json::from_value(serde_json::to_value(request)?)
+            }
+
+            pub fn into_jsonrpc_request(self) -> std::result::Result<JSONRPCRequest, serde_json::Error> {
+                let method = self.method();
+                let mut request = serde_json::from_value::<JSONRPCRequest>(serde_json::to_value(self)?)?;
+                request.method = method;
+                Ok(request)
             }
 
             pub fn serialization_scope(&self) -> Option<ClientRequestSerializationScope> {
@@ -233,7 +264,20 @@ macro_rules! client_request_definitions {
                 }
             }
 
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant { .. } => stringify!($variant),)*
+                }
+            }
+
             pub fn method(&self) -> String {
+                if let Some(descriptor) = crate::proto_registry::descriptor_by_variant(
+                    crate::proto_registry::RpcService::ClientToServer,
+                    self.variant_name(),
+                ) {
+                    return descriptor.jsonrpc_method.clone();
+                }
+
                 serde_json::to_value(self)
                     .ok()
                     .and_then(|value| {
@@ -255,6 +299,13 @@ macro_rules! client_request_definitions {
                         }
                     )*
                 }
+            }
+
+            pub fn into_jsonrpc_response(
+                self,
+            ) -> std::result::Result<JSONRPCResponse, serde_json::Error> {
+                let (id, result) = self.into_jsonrpc_parts()?;
+                Ok(JSONRPCResponse { id, result })
             }
         }
 
@@ -1022,6 +1073,31 @@ macro_rules! server_request_definitions {
                 }
             }
 
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant { .. } => stringify!($variant),)*
+                }
+            }
+
+            pub fn method(&self) -> String {
+                if let Some(descriptor) = crate::proto_registry::descriptor_by_variant(
+                    crate::proto_registry::RpcService::ServerToClient,
+                    self.variant_name(),
+                ) {
+                    return descriptor.jsonrpc_method.clone();
+                }
+
+                serde_json::to_value(self)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("method")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| "<unknown>".to_string())
+            }
+
             pub fn response_from_result(
                 &self,
                 result: crate::Result,
@@ -1037,6 +1113,13 @@ macro_rules! server_request_definitions {
                         }
                     )*
                 }
+            }
+
+            pub fn into_jsonrpc_request(self) -> std::result::Result<JSONRPCRequest, serde_json::Error> {
+                let method = self.method();
+                let mut request = serde_json::from_value::<JSONRPCRequest>(serde_json::to_value(self)?)?;
+                request.method = method;
+                Ok(request)
             }
         }
 
@@ -1062,7 +1145,20 @@ macro_rules! server_request_definitions {
                 }
             }
 
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant { .. } => stringify!($variant),)*
+                }
+            }
+
             pub fn method(&self) -> String {
+                if let Some(descriptor) = crate::proto_registry::descriptor_by_variant(
+                    crate::proto_registry::RpcService::ServerToClient,
+                    self.variant_name(),
+                ) {
+                    return descriptor.jsonrpc_method.clone();
+                }
+
                 serde_json::to_value(self)
                     .ok()
                     .and_then(|value| {
@@ -1072,6 +1168,21 @@ macro_rules! server_request_definitions {
                             .map(str::to_owned)
                     })
                     .unwrap_or_else(|| "<unknown>".to_string())
+            }
+
+            pub fn into_jsonrpc_response(
+                self,
+            ) -> std::result::Result<JSONRPCResponse, serde_json::Error> {
+                match self {
+                    $(
+                        Self::$variant { request_id, response } => {
+                            serde_json::to_value(response).map(|result| JSONRPCResponse {
+                                id: request_id,
+                                result,
+                            })
+                        }
+                    )*
+                }
             }
         }
 
@@ -1166,10 +1277,38 @@ macro_rules! server_notification_definitions {
         }
 
         impl ServerNotification {
+            pub fn variant_name(&self) -> &'static str {
+                match self {
+                    $(Self::$variant(_) => stringify!($variant),)*
+                }
+            }
+
+            pub fn method(&self) -> String {
+                if let Some(descriptor) = crate::proto_registry::descriptor_by_variant(
+                    crate::proto_registry::RpcService::ServerNotifications,
+                    self.variant_name(),
+                ) {
+                    return descriptor.jsonrpc_method.clone();
+                }
+
+                self.to_string()
+            }
+
             pub fn to_params(self) -> Result<serde_json::Value, serde_json::Error> {
                 match self {
                     $(Self::$variant(params) => serde_json::to_value(params),)*
                 }
+            }
+
+            pub fn into_jsonrpc_notification(
+                self,
+            ) -> Result<JSONRPCNotification, serde_json::Error> {
+                let method = self.method();
+                let params = self.to_params()?;
+                Ok(JSONRPCNotification {
+                    method,
+                    params: Some(params),
+                })
             }
         }
 
@@ -1223,6 +1362,10 @@ impl TryFrom<JSONRPCRequest> for ServerRequest {
     type Error = serde_json::Error;
 
     fn try_from(value: JSONRPCRequest) -> Result<Self, Self::Error> {
+        let _descriptor = crate::proto_registry::descriptor_by_method(
+            crate::proto_registry::RpcService::ServerToClient,
+            value.method.as_str(),
+        );
         serde_json::from_value(serde_json::to_value(value)?)
     }
 }

@@ -1,5 +1,5 @@
+use crate::proto::domain as v2;
 use crate::protocol::v1;
-use crate::protocol::v2;
 impl From<v1::ExecOneOffCommandParams> for v2::CommandExecParams {
     fn from(value: v1::ExecOneOffCommandParams) -> Self {
         Self {

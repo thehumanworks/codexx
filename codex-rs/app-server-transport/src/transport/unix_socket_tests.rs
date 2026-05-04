@@ -3,8 +3,13 @@ use super::CHANNEL_CAPACITY;
 use super::TransportEvent;
 use super::app_server_control_socket_path;
 use super::start_control_socket_acceptor;
+use crate::OutgoingMessage;
+use crate::QueuedOutgoingMessage;
+use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCMessage;
 use codex_app_server_protocol::JSONRPCNotification;
+use codex_app_server_protocol::ServerNotification;
+use codex_app_server_protocol::proto::jsonrpc;
 use codex_core::config::find_codex_home;
 use codex_uds::UnixStream;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -79,8 +84,12 @@ async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_messages_a
         .await
         .expect("connection opened event should arrive")
         .expect("connection opened event");
-    let connection_id = match opened {
-        TransportEvent::ConnectionOpened { connection_id, .. } => connection_id,
+    let (connection_id, writer) = match opened {
+        TransportEvent::ConnectionOpened {
+            connection_id,
+            writer,
+            ..
+        } => (connection_id, writer),
         _ => panic!("expected connection opened event"),
     };
 
@@ -111,6 +120,58 @@ async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_messages_a
         },
         (connection_id, notification)
     );
+
+    let binary_notification = JSONRPCMessage::Notification(JSONRPCNotification {
+        method: "binary/initialized".to_string(),
+        params: None,
+    });
+    websocket
+        .send(WebSocketMessage::Binary(
+            jsonrpc::encode_jsonrpc_message(binary_notification.clone()).into(),
+        ))
+        .await
+        .expect("binary notification should send");
+
+    let incoming = timeout(Duration::from_secs(1), transport_event_rx.recv())
+        .await
+        .expect("binary incoming message event should arrive")
+        .expect("binary incoming message event");
+    assert_eq!(
+        match incoming {
+            TransportEvent::IncomingMessage {
+                connection_id: incoming_connection_id,
+                message,
+            } => (incoming_connection_id, message),
+            _ => panic!("expected incoming message event"),
+        },
+        (connection_id, binary_notification)
+    );
+
+    writer
+        .send(QueuedOutgoingMessage::new(
+            OutgoingMessage::AppServerNotification(ServerNotification::ConfigWarning(
+                ConfigWarningNotification {
+                    summary: "binary mode".to_string(),
+                    details: None,
+                    path: None,
+                    range: None,
+                },
+            )),
+        ))
+        .await
+        .expect("outbound message should enqueue");
+    let frame = timeout(Duration::from_secs(1), websocket.next())
+        .await
+        .expect("binary outbound frame should arrive")
+        .expect("binary outbound frame")
+        .expect("binary outbound frame should be valid");
+    let WebSocketMessage::Binary(payload) = frame else {
+        panic!("expected protobuf binary outbound frame");
+    };
+    assert!(matches!(
+        jsonrpc::decode_jsonrpc_message(&payload).expect("binary frame should decode"),
+        JSONRPCMessage::Notification(JSONRPCNotification { method, .. }) if method == "configWarning"
+    ));
 
     websocket
         .send(WebSocketMessage::Ping(Bytes::from_static(b"check")))

@@ -11,6 +11,7 @@ use crate::export_server_notification_schemas;
 use crate::export_server_param_schemas;
 use crate::export_server_response_schemas;
 use crate::export_server_responses;
+use crate::proto_registry;
 use crate::protocol::common::EXPERIMENTAL_CLIENT_METHOD_PARAM_TYPES;
 use crate::protocol::common::EXPERIMENTAL_CLIENT_METHOD_RESPONSE_TYPES;
 use crate::protocol::common::EXPERIMENTAL_CLIENT_METHODS;
@@ -231,6 +232,13 @@ pub fn generate_json_with_experimental(out_dir: &Path, experimental_api: bool) -
     write_pretty_json(
         out_dir.join("codex_app_server_protocol.v2.schemas.json"),
         &flat_v2_bundle,
+    )?;
+    let proto_registry = proto_registry::all_descriptors()
+        .filter(|descriptor| experimental_api || descriptor.experimental_reason.is_none())
+        .collect::<Vec<_>>();
+    write_pretty_json(
+        out_dir.join("codex_app_server_protocol.proto_registry.json"),
+        &proto_registry,
     )?;
 
     if !experimental_api {
@@ -2089,7 +2097,7 @@ fn index_ts_entries(paths: &[&Path], has_v2_ts: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::v2;
+    use crate::proto::domain as v2;
     use crate::schema_fixtures::read_schema_fixture_subtree;
     use anyhow::Context;
     use anyhow::Result;

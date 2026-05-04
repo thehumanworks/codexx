@@ -35,6 +35,7 @@ use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::Result as JsonRpcResult;
 use codex_app_server_protocol::ServerNotification;
 use codex_app_server_protocol::ServerRequest;
+use codex_app_server_protocol::proto::jsonrpc;
 use codex_utils_rustls_provider::ensure_rustls_crypto_provider;
 use futures::SinkExt;
 use futures::StreamExt;
@@ -311,8 +312,8 @@ impl RemoteAppServerClient {
                     }
                     message = stream.next() => {
                         match message {
-                            Some(Ok(Message::Text(text))) => {
-                                match serde_json::from_str::<JSONRPCMessage>(&text) {
+                            Some(Ok(message @ (Message::Text(_) | Message::Binary(_)))) => {
+                                match decode_websocket_jsonrpc_message(message, &websocket_url, "message") {
                                     Ok(JSONRPCMessage::Response(response)) => {
                                         if let Some(response_tx) = pending_requests.remove(&response.id) {
                                             let _ = response_tx.send(Ok(Ok(response.result)));
@@ -385,9 +386,7 @@ impl RemoteAppServerClient {
                                         }
                                     }
                                     Err(err) => {
-                                        let message = format!(
-                                            "remote app server at `{websocket_url}` sent invalid JSON-RPC: {err}"
-                                        );
+                                        let message = err.to_string();
                                         let _ = deliver_event(
                                             &event_tx,
                                             AppServerEvent::Disconnected {
@@ -421,8 +420,7 @@ impl RemoteAppServerClient {
                                 ));
                                 break;
                             }
-                            Some(Ok(Message::Binary(_)))
-                            | Some(Ok(Message::Ping(_)))
+                            Some(Ok(Message::Ping(_)))
                             | Some(Ok(Message::Pong(_)))
                             | Some(Ok(Message::Frame(_))) => {}
                             Some(Err(err)) => {
@@ -700,12 +698,12 @@ async fn initialize_remote_connection(
     timeout(initialize_timeout, async {
         loop {
             match stream.next().await {
-                Some(Ok(Message::Text(text))) => {
-                    let message = serde_json::from_str::<JSONRPCMessage>(&text).map_err(|err| {
-                        IoError::other(format!(
-                            "remote app server at `{websocket_url}` sent invalid initialize response: {err}"
-                        ))
-                    })?;
+                Some(Ok(message @ (Message::Text(_) | Message::Binary(_)))) => {
+                    let message = decode_websocket_jsonrpc_message(
+                        message,
+                        websocket_url,
+                        "initialize response",
+                    )?;
                     match message {
                         JSONRPCMessage::Response(response) if response.id == initialize_request_id => {
                             break Ok(());
@@ -751,8 +749,7 @@ async fn initialize_remote_connection(
                         JSONRPCMessage::Response(_) | JSONRPCMessage::Error(_) => {}
                     }
                 }
-                Some(Ok(Message::Binary(_)))
-                | Some(Ok(Message::Ping(_)))
+                Some(Ok(Message::Ping(_)))
                 | Some(Ok(Message::Pong(_)))
                 | Some(Ok(Message::Frame(_))) => {}
                 Some(Ok(Message::Close(frame))) => {
@@ -826,11 +823,7 @@ fn request_id_from_client_request(request: &ClientRequest) -> RequestId {
 }
 
 fn jsonrpc_request_from_client_request(request: ClientRequest) -> JSONRPCRequest {
-    let value = match serde_json::to_value(request) {
-        Ok(value) => value,
-        Err(err) => panic!("client request should serialize: {err}"),
-    };
-    match serde_json::from_value(value) {
+    match request.into_jsonrpc_request() {
         Ok(request) => request,
         Err(err) => panic!("client request should encode as JSON-RPC request: {err}"),
     }
@@ -863,6 +856,28 @@ async fn write_jsonrpc_message(
                 "failed to write websocket message to `{websocket_url}`: {err}"
             ))
         })
+}
+
+fn decode_websocket_jsonrpc_message(
+    message: Message,
+    websocket_url: &str,
+    context: &str,
+) -> IoResult<JSONRPCMessage> {
+    match message {
+        Message::Text(text) => serde_json::from_str::<JSONRPCMessage>(&text).map_err(|err| {
+            IoError::other(format!(
+                "remote app server at `{websocket_url}` sent invalid {context}: {err}"
+            ))
+        }),
+        Message::Binary(payload) => jsonrpc::decode_jsonrpc_message(&payload).map_err(|err| {
+            IoError::other(format!(
+                "remote app server at `{websocket_url}` sent invalid protobuf {context}: {err}"
+            ))
+        }),
+        Message::Close(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => Err(
+            IoError::new(ErrorKind::InvalidInput, "message is not a JSON-RPC payload"),
+        ),
+    }
 }
 #[cfg(test)]
 mod tests {

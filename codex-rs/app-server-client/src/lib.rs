@@ -949,6 +949,7 @@ mod tests {
     use codex_app_server_protocol::ThreadStartResponse;
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_app_server_protocol::ToolRequestUserInputQuestion;
+    use codex_app_server_protocol::proto::jsonrpc;
     use codex_core::config::ConfigBuilder;
     use futures::SinkExt;
     use futures::StreamExt;
@@ -1086,9 +1087,8 @@ mod tests {
                     return serde_json::from_str::<JSONRPCMessage>(&text)
                         .expect("text frame should be valid JSON-RPC");
                 }
-                Message::Binary(_) | Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => {
-                    continue;
-                }
+                Message::Binary(_) => panic!("remote client should write text JSON-RPC frames"),
+                Message::Ping(_) | Message::Pong(_) | Message::Frame(_) => continue,
                 Message::Close(_) => panic!("unexpected close frame"),
             }
         }
@@ -1106,6 +1106,18 @@ mod tests {
             ))
             .await
             .expect("message should send");
+    }
+
+    async fn write_websocket_binary_message(
+        websocket: &mut tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>,
+        message: JSONRPCMessage,
+    ) {
+        websocket
+            .send(Message::Binary(
+                jsonrpc::encode_jsonrpc_message(message).into(),
+            ))
+            .await
+            .expect("binary message should send");
     }
 
     fn command_execution_output_delta_notification(delta: &str) -> ServerNotification {
@@ -1396,6 +1408,54 @@ mod tests {
             .await
             .expect("typed request should succeed");
         assert_eq!(response.account, None);
+
+        client.shutdown().await.expect("shutdown should complete");
+    }
+
+    #[tokio::test]
+    async fn remote_typed_request_accepts_protobuf_binary_response() {
+        let websocket_url = start_test_remote_server(|mut websocket| async move {
+            expect_remote_initialize(&mut websocket).await;
+            let JSONRPCMessage::Request(request) = read_websocket_message(&mut websocket).await
+            else {
+                panic!("expected account/read request");
+            };
+            assert_eq!(request.method, "account/read");
+            write_websocket_binary_message(
+                &mut websocket,
+                JSONRPCMessage::Response(JSONRPCResponse {
+                    id: request.id,
+                    result: serde_json::to_value(GetAccountResponse {
+                        account: None,
+                        requires_openai_auth: false,
+                    })
+                    .expect("response should serialize"),
+                }),
+            )
+            .await;
+            websocket.close(None).await.expect("close should succeed");
+        })
+        .await;
+        let client = RemoteAppServerClient::connect(test_remote_connect_args(websocket_url))
+            .await
+            .expect("remote client should connect");
+
+        let response: GetAccountResponse = client
+            .request_typed(ClientRequest::GetAccount {
+                request_id: RequestId::Integer(1),
+                params: codex_app_server_protocol::GetAccountParams {
+                    refresh_token: false,
+                },
+            })
+            .await
+            .expect("typed request should decode binary response");
+        assert_eq!(
+            response,
+            GetAccountResponse {
+                account: None,
+                requires_openai_auth: false,
+            }
+        );
 
         client.shutdown().await.expect("shutdown should complete");
     }

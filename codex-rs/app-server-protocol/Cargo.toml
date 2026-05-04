@@ -22,6 +22,8 @@ schemars = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
+prost = "0.14.3"
+prost-types = "0.14.3"
 strum_macros = { workspace = true }
 thiserror = { workspace = true }
 rmcp = { workspace = true, default-features = false, features = [
@@ -41,3 +43,4 @@ codex-utils-cargo-bin = { workspace = true }
 pretty_assertions = { workspace = true }
 similar = { workspace = true }
 tempfile = { workspace = true }
+tonic-prost-build = { version = "=0.14.3", default-features = false, features = ["transport"] }

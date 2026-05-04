@@ -9,19 +9,19 @@
 //!   synthetic items, so sharing the logic avoids drift between those paths.
 //! - The projection is presentation-specific. Core protocol events stay generic, while the
 //!   app-server protocol decides how to surface those events as `ThreadItem`s for clients.
+use crate::proto::domain::AutoReviewDecisionSource;
+use crate::proto::domain::CommandAction;
+use crate::proto::domain::CommandExecutionSource;
+use crate::proto::domain::CommandExecutionStatus;
+use crate::proto::domain::FileUpdateChange;
+use crate::proto::domain::GuardianApprovalReview;
+use crate::proto::domain::GuardianApprovalReviewStatus;
+use crate::proto::domain::ItemGuardianApprovalReviewCompletedNotification;
+use crate::proto::domain::ItemGuardianApprovalReviewStartedNotification;
+use crate::proto::domain::PatchApplyStatus;
+use crate::proto::domain::PatchChangeKind;
+use crate::proto::domain::ThreadItem;
 use crate::protocol::common::ServerNotification;
-use crate::protocol::v2::AutoReviewDecisionSource;
-use crate::protocol::v2::CommandAction;
-use crate::protocol::v2::CommandExecutionSource;
-use crate::protocol::v2::CommandExecutionStatus;
-use crate::protocol::v2::FileUpdateChange;
-use crate::protocol::v2::GuardianApprovalReview;
-use crate::protocol::v2::GuardianApprovalReviewStatus;
-use crate::protocol::v2::ItemGuardianApprovalReviewCompletedNotification;
-use crate::protocol::v2::ItemGuardianApprovalReviewStartedNotification;
-use crate::protocol::v2::PatchApplyStatus;
-use crate::protocol::v2::PatchChangeKind;
-use crate::protocol::v2::ThreadItem;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::ExecApprovalRequestEvent;

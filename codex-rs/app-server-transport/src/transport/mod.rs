@@ -4,8 +4,11 @@ use crate::outgoing_message::ConnectionId;
 use crate::outgoing_message::OutgoingError;
 use crate::outgoing_message::OutgoingMessage;
 use crate::outgoing_message::QueuedOutgoingMessage;
+use codex_app_server_protocol::JSONRPCError;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::JSONRPCMessage;
+use codex_app_server_protocol::JSONRPCResponse;
+use codex_app_server_protocol::proto::jsonrpc;
 use codex_core::config::find_codex_home;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::net::SocketAddr;
@@ -202,6 +205,23 @@ async fn forward_incoming_message(
     }
 }
 
+async fn forward_incoming_protobuf_message(
+    transport_event_tx: &mpsc::Sender<TransportEvent>,
+    writer: &mpsc::Sender<QueuedOutgoingMessage>,
+    connection_id: ConnectionId,
+    payload: &[u8],
+) -> bool {
+    match jsonrpc::decode_jsonrpc_message(payload) {
+        Ok(message) => {
+            enqueue_incoming_message(transport_event_tx, writer, connection_id, message).await
+        }
+        Err(err) => {
+            error!("Failed to deserialize protobuf JSONRPCMessage: {err}");
+            true
+        }
+    }
+}
+
 async fn enqueue_incoming_message(
     transport_event_tx: &mpsc::Sender<TransportEvent>,
     writer: &mpsc::Sender<QueuedOutgoingMessage>,
@@ -257,6 +277,39 @@ fn serialize_outgoing_message(outgoing_message: OutgoingMessage) -> Option<Strin
             error!("Failed to serialize JSONRPCMessage: {err}");
             None
         }
+    }
+}
+
+fn encode_outgoing_protobuf_message(outgoing_message: OutgoingMessage) -> Option<Vec<u8>> {
+    outgoing_message_to_jsonrpc(outgoing_message).map(jsonrpc::encode_jsonrpc_message)
+}
+
+fn outgoing_message_to_jsonrpc(outgoing_message: OutgoingMessage) -> Option<JSONRPCMessage> {
+    match outgoing_message {
+        OutgoingMessage::Request(request) => match request.into_jsonrpc_request() {
+            Ok(request) => Some(JSONRPCMessage::Request(request)),
+            Err(err) => {
+                error!("Failed to convert ServerRequest to JSON-RPC request: {err}");
+                None
+            }
+        },
+        OutgoingMessage::AppServerNotification(notification) => {
+            match notification.into_jsonrpc_notification() {
+                Ok(notification) => Some(JSONRPCMessage::Notification(notification)),
+                Err(err) => {
+                    error!("Failed to convert ServerNotification to JSON-RPC notification: {err}");
+                    None
+                }
+            }
+        }
+        OutgoingMessage::Response(response) => Some(JSONRPCMessage::Response(JSONRPCResponse {
+            id: response.id,
+            result: response.result,
+        })),
+        OutgoingMessage::Error(error) => Some(JSONRPCMessage::Error(JSONRPCError {
+            error: error.error,
+            id: error.id,
+        })),
     }
 }
 

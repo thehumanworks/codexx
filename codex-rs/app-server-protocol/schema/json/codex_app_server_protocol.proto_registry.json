@@ -1,0 +1,1130 @@
+[
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "initialize",
+    "paramsType": "InitializeParams",
+    "responseType": "InitializeResponse",
+    "service": "clientToServer",
+    "variant": "Initialize"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/start",
+    "paramsType": "ThreadStartParams",
+    "responseType": "ThreadStartResponse",
+    "service": "clientToServer",
+    "variant": "ThreadStart"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/resume",
+    "paramsType": "ThreadResumeParams",
+    "responseType": "ThreadResumeResponse",
+    "service": "clientToServer",
+    "variant": "ThreadResume"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/fork",
+    "paramsType": "ThreadForkParams",
+    "responseType": "ThreadForkResponse",
+    "service": "clientToServer",
+    "variant": "ThreadFork"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/archive",
+    "paramsType": "ThreadArchiveParams",
+    "responseType": "ThreadArchiveResponse",
+    "service": "clientToServer",
+    "variant": "ThreadArchive"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/unsubscribe",
+    "paramsType": "ThreadUnsubscribeParams",
+    "responseType": "ThreadUnsubscribeResponse",
+    "service": "clientToServer",
+    "variant": "ThreadUnsubscribe"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/name/set",
+    "paramsType": "ThreadSetNameParams",
+    "responseType": "ThreadSetNameResponse",
+    "service": "clientToServer",
+    "variant": "ThreadSetName"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/metadata/update",
+    "paramsType": "ThreadMetadataUpdateParams",
+    "responseType": "ThreadMetadataUpdateResponse",
+    "service": "clientToServer",
+    "variant": "ThreadMetadataUpdate"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/unarchive",
+    "paramsType": "ThreadUnarchiveParams",
+    "responseType": "ThreadUnarchiveResponse",
+    "service": "clientToServer",
+    "variant": "ThreadUnarchive"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/compact/start",
+    "paramsType": "ThreadCompactStartParams",
+    "responseType": "ThreadCompactStartResponse",
+    "service": "clientToServer",
+    "variant": "ThreadCompactStart"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/shellCommand",
+    "paramsType": "ThreadShellCommandParams",
+    "responseType": "ThreadShellCommandResponse",
+    "service": "clientToServer",
+    "variant": "ThreadShellCommand"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/approveGuardianDeniedAction",
+    "paramsType": "ThreadApproveGuardianDeniedActionParams",
+    "responseType": "ThreadApproveGuardianDeniedActionResponse",
+    "service": "clientToServer",
+    "variant": "ThreadApproveGuardianDeniedAction"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/rollback",
+    "paramsType": "ThreadRollbackParams",
+    "responseType": "ThreadRollbackResponse",
+    "service": "clientToServer",
+    "variant": "ThreadRollback"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/list",
+    "paramsType": "ThreadListParams",
+    "responseType": "ThreadListResponse",
+    "service": "clientToServer",
+    "variant": "ThreadList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/loaded/list",
+    "paramsType": "ThreadLoadedListParams",
+    "responseType": "ThreadLoadedListResponse",
+    "service": "clientToServer",
+    "variant": "ThreadLoadedList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/read",
+    "paramsType": "ThreadReadParams",
+    "responseType": "ThreadReadResponse",
+    "service": "clientToServer",
+    "variant": "ThreadRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/inject_items",
+    "paramsType": "ThreadInjectItemsParams",
+    "responseType": "ThreadInjectItemsResponse",
+    "service": "clientToServer",
+    "variant": "ThreadInjectItems"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "skills/list",
+    "paramsType": "SkillsListParams",
+    "responseType": "SkillsListResponse",
+    "service": "clientToServer",
+    "variant": "SkillsList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "hooks/list",
+    "paramsType": "HooksListParams",
+    "responseType": "HooksListResponse",
+    "service": "clientToServer",
+    "variant": "HooksList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "marketplace/add",
+    "paramsType": "MarketplaceAddParams",
+    "responseType": "MarketplaceAddResponse",
+    "service": "clientToServer",
+    "variant": "MarketplaceAdd"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "marketplace/remove",
+    "paramsType": "MarketplaceRemoveParams",
+    "responseType": "MarketplaceRemoveResponse",
+    "service": "clientToServer",
+    "variant": "MarketplaceRemove"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "marketplace/upgrade",
+    "paramsType": "MarketplaceUpgradeParams",
+    "responseType": "MarketplaceUpgradeResponse",
+    "service": "clientToServer",
+    "variant": "MarketplaceUpgrade"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/list",
+    "paramsType": "PluginListParams",
+    "responseType": "PluginListResponse",
+    "service": "clientToServer",
+    "variant": "PluginList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/read",
+    "paramsType": "PluginReadParams",
+    "responseType": "PluginReadResponse",
+    "service": "clientToServer",
+    "variant": "PluginRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/skill/read",
+    "paramsType": "PluginSkillReadParams",
+    "responseType": "PluginSkillReadResponse",
+    "service": "clientToServer",
+    "variant": "PluginSkillRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/share/save",
+    "paramsType": "PluginShareSaveParams",
+    "responseType": "PluginShareSaveResponse",
+    "service": "clientToServer",
+    "variant": "PluginShareSave"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/share/list",
+    "paramsType": "PluginShareListParams",
+    "responseType": "PluginShareListResponse",
+    "service": "clientToServer",
+    "variant": "PluginShareList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/share/delete",
+    "paramsType": "PluginShareDeleteParams",
+    "responseType": "PluginShareDeleteResponse",
+    "service": "clientToServer",
+    "variant": "PluginShareDelete"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "app/list",
+    "paramsType": "AppsListParams",
+    "responseType": "AppsListResponse",
+    "service": "clientToServer",
+    "variant": "AppsList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "device/key/create",
+    "paramsType": "DeviceKeyCreateParams",
+    "responseType": "DeviceKeyCreateResponse",
+    "service": "clientToServer",
+    "variant": "DeviceKeyCreate"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "device/key/public",
+    "paramsType": "DeviceKeyPublicParams",
+    "responseType": "DeviceKeyPublicResponse",
+    "service": "clientToServer",
+    "variant": "DeviceKeyPublic"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "device/key/sign",
+    "paramsType": "DeviceKeySignParams",
+    "responseType": "DeviceKeySignResponse",
+    "service": "clientToServer",
+    "variant": "DeviceKeySign"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/readFile",
+    "paramsType": "FsReadFileParams",
+    "responseType": "FsReadFileResponse",
+    "service": "clientToServer",
+    "variant": "FsReadFile"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/writeFile",
+    "paramsType": "FsWriteFileParams",
+    "responseType": "FsWriteFileResponse",
+    "service": "clientToServer",
+    "variant": "FsWriteFile"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/createDirectory",
+    "paramsType": "FsCreateDirectoryParams",
+    "responseType": "FsCreateDirectoryResponse",
+    "service": "clientToServer",
+    "variant": "FsCreateDirectory"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/getMetadata",
+    "paramsType": "FsGetMetadataParams",
+    "responseType": "FsGetMetadataResponse",
+    "service": "clientToServer",
+    "variant": "FsGetMetadata"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/readDirectory",
+    "paramsType": "FsReadDirectoryParams",
+    "responseType": "FsReadDirectoryResponse",
+    "service": "clientToServer",
+    "variant": "FsReadDirectory"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/remove",
+    "paramsType": "FsRemoveParams",
+    "responseType": "FsRemoveResponse",
+    "service": "clientToServer",
+    "variant": "FsRemove"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/copy",
+    "paramsType": "FsCopyParams",
+    "responseType": "FsCopyResponse",
+    "service": "clientToServer",
+    "variant": "FsCopy"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/watch",
+    "paramsType": "FsWatchParams",
+    "responseType": "FsWatchResponse",
+    "service": "clientToServer",
+    "variant": "FsWatch"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/unwatch",
+    "paramsType": "FsUnwatchParams",
+    "responseType": "FsUnwatchResponse",
+    "service": "clientToServer",
+    "variant": "FsUnwatch"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "skills/config/write",
+    "paramsType": "SkillsConfigWriteParams",
+    "responseType": "SkillsConfigWriteResponse",
+    "service": "clientToServer",
+    "variant": "SkillsConfigWrite"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/install",
+    "paramsType": "PluginInstallParams",
+    "responseType": "PluginInstallResponse",
+    "service": "clientToServer",
+    "variant": "PluginInstall"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "plugin/uninstall",
+    "paramsType": "PluginUninstallParams",
+    "responseType": "PluginUninstallResponse",
+    "service": "clientToServer",
+    "variant": "PluginUninstall"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/start",
+    "paramsType": "TurnStartParams",
+    "responseType": "TurnStartResponse",
+    "service": "clientToServer",
+    "variant": "TurnStart"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/steer",
+    "paramsType": "TurnSteerParams",
+    "responseType": "TurnSteerResponse",
+    "service": "clientToServer",
+    "variant": "TurnSteer"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/interrupt",
+    "paramsType": "TurnInterruptParams",
+    "responseType": "TurnInterruptResponse",
+    "service": "clientToServer",
+    "variant": "TurnInterrupt"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "review/start",
+    "paramsType": "ReviewStartParams",
+    "responseType": "ReviewStartResponse",
+    "service": "clientToServer",
+    "variant": "ReviewStart"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "model/list",
+    "paramsType": "ModelListParams",
+    "responseType": "ModelListResponse",
+    "service": "clientToServer",
+    "variant": "ModelList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "modelProvider/capabilities/read",
+    "paramsType": "ModelProviderCapabilitiesReadParams",
+    "responseType": "ModelProviderCapabilitiesReadResponse",
+    "service": "clientToServer",
+    "variant": "ModelProviderCapabilitiesRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "experimentalFeature/list",
+    "paramsType": "ExperimentalFeatureListParams",
+    "responseType": "ExperimentalFeatureListResponse",
+    "service": "clientToServer",
+    "variant": "ExperimentalFeatureList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "experimentalFeature/enablement/set",
+    "paramsType": "ExperimentalFeatureEnablementSetParams",
+    "responseType": "ExperimentalFeatureEnablementSetResponse",
+    "service": "clientToServer",
+    "variant": "ExperimentalFeatureEnablementSet"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServer/oauth/login",
+    "paramsType": "McpServerOauthLoginParams",
+    "responseType": "McpServerOauthLoginResponse",
+    "service": "clientToServer",
+    "variant": "McpServerOauthLogin"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "config/mcpServer/reload",
+    "paramsType": "EmptyParams",
+    "responseType": "McpServerRefreshResponse",
+    "service": "clientToServer",
+    "variant": "McpServerRefresh"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServerStatus/list",
+    "paramsType": "ListMcpServerStatusParams",
+    "responseType": "ListMcpServerStatusResponse",
+    "service": "clientToServer",
+    "variant": "McpServerStatusList"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServer/resource/read",
+    "paramsType": "McpResourceReadParams",
+    "responseType": "McpResourceReadResponse",
+    "service": "clientToServer",
+    "variant": "McpResourceRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServer/tool/call",
+    "paramsType": "McpServerToolCallParams",
+    "responseType": "McpServerToolCallResponse",
+    "service": "clientToServer",
+    "variant": "McpServerToolCall"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "windowsSandbox/setupStart",
+    "paramsType": "WindowsSandboxSetupStartParams",
+    "responseType": "WindowsSandboxSetupStartResponse",
+    "service": "clientToServer",
+    "variant": "WindowsSandboxSetupStart"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/login/start",
+    "paramsType": "LoginAccountParams",
+    "responseType": "LoginAccountResponse",
+    "service": "clientToServer",
+    "variant": "LoginAccount"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/login/cancel",
+    "paramsType": "CancelLoginAccountParams",
+    "responseType": "CancelLoginAccountResponse",
+    "service": "clientToServer",
+    "variant": "CancelLoginAccount"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/logout",
+    "paramsType": "EmptyParams",
+    "responseType": "LogoutAccountResponse",
+    "service": "clientToServer",
+    "variant": "LogoutAccount"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/rateLimits/read",
+    "paramsType": "EmptyParams",
+    "responseType": "GetAccountRateLimitsResponse",
+    "service": "clientToServer",
+    "variant": "GetAccountRateLimits"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/sendAddCreditsNudgeEmail",
+    "paramsType": "SendAddCreditsNudgeEmailParams",
+    "responseType": "SendAddCreditsNudgeEmailResponse",
+    "service": "clientToServer",
+    "variant": "SendAddCreditsNudgeEmail"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "feedback/upload",
+    "paramsType": "FeedbackUploadParams",
+    "responseType": "FeedbackUploadResponse",
+    "service": "clientToServer",
+    "variant": "FeedbackUpload"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "command/exec",
+    "paramsType": "CommandExecParams",
+    "responseType": "CommandExecResponse",
+    "service": "clientToServer",
+    "variant": "OneOffCommandExec"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "command/exec/write",
+    "paramsType": "CommandExecWriteParams",
+    "responseType": "CommandExecWriteResponse",
+    "service": "clientToServer",
+    "variant": "CommandExecWrite"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "command/exec/terminate",
+    "paramsType": "CommandExecTerminateParams",
+    "responseType": "CommandExecTerminateResponse",
+    "service": "clientToServer",
+    "variant": "CommandExecTerminate"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "command/exec/resize",
+    "paramsType": "CommandExecResizeParams",
+    "responseType": "CommandExecResizeResponse",
+    "service": "clientToServer",
+    "variant": "CommandExecResize"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "config/read",
+    "paramsType": "ConfigReadParams",
+    "responseType": "ConfigReadResponse",
+    "service": "clientToServer",
+    "variant": "ConfigRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "externalAgentConfig/detect",
+    "paramsType": "ExternalAgentConfigDetectParams",
+    "responseType": "ExternalAgentConfigDetectResponse",
+    "service": "clientToServer",
+    "variant": "ExternalAgentConfigDetect"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "externalAgentConfig/import",
+    "paramsType": "ExternalAgentConfigImportParams",
+    "responseType": "ExternalAgentConfigImportResponse",
+    "service": "clientToServer",
+    "variant": "ExternalAgentConfigImport"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "config/value/write",
+    "paramsType": "ConfigValueWriteParams",
+    "responseType": "ConfigWriteResponse",
+    "service": "clientToServer",
+    "variant": "ConfigValueWrite"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "config/batchWrite",
+    "paramsType": "ConfigBatchWriteParams",
+    "responseType": "ConfigWriteResponse",
+    "service": "clientToServer",
+    "variant": "ConfigBatchWrite"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "configRequirements/read",
+    "paramsType": "EmptyParams",
+    "responseType": "ConfigRequirementsReadResponse",
+    "service": "clientToServer",
+    "variant": "ConfigRequirementsRead"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/read",
+    "paramsType": "GetAccountParams",
+    "responseType": "GetAccountResponse",
+    "service": "clientToServer",
+    "variant": "GetAccount"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "getConversationSummary",
+    "paramsType": "GetConversationSummaryParams",
+    "responseType": "GetConversationSummaryResponse",
+    "service": "clientToServer",
+    "variant": "GetConversationSummary"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "gitDiffToRemote",
+    "paramsType": "GitDiffToRemoteParams",
+    "responseType": "GitDiffToRemoteResponse",
+    "service": "clientToServer",
+    "variant": "GitDiffToRemote"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "getAuthStatus",
+    "paramsType": "GetAuthStatusParams",
+    "responseType": "GetAuthStatusResponse",
+    "service": "clientToServer",
+    "variant": "GetAuthStatus"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fuzzyFileSearch",
+    "paramsType": "FuzzyFileSearchParams",
+    "responseType": "FuzzyFileSearchResponse",
+    "service": "clientToServer",
+    "variant": "FuzzyFileSearch"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/commandExecution/requestApproval",
+    "paramsType": "CommandExecutionRequestApprovalParams",
+    "responseType": "CommandExecutionRequestApprovalResponse",
+    "service": "serverToClient",
+    "variant": "CommandExecutionRequestApproval"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/fileChange/requestApproval",
+    "paramsType": "FileChangeRequestApprovalParams",
+    "responseType": "FileChangeRequestApprovalResponse",
+    "service": "serverToClient",
+    "variant": "FileChangeRequestApproval"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/tool/requestUserInput",
+    "paramsType": "ToolRequestUserInputParams",
+    "responseType": "ToolRequestUserInputResponse",
+    "service": "serverToClient",
+    "variant": "ToolRequestUserInput"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServer/elicitation/request",
+    "paramsType": "McpServerElicitationRequestParams",
+    "responseType": "McpServerElicitationRequestResponse",
+    "service": "serverToClient",
+    "variant": "McpServerElicitationRequest"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/permissions/requestApproval",
+    "paramsType": "PermissionsRequestApprovalParams",
+    "responseType": "PermissionsRequestApprovalResponse",
+    "service": "serverToClient",
+    "variant": "PermissionsRequestApproval"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/tool/call",
+    "paramsType": "DynamicToolCallParams",
+    "responseType": "DynamicToolCallResponse",
+    "service": "serverToClient",
+    "variant": "DynamicToolCall"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/chatgptAuthTokens/refresh",
+    "paramsType": "ChatgptAuthTokensRefreshParams",
+    "responseType": "ChatgptAuthTokensRefreshResponse",
+    "service": "serverToClient",
+    "variant": "ChatgptAuthTokensRefresh"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "applyPatchApproval",
+    "paramsType": "ApplyPatchApprovalParams",
+    "responseType": "ApplyPatchApprovalResponse",
+    "service": "serverToClient",
+    "variant": "ApplyPatchApproval"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "execCommandApproval",
+    "paramsType": "ExecCommandApprovalParams",
+    "responseType": "ExecCommandApprovalResponse",
+    "service": "serverToClient",
+    "variant": "ExecCommandApproval"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "initialized",
+    "paramsType": "EmptyParams",
+    "responseType": "EmptyResponse",
+    "service": "clientNotifications",
+    "variant": "Initialized"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "error",
+    "paramsType": "ErrorNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "Error"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/started",
+    "paramsType": "ThreadStartedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadStarted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/status/changed",
+    "paramsType": "ThreadStatusChangedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadStatusChanged"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/archived",
+    "paramsType": "ThreadArchivedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadArchived"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/unarchived",
+    "paramsType": "ThreadUnarchivedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadUnarchived"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/closed",
+    "paramsType": "ThreadClosedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadClosed"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "skills/changed",
+    "paramsType": "SkillsChangedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "SkillsChanged"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/name/updated",
+    "paramsType": "ThreadNameUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadNameUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/tokenUsage/updated",
+    "paramsType": "ThreadTokenUsageUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ThreadTokenUsageUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/started",
+    "paramsType": "TurnStartedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "TurnStarted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "hook/started",
+    "paramsType": "HookStartedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "HookStarted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/completed",
+    "paramsType": "TurnCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "TurnCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "hook/completed",
+    "paramsType": "HookCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "HookCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/diff/updated",
+    "paramsType": "TurnDiffUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "TurnDiffUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "turn/plan/updated",
+    "paramsType": "TurnPlanUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "TurnPlanUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/started",
+    "paramsType": "ItemStartedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ItemStarted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/autoApprovalReview/started",
+    "paramsType": "ItemGuardianApprovalReviewStartedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ItemGuardianApprovalReviewStarted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/autoApprovalReview/completed",
+    "paramsType": "ItemGuardianApprovalReviewCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ItemGuardianApprovalReviewCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/completed",
+    "paramsType": "ItemCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ItemCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "rawResponseItem/completed",
+    "paramsType": "RawResponseItemCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "RawResponseItemCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/agentMessage/delta",
+    "paramsType": "AgentMessageDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "AgentMessageDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/plan/delta",
+    "paramsType": "PlanDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "PlanDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "command/exec/outputDelta",
+    "paramsType": "CommandExecOutputDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "CommandExecOutputDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/commandExecution/outputDelta",
+    "paramsType": "CommandExecutionOutputDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "CommandExecutionOutputDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/commandExecution/terminalInteraction",
+    "paramsType": "TerminalInteractionNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "TerminalInteraction"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/fileChange/outputDelta",
+    "paramsType": "FileChangeOutputDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "FileChangeOutputDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/fileChange/patchUpdated",
+    "paramsType": "FileChangePatchUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "FileChangePatchUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "serverRequest/resolved",
+    "paramsType": "ServerRequestResolvedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ServerRequestResolved"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/mcpToolCall/progress",
+    "paramsType": "McpToolCallProgressNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "McpToolCallProgress"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServer/oauthLogin/completed",
+    "paramsType": "McpServerOauthLoginCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "McpServerOauthLoginCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "mcpServer/startupStatus/updated",
+    "paramsType": "McpServerStatusUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "McpServerStatusUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/updated",
+    "paramsType": "AccountUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "AccountUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "account/rateLimits/updated",
+    "paramsType": "AccountRateLimitsUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "AccountRateLimitsUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "app/list/updated",
+    "paramsType": "AppListUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "AppListUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "remoteControl/status/changed",
+    "paramsType": "RemoteControlStatusChangedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "RemoteControlStatusChanged"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "externalAgentConfig/import/completed",
+    "paramsType": "ExternalAgentConfigImportCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ExternalAgentConfigImportCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fs/changed",
+    "paramsType": "FsChangedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "FsChanged"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/reasoning/summaryTextDelta",
+    "paramsType": "ReasoningSummaryTextDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ReasoningSummaryTextDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/reasoning/summaryPartAdded",
+    "paramsType": "ReasoningSummaryPartAddedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ReasoningSummaryPartAdded"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "item/reasoning/textDelta",
+    "paramsType": "ReasoningTextDeltaNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ReasoningTextDelta"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "thread/compacted",
+    "paramsType": "ContextCompactedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ContextCompacted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "model/rerouted",
+    "paramsType": "ModelReroutedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ModelRerouted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "model/verification",
+    "paramsType": "ModelVerificationNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ModelVerification"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "warning",
+    "paramsType": "WarningNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "Warning"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "guardianWarning",
+    "paramsType": "GuardianWarningNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "GuardianWarning"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "deprecationNotice",
+    "paramsType": "DeprecationNoticeNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "DeprecationNotice"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "configWarning",
+    "paramsType": "ConfigWarningNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "ConfigWarning"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fuzzyFileSearch/sessionUpdated",
+    "paramsType": "FuzzyFileSearchSessionUpdatedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "FuzzyFileSearchSessionUpdated"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "fuzzyFileSearch/sessionCompleted",
+    "paramsType": "FuzzyFileSearchSessionCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "FuzzyFileSearchSessionCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "windows/worldWritableWarning",
+    "paramsType": "WindowsWorldWritableWarningNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "WindowsWorldWritableWarning"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "windowsSandbox/setupCompleted",
+    "paramsType": "WindowsSandboxSetupCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "WindowsSandboxSetupCompleted"
+  },
+  {
+    "experimentalReason": null,
+    "jsonrpcMethod": "accountLoginCompleted",
+    "paramsType": "AccountLoginCompletedNotification",
+    "responseType": "EmptyResponse",
+    "service": "serverNotifications",
+    "variant": "AccountLoginCompleted"
+  }
+]

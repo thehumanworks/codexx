@@ -66,7 +66,9 @@ Backpressure behavior:
 
 ## Message Schema
 
-Currently, you can dump a TypeScript version of the schema using `codex app-server generate-ts`, or a JSON Schema bundle via `codex app-server generate-json-schema`. Each output is specific to the version of Codex you used to run the command, so the generated artifacts are guaranteed to match that version.
+The app-server protocol registry is defined in protobuf at `app-server-protocol/proto/codex.app_server.v2.proto`. JSON-RPC remains the compatibility wire format for current transports, and the Rust facade, TypeScript bindings, and JSON Schema artifacts are generated or checked against that protobuf registry so method names stay aligned.
+
+You can dump a TypeScript version of the JSON-RPC-facing schema using `codex app-server generate-ts`, or a JSON Schema bundle via `codex app-server generate-json-schema`. Each output is specific to the version of Codex you used to run the command, so the generated artifacts are guaranteed to match that version.
 
 ```
 codex app-server generate-ts --out DIR
@@ -1807,7 +1809,7 @@ Use this checklist when introducing a field/method that should only be available
 
 At runtime, clients must send `initialize` with `capabilities.experimentalApi = true` to use experimental methods or fields.
 
-1. Annotate the field in the protocol type (usually `app-server-protocol/src/protocol/v2.rs`) with:
+1. Annotate the field in the protocol domain type (usually `app-server-protocol/src/proto/domain.rs`) with:
    ```rust
    #[experimental("thread/start.myField")]
    pub my_field: Option<String>,

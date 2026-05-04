@@ -4,7 +4,9 @@ use super::TransportEvent;
 use super::auth::WebsocketAuthPolicy;
 use super::auth::authorize_upgrade;
 use super::auth::should_warn_about_unauthenticated_non_loopback_listener;
+use super::encode_outgoing_protobuf_message;
 use super::forward_incoming_message;
+use super::forward_incoming_protobuf_message;
 use super::next_connection_id;
 use super::serialize_outgoing_message;
 use crate::outgoing_message::ConnectionId;
@@ -34,6 +36,8 @@ use owo_colors::Style;
 use std::io::Result as IoResult;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -183,6 +187,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
         mpsc::channel::<QueuedOutgoingMessage>(WEBSOCKET_OUTBOUND_CHANNEL_CAPACITY);
     let writer_tx_for_reader = writer_tx.clone();
     let disconnect_token = CancellationToken::new();
+    let protobuf_mode = Arc::new(AtomicBool::new(false));
     if transport_event_tx
         .send(TransportEvent::ConnectionOpened {
             connection_id,
@@ -202,6 +207,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
         writer_rx,
         writer_control_rx,
         disconnect_token.clone(),
+        Arc::clone(&protobuf_mode),
     ));
     let mut inbound_task = tokio::spawn(run_websocket_inbound_loop(
         websocket_reader,
@@ -210,6 +216,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
         writer_control_tx,
         connection_id,
         disconnect_token.clone(),
+        protobuf_mode,
     ));
 
     tokio::select! {
@@ -230,7 +237,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
 
 pub(crate) enum IncomingWebSocketMessage {
     Text(String),
-    Binary,
+    Binary(Bytes),
     Ping(Bytes),
     Pong,
     Close,
@@ -241,6 +248,7 @@ pub(crate) enum IncomingWebSocketMessage {
 /// sends directly.
 pub(crate) trait AppServerWebSocketMessage: Sized {
     fn text(text: String) -> Self;
+    fn binary(payload: Vec<u8>) -> Self;
     fn pong(payload: Bytes) -> Self;
     fn into_incoming(self) -> Option<IncomingWebSocketMessage>;
 }
@@ -250,6 +258,10 @@ impl AppServerWebSocketMessage for AxumWebSocketMessage {
         Self::Text(text.into())
     }
 
+    fn binary(payload: Vec<u8>) -> Self {
+        Self::Binary(payload.into())
+    }
+
     fn pong(payload: Bytes) -> Self {
         Self::Pong(payload)
     }
@@ -257,7 +269,7 @@ impl AppServerWebSocketMessage for AxumWebSocketMessage {
     fn into_incoming(self) -> Option<IncomingWebSocketMessage> {
         Some(match self {
             Self::Text(text) => IncomingWebSocketMessage::Text(text.to_string()),
-            Self::Binary(_) => IncomingWebSocketMessage::Binary,
+            Self::Binary(payload) => IncomingWebSocketMessage::Binary(payload),
             Self::Ping(payload) => IncomingWebSocketMessage::Ping(payload),
             Self::Pong(_) => IncomingWebSocketMessage::Pong,
             Self::Close(_) => IncomingWebSocketMessage::Close,
@@ -270,6 +282,10 @@ impl AppServerWebSocketMessage for TungsteniteWebSocketMessage {
         Self::Text(text.into())
     }
 
+    fn binary(payload: Vec<u8>) -> Self {
+        Self::Binary(payload.into())
+    }
+
     fn pong(payload: Bytes) -> Self {
         Self::Pong(payload)
     }
@@ -277,7 +293,7 @@ impl AppServerWebSocketMessage for TungsteniteWebSocketMessage {
     fn into_incoming(self) -> Option<IncomingWebSocketMessage> {
         Some(match self {
             Self::Text(text) => IncomingWebSocketMessage::Text(text.to_string()),
-            Self::Binary(_) => IncomingWebSocketMessage::Binary,
+            Self::Binary(payload) => IncomingWebSocketMessage::Binary(payload),
             Self::Ping(payload) => IncomingWebSocketMessage::Ping(payload),
             Self::Pong(_) => IncomingWebSocketMessage::Pong,
             Self::Close(_) => IncomingWebSocketMessage::Close,
@@ -291,6 +307,7 @@ async fn run_websocket_outbound_loop<M, SinkError>(
     mut writer_rx: mpsc::Receiver<QueuedOutgoingMessage>,
     mut writer_control_rx: mpsc::Receiver<M>,
     disconnect_token: CancellationToken,
+    protobuf_mode: Arc<AtomicBool>,
 ) where
     M: AppServerWebSocketMessage + Send + 'static,
     SinkError: Send + 'static,
@@ -313,10 +330,18 @@ async fn run_websocket_outbound_loop<M, SinkError>(
                 let Some(queued_message) = queued_message else {
                     break;
                 };
-                let Some(json) = serialize_outgoing_message(queued_message.message) else {
-                    continue;
+                let message = if protobuf_mode.load(Ordering::Acquire) {
+                    let Some(payload) = encode_outgoing_protobuf_message(queued_message.message) else {
+                        continue;
+                    };
+                    M::binary(payload)
+                } else {
+                    let Some(json) = serialize_outgoing_message(queued_message.message) else {
+                        continue;
+                    };
+                    M::text(json)
                 };
-                if websocket_writer.send(M::text(json)).await.is_err() {
+                if websocket_writer.send(message).await.is_err() {
                     break;
                 }
                 if let Some(write_complete_tx) = queued_message.write_complete_tx {
@@ -334,6 +359,7 @@ async fn run_websocket_inbound_loop<M, StreamError>(
     writer_control_tx: mpsc::Sender<M>,
     connection_id: ConnectionId,
     disconnect_token: CancellationToken,
+    protobuf_mode: Arc<AtomicBool>,
 ) where
     M: AppServerWebSocketMessage + Send + 'static,
     StreamError: std::fmt::Display + Send + 'static,
@@ -371,8 +397,18 @@ async fn run_websocket_inbound_loop<M, StreamError>(
                         }
                         Some(IncomingWebSocketMessage::Pong) => {}
                         Some(IncomingWebSocketMessage::Close) => break,
-                        Some(IncomingWebSocketMessage::Binary) => {
-                            warn!("dropping unsupported binary websocket message");
+                        Some(IncomingWebSocketMessage::Binary(payload)) => {
+                            protobuf_mode.store(true, Ordering::Release);
+                            if !forward_incoming_protobuf_message(
+                                &transport_event_tx,
+                                &writer_tx_for_reader,
+                                connection_id,
+                                &payload,
+                            )
+                            .await
+                            {
+                                break;
+                            }
                         }
                         None => {}
                     },

@@ -3552,8 +3552,8 @@ pub struct ThreadStartParams {
     pub model_provider: Option<String>,
     #[serde(
         default,
-        deserialize_with = "super::serde_helpers::deserialize_double_option",
-        serialize_with = "super::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
@@ -3705,8 +3705,8 @@ pub struct ThreadResumeParams {
     pub model_provider: Option<String>,
     #[serde(
         default,
-        deserialize_with = "super::serde_helpers::deserialize_double_option",
-        serialize_with = "super::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
@@ -3810,8 +3810,8 @@ pub struct ThreadForkParams {
     pub model_provider: Option<String>,
     #[serde(
         default,
-        deserialize_with = "super::serde_helpers::deserialize_double_option",
-        serialize_with = "super::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
@@ -4036,8 +4036,8 @@ pub struct ThreadGoalSetParams {
     pub status: Option<ThreadGoalStatus>,
     #[serde(
         default,
-        deserialize_with = "super::serde_helpers::deserialize_double_option",
-        serialize_with = "super::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable, type = "number | null")]
@@ -4100,8 +4100,8 @@ pub struct ThreadMetadataGitInfoUpdateParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "super::serde_helpers::serialize_double_option",
-        deserialize_with = "super::serde_helpers::deserialize_double_option"
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
     )]
     #[ts(optional = nullable, type = "string | null")]
     pub sha: Option<Option<String>>,
@@ -4110,8 +4110,8 @@ pub struct ThreadMetadataGitInfoUpdateParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "super::serde_helpers::serialize_double_option",
-        deserialize_with = "super::serde_helpers::deserialize_double_option"
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
     )]
     #[ts(optional = nullable, type = "string | null")]
     pub branch: Option<Option<String>>,
@@ -4120,8 +4120,8 @@ pub struct ThreadMetadataGitInfoUpdateParams {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        serialize_with = "super::serde_helpers::serialize_double_option",
-        deserialize_with = "super::serde_helpers::deserialize_double_option"
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option"
     )]
     #[ts(optional = nullable, type = "string | null")]
     pub origin_url: Option<Option<String>>,
@@ -5332,8 +5332,8 @@ pub struct ThreadRealtimeStartParams {
     pub output_modality: RealtimeOutputModality,
     #[serde(
         default,
-        deserialize_with = "super::serde_helpers::deserialize_double_option",
-        serialize_with = "super::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]
@@ -5568,8 +5568,8 @@ pub struct TurnStartParams {
     /// Override the service tier for this turn and subsequent turns.
     #[serde(
         default,
-        deserialize_with = "super::serde_helpers::deserialize_double_option",
-        serialize_with = "super::serde_helpers::serialize_double_option",
+        deserialize_with = "crate::protocol::serde_helpers::deserialize_double_option",
+        serialize_with = "crate::protocol::serde_helpers::serialize_double_option",
         skip_serializing_if = "Option::is_none"
     )]
     #[ts(optional = nullable)]

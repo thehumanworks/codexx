@@ -1,25 +1,25 @@
+use crate::proto::domain::CollabAgentState;
+use crate::proto::domain::CollabAgentTool;
+use crate::proto::domain::CollabAgentToolCallStatus;
+use crate::proto::domain::CommandExecutionStatus;
+use crate::proto::domain::DynamicToolCallOutputContentItem;
+use crate::proto::domain::DynamicToolCallStatus;
+use crate::proto::domain::McpToolCallError;
+use crate::proto::domain::McpToolCallResult;
+use crate::proto::domain::McpToolCallStatus;
+use crate::proto::domain::ThreadItem;
+use crate::proto::domain::Turn;
+use crate::proto::domain::TurnError as V2TurnError;
+use crate::proto::domain::TurnError;
+use crate::proto::domain::TurnStatus;
+use crate::proto::domain::UserInput;
+use crate::proto::domain::WebSearchAction;
 use crate::protocol::item_builders::build_command_execution_begin_item;
 use crate::protocol::item_builders::build_command_execution_end_item;
 use crate::protocol::item_builders::build_file_change_approval_request_item;
 use crate::protocol::item_builders::build_file_change_begin_item;
 use crate::protocol::item_builders::build_file_change_end_item;
 use crate::protocol::item_builders::build_item_from_guardian_event;
-use crate::protocol::v2::CollabAgentState;
-use crate::protocol::v2::CollabAgentTool;
-use crate::protocol::v2::CollabAgentToolCallStatus;
-use crate::protocol::v2::CommandExecutionStatus;
-use crate::protocol::v2::DynamicToolCallOutputContentItem;
-use crate::protocol::v2::DynamicToolCallStatus;
-use crate::protocol::v2::McpToolCallError;
-use crate::protocol::v2::McpToolCallResult;
-use crate::protocol::v2::McpToolCallStatus;
-use crate::protocol::v2::ThreadItem;
-use crate::protocol::v2::Turn;
-use crate::protocol::v2::TurnError as V2TurnError;
-use crate::protocol::v2::TurnError;
-use crate::protocol::v2::TurnStatus;
-use crate::protocol::v2::UserInput;
-use crate::protocol::v2::WebSearchAction;
 use codex_protocol::items::parse_hook_prompt_message;
 use codex_protocol::models::MessagePhase;
 use codex_protocol::protocol::AgentReasoningEvent;
@@ -58,13 +58,13 @@ use tracing::warn;
 use uuid::Uuid;
 
 #[cfg(test)]
-use crate::protocol::v2::CommandAction;
+use crate::proto::domain::CommandAction;
 #[cfg(test)]
-use crate::protocol::v2::FileUpdateChange;
+use crate::proto::domain::FileUpdateChange;
 #[cfg(test)]
-use crate::protocol::v2::PatchApplyStatus;
+use crate::proto::domain::PatchApplyStatus;
 #[cfg(test)]
-use crate::protocol::v2::PatchChangeKind;
+use crate::proto::domain::PatchChangeKind;
 #[cfg(test)]
 use codex_protocol::protocol::ExecCommandStatus as CoreExecCommandStatus;
 #[cfg(test)]
@@ -256,7 +256,7 @@ impl ThreadHistoryBuilder {
             fragments: hook_prompt
                 .fragments
                 .into_iter()
-                .map(crate::protocol::v2::HookPromptFragment::from)
+                .map(crate::proto::domain::HookPromptFragment::from)
                 .collect(),
         });
     }
@@ -285,7 +285,7 @@ impl ThreadHistoryBuilder {
         &mut self,
         text: String,
         phase: Option<MessagePhase>,
-        memory_citation: Option<crate::protocol::v2::MemoryCitation>,
+        memory_citation: Option<crate::proto::domain::MemoryCitation>,
     ) {
         if text.is_empty() {
             return;
@@ -1190,7 +1190,7 @@ impl From<&PendingTurn> for Turn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::v2::CommandExecutionSource;
+    use crate::proto::domain::CommandExecutionSource;
     use codex_protocol::ThreadId;
     use codex_protocol::dynamic_tools::DynamicToolCallOutputContentItem as CoreDynamicToolCallOutputContentItem;
     use codex_protocol::items::HookPromptFragment as CoreHookPromptFragment;
@@ -2761,7 +2761,7 @@ mod tests {
                 agents_states: [(
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
-                        status: crate::protocol::v2::CollabAgentStatus::Completed,
+                        status: crate::proto::domain::CollabAgentStatus::Completed,
                         message: None,
                     },
                 )]
@@ -2818,7 +2818,7 @@ mod tests {
                 agents_states: [(
                     "00000000-0000-0000-0000-000000000002".into(),
                     CollabAgentState {
-                        status: crate::protocol::v2::CollabAgentStatus::Running,
+                        status: crate::proto::domain::CollabAgentStatus::Running,
                         message: None,
                     },
                 )]
@@ -2886,7 +2886,7 @@ mod tests {
                 agents_states: [(
                     receiver.to_string(),
                     CollabAgentState {
-                        status: crate::protocol::v2::CollabAgentStatus::Interrupted,
+                        status: crate::proto::domain::CollabAgentStatus::Interrupted,
                         message: None,
                     },
                 )]
@@ -3023,7 +3023,7 @@ mod tests {
             Some(TurnError {
                 message: "stream failure".into(),
                 codex_error_info: Some(
-                    crate::protocol::v2::CodexErrorInfo::ResponseStreamDisconnected {
+                    crate::proto::domain::CodexErrorInfo::ResponseStreamDisconnected {
                         http_status_code: Some(502),
                     }
                 ),
@@ -3071,11 +3071,11 @@ mod tests {
             ThreadItem::HookPrompt {
                 id: turns[0].items[1].id().to_string(),
                 fragments: vec![
-                    crate::protocol::v2::HookPromptFragment {
+                    crate::proto::domain::HookPromptFragment {
                         text: "Retry with tests.".into(),
                         hook_run_id: "hook-run-1".into(),
                     },
-                    crate::protocol::v2::HookPromptFragment {
+                    crate::proto::domain::HookPromptFragment {
                         text: "Then summarize cleanly.".into(),
                         hook_run_id: "hook-run-2".into(),
                     },
