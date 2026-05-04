@@ -42,19 +42,33 @@ impl UsageNudgePrefetchThreshold {
 pub(super) struct CurrentUsageLimitNudgePromptState {
     active: bool,
     pending: Option<UsageLimitNudge>,
-    has_shown: bool,
+    shown_thresholds: Vec<u8>,
     last_prefetches: Vec<(UsageNudgePrefetchKey, UsageNudgePrefetchThreshold)>,
 }
 
 impl CurrentUsageLimitNudgePromptState {
-    pub(super) fn update(&mut self, nudge: Option<UsageLimitNudge>) {
-        self.active = nudge.is_some();
-        self.pending = (!self.has_shown).then_some(nudge).flatten();
+    pub(super) fn latch(&mut self, nudge: UsageLimitNudge) {
+        // Once the backend selects a warning for this process, keep that lane
+        // latched. If this threshold has not already been shown, retain it for
+        // the next prompt slot; later sparse snapshots should not retract the
+        // already-queued soft warning.
+        self.active = true;
+        if self.shown_thresholds.contains(&nudge.threshold) {
+            return;
+        }
+        self.pending = Some(nudge);
+    }
+
+    pub(super) fn clear(&mut self) {
+        self.active = false;
+        self.pending = None;
     }
 
     pub(super) fn take_pending(&mut self) -> Option<UsageLimitNudge> {
         let nudge = self.pending.take()?;
-        self.has_shown = true;
+        if !self.shown_thresholds.contains(&nudge.threshold) {
+            self.shown_thresholds.push(nudge.threshold);
+        }
         Some(nudge)
     }
 

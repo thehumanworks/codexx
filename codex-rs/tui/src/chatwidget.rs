@@ -2902,13 +2902,12 @@ impl ChatWidget {
             self.plan_type = snapshot.plan_type.or(self.plan_type);
 
             let is_codex_limit = limit_id.eq_ignore_ascii_case("codex");
-            if is_codex_limit && matches!(source, RateLimitSnapshotSource::AuthoritativeRead) {
-                let nudge = if self.current_usage_limit_nudge_enabled() {
-                    snapshot.current_usage_limit_nudge.clone()
-                } else {
-                    None
-                };
-                self.current_usage_limit_nudge_prompt.update(nudge);
+            if is_codex_limit
+                && matches!(source, RateLimitSnapshotSource::AuthoritativeRead)
+                && self.current_usage_limit_nudge_enabled()
+                && let Some(nudge) = snapshot.current_usage_limit_nudge.clone()
+            {
+                self.current_usage_limit_nudge_prompt.latch(nudge);
             }
             if self.current_usage_limit_nudge_prompt.is_active() {
                 self.rate_limit_switch_prompt = RateLimitSwitchPromptState::Idle;
@@ -9262,7 +9261,7 @@ impl ChatWidget {
                 .set_turn_running(self.agent_turn_running);
         }
         if feature == Feature::CurrentUsageLimitNudge && !enabled {
-            self.current_usage_limit_nudge_prompt.update(None);
+            self.current_usage_limit_nudge_prompt.clear();
         }
         #[cfg(target_os = "windows")]
         if matches!(

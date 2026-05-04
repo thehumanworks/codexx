@@ -184,7 +184,7 @@ async fn stale_rate_limit_refresh_results_are_ignored() {
         /*refresh_generation*/ 1,
         RateLimitRefreshOrigin::UsageNudgePrefetch,
         Ok(vec![codex_rate_limit_snapshot(
-            /*used_percent*/ 90, None,
+            /*used_percent*/ 90, /*current_usage_limit_nudge*/ None,
         )]),
     );
 
@@ -206,7 +206,9 @@ async fn account_rate_limits_updated_prefetches_authoritative_usage_nudge_snapsh
         &app_server,
         codex_app_server_client::AppServerEvent::ServerNotification(
             ServerNotification::AccountRateLimitsUpdated(AccountRateLimitsUpdatedNotification {
-                rate_limits: codex_rate_limit_snapshot(/*used_percent*/ 75, None),
+                rate_limits: codex_rate_limit_snapshot(
+                    /*used_percent*/ 75, /*current_usage_limit_nudge*/ None,
+                ),
             }),
         ),
     )
@@ -242,7 +244,9 @@ async fn account_rate_limits_updated_does_not_clear_authoritative_usage_nudge_st
         &app_server,
         codex_app_server_client::AppServerEvent::ServerNotification(
             ServerNotification::AccountRateLimitsUpdated(AccountRateLimitsUpdatedNotification {
-                rate_limits: codex_rate_limit_snapshot(/*used_percent*/ 80, None),
+                rate_limits: codex_rate_limit_snapshot(
+                    /*used_percent*/ 80, /*current_usage_limit_nudge*/ None,
+                ),
             }),
         ),
     )

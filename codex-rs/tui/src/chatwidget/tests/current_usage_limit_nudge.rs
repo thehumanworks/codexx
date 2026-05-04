@@ -62,7 +62,7 @@ async fn proactive_usage_prompt_renders_backend_actions() {
 }
 
 #[tokio::test]
-async fn proactive_usage_prompt_shows_only_once_per_session() {
+async fn proactive_usage_prompt_shows_once_per_threshold_per_session() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.on_rate_limit_snapshot(Some(snapshot_with_nudge(
@@ -70,12 +70,19 @@ async fn proactive_usage_prompt_shows_only_once_per_session() {
         UsageLimitNudgeAction::AddCredits,
     )));
     assert!(chat.maybe_show_pending_current_usage_limit_nudge_prompt());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+    chat.on_rate_limit_snapshot(Some(snapshot_with_nudge(
+        /*threshold*/ 75,
+        UsageLimitNudgeAction::Upgrade,
+    )));
+    assert!(!chat.maybe_show_pending_current_usage_limit_nudge_prompt());
 
     chat.on_rate_limit_snapshot(Some(snapshot_with_nudge(
         /*threshold*/ 90,
         UsageLimitNudgeAction::Upgrade,
     )));
-    assert!(!chat.maybe_show_pending_current_usage_limit_nudge_prompt());
+    assert!(chat.maybe_show_pending_current_usage_limit_nudge_prompt());
 }
 
 #[tokio::test]
@@ -100,7 +107,7 @@ async fn proactive_usage_prompt_live_snapshot_does_not_clear_authoritative_pendi
 }
 
 #[tokio::test]
-async fn proactive_usage_prompt_authoritative_empty_snapshot_clears_pending_nudge() {
+async fn proactive_usage_prompt_authoritative_empty_snapshot_preserves_pending_nudge() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 
     chat.on_rate_limit_snapshot(Some(snapshot_with_nudge(
@@ -109,7 +116,7 @@ async fn proactive_usage_prompt_authoritative_empty_snapshot_clears_pending_nudg
     )));
     chat.on_rate_limit_snapshot(Some(snapshot(/*percent*/ 75.0)));
 
-    assert!(!chat.maybe_show_pending_current_usage_limit_nudge_prompt());
+    assert!(chat.maybe_show_pending_current_usage_limit_nudge_prompt());
 }
 
 #[tokio::test]
