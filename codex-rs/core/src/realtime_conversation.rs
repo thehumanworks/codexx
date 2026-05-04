@@ -52,6 +52,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::debug;
@@ -276,6 +277,7 @@ impl RealtimeConversationManager {
     }
 
     async fn start_inner(&self, start: RealtimeStart) -> CodexResult<RealtimeStartOutput> {
+        let startup_started_at = Instant::now();
         let RealtimeStart {
             api_provider,
             extra_headers,
@@ -308,6 +310,8 @@ impl RealtimeConversationManager {
 
         let client = RealtimeWebsocketClient::new(api_provider);
         let (task, sdp) = if let Some(sdp) = sdp {
+            info!(transport = "webrtc", "creating realtime call");
+            let call_started_at = Instant::now();
             let call = model_client
                 .create_realtime_call_with_headers(
                     sdp,
@@ -315,6 +319,13 @@ impl RealtimeConversationManager {
                     extra_headers.unwrap_or_default(),
                 )
                 .await?;
+            info!(
+                transport = "webrtc",
+                call_id = %call.call_id,
+                elapsed_ms = call_started_at.elapsed().as_millis() as u64,
+                total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                "realtime call created; sdp answer ready"
+            );
             let task = spawn_webrtc_sideband_input_task(RealtimeWebrtcSidebandInputTask {
                 client,
                 session_config,
@@ -326,9 +337,17 @@ impl RealtimeConversationManager {
                 session_kind,
                 event_parser,
                 realtime_active: Arc::clone(&realtime_active),
+                startup_started_at,
             });
+            info!(
+                transport = "webrtc",
+                total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                "spawned realtime sideband connection task"
+            );
             (task, Some(call.sdp))
         } else {
+            info!(transport = "websocket", "connecting realtime websocket");
+            let connect_started_at = Instant::now();
             let connection = client
                 .connect(
                     session_config,
@@ -337,6 +356,12 @@ impl RealtimeConversationManager {
                 )
                 .await
                 .map_err(map_api_error)?;
+            info!(
+                transport = "websocket",
+                elapsed_ms = connect_started_at.elapsed().as_millis() as u64,
+                total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                "connected realtime websocket"
+            );
             let task = spawn_realtime_input_task(RealtimeInputTask {
                 writer: connection.writer(),
                 events: connection.events(),
@@ -815,6 +840,7 @@ async fn handle_start_inner(
             msg: EventMsg::RealtimeConversationSdp(RealtimeConversationSdpEvent { sdp }),
         })
         .await;
+        info!("sent realtime sdp answer to client");
     }
 
     let sess_clone = Arc::clone(sess);
@@ -1028,6 +1054,7 @@ struct RealtimeWebrtcSidebandInputTask {
     session_kind: RealtimeSessionKind,
     event_parser: RealtimeEventParser,
     realtime_active: Arc<AtomicBool>,
+    startup_started_at: Instant,
 }
 
 fn spawn_webrtc_sideband_input_task(input: RealtimeWebrtcSidebandInputTask) -> JoinHandle<()> {
@@ -1042,6 +1069,7 @@ fn spawn_webrtc_sideband_input_task(input: RealtimeWebrtcSidebandInputTask) -> J
         session_kind,
         event_parser,
         realtime_active,
+        startup_started_at,
     } = input;
 
     tokio::spawn(async move {
@@ -1049,6 +1077,8 @@ fn spawn_webrtc_sideband_input_task(input: RealtimeWebrtcSidebandInputTask) -> J
             return;
         }
 
+        info!(%call_id, "connecting realtime sideband websocket");
+        let sideband_started_at = Instant::now();
         let connection = match client
             .connect_webrtc_sideband(
                 session_config,
@@ -1058,11 +1088,24 @@ fn spawn_webrtc_sideband_input_task(input: RealtimeWebrtcSidebandInputTask) -> J
             )
             .await
         {
-            Ok(connection) => connection,
+            Ok(connection) => {
+                info!(
+                    %call_id,
+                    elapsed_ms = sideband_started_at.elapsed().as_millis() as u64,
+                    total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                    "connected realtime sideband websocket"
+                );
+                connection
+            }
             Err(err) => {
                 if realtime_active.load(Ordering::Relaxed) {
                     let mapped_error = map_api_error(err);
-                    warn!("failed to connect realtime sideband: {mapped_error}");
+                    warn!(
+                        %call_id,
+                        elapsed_ms = sideband_started_at.elapsed().as_millis() as u64,
+                        total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                        "failed to connect realtime sideband: {mapped_error}"
+                    );
                     let _ = events_tx
                         .send(RealtimeEvent::Error(mapped_error.to_string()))
                         .await;
