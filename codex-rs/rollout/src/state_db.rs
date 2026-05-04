@@ -1,3 +1,4 @@
+use crate::ARCHIVED_SESSIONS_SUBDIR;
 use crate::config::RolloutConfig;
 use crate::config::RolloutConfigView;
 use crate::list::Cursor;
@@ -14,6 +15,7 @@ pub use codex_state::LogEntry;
 use codex_state::ThreadMetadataBuilder;
 use codex_utils_path::normalize_for_path_comparison;
 use serde_json::Value;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -534,6 +536,10 @@ pub async fn apply_rollout_items(
     }
     builder.rollout_path = rollout_path.to_path_buf();
     builder.cwd = normalize_cwd_for_state_db(&builder.cwd);
+    let updated_at = updated_at_override.unwrap_or_else(Utc::now);
+    if rollout_path_is_archived(rollout_path) && builder.archived_at.is_none() {
+        builder.archived_at = Some(updated_at);
+    }
     if let Err(err) = ctx
         .apply_rollout_items(&builder, items, new_thread_memory_mode, updated_at_override)
         .await
@@ -542,7 +548,23 @@ pub async fn apply_rollout_items(
             "state db apply_rollout_items failed during {stage} for {}: {err}",
             rollout_path.display()
         );
+        return;
     }
+    if rollout_path_is_archived(rollout_path)
+        && let Err(err) = ctx
+            .mark_archived(builder.id, rollout_path, updated_at)
+            .await
+    {
+        warn!(
+            "state db apply_rollout_items failed to preserve archived status during {stage} for {}: {err}",
+            rollout_path.display()
+        );
+    }
+}
+
+fn rollout_path_is_archived(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == OsStr::new(ARCHIVED_SESSIONS_SUBDIR))
 }
 
 pub async fn touch_thread_updated_at(

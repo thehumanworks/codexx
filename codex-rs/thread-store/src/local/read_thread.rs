@@ -31,6 +31,19 @@ pub(super) async fn read_thread(
     params: ReadThreadParams,
 ) -> ThreadStoreResult<StoredThread> {
     let thread_id = params.thread_id;
+    if let Ok(rollout_path) = live_writer::rollout_path(store, thread_id).await {
+        if !params.include_archived
+            && rollout_path_is_archived(store.config.codex_home.as_path(), rollout_path.as_path())
+        {
+            return Err(ThreadStoreError::InvalidRequest {
+                message: format!("thread {thread_id} is archived"),
+            });
+        }
+        let mut thread = read_thread_from_rollout_path(store, rollout_path).await?;
+        attach_history_if_requested(&mut thread, params.include_history).await?;
+        return Ok(thread);
+    }
+
     if let Some(metadata) = read_sqlite_metadata(store, thread_id).await
         && (params.include_archived
             || (metadata.archived_at.is_none()
@@ -69,6 +82,13 @@ pub(super) async fn read_thread(
         .ok_or_else(|| ThreadStoreError::InvalidRequest {
             message: format!("no rollout found for thread id {thread_id}"),
         })?;
+    if !params.include_archived
+        && rollout_path_is_archived(store.config.codex_home.as_path(), path.as_path())
+    {
+        return Err(ThreadStoreError::InvalidRequest {
+            message: format!("thread {thread_id} is archived"),
+        });
+    }
 
     let mut thread = read_thread_from_rollout_path(store, path).await?;
     attach_history_if_requested(&mut thread, params.include_history).await?;

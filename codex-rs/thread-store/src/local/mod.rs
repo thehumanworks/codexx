@@ -664,6 +664,18 @@ mod tests {
             .flush_thread(thread_id)
             .await
             .expect("flush live thread");
+        assert!(
+            store
+                .state_db()
+                .await
+                .expect("state db")
+                .get_thread(thread_id)
+                .await
+                .expect("read state db metadata")
+                .expect("state db metadata")
+                .archived_at
+                .is_some()
+        );
 
         let err = store
             .read_thread(ReadThreadParams {
