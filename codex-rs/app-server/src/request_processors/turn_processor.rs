@@ -148,10 +148,19 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: ReviewStartParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.review_start_inner(request_id, params)
-            .await
-            .map(|()| None)
+        self.review_start_inner(
+            request_id,
+            params,
+            app_server_client_name,
+            app_server_client_version,
+            client_compatibility_flags,
+        )
+        .await
+        .map(|()| None)
     }
 
     fn track_error_response(
@@ -871,6 +880,7 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         parent_thread_id: ThreadId,
         parent_thread: Arc<CodexThread>,
+        client_compatibility_flags: ClientCompatibilityFlags,
         review_request: ReviewRequest,
         display_text: &str,
     ) -> std::result::Result<(), JSONRPCErrorError> {
@@ -890,7 +900,7 @@ impl TurnRequestProcessor {
         };
 
         let mut config = self.config.as_ref().clone();
-        config.client_compatibility_flags = parent_thread.config().await.client_compatibility_flags;
+        config.client_compatibility_flags = client_compatibility_flags;
         if let Some(review_model) = &config.review_model {
             config.model = Some(review_model.clone());
         }
@@ -983,6 +993,9 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: ReviewStartParams,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+        client_compatibility_flags: ClientCompatibilityFlags,
     ) -> Result<(), JSONRPCErrorError> {
         let ReviewStartParams {
             thread_id,
@@ -991,6 +1004,13 @@ impl TurnRequestProcessor {
         } = params;
 
         let (parent_thread_id, parent_thread) = self.load_thread(&thread_id).await?;
+        parent_thread
+            .set_app_server_client_info(
+                app_server_client_name,
+                app_server_client_version,
+                client_compatibility_flags,
+            )
+            .await;
         let (review_request, display_text) = Self::review_request_from_target(target)?;
         match delivery.unwrap_or(ApiReviewDelivery::Inline).to_core() {
             CoreReviewDelivery::Inline => {
@@ -1008,6 +1028,7 @@ impl TurnRequestProcessor {
                     request_id,
                     parent_thread_id,
                     parent_thread,
+                    client_compatibility_flags,
                     review_request,
                     display_text.as_str(),
                 )
