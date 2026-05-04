@@ -29,8 +29,7 @@ use toml::Value as TomlValue;
 #[serde(untagged)]
 enum LenientEnum<T> {
     Known(T),
-    Unknown(String),
-    Other(TomlValue),
+    Unknown(TomlValue),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,10 +130,10 @@ where
         };
         match value.try_into::<LenientEnum<T>>() {
             Ok(LenientEnum::Known(_)) => {}
-            Ok(LenientEnum::Unknown(raw_value)) => {
+            Ok(LenientEnum::Unknown(TomlValue::String(raw_value))) => {
                 warn_and_remove(root, &value_path, &value_path, &raw_value, warnings);
             }
-            Ok(LenientEnum::Other(_)) | Err(_) => {}
+            Ok(LenientEnum::Unknown(_)) | Err(_) => {}
         };
     }
 }
@@ -156,7 +155,7 @@ fn sanitize_tagged_enum<T>(
         };
         match value.try_into::<LenientEnum<T>>() {
             Ok(LenientEnum::Known(_)) => {}
-            Ok(LenientEnum::Other(table_value)) => {
+            Ok(LenientEnum::Unknown(table_value)) => {
                 let Some(raw_value) = table_value
                     .get(tag_key)
                     .and_then(TomlValue::as_str)
@@ -166,7 +165,7 @@ fn sanitize_tagged_enum<T>(
                 };
                 warn_and_remove(root, &tag_path, &parent_path, &raw_value, warnings);
             }
-            Ok(LenientEnum::Unknown(_)) | Err(_) => {}
+            Err(_) => {}
         };
     }
 }
