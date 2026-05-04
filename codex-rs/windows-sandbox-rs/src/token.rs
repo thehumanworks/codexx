@@ -398,6 +398,40 @@ pub unsafe fn create_readonly_token_with_caps_and_user_from(
     create_token_with_caps_from(base_token, psid_capabilities, &[psid_user])
 }
 
+fn build_restricted_sid_entries(
+    psid_capabilities: &[*mut c_void],
+    extra_restricting_sids: &[*mut c_void],
+    psid_logon: *mut c_void,
+) -> Vec<SID_AND_ATTRIBUTES> {
+    let mut entries: Vec<SID_AND_ATTRIBUTES> =
+        vec![unsafe { std::mem::zeroed() }; psid_capabilities.len() + extra_restricting_sids.len() + 1];
+    for (i, psid) in psid_capabilities.iter().enumerate() {
+        entries[i].Sid = *psid;
+        entries[i].Attributes = 0;
+    }
+    let extras_idx = psid_capabilities.len();
+    for (i, psid) in extra_restricting_sids.iter().enumerate() {
+        entries[extras_idx + i].Sid = *psid;
+        entries[extras_idx + i].Attributes = 0;
+    }
+    let logon_idx = extras_idx + extra_restricting_sids.len();
+    entries[logon_idx].Sid = psid_logon;
+    entries[logon_idx].Attributes = 0;
+    entries
+}
+
+fn build_default_dacl_sids(
+    psid_capabilities: &[*mut c_void],
+    psid_logon: *mut c_void,
+    psid_everyone: *mut c_void,
+) -> Vec<*mut c_void> {
+    let mut dacl_sids: Vec<*mut c_void> = Vec::with_capacity(psid_capabilities.len() + 2);
+    dacl_sids.push(psid_logon);
+    dacl_sids.push(psid_everyone);
+    dacl_sids.extend_from_slice(psid_capabilities);
+    dacl_sids
+}
+
 unsafe fn create_token_with_caps_from(
     base_token: HANDLE,
     psid_capabilities: &[*mut c_void],
@@ -411,23 +445,11 @@ unsafe fn create_token_with_caps_from(
     let mut everyone = world_sid()?;
     let psid_everyone = everyone.as_mut_ptr() as *mut c_void;
 
-    // Exact order: Capabilities..., ExtraRestricting..., Logon, Everyone
-    let mut entries: Vec<SID_AND_ATTRIBUTES> =
-        vec![std::mem::zeroed(); psid_capabilities.len() + extra_restricting_sids.len() + 2];
-    for (i, psid) in psid_capabilities.iter().enumerate() {
-        entries[i].Sid = *psid;
-        entries[i].Attributes = 0;
-    }
-    let extras_idx = psid_capabilities.len();
-    for (i, psid) in extra_restricting_sids.iter().enumerate() {
-        entries[extras_idx + i].Sid = *psid;
-        entries[extras_idx + i].Attributes = 0;
-    }
-    let logon_idx = extras_idx + extra_restricting_sids.len();
-    entries[logon_idx].Sid = psid_logon;
-    entries[logon_idx].Attributes = 0;
-    entries[logon_idx + 1].Sid = psid_everyone;
-    entries[logon_idx + 1].Attributes = 0;
+    // Keep Everyone on the default DACL for IPC compatibility, but do not include it as a
+    // restricting SID. Otherwise broadly writable locations outside the explicit capability
+    // roots can stay mutable under the write-restricted token.
+    let mut entries =
+        build_restricted_sid_entries(psid_capabilities, extra_restricting_sids, psid_logon);
 
     let mut new_token: HANDLE = 0;
     let flags = DISABLE_MAX_PRIVILEGE | LUA_TOKEN | WRITE_RESTRICTED;
@@ -446,12 +468,45 @@ unsafe fn create_token_with_caps_from(
         return Err(anyhow!("CreateRestrictedToken failed: {}", GetLastError()));
     }
 
-    let mut dacl_sids: Vec<*mut c_void> = Vec::with_capacity(psid_capabilities.len() + 2);
-    dacl_sids.push(psid_logon);
-    dacl_sids.push(psid_everyone);
-    dacl_sids.extend_from_slice(psid_capabilities);
+    let dacl_sids = build_default_dacl_sids(psid_capabilities, psid_logon, psid_everyone);
     set_default_dacl(new_token, &dacl_sids)?;
 
     enable_single_privilege(new_token, "SeChangeNotifyPrivilege")?;
     Ok(new_token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_default_dacl_sids;
+    use super::build_restricted_sid_entries;
+    use std::ffi::c_void;
+
+    fn fake_ptr(value: usize) -> *mut c_void {
+        value as *mut c_void
+    }
+
+    #[test]
+    fn restricted_sids_exclude_everyone() {
+        let caps = [fake_ptr(0x10), fake_ptr(0x20)];
+        let extras = [fake_ptr(0x30)];
+        let logon = fake_ptr(0x40);
+        let everyone = fake_ptr(0x50);
+
+        let entries = build_restricted_sid_entries(&caps, &extras, logon);
+        let restricted: Vec<*mut c_void> = entries.iter().map(|entry| entry.Sid).collect();
+
+        assert_eq!(restricted, vec![caps[0], caps[1], extras[0], logon]);
+        assert!(!restricted.contains(&everyone));
+    }
+
+    #[test]
+    fn default_dacl_keeps_everyone_for_ipc_compatibility() {
+        let caps = [fake_ptr(0x10), fake_ptr(0x20)];
+        let logon = fake_ptr(0x30);
+        let everyone = fake_ptr(0x40);
+
+        let dacl_sids = build_default_dacl_sids(&caps, logon, everyone);
+
+        assert_eq!(dacl_sids, vec![logon, everyone, caps[0], caps[1]]);
+    }
 }
