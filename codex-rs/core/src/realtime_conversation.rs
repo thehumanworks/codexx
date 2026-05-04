@@ -52,6 +52,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
+use std::time::Instant;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tracing::debug;
@@ -271,6 +272,7 @@ impl RealtimeConversationManager {
     }
 
     async fn start_inner(&self, start: RealtimeStart) -> CodexResult<RealtimeStartOutput> {
+        let startup_started_at = Instant::now();
         let RealtimeStart {
             api_provider,
             extra_headers,
@@ -286,6 +288,8 @@ impl RealtimeConversationManager {
 
         let client = RealtimeWebsocketClient::new(api_provider);
         let (connection, sdp) = if let Some(sdp) = sdp {
+            info!(transport = "webrtc", "creating realtime call");
+            let call_started_at = Instant::now();
             let call = model_client
                 .create_realtime_call_with_headers(
                     sdp,
@@ -293,7 +297,16 @@ impl RealtimeConversationManager {
                     extra_headers.unwrap_or_default(),
                 )
                 .await?;
-            let connection = client
+            info!(
+                transport = "webrtc",
+                call_id = %call.call_id,
+                elapsed_ms = call_started_at.elapsed().as_millis() as u64,
+                total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                "realtime call created; sdp answer ready"
+            );
+            info!(call_id = %call.call_id, "connecting realtime sideband websocket");
+            let sideband_started_at = Instant::now();
+            let connection = match client
                 .connect_webrtc_sideband(
                     session_config,
                     &call.call_id,
@@ -301,9 +314,31 @@ impl RealtimeConversationManager {
                     default_headers(),
                 )
                 .await
-                .map_err(map_api_error)?;
+            {
+                Ok(connection) => {
+                    info!(
+                        call_id = %call.call_id,
+                        elapsed_ms = sideband_started_at.elapsed().as_millis() as u64,
+                        total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                        "connected realtime sideband websocket"
+                    );
+                    connection
+                }
+                Err(err) => {
+                    let mapped_error = map_api_error(err);
+                    warn!(
+                        call_id = %call.call_id,
+                        elapsed_ms = sideband_started_at.elapsed().as_millis() as u64,
+                        total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                        "failed to connect realtime sideband: {mapped_error}"
+                    );
+                    return Err(mapped_error);
+                }
+            };
             (connection, Some(call.sdp))
         } else {
+            info!(transport = "websocket", "connecting realtime websocket");
+            let connect_started_at = Instant::now();
             let connection = client
                 .connect(
                     session_config,
@@ -312,6 +347,12 @@ impl RealtimeConversationManager {
                 )
                 .await
                 .map_err(map_api_error)?;
+            info!(
+                transport = "websocket",
+                elapsed_ms = connect_started_at.elapsed().as_millis() as u64,
+                total_elapsed_ms = startup_started_at.elapsed().as_millis() as u64,
+                "connected realtime websocket"
+            );
             (connection, None)
         };
 
@@ -583,6 +624,7 @@ pub(crate) async fn handle_start(
             }),
         })
         .await;
+        info!("sent realtime sdp answer to client");
     }
     Ok(())
 }
