@@ -2639,13 +2639,7 @@ async fn spawn_agent_allows_depth_up_to_configured_max_depth() {
 }
 
 #[tokio::test]
-async fn multi_agent_v2_spawn_agent_ignores_configured_max_depth() {
-    #[derive(Debug, Deserialize)]
-    struct SpawnAgentResult {
-        task_name: String,
-        nickname: Option<String>,
-    }
-
+async fn multi_agent_v2_spawn_agent_rejects_when_depth_limit_exceeded() {
     let (mut session, mut turn) = make_session_and_context().await;
     let manager = thread_manager();
     let mut config = (*turn.config).clone();
@@ -2680,16 +2674,15 @@ async fn multi_agent_v2_spawn_agent_ignores_configured_max_depth() {
             "fork_turns": "none"
         })),
     );
-    let output = SpawnAgentHandlerV2
-        .handle(invocation)
-        .await
-        .expect("multi-agent v2 spawn should ignore max depth");
-    let (content, success) = expect_text_output(output);
-    let result: SpawnAgentResult =
-        serde_json::from_str(&content).expect("spawn_agent result should be json");
-    assert_eq!(result.task_name, "/root/parent/child");
-    assert!(result.nickname.is_some());
-    assert_eq!(success, Some(true));
+    let Err(err) = SpawnAgentHandlerV2.handle(invocation).await else {
+        panic!("multi-agent v2 spawn should fail when depth limit exceeded");
+    };
+    assert_eq!(
+        err,
+        FunctionCallError::RespondToModel(
+            "Agent depth limit reached. Solve the task yourself.".to_string()
+        )
+    );
 }
 
 #[tokio::test]
