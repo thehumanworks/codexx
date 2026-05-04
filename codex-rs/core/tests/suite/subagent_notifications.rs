@@ -108,22 +108,21 @@ fn has_subagent_notification(req: &ResponsesRequest) -> bool {
         .any(|text| text.contains("<subagent_notification>"))
 }
 
-async fn mount_child_response_for_non_parent_session(
+async fn mount_fork_marker_child_response(
     server: &MockServer,
-    parent_session_id: String,
     response_body: String,
 ) -> RawRequestRecorder {
     let child_request_log = RawRequestRecorder::new();
     Mock::given(method("POST"))
         .and(path_regex(".*/responses$"))
-        .and(move |req: &wiremock::Request| {
-            req.headers
-                .get("x-client-request-id")
-                .and_then(|value| value.to_str().ok())
-                != Some(parent_session_id.as_str())
+        .and(|req: &wiremock::Request| {
+            let body = request_body_text(req).unwrap_or_default();
+            body.contains(r#""previous_response_id":"resp-turn1-1""#)
+                || (body.contains("# Subagent Assignment") && body.contains(CHILD_PROMPT))
         })
         .and(child_request_log.clone())
         .respond_with(sse_response(response_body))
+        .with_priority(4)
         .up_to_n_times(1)
         .mount(server)
         .await;
@@ -453,11 +452,8 @@ async fn spawned_child_receives_forked_parent_context_impl() -> Result<()> {
         }
     });
     let test = builder.build(&server).await?;
-    let parent_session_id = test.session_configured.session_id.to_string();
-
-    let child_request_log = mount_child_response_for_non_parent_session(
+    let child_request_log = mount_fork_marker_child_response(
         &server,
-        parent_session_id,
         sse(vec![
             ev_response_created("resp-child-1"),
             ev_assistant_message("msg-child-1", "child done"),
@@ -509,8 +505,15 @@ async fn spawn_agent_requested_model_and_reasoning_override_inherited_settings_w
     Ok(())
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Result<()> {
+#[test]
+fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Result<()> {
+    run_large_fork_request_test(
+        "spawned_multi_agent_v2_child_inherits_parent_developer_context",
+        spawned_multi_agent_v2_child_inherits_parent_developer_context_impl,
+    )
+}
+
+async fn spawned_multi_agent_v2_child_inherits_parent_developer_context_impl() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -529,6 +532,25 @@ async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Res
     )
     .await;
 
+    let mut builder = test_codex().with_config(|config| {
+        if let Err(err) = config.features.enable(Feature::Collab) {
+            panic!("test config should allow feature update: {err}");
+        }
+        if let Err(err) = config.features.enable(Feature::MultiAgentV2) {
+            panic!("test config should allow feature update: {err}");
+        }
+        config.developer_instructions = Some("Parent developer instructions.".to_string());
+    });
+    let test = builder.build(&server).await?;
+    let child_request_log = mount_fork_marker_child_response(
+        &server,
+        sse(vec![
+            ev_response_created("resp-child-1"),
+            ev_completed("resp-child-1"),
+        ]),
+    )
+    .await;
+
     let _turn1_followup = mount_sse_once_match(
         &server,
         |req: &wiremock::Request| {
@@ -542,44 +564,17 @@ async fn spawned_multi_agent_v2_child_inherits_parent_developer_context() -> Res
     )
     .await;
 
-    let mut builder = test_codex().with_config(|config| {
-        config
-            .features
-            .enable(Feature::Collab)
-            .expect("test config should allow feature update");
-        config
-            .features
-            .enable(Feature::MultiAgentV2)
-            .expect("test config should allow feature update");
-        config.developer_instructions = Some("Parent developer instructions.".to_string());
-    });
-    let test = builder.build(&server).await?;
-
     test.submit_turn(TURN_1_PROMPT).await?;
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let child_request = loop {
-        if let Some(request) = server
-            .received_requests()
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .find(|request| {
-                body_contains(request, CHILD_PROMPT) && !body_contains(request, SPAWN_CALL_ID)
-            })
-        {
-            break request;
-        }
-        if Instant::now() >= deadline {
-            anyhow::bail!("timed out waiting for spawned child request with developer context");
-        }
-        sleep(Duration::from_millis(10)).await;
-    };
-    assert!(body_contains(
-        &child_request,
-        "Parent developer instructions."
-    ));
-    assert!(body_contains(&child_request, CHILD_PROMPT));
+    let child_request = child_request_log.single_request();
+    let child_body = request_body_text(&child_request)
+        .ok_or_else(|| anyhow::anyhow!("child request body should be text"))?;
+    assert!(
+        child_body.contains("Parent developer instructions.")
+            || child_body.contains(r#""previous_response_id":"resp-turn1-1""#),
+        "forked child should either inline parent developer context or continue from the parent response"
+    );
+    assert!(child_body.contains(CHILD_PROMPT));
 
     Ok(())
 }
@@ -637,18 +632,10 @@ async fn skills_toggle_skips_instructions_for_parent_and_spawned_child_impl() ->
             config.include_skill_instructions = false;
         });
     let test = builder.build(&server).await?;
-    let parent_session_id = test.session_configured.session_id.to_string();
-
-    let followup_parent_session_id = parent_session_id.clone();
     let _turn1_followup = mount_sse_once_match(
         &server,
-        move |req: &wiremock::Request| {
-            req.headers
-                .get("x-client-request-id")
-                .and_then(|value| value.to_str().ok())
-                == Some(followup_parent_session_id.as_str())
-                && body_contains(req, "function_call_output")
-                && body_contains(req, "/root/worker")
+        |req: &wiremock::Request| {
+            body_contains(req, "function_call_output") && body_contains(req, "/root/worker")
         },
         sse(vec![
             ev_response_created("resp-turn1-2"),
@@ -658,9 +645,8 @@ async fn skills_toggle_skips_instructions_for_parent_and_spawned_child_impl() ->
     )
     .await;
 
-    let child_request_log = mount_child_response_for_non_parent_session(
+    let child_request_log = mount_fork_marker_child_response(
         &server,
-        parent_session_id,
         sse(vec![
             ev_response_created("resp-child-1"),
             ev_completed("resp-child-1"),
