@@ -8,7 +8,6 @@ use std::sync::atomic::AtomicU64;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
-use crate::ClientCompatibilityFlags;
 use crate::agent::AgentControl;
 use crate::agent::AgentStatus;
 use crate::agent::Mailbox;
@@ -750,19 +749,14 @@ impl Codex {
         &self,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
-    ) {
-        {
-            let mut state = self.session.state.lock().await;
-            state.session_configuration.app_server_client_name = app_server_client_name;
-            state.session_configuration.app_server_client_version = app_server_client_version;
-            let mut config = (*state.session_configuration.original_config_do_not_use).clone();
-            config.client_compatibility_flags = client_compatibility_flags;
-            state.session_configuration.original_config_do_not_use = Arc::new(config);
-        }
-        let mcp_connection_manager = self.session.services.mcp_connection_manager.read().await;
-        mcp_connection_manager
-            .set_elicitation_compatibility(client_compatibility_flags.mcp_elicitation);
+    ) -> ConstraintResult<()> {
+        self.session
+            .update_settings(SessionSettingsUpdate {
+                app_server_client_name,
+                app_server_client_version,
+                ..Default::default()
+            })
+            .await
     }
 
     pub(crate) async fn agent_status(&self) -> AgentStatus {

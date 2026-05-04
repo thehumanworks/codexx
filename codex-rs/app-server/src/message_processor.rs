@@ -189,6 +189,7 @@ pub(crate) struct InitializedConnectionSessionState {
     pub(crate) opted_out_notification_methods: HashSet<String>,
     pub(crate) app_server_client_name: String,
     pub(crate) client_version: String,
+    pub(crate) client_compatibility_flags: ClientCompatibilityFlags,
 }
 
 fn client_compatibility_flags_for_app_server_client(
@@ -213,6 +214,27 @@ fn client_compatibility_flags_for_app_server_client(
 impl Default for ConnectionSessionState {
     fn default() -> Self {
         Self::new(ConnectionOrigin::WebSocket)
+    }
+}
+
+impl InitializedConnectionSessionState {
+    pub(crate) fn new(
+        experimental_api_enabled: bool,
+        opted_out_notification_methods: HashSet<String>,
+        app_server_client_name: String,
+        client_version: String,
+    ) -> Self {
+        let client_compatibility_flags = client_compatibility_flags_for_app_server_client(
+            &app_server_client_name,
+            &client_version,
+        );
+        Self {
+            experimental_api_enabled,
+            opted_out_notification_methods,
+            app_server_client_name,
+            client_version,
+            client_compatibility_flags,
+        }
     }
 }
 
@@ -261,12 +283,7 @@ impl ConnectionSessionState {
     pub(crate) fn client_compatibility_flags(&self) -> ClientCompatibilityFlags {
         self.initialized
             .get()
-            .map(|session| {
-                client_compatibility_flags_for_app_server_client(
-                    &session.app_server_client_name,
-                    &session.client_version,
-                )
-            })
+            .map(|session| session.client_compatibility_flags)
             .unwrap_or_default()
     }
 
@@ -789,12 +806,10 @@ impl MessageProcessor {
         );
 
         let serialization_scope = codex_request.serialization_scope();
-        let app_server_client_name = session.app_server_client_name().map(str::to_string);
-        let client_version = session.client_version().map(str::to_string);
-        let client_compatibility_flags = session.client_compatibility_flags();
         let device_key_requests_allowed = session.allows_device_key_requests();
         let error_request_id = connection_request_id.clone();
         let rpc_gate = Arc::clone(&session.rpc_gate);
+        let client_session = Arc::clone(&session);
         let processor = Arc::clone(self);
         let span = request_context.span();
         let request = QueuedInitializedRequest::new(
@@ -806,9 +821,7 @@ impl MessageProcessor {
                         connection_request_id,
                         codex_request,
                         request_context,
-                        app_server_client_name,
-                        client_version,
-                        client_compatibility_flags,
+                        client_session,
                         device_key_requests_allowed,
                     )
                     .await;
@@ -832,15 +845,12 @@ impl MessageProcessor {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn handle_initialized_client_request(
         self: Arc<Self>,
         connection_request_id: ConnectionRequestId,
         codex_request: ClientRequest,
         request_context: RequestContext,
-        app_server_client_name: Option<String>,
-        client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: Arc<ConnectionSessionState>,
         device_key_requests_allowed: bool,
     ) -> Result<(), JSONRPCErrorError> {
         let connection_id = connection_request_id.connection_id;
@@ -848,7 +858,6 @@ impl MessageProcessor {
             connection_id,
             request_id: codex_request.id().clone(),
         };
-
         let result: Result<Option<ClientResponsePayload>, JSONRPCErrorError> = match codex_request {
             ClientRequest::Initialize { .. } => {
                 panic!("Initialize should be handled before initialized request dispatch");
@@ -963,9 +972,7 @@ impl MessageProcessor {
                     .thread_start(
                         request_id.clone(),
                         params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
-                        client_compatibility_flags,
+                        client_session.as_ref(),
                         request_context,
                     )
                     .await
@@ -977,12 +984,12 @@ impl MessageProcessor {
             }
             ClientRequest::ThreadResume { params, .. } => {
                 self.thread_processor
-                    .thread_resume(request_id.clone(), params, client_compatibility_flags)
+                    .thread_resume(request_id.clone(), params, client_session.as_ref())
                     .await
             }
             ClientRequest::ThreadFork { params, .. } => {
                 self.thread_processor
-                    .thread_fork(request_id.clone(), params, client_compatibility_flags)
+                    .thread_fork(request_id.clone(), params, client_session.as_ref())
                     .await
             }
             ClientRequest::ThreadArchive { params, .. } => {
@@ -1133,13 +1140,7 @@ impl MessageProcessor {
             }
             ClientRequest::TurnStart { params, .. } => {
                 self.turn_processor
-                    .turn_start(
-                        request_id.clone(),
-                        params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
-                        client_compatibility_flags,
-                    )
+                    .turn_start(request_id.clone(), params, client_session.as_ref())
                     .await
             }
             ClientRequest::ThreadInjectItems { params, .. } => {
@@ -1178,13 +1179,7 @@ impl MessageProcessor {
             }
             ClientRequest::ReviewStart { params, .. } => {
                 self.turn_processor
-                    .review_start(
-                        &request_id,
-                        params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
-                        client_compatibility_flags,
-                    )
+                    .review_start(&request_id, params, client_session.as_ref())
                     .await
             }
             ClientRequest::McpServerOauthLogin { params, .. } => {
@@ -1195,29 +1190,17 @@ impl MessageProcessor {
             }
             ClientRequest::McpServerStatusList { params, .. } => {
                 self.mcp_processor
-                    .mcp_server_status_list(&request_id, params, client_compatibility_flags)
+                    .mcp_server_status_list(&request_id, params, client_session.as_ref())
                     .await
             }
             ClientRequest::McpResourceRead { params, .. } => {
                 self.mcp_processor
-                    .mcp_resource_read(
-                        &request_id,
-                        params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
-                        client_compatibility_flags,
-                    )
+                    .mcp_resource_read(&request_id, params, client_session.as_ref())
                     .await
             }
             ClientRequest::McpServerToolCall { params, .. } => {
                 self.mcp_processor
-                    .mcp_server_tool_call(
-                        &request_id,
-                        params,
-                        app_server_client_name.clone(),
-                        client_version.clone(),
-                        client_compatibility_flags,
-                    )
+                    .mcp_server_tool_call(&request_id, params)
                     .await
             }
             ClientRequest::WindowsSandboxSetupStart { params, .. } => {

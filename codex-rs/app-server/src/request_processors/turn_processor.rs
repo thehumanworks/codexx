@@ -49,19 +49,11 @@ impl TurnRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: TurnStartParams,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.turn_start_inner(
-            request_id,
-            params,
-            app_server_client_name,
-            app_server_client_version,
-            client_compatibility_flags,
-        )
-        .await
-        .map(|response| Some(response.into()))
+        self.turn_start_inner(request_id, params, client_session)
+            .await
+            .map(|response| Some(response.into()))
     }
 
     pub(crate) async fn thread_inject_items(
@@ -148,19 +140,11 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: ReviewStartParams,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.review_start_inner(
-            request_id,
-            params,
-            app_server_client_name,
-            app_server_client_version,
-            client_compatibility_flags,
-        )
-        .await
-        .map(|()| None)
+        self.review_start_inner(request_id, params, client_session)
+            .await
+            .map(|()| None)
     }
 
     fn track_error_response(
@@ -341,9 +325,7 @@ impl TurnRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: TurnStartParams,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<TurnStartResponse, JSONRPCErrorError> {
         if let Err(error) = Self::validate_v2_input_limit(&params.input) {
             self.track_error_response(
@@ -359,13 +341,15 @@ impl TurnRequestProcessor {
                 .inspect_err(|error| {
                     self.track_error_response(&request_id, error, /*error_type*/ None);
                 })?;
-        thread
-            .set_app_server_client_info(
-                app_server_client_name,
-                app_server_client_version,
-                client_compatibility_flags,
-            )
-            .await;
+        Self::set_app_server_client_info(
+            thread.as_ref(),
+            client_session.app_server_client_name().map(str::to_string),
+            client_session.client_version().map(str::to_string),
+        )
+        .await
+        .inspect_err(|error| {
+            self.track_error_response(&request_id, error, /*error_type*/ None);
+        })?;
 
         let collaboration_mode = params
             .collaboration_mode
@@ -564,6 +548,21 @@ impl TurnRequestProcessor {
                 err => internal_error(format!("failed to inject response items: {err}")),
             })?;
         Ok(ThreadInjectItemsResponse {})
+    }
+
+    async fn set_app_server_client_info(
+        thread: &CodexThread,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+    ) -> Result<(), JSONRPCErrorError> {
+        thread
+            .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .await
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to set app server client info: {err}"),
+                data: None,
+            })
     }
 
     async fn turn_steer_inner(
@@ -880,7 +879,7 @@ impl TurnRequestProcessor {
         request_id: &ConnectionRequestId,
         parent_thread_id: ThreadId,
         parent_thread: Arc<CodexThread>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
         review_request: ReviewRequest,
         display_text: &str,
     ) -> std::result::Result<(), JSONRPCErrorError> {
@@ -900,7 +899,7 @@ impl TurnRequestProcessor {
         };
 
         let mut config = self.config.as_ref().clone();
-        config.client_compatibility_flags = client_compatibility_flags;
+        apply_client_compatibility(&mut config, client_session);
         if let Some(review_model) = &config.review_model {
             config.model = Some(review_model.clone());
         }
@@ -993,9 +992,7 @@ impl TurnRequestProcessor {
         &self,
         request_id: &ConnectionRequestId,
         params: ReviewStartParams,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<(), JSONRPCErrorError> {
         let ReviewStartParams {
             thread_id,
@@ -1004,13 +1001,6 @@ impl TurnRequestProcessor {
         } = params;
 
         let (parent_thread_id, parent_thread) = self.load_thread(&thread_id).await?;
-        parent_thread
-            .set_app_server_client_info(
-                app_server_client_name,
-                app_server_client_version,
-                client_compatibility_flags,
-            )
-            .await;
         let (review_request, display_text) = Self::review_request_from_target(target)?;
         match delivery.unwrap_or(ApiReviewDelivery::Inline).to_core() {
             CoreReviewDelivery::Inline => {
@@ -1028,7 +1018,7 @@ impl TurnRequestProcessor {
                     request_id,
                     parent_thread_id,
                     parent_thread,
-                    client_compatibility_flags,
+                    client_session,
                     review_request,
                     display_text.as_str(),
                 )

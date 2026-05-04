@@ -1,4 +1,3 @@
-use crate::ClientCompatibilityFlags;
 use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
 use crate::file_watcher::WatchRegistration;
@@ -219,14 +218,9 @@ impl CodexThread {
         &self,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
-    ) {
+    ) -> ConstraintResult<()> {
         self.codex
-            .set_app_server_client_info(
-                app_server_client_name,
-                app_server_client_version,
-                client_compatibility_flags,
-            )
+            .set_app_server_client_info(app_server_client_name, app_server_client_version)
             .await
     }
 

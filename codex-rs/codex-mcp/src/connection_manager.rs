@@ -17,7 +17,6 @@ use crate::codex_apps::CodexAppsToolsCacheContext;
 use crate::codex_apps::CodexAppsToolsCacheKey;
 use crate::codex_apps::write_cached_codex_apps_tools_if_needed;
 use crate::elicitation::ElicitationRequestManager;
-use crate::elicitation::McpElicitationCompatibility;
 use crate::mcp::CODEX_APPS_MCP_SERVER_NAME;
 use crate::mcp::ToolPluginProvenance;
 use crate::rmcp_client::AsyncManagedClient;
@@ -129,12 +128,6 @@ impl McpConnectionManager {
         }
     }
 
-    pub fn set_elicitation_compatibility(&self, compatibility: McpElicitationCompatibility) {
-        if let Ok(mut manager_compatibility) = self.elicitation_requests.compatibility.lock() {
-            *manager_compatibility = compatibility;
-        }
-    }
-
     #[allow(clippy::new_ret_no_self, clippy::too_many_arguments)]
     pub async fn new(
         mcp_servers: &HashMap<String, McpServerConfig>,
@@ -149,7 +142,7 @@ impl McpConnectionManager {
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
         tool_plugin_provenance: ToolPluginProvenance,
         auth: Option<&CodexAuth>,
-        elicitation_compatibility: McpElicitationCompatibility,
+        elicitation_compatibility: crate::elicitation::McpElicitationCompatibility,
     ) -> (Self, CancellationToken) {
         let cancel_token = CancellationToken::new();
         let mut clients = HashMap::new();

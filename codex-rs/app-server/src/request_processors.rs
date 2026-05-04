@@ -461,6 +461,7 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::filters::compute_source_filters;
 use crate::filters::source_kind_matches;
+use crate::message_processor::ConnectionSessionState;
 use crate::thread_state::ThreadListenerCommand;
 use crate::thread_state::ThreadState;
 use crate::thread_state::ThreadStateManager;
@@ -482,6 +483,10 @@ use self::thread_summary::*;
 pub(crate) use self::thread_summary::read_rollout_items_from_rollout;
 pub(crate) use self::thread_summary::read_summary_from_rollout;
 pub(crate) use self::thread_summary::summary_to_thread;
+
+fn apply_client_compatibility(config: &mut Config, session: &ConnectionSessionState) {
+    config.client_compatibility_flags = session.client_compatibility_flags();
+}
 
 pub(crate) fn build_api_turns_from_rollout_items(items: &[RolloutItem]) -> Vec<Turn> {
     let mut builder = ThreadHistoryBuilder::new();

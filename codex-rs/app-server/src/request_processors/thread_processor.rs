@@ -301,21 +301,12 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadStartParams,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
         request_context: RequestContext,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_start_inner(
-            request_id,
-            params,
-            app_server_client_name,
-            app_server_client_version,
-            client_compatibility_flags,
-            request_context,
-        )
-        .await
-        .map(|()| None)
+        self.thread_start_inner(request_id, params, client_session, request_context)
+            .await
+            .map(|()| None)
     }
 
     pub(crate) async fn thread_unsubscribe(
@@ -332,9 +323,9 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadResumeParams,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_resume_inner(request_id, params, client_compatibility_flags)
+        self.thread_resume_inner(request_id, params, client_session)
             .await
             .map(|()| None)
     }
@@ -343,9 +334,9 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadForkParams,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        self.thread_fork_inner(request_id, params, client_compatibility_flags)
+        self.thread_fork_inner(request_id, params, client_session)
             .await
             .map(|()| None)
     }
@@ -586,6 +577,22 @@ impl ThreadRequestProcessor {
 
         Ok((thread_id, thread))
     }
+
+    async fn set_app_server_client_info(
+        thread: &CodexThread,
+        app_server_client_name: Option<String>,
+        app_server_client_version: Option<String>,
+    ) -> Result<(), JSONRPCErrorError> {
+        thread
+            .set_app_server_client_info(app_server_client_name, app_server_client_version)
+            .await
+            .map_err(|err| JSONRPCErrorError {
+                code: INTERNAL_ERROR_CODE,
+                message: format!("failed to set app server client info: {err}"),
+                data: None,
+            })
+    }
+
     async fn acquire_thread_list_state_permit(
         &self,
     ) -> Result<SemaphorePermit<'_>, JSONRPCErrorError> {
@@ -705,9 +712,7 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadStartParams,
-        app_server_client_name: Option<String>,
-        app_server_client_version: Option<String>,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
         request_context: RequestContext,
     ) -> Result<(), JSONRPCErrorError> {
         let ThreadStartParams {
@@ -767,6 +772,9 @@ impl ThreadRequestProcessor {
         let config_manager = self.config_manager.clone();
         let outgoing = Arc::clone(&listener_task_context.outgoing);
         let error_request_id = request_id.clone();
+        let app_server_client_name = client_session.app_server_client_name().map(str::to_string);
+        let app_server_client_version = client_session.client_version().map(str::to_string);
+        let client_compatibility_flags = client_session.client_compatibility_flags();
         let thread_start_task = async move {
             if let Err(error) = Self::thread_start_task(
                 listener_task_context,
@@ -988,13 +996,12 @@ impl ThreadRequestProcessor {
                 err => internal_error(format!("error creating thread: {err}")),
             })?;
 
-        thread
-            .set_app_server_client_info(
-                app_server_client_name,
-                app_server_client_version,
-                client_compatibility_flags,
-            )
-            .await;
+        Self::set_app_server_client_info(
+            thread.as_ref(),
+            app_server_client_name,
+            app_server_client_version,
+        )
+        .await?;
 
         let config_snapshot = thread
             .config_snapshot()
@@ -2290,7 +2297,7 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadResumeParams,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<(), JSONRPCErrorError> {
         if let Ok(thread_id) = ThreadId::from_string(&params.thread_id)
             && self
@@ -2407,7 +2414,7 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
-        config.client_compatibility_flags = client_compatibility_flags;
+        apply_client_compatibility(&mut config, client_session);
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
@@ -2927,7 +2934,7 @@ impl ThreadRequestProcessor {
         &self,
         request_id: ConnectionRequestId,
         params: ThreadForkParams,
-        client_compatibility_flags: ClientCompatibilityFlags,
+        client_session: &ConnectionSessionState,
     ) -> Result<(), JSONRPCErrorError> {
         let ThreadForkParams {
             thread_id,
@@ -3011,7 +3018,7 @@ impl ThreadRequestProcessor {
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
-        config.client_compatibility_flags = client_compatibility_flags;
+        apply_client_compatibility(&mut config, client_session);
 
         let fallback_model_provider = config.model_provider_id.clone();
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
