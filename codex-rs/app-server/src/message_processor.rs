@@ -370,6 +370,7 @@ impl MessageProcessor {
             Arc::clone(&thread_manager),
             outgoing.clone(),
             Arc::clone(&config),
+            Arc::clone(&thread_store),
             thread_state_manager.clone(),
         );
         let thread_processor = ThreadRequestProcessor::new(

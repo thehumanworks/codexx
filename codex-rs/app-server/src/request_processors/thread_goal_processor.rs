@@ -6,6 +6,7 @@ pub(crate) struct ThreadGoalRequestProcessor {
     thread_manager: Arc<ThreadManager>,
     outgoing: Arc<OutgoingMessageSender>,
     config: Arc<Config>,
+    thread_store: Arc<dyn ThreadStore>,
     thread_state_manager: ThreadStateManager,
 }
 
@@ -14,12 +15,14 @@ impl ThreadGoalRequestProcessor {
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
         config: Arc<Config>,
+        thread_store: Arc<dyn ThreadStore>,
         thread_state_manager: ThreadStateManager,
     ) -> Self {
         Self {
             thread_manager,
             outgoing,
             config,
+            thread_store,
             thread_state_manager,
         }
     }
