@@ -14096,6 +14096,10 @@
             "null"
           ]
         },
+        "includeSummaries": {
+          "description": "When true, include lightweight metadata for each loaded thread in the page.",
+          "type": "boolean"
+        },
         "limit": {
           "description": "Optional page size; defaults to no limit.",
           "format": "uint32",
@@ -14104,10 +14108,6 @@
             "integer",
             "null"
           ]
-        },
-        "includeSummaries": {
-          "description": "When true, include lightweight metadata for each loaded thread in the page.",
-          "type": "boolean"
         }
       },
       "title": "ThreadLoadedListParams",
@@ -14123,19 +14123,20 @@
           },
           "type": "array"
         },
-        "summaries": {
-          "description": "Loaded-thread summaries for the returned page when `includeSummaries` is true. Empty when summaries were not requested.",
-          "items": {
-            "$ref": "#/definitions/ThreadLoadedSummary"
-          },
-          "type": "array"
-        },
         "nextCursor": {
           "description": "Opaque cursor to pass to the next call to continue after the last item. if None, there are no more items to return.",
           "type": [
             "string",
             "null"
           ]
+        },
+        "summaries": {
+          "default": [],
+          "description": "Loaded-thread summaries for the returned page when `includeSummaries` is true. Empty when summaries were not requested.",
+          "items": {
+            "$ref": "#/definitions/ThreadLoadedSummary"
+          },
+          "type": "array"
         }
       },
       "required": [

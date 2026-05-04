@@ -8,6 +8,10 @@
         "null"
       ]
     },
+    "includeSummaries": {
+      "description": "When true, include lightweight metadata for each loaded thread in the page.",
+      "type": "boolean"
+    },
     "limit": {
       "description": "Optional page size; defaults to no limit.",
       "format": "uint32",
@@ -16,10 +20,6 @@
         "integer",
         "null"
       ]
-    },
-    "includeSummaries": {
-      "description": "When true, include lightweight metadata for each loaded thread in the page.",
-      "type": "boolean"
     }
   },
   "title": "ThreadLoadedListParams",
