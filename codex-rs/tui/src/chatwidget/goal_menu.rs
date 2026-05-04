@@ -1,12 +1,16 @@
 //! Goal summary for the bare `/goal` command.
 
 use super::*;
+use crate::goal_display::GOAL_CONTINUATION_PAUSED_IN_PLAN_MODE_HINT;
 use crate::goal_display::format_goal_elapsed_seconds;
+use crate::goal_display::goal_status_label;
+use crate::goal_display::show_goal_plan_mode_hint;
 use crate::status::format_tokens_compact;
 
 impl ChatWidget {
     pub(crate) fn show_goal_summary(&mut self, goal: AppThreadGoal) {
-        self.add_plain_history_lines(goal_summary_lines(&goal));
+        let show_plan_mode_hint = show_goal_plan_mode_hint(goal.status, self.is_plan_mode_active());
+        self.add_plain_history_lines(goal_summary_lines(&goal, show_plan_mode_hint));
     }
 
     pub(crate) fn show_resume_paused_goal_prompt(
@@ -55,7 +59,7 @@ impl ChatWidget {
     }
 }
 
-fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
+fn goal_summary_lines(goal: &AppThreadGoal, show_plan_mode_hint: bool) -> Vec<Line<'static>> {
     let mut lines = vec![
         Line::from("Goal".bold()),
         Line::from(vec![
@@ -63,15 +67,20 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
             goal_status_label(goal.status).to_string().into(),
         ]),
         Line::from(vec!["Objective: ".dim(), goal.objective.clone().into()]),
-        Line::from(vec![
-            "Time used: ".dim(),
-            format_goal_elapsed_seconds(goal.time_used_seconds).into(),
-        ]),
-        Line::from(vec![
-            "Tokens used: ".dim(),
-            format_tokens_compact(goal.tokens_used).into(),
-        ]),
     ];
+    if show_plan_mode_hint {
+        lines.push(Line::from(
+            GOAL_CONTINUATION_PAUSED_IN_PLAN_MODE_HINT.magenta(),
+        ));
+    }
+    lines.push(Line::from(vec![
+        "Time used: ".dim(),
+        format_goal_elapsed_seconds(goal.time_used_seconds).into(),
+    ]));
+    lines.push(Line::from(vec![
+        "Tokens used: ".dim(),
+        format_tokens_compact(goal.tokens_used).into(),
+    ]));
     if let Some(token_budget) = goal.token_budget {
         lines.push(Line::from(vec![
             "Token budget: ".dim(),
@@ -88,13 +97,4 @@ fn goal_summary_lines(goal: &AppThreadGoal) -> Vec<Line<'static>> {
     lines.push(Line::default());
     lines.push(Line::from(command_hint.dim()));
     lines
-}
-
-fn goal_status_label(status: AppThreadGoalStatus) -> &'static str {
-    match status {
-        AppThreadGoalStatus::Active => "active",
-        AppThreadGoalStatus::Paused => "paused",
-        AppThreadGoalStatus::BudgetLimited => "limited by budget",
-        AppThreadGoalStatus::Complete => "complete",
-    }
 }

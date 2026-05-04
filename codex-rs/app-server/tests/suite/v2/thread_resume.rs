@@ -48,7 +48,10 @@ use codex_app_server_protocol::UserInput;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_login::REFRESH_TOKEN_URL_OVERRIDE_ENV_VAR;
 use codex_protocol::ThreadId;
+use codex_protocol::config_types::CollaborationMode;
+use codex_protocol::config_types::ModeKind;
 use codex_protocol::config_types::Personality;
+use codex_protocol::config_types::Settings;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::AgentMessageEvent;
@@ -181,36 +184,14 @@ async fn thread_resume_rejects_unmaterialized_thread() -> Result<()> {
 async fn thread_goal_get_rejects_unmaterialized_thread() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
-    let config_path = codex_home.path().join("config.toml");
-    let config = std::fs::read_to_string(&config_path)?;
-    std::fs::write(
-        &config_path,
-        config.replace("personality = true\n", "personality = true\ngoals = true\n"),
-    )?;
-
-    let mut mcp = McpProcess::new_without_managed_config(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let start_id = mcp
-        .send_thread_start_request(ThreadStartParams {
-            model: Some("gpt-5.2-codex".to_string()),
-            ephemeral: Some(true),
-            ..Default::default()
-        })
-        .await?;
-    let start_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    let mut mcp = new_goals_enabled_mcp(codex_home.path(), &server.uri()).await?;
+    let thread_id = start_test_thread(&mut mcp, /*ephemeral*/ true).await?;
 
     let goal_id = mcp
         .send_raw_request(
             "thread/goal/get",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
             })),
         )
         .await?;
@@ -385,59 +366,18 @@ async fn thread_resume_can_skip_turns_for_metadata_only_resume() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_resume_keeps_paused_goal_paused() -> Result<()> {
+async fn thread_resume_emits_paused_goal_snapshot_without_continuation() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
-    let config_path = codex_home.path().join("config.toml");
-    let config = std::fs::read_to_string(&config_path)?;
-    std::fs::write(
-        &config_path,
-        config.replace("personality = true\n", "personality = true\ngoals = true\n"),
-    )?;
-
-    let mut mcp = McpProcess::new_without_managed_config(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let start_id = mcp
-        .send_thread_start_request(ThreadStartParams {
-            model: Some("gpt-5.2-codex".to_string()),
-            ..Default::default()
-        })
-        .await?;
-    let start_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
-
-    let turn_id = mcp
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id.clone(),
-            input: vec![UserInput::Text {
-                text: "materialize this thread".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
-        })
-        .await?;
-    let _turn_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
-    )
-    .await??;
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
+    let mut mcp = new_goals_enabled_mcp(codex_home.path(), &server.uri()).await?;
+    let thread_id = start_test_thread(&mut mcp, /*ephemeral*/ false).await?;
+    materialize_thread(&mut mcp, &thread_id, /*collaboration_mode*/ None).await?;
 
     let goal_id = mcp
         .send_raw_request(
             "thread/goal/set",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
                 "objective": "keep polishing",
                 "status": "paused",
             })),
@@ -458,7 +398,7 @@ async fn thread_resume_keeps_paused_goal_paused() -> Result<()> {
 
     let resume_id = mcp
         .send_thread_resume_request(ThreadResumeParams {
-            thread_id: thread.id.clone(),
+            thread_id,
             ..Default::default()
         })
         .await?;
@@ -482,7 +422,7 @@ async fn thread_resume_keeps_paused_goal_paused() -> Result<()> {
         !mcp.pending_notification_methods()
             .iter()
             .any(|method| method == "turn/started"),
-        "paused goal should not continue after thread resume"
+        "paused goals should not continue automatically on thread resume"
     );
 
     Ok(())
@@ -492,56 +432,15 @@ async fn thread_resume_keeps_paused_goal_paused() -> Result<()> {
 async fn thread_goal_set_preserves_budget_limited_same_objective() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
-    let config_path = codex_home.path().join("config.toml");
-    let config = std::fs::read_to_string(&config_path)?;
-    std::fs::write(
-        &config_path,
-        config.replace("personality = true\n", "personality = true\ngoals = true\n"),
-    )?;
-
-    let mut mcp = McpProcess::new_without_managed_config(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let start_id = mcp
-        .send_thread_start_request(ThreadStartParams {
-            model: Some("gpt-5.2-codex".to_string()),
-            ..Default::default()
-        })
-        .await?;
-    let start_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
-    )
-    .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
-
-    let turn_id = mcp
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id.clone(),
-            input: vec![UserInput::Text {
-                text: "materialize this thread".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
-        })
-        .await?;
-    let _turn_resp: JSONRPCResponse = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
-    )
-    .await??;
-    timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_notification_message("turn/completed"),
-    )
-    .await??;
+    let mut mcp = new_goals_enabled_mcp(codex_home.path(), &server.uri()).await?;
+    let thread_id = start_test_thread(&mut mcp, /*ephemeral*/ false).await?;
+    materialize_thread(&mut mcp, &thread_id, /*collaboration_mode*/ None).await?;
 
     let goal_id = mcp
         .send_raw_request(
             "thread/goal/set",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
                 "objective": "keep polishing",
                 "status": "budgetLimited",
                 "tokenBudget": 10,
@@ -566,7 +465,7 @@ async fn thread_goal_set_preserves_budget_limited_same_objective() -> Result<()>
         .send_raw_request(
             "thread/goal/set",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
                 "objective": "keep polishing",
             })),
         )
@@ -587,46 +486,75 @@ async fn thread_goal_set_preserves_budget_limited_same_objective() -> Result<()>
 }
 
 #[tokio::test]
-async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
+async fn thread_goal_set_active_continues_after_explicit_resume() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
-    create_config_toml(codex_home.path(), &server.uri())?;
-    let config_path = codex_home.path().join("config.toml");
-    let config = std::fs::read_to_string(&config_path)?;
-    std::fs::write(
-        &config_path,
-        config.replace("personality = true\n", "personality = true\ngoals = true\n"),
-    )?;
+    let mut mcp = new_goals_enabled_mcp(codex_home.path(), &server.uri()).await?;
+    let thread_id = start_test_thread(&mut mcp, /*ephemeral*/ false).await?;
+    let plan_mode = CollaborationMode {
+        mode: ModeKind::Plan,
+        settings: Settings {
+            model: "gpt-5.2-codex".to_string(),
+            reasoning_effort: None,
+            developer_instructions: None,
+        },
+    };
+    materialize_thread(&mut mcp, &thread_id, Some(plan_mode)).await?;
 
-    let mut mcp = McpProcess::new_without_managed_config(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let start_id = mcp
-        .send_thread_start_request(ThreadStartParams {
-            model: Some("gpt-5.2-codex".to_string()),
-            ..Default::default()
-        })
+    let goal_id = mcp
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({
+                "threadId": thread_id,
+                "objective": "keep polishing",
+                "status": "paused",
+            })),
+        )
         .await?;
-    let start_resp: JSONRPCResponse = timeout(
+    let goal_resp: JSONRPCResponse = timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+        mcp.read_stream_until_response_message(RequestId::Integer(goal_id)),
     )
     .await??;
-    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
-
-    let turn_id = mcp
-        .send_turn_start_request(TurnStartParams {
-            thread_id: thread.id.clone(),
-            input: vec![UserInput::Text {
-                text: "materialize this thread".to_string(),
-                text_elements: Vec::new(),
-            }],
-            ..Default::default()
-        })
-        .await?;
-    let _turn_resp: JSONRPCResponse = timeout(
+    let _goal: ThreadGoalSetResponse = to_response(goal_resp)?;
+    timeout(
         DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+        mcp.read_stream_until_notification_message("thread/goal/updated"),
+    )
+    .await??;
+    mcp.clear_message_buffer();
+
+    let resume_id = mcp
+        .send_raw_request(
+            "thread/goal/set",
+            Some(json!({
+                "threadId": thread_id,
+                "status": "active",
+            })),
+        )
+        .await?;
+    let resume_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(resume_id)),
+    )
+    .await??;
+    let resumed_goal: ThreadGoalSetResponse = to_response(resume_resp)?;
+    assert_eq!(resumed_goal.goal.status, ThreadGoalStatus::Active);
+
+    let notification = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("thread/goal/updated"),
+    )
+    .await??;
+    let notification: ServerNotification = notification.try_into()?;
+    let ServerNotification::ThreadGoalUpdated(notification) = notification else {
+        anyhow::bail!("expected thread goal update notification");
+    };
+    assert_eq!(notification.goal.status, ThreadGoalStatus::Active);
+
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/started"),
     )
     .await??;
     timeout(
@@ -635,11 +563,22 @@ async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
     )
     .await??;
 
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    let mut mcp = new_goals_enabled_mcp(codex_home.path(), &server.uri()).await?;
+    let thread_id = start_test_thread(&mut mcp, /*ephemeral*/ false).await?;
+    materialize_thread(&mut mcp, &thread_id, /*collaboration_mode*/ None).await?;
+
     let goal_id = mcp
         .send_raw_request(
             "thread/goal/set",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
                 "objective": "keep polishing",
             })),
         )
@@ -660,7 +599,7 @@ async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
         .send_raw_request(
             "thread/goal/clear",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
             })),
         )
         .await?;
@@ -682,7 +621,7 @@ async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
         .send_raw_request(
             "thread/goal/get",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
             })),
         )
         .await?;
@@ -698,7 +637,7 @@ async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
         .send_raw_request(
             "thread/goal/clear",
             Some(json!({
-                "threadId": thread.id,
+                "threadId": thread_id,
             })),
         )
         .await?;
@@ -2868,6 +2807,71 @@ async fn thread_resume_accepts_personality_override() -> Result<()> {
 }
 
 // Helper to create a config.toml pointing at the mock model server.
+async fn new_goals_enabled_mcp(codex_home: &Path, server_uri: &str) -> Result<McpProcess> {
+    create_config_toml(codex_home, server_uri)?;
+    enable_goals_in_config(codex_home)?;
+
+    let mut mcp = McpProcess::new_without_managed_config(codex_home).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+    Ok(mcp)
+}
+
+fn enable_goals_in_config(codex_home: &Path) -> Result<()> {
+    let config_path = codex_home.join("config.toml");
+    let config = std::fs::read_to_string(&config_path)?;
+    std::fs::write(
+        &config_path,
+        config.replace("personality = true\n", "personality = true\ngoals = true\n"),
+    )?;
+    Ok(())
+}
+
+async fn start_test_thread(mcp: &mut McpProcess, ephemeral: bool) -> Result<String> {
+    let start_id = mcp
+        .send_thread_start_request(ThreadStartParams {
+            model: Some("gpt-5.2-codex".to_string()),
+            ephemeral: ephemeral.then_some(true),
+            ..Default::default()
+        })
+        .await?;
+    let start_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(start_id)),
+    )
+    .await??;
+    let ThreadStartResponse { thread, .. } = to_response::<ThreadStartResponse>(start_resp)?;
+    Ok(thread.id)
+}
+
+async fn materialize_thread(
+    mcp: &mut McpProcess,
+    thread_id: &str,
+    collaboration_mode: Option<CollaborationMode>,
+) -> Result<()> {
+    let turn_id = mcp
+        .send_turn_start_request(TurnStartParams {
+            thread_id: thread_id.to_string(),
+            input: vec![UserInput::Text {
+                text: "materialize this thread".to_string(),
+                text_elements: Vec::new(),
+            }],
+            collaboration_mode,
+            ..Default::default()
+        })
+        .await?;
+    let _turn_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turn_id)),
+    )
+    .await??;
+    timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_notification_message("turn/completed"),
+    )
+    .await??;
+    Ok(())
+}
+
 fn create_config_toml(codex_home: &std::path::Path, server_uri: &str) -> std::io::Result<()> {
     let config_toml = codex_home.join("config.toml");
     std::fs::write(

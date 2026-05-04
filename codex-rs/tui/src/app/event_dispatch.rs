@@ -665,6 +665,10 @@ impl App {
                 self.set_thread_goal_status(app_server, thread_id, status)
                     .await;
             }
+            AppEvent::PauseActiveGoalIfNeeded { thread_id } => {
+                self.pause_active_goal_if_needed(app_server, thread_id)
+                    .await;
+            }
             AppEvent::ClearThreadGoal { thread_id } => {
                 self.clear_thread_goal(app_server, thread_id).await;
             }

@@ -1200,18 +1200,6 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
             .is_none()
     );
 
-    resumed.thread.continue_active_goal_if_idle().await?;
-    assert!(
-        resumed
-            .thread
-            .codex
-            .session
-            .active_turn
-            .lock()
-            .await
-            .is_none()
-    );
-
     resumed.thread.shutdown_and_wait().await?;
     Ok(())
 }

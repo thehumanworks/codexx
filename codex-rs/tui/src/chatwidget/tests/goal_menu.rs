@@ -29,6 +29,24 @@ async fn goal_menu_paused_snapshot() {
 }
 
 #[tokio::test]
+async fn goal_menu_paused_plan_mode_snapshot() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    let thread_id = ThreadId::new();
+    let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
+        .expect("expected plan collaboration mode");
+    chat.set_collaboration_mask(plan_mask);
+    drain_insert_history(&mut rx);
+
+    chat.show_goal_summary(test_goal(
+        thread_id,
+        AppThreadGoalStatus::Paused,
+        /*token_budget*/ Some(80_000),
+    ));
+
+    assert_chatwidget_snapshot!("goal_menu_paused_plan_mode", rendered_goal_summary(&mut rx));
+}
+
+#[tokio::test]
 async fn goal_menu_budget_limited_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     let thread_id = ThreadId::new();

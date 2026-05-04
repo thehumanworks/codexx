@@ -133,13 +133,6 @@ impl CodexThread {
         self.codex.session_loop_termination.clone().await;
     }
 
-    pub async fn apply_goal_resume_runtime_effects(&self) -> anyhow::Result<()> {
-        self.codex
-            .session
-            .goal_runtime_apply(GoalRuntimeEvent::ThreadResumed)
-            .await
-    }
-
     pub async fn continue_active_goal_if_idle(&self) -> anyhow::Result<()> {
         self.codex
             .session

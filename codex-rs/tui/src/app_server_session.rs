@@ -102,6 +102,7 @@ use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnSteerParams;
 use codex_app_server_protocol::TurnSteerResponse;
 use codex_app_server_protocol::UserInput;
+use codex_features::Feature;
 use codex_otel::TelemetryAuthMode;
 use codex_protocol::ThreadId;
 use codex_protocol::approvals::GuardianAssessmentEvent;
@@ -679,6 +680,30 @@ impl AppServerSession {
             })
             .await
             .wrap_err("thread/goal/get failed in TUI")
+    }
+
+    pub(crate) async fn pause_active_goal_if_needed(
+        &mut self,
+        config: &Config,
+        thread_id: ThreadId,
+    ) -> Result<()> {
+        if !config.features.enabled(Feature::Goals) {
+            return Ok(());
+        }
+        let response = self.thread_goal_get(thread_id).await?;
+        if response
+            .goal
+            .is_some_and(|goal| goal.status == ThreadGoalStatus::Active)
+        {
+            self.thread_goal_set(
+                thread_id,
+                /*objective*/ None,
+                Some(ThreadGoalStatus::Paused),
+                /*token_budget*/ None,
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     pub(crate) async fn thread_goal_set(

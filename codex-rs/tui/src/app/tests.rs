@@ -66,6 +66,7 @@ use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput;
 use codex_app_server_protocol::UserInput as AppServerUserInput;
 use codex_app_server_protocol::WarningNotification;
+use codex_features::Feature;
 use codex_otel::SessionTelemetry;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationMode;
@@ -1144,6 +1145,7 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
         .chat_widget
         .capture_thread_input_state()
         .expect("expected collaboration-only input state");
+    assert!(input_state.is_plan_mode_active());
 
     let (chat_widget, _app_event_tx, _rx, _new_op_rx) = make_chatwidget_manual_with_sender().await;
     app.chat_widget = chat_widget;
@@ -1178,6 +1180,147 @@ async fn replay_thread_snapshot_restores_collaboration_mode_without_input() {
         app.chat_widget.current_reasoning_effort(),
         Some(ReasoningEffortConfig::High)
     );
+}
+
+#[test]
+fn refresh_snapshot_session_pauses_active_goal_before_plan_mode_resume() -> Result<()> {
+    const WORKER_THREADS: usize = 1;
+    const TEST_STACK_SIZE_BYTES: usize = 8 * 1024 * 1024;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(WORKER_THREADS)
+        .thread_stack_size(TEST_STACK_SIZE_BYTES)
+        .enable_all()
+        .build()?;
+
+    runtime.block_on(async {
+        let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+        app.chat_widget
+            .set_feature_enabled(Feature::Goals, /*enabled*/ true);
+        app.chat_widget
+            .set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+        app.config = app.chat_widget.config_ref().clone();
+
+        let mut app_server =
+            Box::pin(crate::start_embedded_app_server_for_picker(&app.config)).await?;
+        let displayed_started = app_server.start_thread(&app.config).await?;
+        let displayed_thread_id = displayed_started.session.thread_id;
+        app.chat_widget
+            .handle_thread_session(displayed_started.session.clone());
+        let plan_mask =
+            crate::collaboration_modes::plan_mask(app.chat_widget.model_catalog().as_ref())
+                .expect("expected plan collaboration mask");
+        app.chat_widget.set_collaboration_mask(plan_mask);
+        assert!(app.chat_widget.is_plan_mode_active());
+        let plan_input_state = app
+            .chat_widget
+            .capture_thread_input_state()
+            .expect("plan input state should be captured");
+        let default_mask =
+            crate::collaboration_modes::default_mask(app.chat_widget.model_catalog().as_ref())
+                .expect("expected default collaboration mask");
+        app.chat_widget.set_collaboration_mask(default_mask);
+        assert!(!app.chat_widget.is_plan_mode_active());
+        assert_eq!(app.current_displayed_thread_id(), Some(displayed_thread_id));
+
+        let target_started = app_server.start_thread(&app.config).await?;
+        let thread_id = target_started.session.thread_id;
+
+        let state_db = codex_state::StateRuntime::init(
+            app.config.sqlite_home.clone(),
+            app.config.model_provider_id.clone(),
+        )
+        .await
+        .expect("state db should initialize");
+        let mut metadata = codex_state::ThreadMetadataBuilder::new(
+            thread_id,
+            target_started
+                .session
+                .rollout_path
+                .clone()
+                .expect("target thread should have a rollout path"),
+            chrono::Utc::now(),
+            codex_protocol::protocol::SessionSource::Cli,
+        );
+        metadata.cwd = app.config.cwd.to_path_buf();
+        metadata.model_provider = Some(app.config.model_provider_id.clone());
+        state_db
+            .upsert_thread(&metadata.build(app.config.model_provider_id.as_str()))
+            .await
+            .expect("thread metadata should seed");
+        state_db
+            .replace_thread_goal(
+                thread_id,
+                "Keep planning safely",
+                codex_state::ThreadGoalStatus::Active,
+                /*token_budget*/ None,
+            )
+            .await
+            .expect("active goal should seed");
+
+        let mut snapshot = ThreadEventSnapshot {
+            session: None,
+            turns: Vec::new(),
+            events: Vec::new(),
+            input_state: Some(plan_input_state),
+        };
+
+        app.refresh_snapshot_session_if_needed(
+            &mut app_server,
+            thread_id,
+            /*is_replay_only*/ false,
+            &mut snapshot,
+        )
+        .await;
+
+        assert!(snapshot.session.is_some());
+        let goal = state_db
+            .get_thread_goal(thread_id)
+            .await
+            .expect("goal should be readable")
+            .expect("goal should still exist");
+        assert_eq!(goal.status, codex_state::ThreadGoalStatus::Paused);
+        Ok(())
+    })
+}
+
+#[tokio::test]
+async fn snapshot_resume_plan_mode_uses_target_state_or_same_thread_fallback() {
+    let (mut app, _app_event_rx, _op_rx) = make_test_app_with_channels().await;
+    let target_thread_id = ThreadId::new();
+    let other_thread_id = ThreadId::new();
+    let plan_mask = crate::collaboration_modes::plan_mask(app.chat_widget.model_catalog().as_ref())
+        .expect("expected plan collaboration mask");
+    app.chat_widget.set_collaboration_mask(plan_mask);
+    let plan_input_state = app
+        .chat_widget
+        .capture_thread_input_state()
+        .expect("plan input state should be captured");
+    let snapshot = |input_state| ThreadEventSnapshot {
+        session: None,
+        turns: Vec::new(),
+        events: Vec::new(),
+        input_state,
+    };
+
+    assert!(thread_routing::plan_mode_active_for_snapshot_resume(
+        &snapshot(Some(plan_input_state)),
+        target_thread_id,
+        /*current_displayed_thread_id*/ None,
+        /*current_widget_plan_mode_active*/ false,
+    ));
+    assert!(thread_routing::plan_mode_active_for_snapshot_resume(
+        &snapshot(None),
+        target_thread_id,
+        Some(target_thread_id),
+        /*current_widget_plan_mode_active*/ true,
+    ));
+    assert!(!thread_routing::plan_mode_active_for_snapshot_resume(
+        &snapshot(None),
+        target_thread_id,
+        Some(other_thread_id),
+        /*current_widget_plan_mode_active*/ true,
+    ));
 }
 
 #[tokio::test]

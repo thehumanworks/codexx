@@ -566,14 +566,33 @@ pub(crate) fn goal_status_indicator_line(
     Some(Line::from(vec![Span::from(label).magenta()]))
 }
 
+fn goal_paused_in_plan_mode_line(usage: Option<&str>) -> Line<'static> {
+    let label = if let Some(usage) = usage {
+        format!("Goal paused in Plan mode ({usage})")
+    } else {
+        "Goal paused in Plan mode".to_string()
+    };
+
+    Line::from(vec![Span::from(label).magenta()])
+}
+
 pub(crate) fn status_line_right_indicator_line(
     collaboration_mode_indicator: Option<CollaborationModeIndicator>,
     goal_status_indicator: Option<&GoalStatusIndicator>,
     ide_context_active: bool,
     show_cycle_hint: bool,
 ) -> Option<Line<'static>> {
-    let primary_indicator = mode_indicator_line(collaboration_mode_indicator, show_cycle_hint)
-        .or_else(|| goal_status_indicator_line(goal_status_indicator));
+    let primary_indicator = match (collaboration_mode_indicator, goal_status_indicator) {
+        (
+            Some(CollaborationModeIndicator::Plan),
+            active @ Some(GoalStatusIndicator::Active { .. }),
+        ) => goal_status_indicator_line(active),
+        (Some(CollaborationModeIndicator::Plan), Some(GoalStatusIndicator::Paused)) => {
+            Some(goal_paused_in_plan_mode_line(/*usage*/ None))
+        }
+        _ => mode_indicator_line(collaboration_mode_indicator, show_cycle_hint)
+            .or_else(|| goal_status_indicator_line(goal_status_indicator)),
+    };
     let ide_context_indicator = ide_context_active.then(|| Line::from(vec!["IDE context".cyan()]));
     let mut line: Option<Line<'static>> = None;
 

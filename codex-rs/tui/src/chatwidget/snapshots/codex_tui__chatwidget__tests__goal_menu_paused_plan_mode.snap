@@ -1,0 +1,13 @@
+---
+source: tui/src/chatwidget/tests/goal_menu.rs
+expression: rendered_goal_summary(&mut rx)
+---
+Goal
+Status: paused
+Objective: Keep improving the bare goal command until it feels calm and useful.
+Goal continuation is paused in Plan mode. Switch out of Plan mode, then use /goal resume to continue.
+Time used: 1m
+Tokens used: 12.5K
+Token budget: 80K
+
+Commands: /goal resume, /goal clear

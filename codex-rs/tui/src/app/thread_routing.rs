@@ -1122,6 +1122,24 @@ impl App {
             return;
         }
 
+        let plan_mode_active = plan_mode_active_for_snapshot_resume(
+            snapshot,
+            thread_id,
+            self.current_displayed_thread_id(),
+            self.chat_widget.is_plan_mode_active(),
+        );
+        if plan_mode_active
+            && let Err(err) = app_server
+                .pause_active_goal_if_needed(&self.config, thread_id)
+                .await
+        {
+            tracing::warn!(
+                thread_id = %thread_id,
+                error = %err,
+                "failed to pause active goal before Plan-mode thread resume; continuing resume"
+            );
+        }
+
         match app_server
             .resume_thread(self.config.clone(), thread_id)
             .await
@@ -1478,4 +1496,21 @@ impl App {
         }
         Ok(())
     }
+}
+
+pub(super) fn plan_mode_active_for_snapshot_resume(
+    snapshot: &ThreadEventSnapshot,
+    thread_id: ThreadId,
+    current_displayed_thread_id: Option<ThreadId>,
+    current_widget_plan_mode_active: bool,
+) -> bool {
+    snapshot.input_state.as_ref().map_or_else(
+        || {
+            // A missing input_state can only inherit live widget mode when the widget already
+            // displays this thread. During a thread switch it still belongs to the previous
+            // thread, and using it would pause the target thread incorrectly.
+            current_displayed_thread_id == Some(thread_id) && current_widget_plan_mode_active
+        },
+        ThreadInputState::is_plan_mode_active,
+    )
 }

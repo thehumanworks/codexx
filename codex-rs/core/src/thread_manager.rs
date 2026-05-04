@@ -1076,7 +1076,6 @@ impl ThreadManagerState {
         environments: Vec<TurnEnvironmentSelection>,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
-        let is_resumed_thread = matches!(&initial_history, InitialHistory::Resumed(_));
         if let InitialHistory::Resumed(resumed) = &initial_history {
             let mut threads = self.threads.write().await;
             if let Some(thread) = threads.get(&resumed.conversation_id).cloned() {
@@ -1147,11 +1146,6 @@ impl ThreadManagerState {
         let new_thread = self
             .finalize_thread_spawn(codex, thread_id, tracked_session_source, watch_registration)
             .await?;
-        if is_resumed_thread
-            && let Err(err) = new_thread.thread.apply_goal_resume_runtime_effects().await
-        {
-            warn!("failed to apply goal resume runtime effects: {err}");
-        }
         Ok(new_thread)
     }
 

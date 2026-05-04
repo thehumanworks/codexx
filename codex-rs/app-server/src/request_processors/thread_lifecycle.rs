@@ -592,12 +592,6 @@ pub(super) async fn handle_pending_thread_resume_request(
         }
     }
 
-    if pending.emit_thread_goal_update
-        && let Err(err) = conversation.apply_goal_resume_runtime_effects().await
-    {
-        tracing::warn!("failed to apply goal resume runtime effects: {err}");
-    }
-
     let ThreadConfigSnapshot {
         model,
         model_provider_id,

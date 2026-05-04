@@ -1643,6 +1643,52 @@ async fn status_line_goal_active_token_budget_footer_snapshot() {
 }
 
 #[tokio::test]
+async fn status_line_goal_active_plan_mode_footer_snapshot() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.set_feature_enabled(Feature::Goals, /*enabled*/ true);
+    chat.show_welcome_banner = false;
+    chat.config.tui_status_line = Some(vec!["model-name".to_string()]);
+    let plan_mask = collaboration_modes::plan_mask(chat.model_catalog.as_ref())
+        .expect("expected plan collaboration mode");
+    chat.set_collaboration_mask(plan_mask);
+    chat.refresh_status_line();
+    chat.handle_server_notification(
+        ServerNotification::ThreadGoalUpdated(
+            codex_app_server_protocol::ThreadGoalUpdatedNotification {
+                thread_id: "thread-1".to_string(),
+                turn_id: None,
+                goal: test_thread_goal(
+                    codex_app_server_protocol::ThreadGoalStatus::Active,
+                    /*token_budget*/ Some(50_000),
+                    /*tokens_used*/ 40_000,
+                ),
+            },
+        ),
+        /*replay_kind*/ None,
+    );
+    assert_eq!(
+        chat.current_goal_status_indicator,
+        Some(GoalStatusIndicator::Active {
+            usage: Some("40K / 50K".to_string()),
+        })
+    );
+
+    let width = 80;
+    let height = chat.desired_height(width);
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("create terminal");
+    terminal
+        .draw(|f| chat.render(f.area(), f.buffer_mut()))
+        .expect("draw goal status footer");
+    assert_chatwidget_snapshot!(
+        "status_line_goal_active_plan_mode_footer",
+        normalized_backend_snapshot(terminal.backend())
+    );
+}
+
+#[tokio::test]
 async fn status_line_goal_complete_elapsed_footer_snapshot() {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;

@@ -235,6 +235,11 @@ pub(crate) enum AppEvent {
         status: ThreadGoalStatus,
     },
 
+    /// Pause the current thread goal if it is active.
+    PauseActiveGoalIfNeeded {
+        thread_id: ThreadId,
+    },
+
     /// Clear the current thread goal.
     ClearThreadGoal {
         thread_id: ThreadId,
