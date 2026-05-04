@@ -44,6 +44,7 @@ mod collaboration_instructions;
 mod compact;
 mod compact_remote;
 mod compact_resume_fork;
+mod config_unknown_enum_values;
 mod deprecation_notice;
 mod exec;
 mod exec_policy;

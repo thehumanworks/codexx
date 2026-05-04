@@ -24,6 +24,7 @@ mod state;
 mod thread_config;
 mod tui_keymap;
 pub mod types;
+mod unknown_enum_values;
 
 pub const CONFIG_TOML_FILE: &str = "config.toml";
 
@@ -126,3 +127,4 @@ pub use thread_config::ThreadConfigLoader;
 pub use thread_config::ThreadConfigSource;
 pub use thread_config::UserThreadConfig;
 pub use toml::Value as TomlValue;
+pub use unknown_enum_values::sanitize_unknown_enum_values;

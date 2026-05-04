@@ -35,6 +35,7 @@ use codex_config::loader::load_config_layers_state;
 use codex_config::loader::project_trust_key;
 use codex_config::profile_toml::ConfigProfile;
 use codex_config::sandbox_mode_requirement_for_permission_profile;
+use codex_config::sanitize_unknown_enum_values;
 use codex_config::types::ApprovalsReviewer;
 use codex_config::types::AuthCredentialsStoreMode;
 use codex_config::types::DEFAULT_OTEL_ENVIRONMENT;
@@ -951,7 +952,7 @@ impl ConfigBuilder {
             None => AbsolutePathBuf::current_dir()?,
         };
         harness_overrides.cwd = Some(cwd.to_path_buf());
-        let config_layer_stack = load_config_layers_state(
+        let mut config_layer_stack = load_config_layers_state(
             LOCAL_FS.as_ref(),
             &codex_home,
             Some(cwd),
@@ -963,6 +964,7 @@ impl ConfigBuilder {
                 .unwrap_or(&codex_config::NoopThreadConfigLoader),
         )
         .await?;
+        let unknown_enum_warnings = config_layer_stack.sanitize_unknown_enum_values();
         let merged_toml = config_layer_stack.effective_config();
 
         // Note that each layer in ConfigLayerStack should have resolved
@@ -1017,20 +1019,25 @@ impl ConfigBuilder {
                 lock_config_layer_stack,
             )
             .await?;
+            config
+                .startup_warnings
+                .splice(0..0, unknown_enum_warnings.clone());
             config.config_lock_toml = Some(Arc::new(expected_lock_config));
             config.config_lock_allow_codex_version_mismatch = allow_codex_version_mismatch;
             config.config_lock_save_fields_resolved_from_model_catalog =
                 save_fields_resolved_from_model_catalog;
             return Ok(config);
         }
-        Config::load_config_with_layer_stack(
+        let mut config = Config::load_config_with_layer_stack(
             LOCAL_FS.as_ref(),
             config_toml,
             harness_overrides,
             codex_home,
             config_layer_stack,
         )
-        .await
+        .await?;
+        config.startup_warnings.splice(0..0, unknown_enum_warnings);
+        Ok(config)
     }
 
     #[cfg(test)]
@@ -1159,6 +1166,7 @@ impl Config {
         })?;
         let cli_layer = codex_config::build_cli_overrides_layer(&cli_overrides);
         codex_config::merge_toml_values(&mut merged, &cli_layer);
+        sanitize_unknown_enum_values(&mut merged);
         let codex_home = AbsolutePathBuf::from_absolute_path_checked(codex_home)?;
         let config_toml = deserialize_config_toml_with_base(merged, &codex_home)?;
         Self::load_config_with_layer_stack(
@@ -1225,6 +1233,8 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     )
     .await?;
 
+    let mut config_layer_stack = config_layer_stack;
+    config_layer_stack.sanitize_unknown_enum_values();
     let merged_toml = config_layer_stack.effective_config();
     let cfg = deserialize_config_toml_with_base(merged_toml, codex_home).map_err(|e| {
         tracing::error!("Failed to deserialize overridden config: {e}");
@@ -1241,6 +1251,8 @@ pub fn deserialize_config_toml_with_base(
     // This guard ensures that any relative paths that is deserialized into an
     // [AbsolutePathBuf] is resolved against `config_base_dir`.
     let _guard = AbsolutePathBufGuard::new(config_base_dir);
+    let mut root_value = root_value;
+    sanitize_unknown_enum_values(&mut root_value);
     root_value
         .try_into()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))

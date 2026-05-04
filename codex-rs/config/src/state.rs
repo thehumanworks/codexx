@@ -1,5 +1,6 @@
 use crate::config_requirements::ConfigRequirements;
 use crate::config_requirements::ConfigRequirementsToml;
+use crate::unknown_enum_values::sanitize_unknown_enum_values;
 
 use super::fingerprint::record_origins;
 use super::fingerprint::version_for_toml;
@@ -214,6 +215,18 @@ impl ConfigLayerStack {
 
     pub fn startup_warnings(&self) -> Option<&[String]> {
         self.startup_warnings.as_deref()
+    }
+
+    pub fn sanitize_unknown_enum_values(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for layer in &mut self.layers {
+            let layer_warnings = sanitize_unknown_enum_values(&mut layer.config);
+            if !layer_warnings.is_empty() {
+                layer.version = version_for_toml(&layer.config);
+                warnings.extend(layer_warnings);
+            }
+        }
+        warnings
     }
 
     /// Returns the raw user config layer, if any.
