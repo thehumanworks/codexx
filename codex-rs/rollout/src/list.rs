@@ -940,6 +940,19 @@ pub(crate) fn parse_timestamp_uuid_from_filename(name: &str) -> Option<(OffsetDa
     Some((ts, uuid))
 }
 
+fn parse_timestamp_string_uuid_from_filename(name: &str) -> Option<(&str, Uuid)> {
+    // Expected: rollout-YYYY-MM-DDThh-mm-ss-<uuid>.jsonl
+    let core = name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
+    core.match_indices('-')
+        .rev()
+        .find_map(|(index, _)| {
+            Uuid::parse_str(&core[index + 1..])
+                .ok()
+                .map(|uuid| (index, uuid))
+        })
+        .map(|(index, uuid)| (&core[..index], uuid))
+}
+
 struct ThreadCandidate {
     path: PathBuf,
     id: Uuid,
@@ -1445,6 +1458,13 @@ pub async fn resolve_fork_reference_rollout_path(
     let Some((_, uuid)) = parse_timestamp_uuid_from_filename(file_name) else {
         return Ok(rollout_path.to_path_buf());
     };
+    let archived_path = codex_home.join(ARCHIVED_SESSIONS_SUBDIR).join(file_name);
+    if tokio::fs::try_exists(archived_path.as_path())
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(archived_path);
+    }
     let id = uuid.to_string();
     if let Some(path) = find_thread_path_by_id_str(codex_home, id.as_str()).await? {
         return Ok(path);
@@ -1459,6 +1479,27 @@ pub async fn resolve_rollout_reference_rollout_path(
     codex_home: &Path,
     reference: &codex_protocol::protocol::RolloutReferenceItem,
 ) -> io::Result<PathBuf> {
+    if let (Some(thread_id), Some(rollout_timestamp)) =
+        (reference.thread_id, reference.rollout_timestamp.as_deref())
+    {
+        let file_name = format!("rollout-{rollout_timestamp}-{thread_id}.jsonl");
+        if let Some(active_path) =
+            rollout_path_for_timestamp_file(codex_home, rollout_timestamp, &file_name)
+            && tokio::fs::try_exists(active_path.as_path())
+                .await
+                .unwrap_or(false)
+        {
+            return Ok(active_path);
+        }
+        let archived_path = codex_home.join(ARCHIVED_SESSIONS_SUBDIR).join(&file_name);
+        if tokio::fs::try_exists(archived_path.as_path())
+            .await
+            .unwrap_or(false)
+        {
+            return Ok(archived_path);
+        }
+    }
+
     if let (Some(thread_id), Some(segment_id)) = (reference.thread_id, reference.segment_id)
         && let Some(path) =
             find_rollout_path_by_segment_id(codex_home, thread_id, segment_id).await?
@@ -1477,9 +1518,25 @@ pub async fn resolve_rollout_reference_rollout_path(
     else {
         return Ok(rollout_path.to_path_buf());
     };
-    let Some((_, uuid)) = parse_timestamp_uuid_from_filename(file_name) else {
+    let Some((rollout_timestamp, uuid)) = parse_timestamp_string_uuid_from_filename(file_name)
+    else {
         return Ok(rollout_path.to_path_buf());
     };
+    let archived_path = codex_home.join(ARCHIVED_SESSIONS_SUBDIR).join(file_name);
+    if tokio::fs::try_exists(archived_path.as_path())
+        .await
+        .unwrap_or(false)
+    {
+        return Ok(archived_path);
+    }
+    if let Some(active_path) =
+        rollout_path_for_timestamp_file(codex_home, rollout_timestamp, file_name)
+        && tokio::fs::try_exists(active_path.as_path())
+            .await
+            .unwrap_or(false)
+    {
+        return Ok(active_path);
+    }
     let id = uuid.to_string();
     if let Some(path) = find_thread_path_by_id_str(codex_home, id.as_str()).await? {
         return Ok(path);
@@ -1488,6 +1545,24 @@ pub async fn resolve_rollout_reference_rollout_path(
         return Ok(path);
     }
     Ok(rollout_path.to_path_buf())
+}
+
+fn rollout_path_for_timestamp_file(
+    codex_home: &Path,
+    rollout_timestamp: &str,
+    file_name: &str,
+) -> Option<PathBuf> {
+    let year = rollout_timestamp.get(0..4)?;
+    let month = rollout_timestamp.get(5..7)?;
+    let day = rollout_timestamp.get(8..10)?;
+    Some(
+        codex_home
+            .join(SESSIONS_SUBDIR)
+            .join(year)
+            .join(month)
+            .join(day)
+            .join(file_name),
+    )
 }
 
 /// Extract the `YYYY/MM/DD` directory components from a rollout filename.

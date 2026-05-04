@@ -9,6 +9,7 @@ use codex_rollout::RolloutRecorder;
 use codex_rollout::RolloutRecorderParams;
 use codex_rollout::builder_from_items;
 use codex_rollout::read_session_meta_line;
+use tokio::fs;
 use tracing::warn;
 
 use super::LocalThreadStore;
@@ -210,6 +211,7 @@ pub(super) async fn rotate_thread_segment(
     initial_items.push(RolloutItem::RolloutReference(RolloutReferenceItem {
         rollout_path: old_rollout_path.clone(),
         thread_id: Some(thread_id),
+        rollout_timestamp: rollout_timestamp_from_path(old_rollout_path.as_path()),
         segment_id: old_meta.meta.segment_id,
         max_depth: params.previous_segment_reference_depth,
     }));
@@ -246,6 +248,46 @@ pub(super) async fn rotate_thread_segment(
         );
     }
 
+    let current_path = store
+        .live_recorders
+        .lock()
+        .await
+        .get(&thread_id)
+        .ok_or(ThreadStoreError::ThreadNotFound { thread_id })?
+        .rollout_path()
+        .to_path_buf();
+    if current_path != old_rollout_path {
+        return Err(ThreadStoreError::Conflict {
+            message: format!("live writer for thread {thread_id} changed during segment rotation"),
+        });
+    }
+
+    let old_file_name = old_rollout_path
+        .file_name()
+        .ok_or_else(|| ThreadStoreError::Internal {
+            message: format!(
+                "previous rollout segment path {} does not have a file name",
+                old_rollout_path.display()
+            ),
+        })?;
+    let archived_root = store
+        .config
+        .codex_home
+        .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR);
+    fs::create_dir_all(archived_root.as_path())
+        .await
+        .map_err(thread_store_io_error)?;
+    let archived_path = archived_root.join(old_file_name);
+    fs::rename(old_rollout_path.as_path(), archived_path.as_path())
+        .await
+        .map_err(|err| ThreadStoreError::Internal {
+            message: format!(
+                "failed to archive previous rollout segment {} to {}: {err}",
+                old_rollout_path.display(),
+                archived_path.display()
+            ),
+        })?;
+
     let mut live_recorders = store.live_recorders.lock().await;
     let current_path = live_recorders
         .get(&thread_id)
@@ -265,4 +307,14 @@ fn thread_store_io_error(err: std::io::Error) -> ThreadStoreError {
     ThreadStoreError::Internal {
         message: err.to_string(),
     }
+}
+
+fn rollout_timestamp_from_path(path: &std::path::Path) -> Option<String> {
+    let file_name = path.file_name()?.to_str()?;
+    let core = file_name.strip_prefix("rollout-")?.strip_suffix(".jsonl")?;
+    core.match_indices('-').rev().find_map(|(index, _)| {
+        ThreadId::from_string(&core[index + 1..])
+            .ok()
+            .map(|_| core[..index].to_string())
+    })
 }

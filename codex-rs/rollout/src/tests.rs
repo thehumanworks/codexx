@@ -34,6 +34,7 @@ use codex_protocol::models::ResponseItem;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::RolloutLine;
+use codex_protocol::protocol::RolloutReferenceItem;
 use codex_protocol::protocol::SessionMeta;
 use codex_protocol::protocol::SessionMetaLine;
 use codex_protocol::protocol::SessionSource;
@@ -292,6 +293,34 @@ fn rollout_date_parts_extracts_directory_components() {
         parts,
         Some(("2025".to_string(), "03".to_string(), "01".to_string()))
     );
+}
+
+#[tokio::test]
+async fn rollout_reference_resolves_archived_file_by_stable_thread_and_timestamp() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path();
+    let uuid = Uuid::new_v4();
+    let thread_id = ThreadId::from_string(&uuid.to_string()).expect("thread id");
+    let ts = "2025-01-03T13-00-00";
+    let active_path = home.join(format!("sessions/2025/01/03/rollout-{ts}-{uuid}.jsonl"));
+    let archived_path = home.join(format!("archived_sessions/rollout-{ts}-{uuid}.jsonl"));
+    fs::create_dir_all(archived_path.parent().expect("archived parent")).unwrap();
+    fs::write(&archived_path, "").unwrap();
+
+    let resolved = crate::resolve_rollout_reference_rollout_path(
+        home,
+        &RolloutReferenceItem {
+            rollout_path: active_path,
+            thread_id: Some(thread_id),
+            rollout_timestamp: Some(ts.to_string()),
+            segment_id: None,
+            max_depth: 2,
+        },
+    )
+    .await
+    .expect("resolve rollout reference");
+
+    assert_eq!(resolved, archived_path);
 }
 
 async fn assert_state_db_rollout_path(

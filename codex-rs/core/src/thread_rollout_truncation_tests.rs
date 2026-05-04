@@ -271,6 +271,7 @@ async fn materializes_fork_reference_before_truncating_rollout_references() {
             RolloutItem::RolloutReference(RolloutReferenceItem {
                 rollout_path: old_path,
                 thread_id: None,
+                rollout_timestamp: None,
                 segment_id: None,
                 max_depth: 2,
             }),
@@ -327,6 +328,7 @@ async fn materializes_rollout_reference_with_bounded_depth() {
             RolloutItem::RolloutReference(RolloutReferenceItem {
                 rollout_path: oldest_path,
                 thread_id: None,
+                rollout_timestamp: None,
                 segment_id: None,
                 max_depth: 2,
             }),
@@ -341,6 +343,7 @@ async fn materializes_rollout_reference_with_bounded_depth() {
             RolloutItem::RolloutReference(RolloutReferenceItem {
                 rollout_path: old_path,
                 thread_id: None,
+                rollout_timestamp: None,
                 segment_id: None,
                 max_depth: 2,
             }),
@@ -353,6 +356,7 @@ async fn materializes_rollout_reference_with_bounded_depth() {
         RolloutItem::RolloutReference(RolloutReferenceItem {
             rollout_path: middle_path,
             thread_id: None,
+            rollout_timestamp: None,
             segment_id: None,
             max_depth: 2,
         }),

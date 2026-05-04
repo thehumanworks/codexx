@@ -469,6 +469,7 @@ async fn thread_read_unloaded_include_turns_materializes_rollout_reference() -> 
                     thread_id: Some(codex_protocol::ThreadId::from_string(
                         &referenced_thread_id,
                     )?),
+                    rollout_timestamp: None,
                     segment_id: None,
                     max_depth: 2,
                 }),

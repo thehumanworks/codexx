@@ -4945,7 +4945,11 @@ impl CodexMessageProcessor {
         thread.id = thread_id.to_string();
         thread.path = Some(rollout_path.to_path_buf());
         if include_turns {
-            let history_items = thread_history.get_rollout_items();
+            let history_items = codex_core::materialize_rollout_items_for_replay(
+                self.config.codex_home.as_path(),
+                &thread_history.get_rollout_items(),
+            )
+            .await;
             populate_thread_turns_from_history(
                 &mut thread,
                 &history_items,
@@ -8409,7 +8413,7 @@ async fn handle_thread_listener_command(
 async fn handle_pending_thread_resume_request(
     conversation_id: ThreadId,
     conversation: &Arc<CodexThread>,
-    _codex_home: &Path,
+    codex_home: &Path,
     thread_state_manager: &ThreadStateManager,
     thread_state: &Arc<Mutex<ThreadState>>,
     thread_watch_manager: &ThreadWatchManager,
@@ -8438,12 +8442,14 @@ async fn handle_pending_thread_resume_request(
     let request_id = pending.request_id;
     let connection_id = request_id.connection_id;
     let mut thread = pending.thread_summary;
+    let history_items = if pending.include_turns {
+        codex_core::materialize_rollout_items_for_replay(codex_home, &pending.history_items).await
+    } else {
+        Vec::new()
+    };
     if pending.include_turns
-        && let Err(message) = populate_thread_turns_from_history(
-            &mut thread,
-            &pending.history_items,
-            active_turn.as_ref(),
-        )
+        && let Err(message) =
+            populate_thread_turns_from_history(&mut thread, &history_items, active_turn.as_ref())
     {
         outgoing
             .send_error(request_id, internal_error(message))
@@ -8531,7 +8537,7 @@ async fn handle_pending_thread_resume_request(
     // paying the cost of turn reconstruction for historical usage replay.
     if let Some(token_usage_thread) = token_usage_thread {
         let token_usage_turn_id = latest_token_usage_turn_id_from_rollout_items(
-            &pending.history_items,
+            &history_items,
             token_usage_thread.turns.as_slice(),
         );
         // Rejoining a loaded thread has the same UI contract as a cold resume, but

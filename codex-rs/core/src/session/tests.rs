@@ -2910,6 +2910,23 @@ async fn replace_compacted_history_rotates_local_rollout_segment() {
         .expect("load current rollout path")
         .expect("rollout path after compaction");
     assert_ne!(new_rollout_path, old_rollout_path);
+    let config = sess.get_config().await;
+    let archived_old_rollout_path = config
+        .codex_home
+        .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR)
+        .join(
+            old_rollout_path
+                .file_name()
+                .expect("old rollout path should have a file name"),
+        );
+    assert!(!old_rollout_path.exists());
+    assert!(archived_old_rollout_path.exists());
+    let old_rollout_timestamp = old_rollout_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .and_then(|file_name| file_name.strip_prefix("rollout-"))
+        .and_then(|file_name| file_name.strip_suffix(&format!("-{}.jsonl", sess.conversation_id)))
+        .expect("old rollout timestamp");
     let (new_items, new_thread_id, _) =
         RolloutRecorder::load_rollout_items(new_rollout_path.as_path())
             .await
@@ -2921,6 +2938,7 @@ async fn replace_compacted_history_rotates_local_rollout_segment() {
             RolloutItem::RolloutReference(reference)
                 if reference.rollout_path == old_rollout_path
                     && reference.thread_id == Some(sess.conversation_id)
+                    && reference.rollout_timestamp.as_deref() == Some(old_rollout_timestamp)
         )
     }));
     assert!(new_items.iter().any(|item| {
@@ -2933,7 +2951,6 @@ async fn replace_compacted_history_rotates_local_rollout_segment() {
         )
     }));
 
-    let config = sess.get_config().await;
     let replay_items = crate::thread_rollout_truncation::materialize_rollout_items_for_replay(
         config.codex_home.as_path(),
         &new_items,

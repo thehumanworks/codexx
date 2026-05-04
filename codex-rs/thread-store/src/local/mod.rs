@@ -428,6 +428,29 @@ mod tests {
             .flush_thread(thread_id)
             .await
             .expect("flush post-rotation item");
+        let archived_old_rollout_path = home
+            .path()
+            .join(codex_rollout::ARCHIVED_SESSIONS_SUBDIR)
+            .join(
+                old_rollout_path
+                    .file_name()
+                    .expect("old rollout path should have a file name"),
+            );
+        assert!(!old_rollout_path.exists());
+        assert!(archived_old_rollout_path.exists());
+        let old_segment_id = old_segment_id.expect("old rollout should have a segment id");
+        let resolved_old_rollout_path =
+            codex_rollout::find_rollout_path_by_segment_id(home.path(), thread_id, old_segment_id)
+                .await
+                .expect("resolve archived segment by id")
+                .expect("archived segment should resolve by id");
+        assert_eq!(resolved_old_rollout_path, archived_old_rollout_path);
+        let old_rollout_timestamp = old_rollout_path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .and_then(|file_name| file_name.strip_prefix("rollout-"))
+            .and_then(|file_name| file_name.strip_suffix(&format!("-{thread_id}.jsonl")))
+            .expect("old rollout timestamp");
 
         let (new_items, new_thread_id, _) =
             RolloutRecorder::load_rollout_items(new_rollout_path.as_path())
@@ -440,7 +463,8 @@ mod tests {
                 RolloutItem::RolloutReference(reference)
                     if reference.rollout_path == old_rollout_path
                         && reference.thread_id == Some(thread_id)
-                        && reference.segment_id == old_segment_id
+                        && reference.rollout_timestamp.as_deref() == Some(old_rollout_timestamp)
+                        && reference.segment_id == Some(old_segment_id)
                         && reference.max_depth == 2
             )
         }));
@@ -458,7 +482,8 @@ mod tests {
                     if event.message == "after rotation"
             )
         }));
-        assert_rollout_contains_message(old_rollout_path.as_path(), "before rotation").await;
+        assert_rollout_contains_message(archived_old_rollout_path.as_path(), "before rotation")
+            .await;
     }
 
     #[tokio::test]

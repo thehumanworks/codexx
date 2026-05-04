@@ -2792,6 +2792,8 @@ pub struct RolloutReferenceItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<ThreadId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollout_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub segment_id: Option<SegmentId>,
     #[serde(default = "default_rollout_reference_depth")]
     pub max_depth: usize,
