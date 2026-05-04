@@ -875,10 +875,6 @@ impl RuntimeKeymap {
                 ("list.accept", self.list.accept.as_slice()),
                 ("list.cancel", self.list.cancel.as_slice()),
                 (
-                    "unified_mentions.toggle_remember_search_mode",
-                    self.unified_mentions.toggle_remember_search_mode.as_slice(),
-                ),
-                (
                     "approval.open_fullscreen",
                     self.approval.open_fullscreen.as_slice(),
                 ),
