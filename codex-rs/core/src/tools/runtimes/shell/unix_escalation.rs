@@ -410,25 +410,13 @@ impl CoreShellActionProvider {
             pre_tool_use_permission_decision.as_ref(),
             Some(PreToolUsePermissionDecision::Ask { .. })
         );
-        let pre_tool_use_allows = matches!(
-            pre_tool_use_permission_decision.as_ref(),
-            Some(PreToolUsePermissionDecision::Allow { .. })
-        );
         let guardian_review_id = (routes_approval_to_guardian(&turn) && !pre_tool_use_asks_user)
             .then(new_guardian_review_id);
         Ok(stopwatch
             .pause_for(async move {
-                if pre_tool_use_allows {
-                    return PromptDecision {
-                        decision: ReviewDecision::Approved,
-                        guardian_review_id: None,
-                        rejection_message: None,
-                    };
-                }
-
                 // 1) Run PermissionRequest hooks when PreToolUse did not already
-                // provide the approval directive for this tool call.
-                if pre_tool_use_permission_decision.is_none() {
+                // require the user to answer this tool call.
+                if !pre_tool_use_asks_user {
                     let permission_request = PermissionRequestPayload::bash(
                         codex_shell_command::parse_command::shlex_join(&command),
                         /*description*/ None,

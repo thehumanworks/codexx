@@ -476,11 +476,7 @@ impl NetworkApprovalService {
         let command = owner_call
             .as_ref()
             .map_or_else(|| prompt_command.join(" "), |call| call.command.clone());
-        let pre_tool_use_allows = matches!(
-            pre_tool_use_permission_decision,
-            Some(PreToolUsePermissionDecision::Allow { .. })
-        );
-        if pre_tool_use_permission_decision.is_none()
+        if !pre_tool_use_asks_user
             && let Some(permission_request_decision) = run_permission_request_hooks(
                 &session,
                 &turn_context,
@@ -512,14 +508,6 @@ impl NetworkApprovalService {
                     return NetworkDecision::deny(REASON_NOT_ALLOWED);
                 }
             }
-        }
-        if pre_tool_use_allows {
-            pending
-                .set_decision(PendingApprovalDecision::AllowOnce)
-                .await;
-            let mut pending_approvals = self.pending_host_approvals.lock().await;
-            pending_approvals.remove(&key);
-            return NetworkDecision::Allow;
         }
         let guardian_review_id = (routes_approval_to_guardian(&turn_context)
             && !pre_tool_use_asks_user)

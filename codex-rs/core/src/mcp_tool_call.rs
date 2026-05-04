@@ -1026,10 +1026,6 @@ async fn maybe_request_mcp_tool_approval(
         pre_tool_use_permission_decision.as_ref(),
         Some(PreToolUsePermissionDecision::Ask { .. })
     );
-    let pre_tool_use_allows = matches!(
-        pre_tool_use_permission_decision.as_ref(),
-        Some(PreToolUsePermissionDecision::Allow { .. })
-    );
     let auto_approved_by_permissions = mcp_permission_prompt_is_auto_approved(
         turn_context.approval_policy.value(),
         &turn_context.permission_profile(),
@@ -1076,22 +1072,18 @@ async fn maybe_request_mcp_tool_approval(
     if auto_approved_by_policy && approval_required && !must_prompt_user {
         return None;
     }
-    if pre_tool_use_allows && !must_prompt_user {
-        return None;
-    }
-
     let session_approval_key = session_mcp_tool_approval_key(invocation, metadata, approval_mode);
     let persistent_approval_key =
         persistent_mcp_tool_approval_key(invocation, metadata, approval_mode);
     if !must_prompt_user
-        && pre_tool_use_permission_decision.is_none()
+        && !pre_tool_use_asks_user
         && let Some(key) = session_approval_key.as_ref()
         && mcp_tool_approval_is_remembered(sess, key).await
     {
         return Some(McpToolApprovalDecision::Accept);
     }
 
-    if !must_prompt_user && pre_tool_use_permission_decision.is_none() {
+    if !must_prompt_user && !pre_tool_use_asks_user {
         match run_permission_request_hooks(
             sess,
             turn_context,

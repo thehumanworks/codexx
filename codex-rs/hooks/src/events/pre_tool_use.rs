@@ -42,11 +42,11 @@ pub struct PreToolUseOutcome {
     pub additional_contexts: Vec<String>,
 }
 
-/// Hook-authored approval guidance to apply later at the concrete permission
-/// boundary for the same tool call.
+/// Hook-authored approval guidance to apply later at concrete permission
+/// boundaries for the same tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreToolUsePermissionDecision {
-    /// Skip an otherwise-required permission prompt when policy allows it.
+    /// Record hook-level approval without waiving later concrete permission checks.
     Allow { reason: Option<String> },
     /// Require explicit human-user confirmation.
     Ask { reason: Option<String> },
