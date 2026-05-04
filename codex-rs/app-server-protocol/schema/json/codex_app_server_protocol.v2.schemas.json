@@ -7388,6 +7388,14 @@
         },
         "status": {
           "$ref": "#/definitions/McpServerStartupState"
+        },
+        "threadId": {
+          "default": null,
+          "description": "Identifier of the thread whose `McpConnectionManager` produced this update. Current servers always set this; it remains optional so older app servers that omit the field still deserialize and route globally.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [

@@ -436,8 +436,10 @@ fn server_notification_thread_target(
         }
         ServerNotification::Warning(notification) => notification.thread_id.as_deref(),
         ServerNotification::GuardianWarning(notification) => Some(notification.thread_id.as_str()),
+        ServerNotification::McpServerStatusUpdated(notification) => {
+            notification.thread_id.as_deref()
+        }
         ServerNotification::SkillsChanged(_)
-        | ServerNotification::McpServerStatusUpdated(_)
         | ServerNotification::McpServerStartupCompleted(_)
         | ServerNotification::McpServerOauthLoginCompleted(_)
         | ServerNotification::AccountUpdated(_)
@@ -1083,6 +1085,8 @@ mod tests {
     use codex_app_server_protocol::GuardianWarningNotification;
     use codex_app_server_protocol::ItemCompletedNotification;
     use codex_app_server_protocol::ItemStartedNotification;
+    use codex_app_server_protocol::McpServerStartupState;
+    use codex_app_server_protocol::McpServerStatusUpdatedNotification;
     use codex_app_server_protocol::ReasoningSummaryTextDeltaNotification;
     use codex_app_server_protocol::ServerNotification;
     use codex_app_server_protocol::Thread;
@@ -1708,6 +1712,37 @@ mod tests {
             thread_id: thread_id.to_string(),
             message: "warning".to_string(),
         });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Thread(thread_id));
+    }
+
+    #[test]
+    fn mcp_server_status_updates_without_thread_id_route_globally() {
+        let notification =
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: None,
+                name: "alpha".to_string(),
+                status: McpServerStartupState::Starting,
+                error: None,
+            });
+
+        let target = server_notification_thread_target(&notification);
+
+        assert_eq!(target, ServerNotificationThreadTarget::Global);
+    }
+
+    #[test]
+    fn mcp_server_status_updates_with_thread_id_route_to_threads() {
+        let thread_id = ThreadId::new();
+        let notification =
+            ServerNotification::McpServerStatusUpdated(McpServerStatusUpdatedNotification {
+                thread_id: Some(thread_id.to_string()),
+                name: "alpha".to_string(),
+                status: McpServerStartupState::Ready,
+                error: None,
+            });
 
         let target = server_notification_thread_target(&notification);
 

@@ -266,6 +266,7 @@ pub(crate) async fn apply_bespoke_event_handling(
                     }
                 };
                 let notification = McpServerStatusUpdatedNotification {
+                    thread_id: Some(conversation_id.to_string()),
                     name: update.server,
                     status,
                     error,
