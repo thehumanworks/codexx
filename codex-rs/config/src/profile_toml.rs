@@ -5,7 +5,6 @@ use serde::Serialize;
 
 use crate::Lenient;
 use crate::config_toml::ToolsToml;
-use crate::invalid_config_warnings;
 use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
 use crate::types::Personality;
@@ -80,72 +79,19 @@ impl From<ConfigProfile> for codex_app_server_protocol::Profile {
         Self {
             model: config_profile.model,
             model_provider: config_profile.model_provider,
-            approval_policy: config_profile.approval_policy.and_then(Lenient::into_valid),
+            approval_policy: config_profile
+                .approval_policy
+                .and_then(|value| value.into_valid("approval_policy", None)),
             model_reasoning_effort: config_profile
                 .model_reasoning_effort
-                .and_then(Lenient::into_valid),
+                .and_then(|value| value.into_valid("model_reasoning_effort", None)),
             model_reasoning_summary: config_profile
                 .model_reasoning_summary
-                .and_then(Lenient::into_valid),
-            model_verbosity: config_profile.model_verbosity.and_then(Lenient::into_valid),
+                .and_then(|value| value.into_valid("model_reasoning_summary", None)),
+            model_verbosity: config_profile
+                .model_verbosity
+                .and_then(|value| value.into_valid("model_verbosity", None)),
             chatgpt_base_url: config_profile.chatgpt_base_url,
         }
-    }
-}
-
-impl ConfigProfile {
-    pub fn push_invalid_enum_warnings(&self, warnings: &mut Vec<String>, prefix: &str) {
-        push_invalid(
-            warnings,
-            &format!("{prefix}.service_tier"),
-            &self.service_tier,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.approval_policy"),
-            &self.approval_policy,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.approvals_reviewer"),
-            &self.approvals_reviewer,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.sandbox_mode"),
-            &self.sandbox_mode,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.model_reasoning_effort"),
-            &self.model_reasoning_effort,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.plan_mode_reasoning_effort"),
-            &self.plan_mode_reasoning_effort,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.model_reasoning_summary"),
-            &self.model_reasoning_summary,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.model_verbosity"),
-            &self.model_verbosity,
-        );
-        push_invalid(
-            warnings,
-            &format!("{prefix}.personality"),
-            &self.personality,
-        );
-        push_invalid(warnings, &format!("{prefix}.web_search"), &self.web_search);
-    }
-}
-
-fn push_invalid<T>(warnings: &mut Vec<String>, path: &str, value: &Option<Lenient<T>>) {
-    if let Some(warning) = invalid_config_warnings(path, value) {
-        warnings.push(warning);
     }
 }

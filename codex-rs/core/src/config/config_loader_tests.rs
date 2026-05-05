@@ -145,7 +145,10 @@ sandbox_mode = "make-it-so"
         .clone()
         .try_into()
         .map_err(std::io::Error::other)?;
-    let enum_warnings = config_toml.invalid_enum_warnings();
+    let mut enum_warnings = Vec::new();
+    let sandbox_mode = config_toml
+        .sandbox_mode
+        .and_then(|value| value.into_valid("sandbox_mode", Some(&mut enum_warnings)));
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"
@@ -157,8 +160,8 @@ sandbox_mode = "make-it-so"
         vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()];
 
     assert_eq!(
-        (effective_config, enum_warnings),
-        (expected_config, expected_startup_warnings)
+        (effective_config, sandbox_mode, enum_warnings),
+        (expected_config, None, expected_startup_warnings)
     );
     Ok(())
 }
@@ -173,6 +176,7 @@ async fn invalid_enum_values_emit_startup_warnings_when_loading_config() -> std:
         r#"
 model = "gpt-5-codex"
 sandbox_mode = "make-it-so"
+profile = "dev"
 
 [profiles.dev]
 model_reasoning_effort = "much"

@@ -152,6 +152,10 @@ async fn derive_legacy_sandbox_policy_for_test(
         .derive_permission_profile(
             sandbox_mode_override,
             profile_sandbox_mode,
+            cfg.sandbox_mode
+                .as_ref()
+                .and_then(Lenient::as_valid)
+                .copied(),
             windows_sandbox_level,
             active_project,
             permission_profile_constraint,
@@ -3105,41 +3109,29 @@ async fn feedback_enabled_defaults_to_true() -> std::io::Result<()> {
 
 #[test]
 fn web_search_mode_defaults_to_none_if_unset() {
-    let cfg = ConfigToml::default();
-    let profile = ConfigProfile::default();
     let features = Features::with_defaults();
 
-    assert_eq!(resolve_web_search_mode(&cfg, &profile, &features), None);
+    assert_eq!(resolve_web_search_mode(None, &features), None);
 }
 
 #[test]
 fn web_search_mode_prefers_profile_over_legacy_flags() {
-    let cfg = ConfigToml::default();
-    let profile = ConfigProfile {
-        web_search: Some(Lenient::from(WebSearchMode::Live)),
-        ..Default::default()
-    };
     let mut features = Features::with_defaults();
     features.enable(Feature::WebSearchCached);
 
     assert_eq!(
-        resolve_web_search_mode(&cfg, &profile, &features),
+        resolve_web_search_mode(Some(WebSearchMode::Live), &features),
         Some(WebSearchMode::Live)
     );
 }
 
 #[test]
 fn web_search_mode_disabled_overrides_legacy_request() {
-    let cfg = ConfigToml {
-        web_search: Some(Lenient::from(WebSearchMode::Disabled)),
-        ..Default::default()
-    };
-    let profile = ConfigProfile::default();
     let mut features = Features::with_defaults();
     features.enable(Feature::WebSearchRequest);
 
     assert_eq!(
-        resolve_web_search_mode(&cfg, &profile, &features),
+        resolve_web_search_mode(Some(WebSearchMode::Disabled), &features),
         Some(WebSearchMode::Disabled)
     );
 }
@@ -3451,7 +3443,7 @@ async fn managed_config_overrides_oauth_store_mode() -> anyhow::Result<()> {
     assert_eq!(
         cfg.mcp_oauth_credentials_store
             .clone()
-            .and_then(Lenient::into_valid),
+            .and_then(|value| value.into_valid("mcp_oauth_credentials_store", None)),
         Some(OAuthCredentialsStoreMode::Keyring),
     );
 
@@ -4576,7 +4568,9 @@ async fn set_model_updates_defaults() -> anyhow::Result<()> {
 
     assert_eq!(parsed.model.as_deref(), Some("gpt-5.4"));
     assert_eq!(
-        parsed.model_reasoning_effort.and_then(Lenient::into_valid),
+        parsed
+            .model_reasoning_effort
+            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
         Some(ReasoningEffort::High)
     );
 
@@ -4610,7 +4604,9 @@ model = "gpt-4.1"
 
     assert_eq!(parsed.model.as_deref(), Some("o4-mini"));
     assert_eq!(
-        parsed.model_reasoning_effort.and_then(Lenient::into_valid),
+        parsed
+            .model_reasoning_effort
+            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
         Some(ReasoningEffort::High)
     );
     assert_eq!(
@@ -4646,7 +4642,7 @@ async fn set_model_updates_profile() -> anyhow::Result<()> {
         profile
             .model_reasoning_effort
             .clone()
-            .and_then(Lenient::into_valid),
+            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
         Some(ReasoningEffort::Medium)
     );
 
@@ -4689,7 +4685,7 @@ model = "gpt-5.4"
         dev_profile
             .model_reasoning_effort
             .clone()
-            .and_then(Lenient::into_valid),
+            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
         Some(ReasoningEffort::Medium)
     );
 

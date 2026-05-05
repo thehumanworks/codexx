@@ -6,7 +6,6 @@ use std::path::Path;
 
 use crate::HooksToml;
 use crate::Lenient;
-use crate::invalid_config_warnings;
 use crate::permissions_toml::PermissionsToml;
 use crate::profile_toml::ConfigProfile;
 use crate::types::AnalyticsConfigToml;
@@ -511,21 +510,27 @@ impl From<ConfigToml> for UserSavedConfig {
             .collect();
 
         Self {
-            approval_policy: config_toml.approval_policy.and_then(Lenient::into_valid),
-            sandbox_mode: config_toml.sandbox_mode.and_then(Lenient::into_valid),
+            approval_policy: config_toml
+                .approval_policy
+                .and_then(|value| value.into_valid("approval_policy", None)),
+            sandbox_mode: config_toml
+                .sandbox_mode
+                .and_then(|value| value.into_valid("sandbox_mode", None)),
             sandbox_settings: config_toml.sandbox_workspace_write.map(From::from),
             forced_chatgpt_workspace_id: config_toml.forced_chatgpt_workspace_id,
             forced_login_method: config_toml
                 .forced_login_method
-                .and_then(Lenient::into_valid),
+                .and_then(|value| value.into_valid("forced_login_method", None)),
             model: config_toml.model,
             model_reasoning_effort: config_toml
                 .model_reasoning_effort
-                .and_then(Lenient::into_valid),
+                .and_then(|value| value.into_valid("model_reasoning_effort", None)),
             model_reasoning_summary: config_toml
                 .model_reasoning_summary
-                .and_then(Lenient::into_valid),
-            model_verbosity: config_toml.model_verbosity.and_then(Lenient::into_valid),
+                .and_then(|value| value.into_valid("model_reasoning_summary", None)),
+            model_verbosity: config_toml
+                .model_verbosity
+                .and_then(|value| value.into_valid("model_verbosity", None)),
             tools: config_toml.tools.map(From::from),
             profile: config_toml.profile,
             profiles,
@@ -719,15 +724,11 @@ impl ConfigToml {
         &self,
         sandbox_mode_override: Option<SandboxMode>,
         profile_sandbox_mode: Option<SandboxMode>,
+        config_sandbox_mode: Option<SandboxMode>,
         windows_sandbox_level: WindowsSandboxLevel,
         active_project: Option<&ProjectConfig>,
         permission_profile_constraint: Option<&crate::Constrained<PermissionProfile>>,
     ) -> PermissionProfile {
-        let config_sandbox_mode = self
-            .sandbox_mode
-            .as_ref()
-            .and_then(Lenient::as_valid)
-            .copied();
         let sandbox_mode_was_explicit = sandbox_mode_override.is_some()
             || profile_sandbox_mode.is_some()
             || config_sandbox_mode.is_some();
@@ -852,69 +853,6 @@ impl ConfigToml {
             }
             None => Ok(ConfigProfile::default()),
         }
-    }
-
-    pub fn invalid_enum_warnings(&self) -> Vec<String> {
-        let mut warnings = Vec::new();
-        push_invalid(&mut warnings, "approval_policy", &self.approval_policy);
-        push_invalid(
-            &mut warnings,
-            "approvals_reviewer",
-            &self.approvals_reviewer,
-        );
-        push_invalid(&mut warnings, "sandbox_mode", &self.sandbox_mode);
-        push_invalid(
-            &mut warnings,
-            "forced_login_method",
-            &self.forced_login_method,
-        );
-        push_invalid(
-            &mut warnings,
-            "cli_auth_credentials_store",
-            &self.cli_auth_credentials_store,
-        );
-        push_invalid(
-            &mut warnings,
-            "mcp_oauth_credentials_store",
-            &self.mcp_oauth_credentials_store,
-        );
-        push_invalid(&mut warnings, "file_opener", &self.file_opener);
-        push_invalid(
-            &mut warnings,
-            "model_reasoning_effort",
-            &self.model_reasoning_effort,
-        );
-        push_invalid(
-            &mut warnings,
-            "plan_mode_reasoning_effort",
-            &self.plan_mode_reasoning_effort,
-        );
-        push_invalid(
-            &mut warnings,
-            "model_reasoning_summary",
-            &self.model_reasoning_summary,
-        );
-        push_invalid(&mut warnings, "model_verbosity", &self.model_verbosity);
-        push_invalid(&mut warnings, "personality", &self.personality);
-        push_invalid(&mut warnings, "service_tier", &self.service_tier);
-        push_invalid(
-            &mut warnings,
-            "experimental_thread_store",
-            &self.experimental_thread_store,
-        );
-        push_invalid(&mut warnings, "web_search", &self.web_search);
-        let mut profiles: Vec<_> = self.profiles.iter().collect();
-        profiles.sort_by_key(|(name, _)| *name);
-        for (name, profile) in profiles {
-            profile.push_invalid_enum_warnings(&mut warnings, &format!("profiles.{name}"));
-        }
-        warnings
-    }
-}
-
-fn push_invalid<T>(warnings: &mut Vec<String>, path: &str, value: &Option<Lenient<T>>) {
-    if let Some(warning) = invalid_config_warnings(path, value) {
-        warnings.push(warning);
     }
 }
 

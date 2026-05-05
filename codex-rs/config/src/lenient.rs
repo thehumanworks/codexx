@@ -28,10 +28,17 @@ impl<T> Lenient<T> {
         }
     }
 
-    pub fn into_valid(self) -> Option<T> {
+    pub fn into_valid(self, field_path: &str, warnings: Option<&mut Vec<String>>) -> Option<T> {
         match self {
             Self::Valid(value) => Some(value),
-            Self::Invalid(_) => None,
+            Self::Invalid(value) => {
+                if let Some(warnings) = warnings {
+                    warnings.push(format!(
+                        "Ignoring invalid config value at {field_path}: {value}"
+                    ));
+                }
+                None
+            }
         }
     }
 
@@ -90,12 +97,4 @@ where
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
         T::json_schema(generator)
     }
-}
-
-pub fn invalid_config_warnings<T>(field_path: &str, value: &Option<Lenient<T>>) -> Option<String> {
-    value.as_ref().and_then(|value| {
-        value
-            .invalid_value()
-            .map(|invalid| format!("Ignoring invalid config value at {field_path}: {invalid}"))
-    })
 }
