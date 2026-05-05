@@ -4,6 +4,8 @@
 //! - in-process restrictions (`no_new_privs` + seccomp), and
 //! - bubblewrap for filesystem isolation.
 #[cfg(target_os = "linux")]
+mod bazel_bwrap;
+#[cfg(target_os = "linux")]
 mod bwrap;
 #[cfg(target_os = "linux")]
 mod landlock;
@@ -13,8 +15,6 @@ mod launcher;
 mod linux_run_main;
 #[cfg(target_os = "linux")]
 mod proxy_routing;
-#[cfg(target_os = "linux")]
-mod vendored_bwrap;
 
 #[cfg(target_os = "linux")]
 pub fn run_main() -> ! {
