@@ -234,7 +234,6 @@ impl ToolHandler for ShellHandler {
                             "command".to_string(),
                             JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
                         );
-                        Ok(())
                     })?,
                 }
             }

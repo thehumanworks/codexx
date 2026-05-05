@@ -89,7 +89,7 @@ fn updated_hook_command(updated_input: &Value) -> Result<&str, FunctionCallError
 fn rewrite_function_arguments(
     arguments: &str,
     tool_name: &str,
-    rewrite: impl FnOnce(&mut Map<String, Value>) -> Result<(), FunctionCallError>,
+    rewrite: impl FnOnce(&mut Map<String, Value>),
 ) -> Result<String, FunctionCallError> {
     let mut arguments: Value = parse_arguments(arguments)?;
     let Value::Object(arguments) = &mut arguments else {
@@ -97,7 +97,7 @@ fn rewrite_function_arguments(
             "{tool_name} arguments must be an object"
         )));
     };
-    rewrite(arguments)?;
+    rewrite(arguments);
     serde_json::to_string(&arguments).map_err(|err| {
         FunctionCallError::RespondToModel(format!(
             "failed to serialize rewritten {tool_name} arguments: {err}"
@@ -113,7 +113,6 @@ fn rewrite_function_string_argument(
 ) -> Result<String, FunctionCallError> {
     rewrite_function_arguments(arguments, tool_name, |arguments| {
         arguments.insert(field_name.to_string(), Value::String(value.to_string()));
-        Ok(())
     })
 }
 
