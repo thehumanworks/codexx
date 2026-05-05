@@ -3940,6 +3940,15 @@
             }
           ]
         },
+        "projectRoots": {
+          "items": {
+            "$ref": "#/definitions/AbsolutePathBuf"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
         "sandbox": {
           "anyOf": [
             {
@@ -4121,6 +4130,15 @@
             {
               "type": "null"
             }
+          ]
+        },
+        "projectRoots": {
+          "items": {
+            "$ref": "#/definitions/AbsolutePathBuf"
+          },
+          "type": [
+            "array",
+            "null"
           ]
         },
         "sandbox": {
