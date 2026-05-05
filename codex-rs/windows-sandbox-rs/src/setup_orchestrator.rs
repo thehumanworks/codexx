@@ -9,6 +9,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::time::Duration;
 
 use crate::allow::AllowDenyPaths;
 use crate::allow::compute_allow_paths;
@@ -39,6 +40,8 @@ pub const SETUP_VERSION: u32 = 5;
 pub const OFFLINE_USERNAME: &str = "CodexSandboxOffline";
 pub const ONLINE_USERNAME: &str = "CodexSandboxOnline";
 const ERROR_CANCELLED: u32 = 1223;
+const SETUP_REFRESH_MAX_SPAWN_ATTEMPTS: usize = 4;
+const SETUP_REFRESH_RETRY_DELAY: Duration = Duration::from_millis(150);
 const SECURITY_BUILTIN_DOMAIN_RID: u32 = 0x0000_0020;
 const DOMAIN_ALIAS_RID_ADMINS: u32 = 0x0000_0220;
 const USERPROFILE_ROOT_EXCLUSIONS: &[&str] = &[
@@ -190,9 +193,6 @@ fn run_setup_refresh_inner(
     let json = serde_json::to_vec(&payload)?;
     let b64 = BASE64_STANDARD.encode(json);
     let exe = find_setup_exe();
-    // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
-    let mut cmd = Command::new(&exe);
-    cmd.arg(&b64).stdout(Stdio::null()).stderr(Stdio::null());
     let cwd = std::env::current_dir().unwrap_or_else(|_| request.codex_home.to_path_buf());
     log_note(
         &format!(
@@ -203,24 +203,49 @@ fn run_setup_refresh_inner(
         ),
         Some(&sandbox_dir(request.codex_home)),
     );
-    let status = cmd
-        .status()
-        .map_err(|e| {
-            log_note(
-                &format!("setup refresh: failed to spawn {}: {e}", exe.display()),
-                Some(&sandbox_dir(request.codex_home)),
-            );
-            e
-        })
-        .context("spawn setup refresh")?;
-    if !status.success() {
-        log_note(
-            &format!("setup refresh: exited with status {status:?}"),
-            Some(&sandbox_dir(request.codex_home)),
-        );
-        return Err(anyhow!("setup refresh failed with status {status}"));
+    run_setup_refresh_helper(&exe, &b64, Some(&sandbox_dir(request.codex_home)))
+}
+
+fn run_setup_refresh_helper(exe: &Path, payload_b64: &str, log_dir: Option<&Path>) -> Result<()> {
+    let mut last_spawn_error: Option<std::io::Error> = None;
+
+    for attempt in 1..=SETUP_REFRESH_MAX_SPAWN_ATTEMPTS {
+        let mut cmd = Command::new(exe);
+        cmd.arg(payload_b64)
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        match cmd.status() {
+            Ok(status) => {
+                if status.success() {
+                    return Ok(());
+                }
+                log_note(
+                    &format!("setup refresh: exited with status {status:?}"),
+                    log_dir,
+                );
+                return Err(anyhow!("setup refresh failed with status {status}"));
+            }
+            Err(err) => {
+                log_note(
+                    &format!(
+                        "setup refresh: failed to spawn {} on attempt {attempt}/{}: {err}",
+                        exe.display(),
+                        SETUP_REFRESH_MAX_SPAWN_ATTEMPTS
+                    ),
+                    log_dir,
+                );
+                last_spawn_error = Some(err);
+            }
+        }
+
+        if attempt < SETUP_REFRESH_MAX_SPAWN_ATTEMPTS {
+            std::thread::sleep(SETUP_REFRESH_RETRY_DELAY);
+        }
     }
-    Ok(())
+
+    let err = last_spawn_error.expect("spawn error must be recorded before retries are exhausted");
+    Err(anyhow!("spawn setup refresh: {err}"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
