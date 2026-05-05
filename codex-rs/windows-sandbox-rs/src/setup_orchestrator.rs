@@ -9,6 +9,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
+use std::time::Duration;
 
 use crate::allow::AllowDenyPaths;
 use crate::allow::compute_allow_paths;
@@ -61,6 +62,8 @@ const WINDOWS_PLATFORM_DEFAULT_READ_ROOTS: &[&str] = &[
     r"C:\Program Files (x86)",
     r"C:\ProgramData",
 ];
+const SETUP_REFRESH_MAX_ATTEMPTS: usize = 3;
+const SETUP_REFRESH_RETRY_DELAY: Duration = Duration::from_millis(200);
 
 pub fn sandbox_dir(codex_home: &Path) -> PathBuf {
     codex_home.join(".sandbox")
@@ -190,37 +193,55 @@ fn run_setup_refresh_inner(
     let json = serde_json::to_vec(&payload)?;
     let b64 = BASE64_STANDARD.encode(json);
     let exe = find_setup_exe();
-    // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
-    let mut cmd = Command::new(&exe);
-    cmd.arg(&b64).stdout(Stdio::null()).stderr(Stdio::null());
     let cwd = std::env::current_dir().unwrap_or_else(|_| request.codex_home.to_path_buf());
-    log_note(
-        &format!(
-            "setup refresh: spawning {} (cwd={}, payload_len={})",
-            exe.display(),
-            cwd.display(),
-            b64.len()
-        ),
-        Some(&sandbox_dir(request.codex_home)),
-    );
-    let status = cmd
-        .status()
-        .map_err(|e| {
-            log_note(
-                &format!("setup refresh: failed to spawn {}: {e}", exe.display()),
-                Some(&sandbox_dir(request.codex_home)),
-            );
-            e
-        })
-        .context("spawn setup refresh")?;
-    if !status.success() {
+    let log_dir = sandbox_dir(request.codex_home);
+    let mut last_error: Option<anyhow::Error> = None;
+    for attempt in 1..=SETUP_REFRESH_MAX_ATTEMPTS {
         log_note(
-            &format!("setup refresh: exited with status {status:?}"),
-            Some(&sandbox_dir(request.codex_home)),
+            &format!(
+                "setup refresh: spawning {} (cwd={}, payload_len={}, attempt={}/{})",
+                exe.display(),
+                cwd.display(),
+                b64.len(),
+                attempt,
+                SETUP_REFRESH_MAX_ATTEMPTS
+            ),
+            Some(&log_dir),
         );
-        return Err(anyhow!("setup refresh failed with status {status}"));
+        // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
+        let mut cmd = Command::new(&exe);
+        cmd.arg(&b64).stdout(Stdio::null()).stderr(Stdio::null());
+
+        match cmd.status() {
+            Ok(status) if status.success() => return Ok(()),
+            Ok(status) => {
+                log_note(
+                    &format!(
+                        "setup refresh: exited with status {status:?} on attempt {attempt}/{}",
+                        SETUP_REFRESH_MAX_ATTEMPTS
+                    ),
+                    Some(&log_dir),
+                );
+                last_error = Some(anyhow!("setup refresh failed with status {status}"));
+            }
+            Err(err) => {
+                log_note(
+                    &format!(
+                        "setup refresh: failed to spawn {} on attempt {attempt}/{}: {err}",
+                        exe.display(),
+                        SETUP_REFRESH_MAX_ATTEMPTS
+                    ),
+                    Some(&log_dir),
+                );
+                last_error = Some(anyhow!("spawn setup refresh: {err}"));
+            }
+        }
+
+        if attempt < SETUP_REFRESH_MAX_ATTEMPTS {
+            std::thread::sleep(SETUP_REFRESH_RETRY_DELAY);
+        }
     }
-    Ok(())
+    Err(last_error.unwrap_or_else(|| anyhow!("setup refresh failed")))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
