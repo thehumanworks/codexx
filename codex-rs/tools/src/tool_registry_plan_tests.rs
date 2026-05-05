@@ -206,6 +206,7 @@ fn exec_command_spec_includes_environment_id_only_for_multiple_selected_environm
     );
 }
 
+#[test]
 fn apply_patch_freeform_spec_includes_environment_metadata_only_for_multiple_selected_environments()
 {
     let model_info = model_info();
