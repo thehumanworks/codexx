@@ -960,7 +960,7 @@ fn thread_start_params_from_config(
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
         permissions,
-        project_roots: project_roots.map(|roots| roots.to_vec()),
+        project_roots: project_roots.map(<[AbsolutePathBuf]>::to_vec),
         config: config_request_overrides_from_config(config),
         ephemeral: Some(config.ephemeral),
         ..ThreadStartParams::default()
@@ -988,7 +988,7 @@ fn thread_resume_params_from_config(
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
         permissions,
-        project_roots: project_roots.map(|roots| roots.to_vec()),
+        project_roots: project_roots.map(<[AbsolutePathBuf]>::to_vec),
         config: config_request_overrides_from_config(config),
         ..ThreadResumeParams::default()
     }
