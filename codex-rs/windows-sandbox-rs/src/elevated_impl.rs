@@ -143,8 +143,9 @@ mod windows_impl {
 
         let logs_base_dir: Option<&Path> = Some(sandbox_base.as_path());
         log_start(&command, logs_base_dir);
-        let protected_metadata_guard =
-            prepare_protected_metadata_targets(protected_metadata_targets);
+        let mut protected_metadata_guard =
+            prepare_protected_metadata_targets(protected_metadata_targets)?;
+        protected_metadata_guard.arm_sentinel_cleanup()?;
         let sandbox_creds = require_logon_sandbox_creds(
             &policy,
             sandbox_policy_cwd,
