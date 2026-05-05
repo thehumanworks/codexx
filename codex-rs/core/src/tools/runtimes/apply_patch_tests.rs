@@ -1,5 +1,6 @@
 use super::*;
 use crate::tools::sandboxing::SandboxAttempt;
+use codex_exec_server::Environment;
 use codex_protocol::config_types::WindowsSandboxLevel;
 use codex_protocol::models::AdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions;
@@ -15,6 +16,14 @@ use codex_sandboxing::policy_transforms::effective_network_sandbox_policy;
 use core_test_support::PathBufExt;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+fn test_environment() -> Arc<Environment> {
+    Arc::new(
+        Environment::create_for_tests(Some("ws://127.0.0.1:0".to_string()))
+            .expect("test environment"),
+    )
+}
 
 #[test]
 fn wants_no_sandbox_approval_granular_respects_sandbox_flag() {
@@ -40,8 +49,8 @@ fn wants_no_sandbox_approval_granular_respects_sandbox_flag() {
     );
 }
 
-#[test]
-fn guardian_review_request_includes_patch_context() {
+#[tokio::test]
+async fn guardian_review_request_includes_patch_context() {
     let path = std::env::temp_dir()
         .join("guardian-apply-patch-test.txt")
         .abs();
@@ -50,6 +59,7 @@ fn guardian_review_request_includes_patch_context() {
     let expected_patch = action.patch.clone();
     let request = ApplyPatchRequest {
         action,
+        environment: test_environment(),
         file_paths: vec![path.clone()],
         changes: HashMap::from([(
             path.to_path_buf(),
@@ -78,8 +88,8 @@ fn guardian_review_request_includes_patch_context() {
     );
 }
 
-#[test]
-fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
+#[tokio::test]
+async fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
     let runtime = ApplyPatchRuntime::new();
     let path = std::env::temp_dir()
         .join("apply-patch-permission-request-payload.txt")
@@ -88,6 +98,7 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
     let expected_patch = action.patch.clone();
     let req = ApplyPatchRequest {
         action,
+        environment: test_environment(),
         file_paths: vec![path],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::NeedsApproval {
@@ -113,8 +124,8 @@ fn permission_request_payload_uses_apply_patch_hook_name_and_aliases() {
     );
 }
 
-#[test]
-fn file_system_sandbox_context_uses_active_attempt() {
+#[tokio::test]
+async fn file_system_sandbox_context_uses_active_attempt() {
     let path = std::env::temp_dir()
         .join("apply-patch-runtime-attempt.txt")
         .abs();
@@ -127,6 +138,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
     };
     let req = ApplyPatchRequest {
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
+        environment: test_environment(),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::Skip {
@@ -168,7 +180,7 @@ fn file_system_sandbox_context_uses_active_attempt() {
     let expected_permissions =
         PermissionProfile::from_runtime_permissions(&file_system_policy, network_policy);
     assert_eq!(sandbox.permissions, expected_permissions);
-    assert_eq!(sandbox.cwd, Some(path.clone()));
+    assert_eq!(sandbox.cwd, Some(req.action.cwd.clone()));
     assert_eq!(
         sandbox.windows_sandbox_level,
         WindowsSandboxLevel::RestrictedToken
@@ -177,13 +189,14 @@ fn file_system_sandbox_context_uses_active_attempt() {
     assert_eq!(sandbox.use_legacy_landlock, true);
 }
 
-#[test]
-fn no_sandbox_attempt_has_no_file_system_context() {
+#[tokio::test]
+async fn no_sandbox_attempt_has_no_file_system_context() {
     let path = std::env::temp_dir()
         .join("apply-patch-runtime-none.txt")
         .abs();
     let req = ApplyPatchRequest {
         action: ApplyPatchAction::new_add_for_test(&path, "hello".to_string()),
+        environment: test_environment(),
         file_paths: vec![path.clone()],
         changes: HashMap::new(),
         exec_approval_requirement: ExecApprovalRequirement::Skip {

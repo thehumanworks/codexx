@@ -3,8 +3,9 @@
 //!
 //! The official Lark grammar for the apply-patch format is:
 //!
-//! start: begin_patch hunk+ end_patch
+//! start: begin_patch environment? hunk+ end_patch
 //! begin_patch: "*** Begin Patch" LF
+//! environment: "*** Environment ID: " environment_id LF
 //! end_patch: "*** End Patch" LF?
 //!
 //! hunk: add_hunk | delete_hunk | update_hunk
@@ -40,6 +41,7 @@ pub(crate) const MOVE_TO_MARKER: &str = "*** Move to: ";
 pub(crate) const EOF_MARKER: &str = "*** End of File";
 pub(crate) const CHANGE_CONTEXT_MARKER: &str = "@@ ";
 pub(crate) const EMPTY_CHANGE_CONTEXT_MARKER: &str = "@@";
+const ENVIRONMENT_ID_MARKER: &str = "*** Environment ID: ";
 
 /// Currently, the only OpenAI model that knowingly requires lenient parsing is
 /// gpt-4.1. While we could try to require everyone to pass in a strictness
@@ -177,10 +179,29 @@ fn parse_patch_text(patch: &str, mode: ParseMode) -> Result<ApplyPatchArgs, Pars
         ParseMode::Strict => check_patch_boundaries_strict(&lines)?,
         ParseMode::Lenient => check_patch_boundaries_lenient(&lines)?,
     };
+    let mut patch_lines = patch_lines.to_vec();
+    let mut hunk_lines = hunk_lines;
+    let mut line_number = 2;
+    let environment_id = match hunk_lines.first() {
+        Some(line) => match line.strip_prefix(ENVIRONMENT_ID_MARKER) {
+            Some("") => {
+                return Err(InvalidPatchError(
+                    "environment_id cannot be empty".to_string(),
+                ));
+            }
+            Some(environment_id) => {
+                patch_lines.remove(1);
+                hunk_lines = &hunk_lines[1..];
+                line_number += 1;
+                Some(environment_id.to_string())
+            }
+            None => None,
+        },
+        None => None,
+    };
 
     let mut hunks: Vec<Hunk> = Vec::new();
     let mut remaining_lines = hunk_lines;
-    let mut line_number = 2;
     while !remaining_lines.is_empty() {
         let (hunk, hunk_lines) = parse_one_hunk(remaining_lines, line_number)?;
         hunks.push(hunk);
@@ -192,6 +213,7 @@ fn parse_patch_text(patch: &str, mode: ParseMode) -> Result<ApplyPatchArgs, Pars
         hunks,
         patch,
         workdir: None,
+        environment_id,
     })
 }
 
@@ -750,6 +772,30 @@ fn test_parse_patch_accepts_relative_and_absolute_hunk_paths() {
 }
 
 #[test]
+fn test_parse_patch_strips_environment_id_metadata() {
+    let patch_text = r#"*** Begin Patch
+*** Environment ID: selected
+*** Add File: hello.txt
++hello
+*** End Patch"#;
+
+    let parsed = parse_patch_text(patch_text, ParseMode::Strict).unwrap();
+
+    assert_eq!(
+        parsed,
+        ApplyPatchArgs {
+            hunks: vec![AddFile {
+                path: PathBuf::from("hello.txt"),
+                contents: "hello\n".to_string(),
+            }],
+            patch: "*** Begin Patch\n*** Add File: hello.txt\n+hello\n*** End Patch".to_string(),
+            workdir: None,
+            environment_id: Some("selected".to_string()),
+        }
+    );
+}
+
+#[test]
 fn test_hunk_resolve_path_accepts_relative_and_absolute_paths() {
     let cwd_dir = tempfile::tempdir().unwrap();
     let cwd = cwd_dir.path().to_path_buf().abs();
@@ -837,6 +883,7 @@ fn test_parse_patch_lenient() {
             hunks: expected_patch.clone(),
             patch: patch_text.to_string(),
             workdir: None,
+            environment_id: None,
         })
     );
 
@@ -851,6 +898,7 @@ fn test_parse_patch_lenient() {
             hunks: expected_patch.clone(),
             patch: patch_text.to_string(),
             workdir: None,
+            environment_id: None,
         })
     );
 
@@ -865,6 +913,7 @@ fn test_parse_patch_lenient() {
             hunks: expected_patch,
             patch: patch_text.to_string(),
             workdir: None,
+            environment_id: None,
         })
     );
 

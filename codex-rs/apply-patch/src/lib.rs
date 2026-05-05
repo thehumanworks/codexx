@@ -97,6 +97,7 @@ pub struct ApplyPatchArgs {
     pub patch: String,
     pub hunks: Vec<Hunk>,
     pub workdir: Option<String>,
+    pub environment_id: Option<String>,
 }
 
 #[derive(Debug, PartialEq)]

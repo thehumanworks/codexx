@@ -155,6 +155,7 @@ pub async fn maybe_parse_apply_patch_verified(
             patch,
             hunks,
             workdir,
+            environment_id: _,
         }) => {
             let effective_cwd = workdir
                 .as_ref()

@@ -82,6 +82,8 @@ It is important to remember:
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplyPatchToolArgs {
     pub input: String,
+    #[serde(default)]
+    pub environment_id: Option<String>,
 }
 
 /// Returns a custom tool that can be used to edit files. Well-suited for GPT-5 models
