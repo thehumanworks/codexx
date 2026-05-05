@@ -6810,6 +6810,13 @@ impl ChatWidget {
         self.user_turn_pending_start || self.bottom_pane.is_task_running()
     }
 
+    pub(crate) fn maybe_show_pending_current_usage_limit_nudge_prompt_if_idle(&mut self) -> bool {
+        if self.is_user_turn_pending_or_running() {
+            return false;
+        }
+        self.maybe_show_pending_current_usage_limit_nudge_prompt()
+    }
+
     fn only_user_shell_commands_running(&self) -> bool {
         self.agent_turn_running
             && !self.running_commands.is_empty()
@@ -9282,6 +9289,11 @@ impl ChatWidget {
     #[cfg(test)]
     pub(crate) fn has_active_current_usage_limit_nudge_for_test(&self) -> bool {
         self.current_usage_limit_nudge_prompt.is_active()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_pending_current_usage_limit_nudge_for_test(&self) -> bool {
+        self.current_usage_limit_nudge_prompt.has_pending()
     }
 
     pub(crate) fn set_approvals_reviewer(&mut self, policy: ApprovalsReviewer) {

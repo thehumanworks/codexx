@@ -195,6 +195,32 @@ async fn stale_rate_limit_refresh_results_are_ignored() {
 }
 
 #[tokio::test]
+async fn usage_nudge_prefetch_shows_prompt_when_result_arrives_while_idle() {
+    let mut app = make_test_app().await;
+
+    assert!(app.handle_rate_limits_loaded(
+        /*refresh_generation*/ 0,
+        RateLimitRefreshOrigin::UsageNudgePrefetch,
+        Ok(vec![codex_rate_limit_snapshot(
+            /*used_percent*/ 75,
+            Some(UsageLimitNudge {
+                threshold: 75,
+                action: UsageLimitNudgeAction::AddCredits,
+            }),
+        )]),
+    ));
+
+    assert!(
+        app.chat_widget
+            .has_active_current_usage_limit_nudge_for_test()
+    );
+    assert!(
+        !app.chat_widget
+            .has_pending_current_usage_limit_nudge_for_test()
+    );
+}
+
+#[tokio::test]
 async fn account_rate_limits_updated_prefetches_authoritative_usage_nudge_snapshot() {
     let (mut app, mut app_event_rx, _op_rx) = make_test_app_with_channels().await;
     while app_event_rx.try_recv().is_ok() {}

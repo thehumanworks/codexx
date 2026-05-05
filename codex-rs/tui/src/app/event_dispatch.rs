@@ -1915,6 +1915,17 @@ impl App {
                     }
                     should_schedule_frame =
                         matches!(origin, RateLimitRefreshOrigin::StartupPrefetch);
+                    // A usage-nudge prefetch may complete just after the usual
+                    // turn-end prompt slot. If the TUI is already idle, surface
+                    // that newly latched prompt now instead of waiting for
+                    // another turn.
+                    if matches!(origin, RateLimitRefreshOrigin::UsageNudgePrefetch)
+                        && self
+                            .chat_widget
+                            .maybe_show_pending_current_usage_limit_nudge_prompt_if_idle()
+                    {
+                        should_schedule_frame = true;
+                    }
                 }
             }
             Err(err) => {
