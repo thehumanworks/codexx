@@ -153,6 +153,42 @@ fn startup_waiting_gate_is_only_for_fresh_or_exit_session_selection() {
 }
 
 #[test]
+fn startup_paused_goal_prompt_gate_is_only_for_quiet_resume() {
+    let resume = SessionSelection::Resume(crate::resume_picker::SessionTarget {
+        path: Some(PathBuf::from("/tmp/restore")),
+        thread_id: ThreadId::new(),
+    });
+    let fork = SessionSelection::Fork(crate::resume_picker::SessionTarget {
+        path: Some(PathBuf::from("/tmp/fork")),
+        thread_id: ThreadId::new(),
+    });
+    let no_images: Vec<PathBuf> = Vec::new();
+    let initial_images = vec![PathBuf::from("/tmp/image.png")];
+
+    assert!(App::should_prompt_for_paused_goal_after_startup_resume(
+        &resume, &None, &no_images
+    ));
+    assert!(!App::should_prompt_for_paused_goal_after_startup_resume(
+        &resume,
+        &Some("continue from here".to_string()),
+        &no_images
+    ));
+    assert!(!App::should_prompt_for_paused_goal_after_startup_resume(
+        &resume,
+        &None,
+        &initial_images
+    ));
+    assert!(!App::should_prompt_for_paused_goal_after_startup_resume(
+        &SessionSelection::StartFresh,
+        &None,
+        &no_images
+    ));
+    assert!(!App::should_prompt_for_paused_goal_after_startup_resume(
+        &fork, &None, &no_images
+    ));
+}
+
+#[test]
 fn startup_waiting_gate_holds_active_thread_events_until_primary_thread_configured() {
     let mut wait_for_initial_session =
         App::should_wait_for_initial_session(&SessionSelection::StartFresh);
@@ -388,6 +424,7 @@ async fn enqueue_primary_thread_session_replays_turns_before_initial_prompt_subm
         config,
         frame_requester: crate::tui::FrameRequester::test_dummy(),
         app_event_tx: app.app_event_tx.clone(),
+        workspace_command_runner: None,
         initial_user_message: create_initial_user_message(
             Some(initial_prompt.clone()),
             Vec::new(),
@@ -1199,8 +1236,10 @@ async fn replayed_interrupted_turn_restores_queued_input_to_composer() {
 #[tokio::test]
 async fn token_usage_update_refreshes_status_line_with_runtime_context_window() {
     let mut app = make_test_app().await;
-    app.chat_widget
-        .setup_status_line(vec![crate::bottom_pane::StatusLineItem::ContextWindowSize]);
+    app.chat_widget.setup_status_line(
+        vec![crate::bottom_pane::StatusLineItem::ContextWindowSize],
+        /*use_theme_colors*/ true,
+    );
 
     assert_eq!(app.chat_widget.status_line_text(), None);
 
@@ -1592,6 +1631,7 @@ fn update_memory_settings_updates_current_thread_memory_mode() -> Result<()> {
         let (mut app, _app_event_rx, _op_rx) = Box::pin(make_test_app_with_channels()).await;
         let codex_home = tempdir()?;
         app.config.codex_home = codex_home.path().to_path_buf().abs();
+        app.config.sqlite_home = codex_home.path().to_path_buf();
         // Seed the previous setting so this test exercises the thread-mode update path.
         app.config.memories.generate_memories = true;
 
@@ -2594,6 +2634,7 @@ async fn inactive_thread_file_change_approval_recovers_buffered_changes() {
         ServerNotification::ItemStarted(ItemStartedNotification {
             thread_id: thread_id.to_string(),
             turn_id: "turn-approval".to_string(),
+            started_at_ms: 0,
             item: ThreadItem::FileChange {
                 id: "patch-approval".to_string(),
                 changes: vec![FileUpdateChange {
@@ -3731,7 +3772,9 @@ async fn make_test_app() -> App {
         session_telemetry,
         app_event_tx,
         chat_widget,
+        workspace_command_runner: None,
         config,
+        state_db: None,
         active_profile: None,
         cli_kv_overrides: Vec::new(),
         harness_overrides: ConfigOverrides::default(),
@@ -3792,7 +3835,9 @@ async fn make_test_app_with_channels() -> (
             session_telemetry,
             app_event_tx,
             chat_widget,
+            workspace_command_runner: None,
             config,
+            state_db: None,
             active_profile: None,
             cli_kv_overrides: Vec::new(),
             harness_overrides: ConfigOverrides::default(),
@@ -3981,6 +4026,33 @@ async fn initial_replay_buffer_keeps_recent_rows_when_row_cap_present() {
             "line 4".to_string(),
         ]
     );
+}
+
+#[tokio::test]
+async fn thread_switch_replay_buffer_uses_transcript_tail_mode_when_row_cap_present() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Limit(3);
+
+    app.begin_thread_switch_history_replay_buffer();
+
+    let buffer = app
+        .initial_history_replay_buffer
+        .as_ref()
+        .expect("thread switch replay buffer should be active");
+    assert!(buffer.render_from_transcript_tail);
+    assert!(buffer.retained_lines.is_empty());
+}
+
+#[tokio::test]
+async fn thread_switch_replay_buffer_is_disabled_without_row_cap() {
+    let (mut app, _rx, _op_rx) = make_test_app_with_channels().await;
+    enable_terminal_resize_reflow(&mut app);
+    app.config.terminal_resize_reflow.max_rows = TerminalResizeReflowMaxRows::Disabled;
+
+    app.begin_thread_switch_history_replay_buffer();
+
+    assert!(app.initial_history_replay_buffer.is_none());
 }
 
 #[tokio::test]
@@ -4665,6 +4737,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
         config: app.config.clone(),
         frame_requester: crate::tui::FrameRequester::test_dummy(),
         app_event_tx: app.app_event_tx.clone(),
+        workspace_command_runner: None,
         initial_user_message: None,
         enhanced_keys_supported: app.enhanced_keys_supported,
         has_chatgpt_account: app.chat_widget.has_chatgpt_account(),
@@ -4694,6 +4767,7 @@ async fn replace_chat_widget_reseeds_collab_agent_metadata_for_replay() {
                     codex_app_server_protocol::ItemStartedNotification {
                         thread_id: "thread-1".to_string(),
                         turn_id: "turn-1".to_string(),
+                        started_at_ms: 0,
                         item: ThreadItem::CollabAgentToolCall {
                             id: "wait-1".to_string(),
                             tool: codex_app_server_protocol::CollabAgentTool::Wait,
@@ -5077,6 +5151,32 @@ async fn clear_only_ui_reset_preserves_chat_session_state() {
     assert!(!app.backtrack_render_pending);
     assert_eq!(app.chat_widget.thread_id(), Some(thread_id));
     assert_eq!(app.chat_widget.composer_text_with_pending(), "draft prompt");
+}
+
+#[tokio::test]
+async fn backtrack_esc_does_not_steal_empty_vim_insert_escape() {
+    let mut app = make_test_app().await;
+    let esc = crossterm::event::KeyEvent::new(crossterm::event::KeyCode::Esc, KeyModifiers::NONE);
+
+    assert!(app.chat_widget.composer_is_empty());
+    assert!(app.should_handle_backtrack_esc(esc));
+
+    app.chat_widget.toggle_vim_mode_and_notify();
+    assert!(app.should_handle_backtrack_esc(esc));
+
+    app.chat_widget
+        .handle_key_event(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('i'),
+            KeyModifiers::NONE,
+        ));
+    assert!(app.chat_widget.should_handle_vim_insert_escape(esc));
+    assert!(!app.should_handle_backtrack_esc(esc));
+
+    app.chat_widget.handle_key_event(esc);
+
+    assert!(!app.backtrack.primed);
+    assert!(!app.chat_widget.should_handle_vim_insert_escape(esc));
+    assert!(app.should_handle_backtrack_esc(esc));
 }
 
 #[tokio::test]

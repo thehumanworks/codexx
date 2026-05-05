@@ -2,6 +2,7 @@ use super::*;
 use crate::goals::GoalRuntimeState;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
+use codex_protocol::protocol::TurnEnvironmentSelection;
 use tokio::sync::Semaphore;
 
 /// Context for an initialized model agent
@@ -206,12 +207,7 @@ impl SessionConfiguration {
             .unwrap_or_else(|| self.cwd.clone());
 
         let cwd_changed = absolute_cwd.as_path() != self.cwd.as_path();
-        next_configuration.cwd = absolute_cwd.clone();
-        if cwd_changed
-            && let Some(primary_environment) = next_configuration.environments.first_mut()
-        {
-            primary_environment.cwd = absolute_cwd;
-        }
+        next_configuration.cwd = absolute_cwd;
 
         if let Some(permission_profile) = updates.permission_profile.clone() {
             let active_permission_profile =
@@ -400,6 +396,15 @@ impl Session {
                                     text: session_configuration.base_instructions.clone(),
                                 },
                                 dynamic_tools: session_configuration.dynamic_tools.clone(),
+                                metadata: ThreadPersistenceMetadata {
+                                    cwd: Some(config.cwd.to_path_buf()),
+                                    model_provider: config.model_provider_id.clone(),
+                                    memory_mode: if config.memories.generate_memories {
+                                        ThreadMemoryMode::Enabled
+                                    } else {
+                                        ThreadMemoryMode::Disabled
+                                    },
+                                },
                                 event_persistence_mode,
                             },
                         )
@@ -413,6 +418,15 @@ impl Session {
                                 rollout_path: resumed_history.rollout_path.clone(),
                                 history: Some(resumed_history.history.clone()),
                                 include_archived: true,
+                                metadata: ThreadPersistenceMetadata {
+                                    cwd: Some(config.cwd.to_path_buf()),
+                                    model_provider: config.model_provider_id.clone(),
+                                    memory_mode: if config.memories.generate_memories {
+                                        ThreadMemoryMode::Enabled
+                                    } else {
+                                        ThreadMemoryMode::Disabled
+                                    },
+                                },
                                 event_persistence_mode,
                             },
                         )
@@ -690,6 +704,7 @@ impl Session {
                         session_configuration.cwd.clone(),
                         &mut default_shell,
                         session_telemetry.clone(),
+                        state_db_ctx.clone(),
                     )
                 }
             } else {
@@ -705,6 +720,8 @@ impl Session {
                     ))
                     .await;
             session_configuration.thread_name = thread_name.clone();
+            validate_config_lock_if_configured(&session_configuration).await?;
+            export_config_lock_if_configured(&session_configuration, conversation_id).await?;
             let state = SessionState::new(session_configuration.clone());
             let managed_network_requirements_configured = config
                 .config_layer_stack
@@ -920,6 +937,31 @@ impl Session {
                 cancel_guard.cancel();
                 *cancel_guard = CancellationToken::new();
             }
+            let turn_environment = crate::environment_selection::resolve_environment_selections(
+                sess.services.environment_manager.as_ref(),
+                &session_configuration.environments,
+            )
+            .map_err(|err| {
+                CodexErr::InvalidRequest(err.to_string().replace(
+                    "unknown turn environment id",
+                    "unknown stored MCP environment id",
+                ))
+            })?
+            .primary()
+            .cloned();
+            let mcp_runtime_environment = match turn_environment {
+                Some(turn_environment) => McpRuntimeEnvironment::new(
+                    Arc::clone(&turn_environment.environment),
+                    turn_environment.cwd.to_path_buf(),
+                ),
+                None => McpRuntimeEnvironment::new(
+                    sess.services
+                        .environment_manager
+                        .default_environment()
+                        .unwrap_or_else(|| sess.services.environment_manager.local_environment()),
+                    session_configuration.cwd.to_path_buf(),
+                ),
+            };
             let (mcp_connection_manager, cancel_token) = McpConnectionManager::new(
                 &mcp_servers,
                 config.mcp_oauth_credentials_store_mode,
@@ -928,13 +970,7 @@ impl Session {
                 INITIAL_SUBMIT_ID.to_owned(),
                 tx_event.clone(),
                 session_configuration.permission_profile(),
-                McpRuntimeEnvironment::new(
-                    sess.services
-                        .environment_manager
-                        .default_environment()
-                        .unwrap_or_else(|| sess.services.environment_manager.local_environment()),
-                    session_configuration.cwd.to_path_buf(),
-                ),
+                mcp_runtime_environment,
                 config.codex_home.to_path_buf(),
                 codex_apps_tools_cache_key(auth),
                 tool_plugin_provenance,
