@@ -43,7 +43,7 @@ struct RecordingState {
 }
 
 impl RecordingState {
-    fn record(&self, req: Request) {
+    fn record_stream(&self, req: Request) {
         let mut guard = self
             .stream_requests
             .lock()
@@ -78,7 +78,7 @@ impl HttpTransport for RecordingTransport {
     }
 
     async fn stream(&self, req: Request) -> Result<StreamResponse, TransportError> {
-        self.state.record(req);
+        self.state.record_stream(req);
 
         let stream = futures::stream::iter(Vec::<Result<Bytes, TransportError>>::new());
         Ok(StreamResponse {
@@ -325,12 +325,11 @@ async fn streaming_client_retries_on_transport_error() -> Result<()> {
         instructions: "Say hi".into(),
         input: Vec::new(),
         tools: Vec::new(),
-        tool_choice: "auto".into(),
         parallel_tool_calls: false,
         reasoning: None,
-        store: false,
-        stream: true,
-        include: Vec::new(),
+        store: Some(false),
+        stream: Some(true),
+        include: Some(Vec::new()),
         service_tier: None,
         prompt_cache_key: None,
         text: None,
@@ -426,12 +425,11 @@ async fn azure_default_store_attaches_ids_and_headers() -> Result<()> {
             phase: None,
         }],
         tools: Vec::new(),
-        tool_choice: "auto".into(),
         parallel_tool_calls: false,
         reasoning: None,
-        store: true,
-        stream: true,
-        include: Vec::new(),
+        store: Some(true),
+        stream: Some(true),
+        include: Some(Vec::new()),
         service_tier: None,
         prompt_cache_key: None,
         text: None,

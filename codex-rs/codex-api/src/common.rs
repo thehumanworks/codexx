@@ -20,21 +20,6 @@ use tokio::sync::mpsc;
 pub const WS_REQUEST_HEADER_TRACEPARENT_CLIENT_METADATA_KEY: &str = "ws_request_header_traceparent";
 pub const WS_REQUEST_HEADER_TRACESTATE_CLIENT_METADATA_KEY: &str = "ws_request_header_tracestate";
 
-/// Canonical input payload for the compaction endpoint.
-#[derive(Debug, Clone, Serialize)]
-pub struct CompactionInput<'a> {
-    pub model: &'a str,
-    pub input: &'a [ResponseItem],
-    #[serde(skip_serializing_if = "str::is_empty")]
-    pub instructions: &'a str,
-    pub tools: Vec<Value>,
-    pub parallel_tool_calls: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning: Option<Reasoning>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<TextControls>,
-}
-
 /// Canonical input payload for the memory summarize endpoint.
 #[derive(Debug, Clone, Serialize)]
 pub struct MemorySummarizeInput {
@@ -162,6 +147,11 @@ impl From<VerbosityConfig> for OpenAiVerbosity {
     }
 }
 
+/// Shared request body for `/responses`-style calls.
+///
+/// Normal sampling sends every populated field. `/responses/compact` starts from this same shape
+/// and then clears the fields that endpoint does not accept, so new request-body fields naturally
+/// stay visible to both paths unless compact explicitly opts out.
 #[derive(Debug, Serialize, Clone, PartialEq)]
 pub struct ResponsesApiRequest {
     pub model: String,
@@ -169,12 +159,14 @@ pub struct ResponsesApiRequest {
     pub instructions: String,
     pub input: Vec<ResponseItem>,
     pub tools: Vec<serde_json::Value>,
-    pub tool_choice: String,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<Reasoning>,
-    pub store: bool,
-    pub stream: bool,
-    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -193,7 +185,6 @@ impl From<&ResponsesApiRequest> for ResponseCreateWsRequest {
             previous_response_id: None,
             input: request.input.clone(),
             tools: request.tools.clone(),
-            tool_choice: request.tool_choice.clone(),
             parallel_tool_calls: request.parallel_tool_calls,
             reasoning: request.reasoning.clone(),
             store: request.store,
@@ -217,12 +208,14 @@ pub struct ResponseCreateWsRequest {
     pub previous_response_id: Option<String>,
     pub input: Vec<ResponseItem>,
     pub tools: Vec<Value>,
-    pub tool_choice: String,
     pub parallel_tool_calls: bool,
     pub reasoning: Option<Reasoning>,
-    pub store: bool,
-    pub stream: bool,
-    pub include: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -34,7 +34,6 @@ use std::sync::atomic::Ordering;
 use codex_api::ApiError;
 use codex_api::AuthProvider;
 use codex_api::CompactClient as ApiCompactClient;
-use codex_api::CompactionInput as ApiCompactionInput;
 use codex_api::Compression;
 use codex_api::MemoriesClient as ApiMemoriesClient;
 use codex_api::MemorySummarizeInput as ApiMemorySummarizeInput;
@@ -203,6 +202,21 @@ pub struct ModelClient {
     state: Arc<ModelClientState>,
 }
 
+/// Turn-scoped inputs for remote conversation-history compaction.
+///
+/// Remote compaction intentionally receives the same per-turn request controls as normal
+/// `/responses` sampling so the two paths stay aligned when request shape evolves.
+pub(crate) struct CompactConversationRequest<'a> {
+    pub(crate) prompt: &'a Prompt,
+    pub(crate) model_info: &'a ModelInfo,
+    pub(crate) session_telemetry: &'a SessionTelemetry,
+    pub(crate) effort: Option<ReasoningEffortConfig>,
+    pub(crate) summary: ReasoningSummaryConfig,
+    pub(crate) service_tier: Option<ServiceTier>,
+    pub(crate) turn_metadata_header: Option<&'a str>,
+    pub(crate) compaction_trace: &'a CompactionTraceContext,
+}
+
 /// A turn-scoped streaming session created from a [`ModelClient`].
 ///
 /// The session establishes a Responses WebSocket connection lazily and reuses it across multiple
@@ -287,6 +301,32 @@ fn sideband_websocket_auth_headers(api_auth: &dyn AuthProvider) -> ApiHeaderMap 
     let mut headers = ApiHeaderMap::new();
     api_auth.add_auth_headers(&mut headers);
     headers
+}
+
+/// Adapts the shared `/responses` request for the `/responses/compact` endpoint.
+///
+/// Remote compaction starts from the same request body and transport options as a normal sampling
+/// turn, then clears only the body fields the compact endpoint rejects. Because compact cannot
+/// carry `client_metadata` in the body, installation attribution is preserved as a header to match
+/// the previous compact path.
+fn prepare_responses_compact_request(
+    request: &mut ResponsesApiRequest,
+    options: &mut ApiResponsesOptions,
+    auth: Option<&CodexAuth>,
+    installation_id: &str,
+) {
+    request.store = None;
+    request.stream = None;
+    request.include = None;
+    request.client_metadata = None;
+    if auth.is_some_and(CodexAuth::is_api_key_auth) {
+        request.service_tier = None;
+    }
+    if let Ok(header_value) = HeaderValue::from_str(installation_id) {
+        options
+            .extra_headers
+            .insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
+    }
 }
 
 impl ModelClient {
@@ -408,17 +448,22 @@ impl ModelClient {
     /// This is a unary call (no streaming) that returns a new list of
     /// `ResponseItem`s representing the compacted transcript.
     ///
-    /// The model selection and telemetry context are passed explicitly to keep `ModelClient`
-    /// session-scoped.
-    pub async fn compact_conversation_history(
+    /// Per-turn request settings are passed explicitly, matching the normal `/responses` streaming
+    /// callsite while keeping `ModelClient` session-scoped.
+    pub(crate) async fn compact_conversation_history(
         &self,
-        prompt: &Prompt,
-        model_info: &ModelInfo,
-        effort: Option<ReasoningEffortConfig>,
-        summary: ReasoningSummaryConfig,
-        session_telemetry: &SessionTelemetry,
-        compaction_trace: &CompactionTraceContext,
+        request: CompactConversationRequest<'_>,
     ) -> Result<Vec<ResponseItem>> {
+        let CompactConversationRequest {
+            prompt,
+            model_info,
+            session_telemetry,
+            effort,
+            summary,
+            service_tier,
+            turn_metadata_header,
+            compaction_trace,
+        } = request;
         if prompt.input.is_empty() {
             return Ok(Vec::new());
         }
@@ -434,53 +479,31 @@ impl ModelClient {
             RequestRouteTelemetry::for_endpoint(RESPONSES_COMPACT_ENDPOINT),
             self.state.auth_env_telemetry.clone(),
         );
-        let request = self.build_responses_request(
+        let mut request = self.build_responses_request(
             &client_setup.api_provider,
             prompt,
             model_info,
             effort,
             summary,
-            /*service_tier*/ None,
+            service_tier,
         )?;
-        let ResponsesApiRequest {
-            model,
-            instructions,
-            input,
-            tools,
-            parallel_tool_calls,
-            reasoning,
-            text,
-            ..
-        } = request;
+        let mut options = self.build_responses_options(
+            /*turn_state*/ None,
+            turn_metadata_header,
+            Compression::None,
+        );
+        prepare_responses_compact_request(
+            &mut request,
+            &mut options,
+            client_setup.auth.as_ref(),
+            &self.state.installation_id,
+        );
+        let trace_attempt = compaction_trace.start_attempt(&request);
         let client =
             ApiCompactClient::new(transport, client_setup.api_provider, client_setup.api_auth)
                 .with_telemetry(Some(request_telemetry));
-        let payload = ApiCompactionInput {
-            model: &model,
-            input: &input,
-            instructions: &instructions,
-            tools,
-            parallel_tool_calls,
-            reasoning,
-            text,
-        };
-
-        let mut extra_headers = ApiHeaderMap::new();
-        if let Ok(header_value) = HeaderValue::from_str(&self.state.installation_id) {
-            extra_headers.insert(X_CODEX_INSTALLATION_ID_HEADER, header_value);
-        }
-        extra_headers.extend(build_responses_headers(
-            self.state.beta_features_header.as_deref(),
-            /*turn_state*/ None,
-            /*turn_metadata_header*/ None,
-        ));
-        extra_headers.extend(self.build_responses_identity_headers());
-        extra_headers.extend(build_conversation_headers(Some(
-            self.state.conversation_id.to_string(),
-        )));
-        let trace_attempt = compaction_trace.start_attempt(&payload);
         let result = client
-            .compact_input(&payload, extra_headers)
+            .compact_request(request, options)
             .await
             .map_err(map_api_error);
         trace_attempt.record_result(result.as_deref());
@@ -643,28 +666,9 @@ impl ModelClient {
         request_telemetry
     }
 
-    fn build_reasoning(
-        model_info: &ModelInfo,
-        effort: Option<ReasoningEffortConfig>,
-        summary: ReasoningSummaryConfig,
-    ) -> Option<Reasoning> {
-        if model_info.supports_reasoning_summaries {
-            Some(Reasoning {
-                effort: effort.or(model_info.default_reasoning_level),
-                summary: if summary == ReasoningSummaryConfig::None {
-                    None
-                } else {
-                    Some(summary)
-                },
-            })
-        } else {
-            None
-        }
-    }
-
     fn build_responses_request(
         &self,
-        provider: &codex_api::Provider,
+        provider: &ApiProvider,
         prompt: &Prompt,
         model_info: &ModelInfo,
         effort: Option<ReasoningEffortConfig>,
@@ -674,7 +678,19 @@ impl ModelClient {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
         let tools = create_tools_json_for_responses_api(&prompt.tools)?;
-        let reasoning = Self::build_reasoning(model_info, effort, summary);
+        let default_reasoning_effort = model_info.default_reasoning_level;
+        let reasoning = if model_info.supports_reasoning_summaries {
+            Some(Reasoning {
+                effort: effort.or(default_reasoning_effort),
+                summary: if summary == ReasoningSummaryConfig::None {
+                    None
+                } else {
+                    Some(summary)
+                },
+            })
+        } else {
+            None
+        };
         let include = if reasoning.is_some() {
             vec!["reasoning.encrypted_content".to_string()]
         } else {
@@ -702,12 +718,11 @@ impl ModelClient {
             instructions: instructions.clone(),
             input,
             tools,
-            tool_choice: "auto".to_string(),
             parallel_tool_calls: prompt.parallel_tool_calls,
             reasoning,
-            store: provider.is_azure_responses_endpoint(),
-            stream: true,
-            include,
+            store: Some(provider.is_azure_responses_endpoint()),
+            stream: Some(true),
+            include: Some(include),
             service_tier: match service_tier {
                 Some(ServiceTier::Fast) => Some("priority".to_string()),
                 Some(service_tier) => Some(service_tier.to_string()),
@@ -721,6 +736,35 @@ impl ModelClient {
             )])),
         };
         Ok(request)
+    }
+
+    /// Builds shared Responses API transport options and request-body options.
+    ///
+    /// Keeping option construction in one place ensures request-scoped headers are consistent
+    /// regardless of transport choice.
+    fn build_responses_options(
+        &self,
+        turn_state: Option<Arc<OnceLock<String>>>,
+        turn_metadata_header: Option<&str>,
+        compression: Compression,
+    ) -> ApiResponsesOptions {
+        let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
+        let conversation_id = self.state.conversation_id.to_string();
+        ApiResponsesOptions {
+            conversation_id: Some(conversation_id),
+            session_source: Some(self.state.session_source.clone()),
+            extra_headers: {
+                let mut headers = build_responses_headers(
+                    self.state.beta_features_header.as_deref(),
+                    turn_state.as_ref(),
+                    turn_metadata_header.as_ref(),
+                );
+                headers.extend(self.build_responses_identity_headers());
+                headers
+            },
+            compression,
+            turn_state,
+        }
     }
 
     /// Returns whether the Responses-over-WebSocket transport is active for this session.
@@ -890,35 +934,6 @@ impl ModelClientSession {
         self.websocket_session.last_response_rx = None;
         self.websocket_session
             .set_connection_reused(/*connection_reused*/ false);
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    /// Builds shared Responses API transport options and request-body options.
-    ///
-    /// Keeping option construction in one place ensures request-scoped headers are consistent
-    /// regardless of transport choice.
-    fn build_responses_options(
-        &self,
-        turn_metadata_header: Option<&str>,
-        compression: Compression,
-    ) -> ApiResponsesOptions {
-        let turn_metadata_header = parse_turn_metadata_header(turn_metadata_header);
-        let conversation_id = self.client.state.conversation_id.to_string();
-        ApiResponsesOptions {
-            conversation_id: Some(conversation_id),
-            session_source: Some(self.client.state.session_source.clone()),
-            extra_headers: {
-                let mut headers = build_responses_headers(
-                    self.client.state.beta_features_header.as_deref(),
-                    Some(&self.turn_state),
-                    turn_metadata_header.as_ref(),
-                );
-                headers.extend(self.client.build_responses_identity_headers());
-                headers
-            },
-            compression,
-            turn_state: Some(Arc::clone(&self.turn_state)),
-        }
     }
 
     fn get_incremental_items(
@@ -1190,7 +1205,11 @@ impl ModelClientSession {
                 self.client.state.auth_env_telemetry.clone(),
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self.client.build_responses_options(
+                Some(Arc::clone(&self.turn_state)),
+                turn_metadata_header,
+                compression,
+            );
 
             let request = self.client.build_responses_request(
                 &client_setup.api_provider,
@@ -1297,7 +1316,11 @@ impl ModelClientSession {
             );
             let compression = self.responses_request_compression(client_setup.auth.as_ref());
 
-            let options = self.build_responses_options(turn_metadata_header, compression);
+            let options = self.client.build_responses_options(
+                Some(Arc::clone(&self.turn_state)),
+                turn_metadata_header,
+                compression,
+            );
             let request = self.client.build_responses_request(
                 &client_setup.api_provider,
                 prompt,
