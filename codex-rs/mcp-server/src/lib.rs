@@ -114,6 +114,16 @@ pub async fn run_main(
     let (incoming_tx, mut incoming_rx) = mpsc::channel::<IncomingMessage>(CHANNEL_CAPACITY);
     let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
 
+    let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx);
+    let mut processor = MessageProcessor::new(
+        outgoing_message_sender,
+        arg0_paths,
+        Arc::new(config),
+        environment_manager,
+        state_db,
+    )
+    .await?;
+
     // Task: read from stdin, push to `incoming_tx`.
     let stdin_reader_handle = tokio::spawn({
         async move {
@@ -138,28 +148,17 @@ pub async fn run_main(
     });
 
     // Task: process incoming messages.
-    let processor_handle = tokio::spawn({
-        let outgoing_message_sender = OutgoingMessageSender::new(outgoing_tx);
-        let mut processor = MessageProcessor::new(
-            outgoing_message_sender,
-            arg0_paths,
-            Arc::new(config),
-            environment_manager,
-            state_db,
-        )
-        .await;
-        async move {
-            while let Some(msg) = incoming_rx.recv().await {
-                match msg {
-                    JsonRpcMessage::Request(r) => processor.process_request(r).await,
-                    JsonRpcMessage::Response(r) => processor.process_response(r).await,
-                    JsonRpcMessage::Notification(n) => processor.process_notification(n).await,
-                    JsonRpcMessage::Error(e) => processor.process_error(e),
-                }
+    let processor_handle = tokio::spawn(async move {
+        while let Some(msg) = incoming_rx.recv().await {
+            match msg {
+                JsonRpcMessage::Request(r) => processor.process_request(r).await,
+                JsonRpcMessage::Response(r) => processor.process_response(r).await,
+                JsonRpcMessage::Notification(n) => processor.process_notification(n).await,
+                JsonRpcMessage::Error(e) => processor.process_error(e),
             }
-
-            info!("processor task exited (channel closed)");
         }
+
+        info!("processor task exited (channel closed)");
     });
 
     // Task: write outgoing messages to stdout.

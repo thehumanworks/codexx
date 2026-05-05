@@ -248,6 +248,7 @@ pub(crate) struct ThreadManagerState {
     skills_watcher: Arc<SkillsWatcher>,
     thread_store: Arc<dyn ThreadStore>,
     session_source: SessionSource,
+    installation_id: String,
     analytics_events_client: Option<AnalyticsEventsClient>,
     state_db: Option<StateDbHandle>,
     // Captures submitted ops for testing purpose when test mode is enabled.
@@ -280,6 +281,7 @@ pub fn thread_store_from_config(
 }
 
 impl ThreadManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: &Config,
         auth_manager: Arc<AuthManager>,
@@ -288,6 +290,7 @@ impl ThreadManager {
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
+        installation_id: String,
     ) -> Self {
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
@@ -316,6 +319,7 @@ impl ThreadManager {
                 thread_store,
                 auth_manager,
                 session_source,
+                installation_id,
                 analytics_events_client,
                 state_db,
                 ops_log: should_use_test_thread_manager_behavior()
@@ -415,6 +419,7 @@ impl ThreadManager {
                 thread_store,
                 auth_manager,
                 session_source: SessionSource::Exec,
+                installation_id: uuid::Uuid::new_v4().to_string(),
                 analytics_events_client: None,
                 state_db,
                 ops_log: should_use_test_thread_manager_behavior()
@@ -1152,6 +1157,7 @@ impl ThreadManagerState {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
             config,
+            installation_id: self.installation_id.clone(),
             auth_manager,
             models_manager: Arc::clone(&self.models_manager),
             environment_manager: Arc::clone(&self.environment_manager),

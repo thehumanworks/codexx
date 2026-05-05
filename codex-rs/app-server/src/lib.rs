@@ -7,6 +7,7 @@ use codex_config::NoopThreadConfigLoader;
 use codex_config::RemoteThreadConfigLoader;
 use codex_config::ThreadConfigLoader;
 use codex_core::config::Config;
+use codex_core::resolve_installation_id;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -754,6 +755,7 @@ pub async fn run_main_with_transport_options(
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
         let analytics_events_client =
             analytics_events_client_from_config(Arc::clone(&auth_manager), &config);
+        let installation_id = resolve_installation_id(&config.codex_home).await?;
         let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
             outgoing_tx,
             analytics_events_client.clone(),
@@ -773,6 +775,7 @@ pub async fn run_main_with_transport_options(
             config_warnings,
             session_source,
             auth_manager,
+            installation_id,
             rpc_transport: analytics_rpc_transport(&transport),
             remote_control_handle: Some(remote_control_handle.clone()),
             plugin_startup_tasks: runtime_options.plugin_startup_tasks,
