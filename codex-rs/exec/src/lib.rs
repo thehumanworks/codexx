@@ -55,6 +55,7 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_arg0::Arg0DispatchPaths;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
 use codex_config::ConfigLoadError;
+use codex_config::Lenient;
 use codex_config::LoaderOverrides;
 use codex_config::format_config_error_with_source;
 use codex_core::StateDbHandle;
@@ -356,7 +357,11 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let cloud_requirements = cloud_requirements_loader_for_storage(
         codex_home.to_path_buf(),
         /*enable_codex_api_key_env*/ false,
-        config_toml.cli_auth_credentials_store.unwrap_or_default(),
+        config_toml
+            .cli_auth_credentials_store
+            .clone()
+            .and_then(Lenient::into_valid)
+            .unwrap_or_default(),
         chatgpt_base_url,
     )
     .await;
