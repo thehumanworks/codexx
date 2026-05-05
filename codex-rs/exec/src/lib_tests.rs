@@ -355,7 +355,7 @@ async fn thread_start_params_include_review_policy_when_review_policy_is_manual_
         .await
         .expect("build config with manual-only review policy");
 
-    let params = thread_start_params_from_config(&config, None);
+    let params = thread_start_params_from_config(&config, /*project_roots*/ None);
 
     assert_eq!(
         params.approvals_reviewer,
@@ -383,7 +383,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
         .await
         .expect("build config with guardian review policy");
 
-    let params = thread_start_params_from_config(&config, None);
+    let params = thread_start_params_from_config(&config, /*project_roots*/ None);
 
     assert_eq!(
         params.approvals_reviewer,
