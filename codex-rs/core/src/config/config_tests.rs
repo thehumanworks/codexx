@@ -3443,7 +3443,7 @@ async fn managed_config_overrides_oauth_store_mode() -> anyhow::Result<()> {
     assert_eq!(
         cfg.mcp_oauth_credentials_store
             .clone()
-            .and_then(|value| value.into_valid("mcp_oauth_credentials_store", None)),
+            .and_then(|value| value.into_valid()),
         Some(OAuthCredentialsStoreMode::Keyring),
     );
 
@@ -4570,7 +4570,7 @@ async fn set_model_updates_defaults() -> anyhow::Result<()> {
     assert_eq!(
         parsed
             .model_reasoning_effort
-            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+            .and_then(|value| value.into_valid()),
         Some(ReasoningEffort::High)
     );
 
@@ -4606,7 +4606,7 @@ model = "gpt-4.1"
     assert_eq!(
         parsed
             .model_reasoning_effort
-            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+            .and_then(|value| value.into_valid()),
         Some(ReasoningEffort::High)
     );
     assert_eq!(
@@ -4642,7 +4642,7 @@ async fn set_model_updates_profile() -> anyhow::Result<()> {
         profile
             .model_reasoning_effort
             .clone()
-            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+            .and_then(|value| value.into_valid()),
         Some(ReasoningEffort::Medium)
     );
 
@@ -4685,7 +4685,7 @@ model = "gpt-5.4"
         dev_profile
             .model_reasoning_effort
             .clone()
-            .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+            .and_then(|value| value.into_valid()),
         Some(ReasoningEffort::Medium)
     );
 

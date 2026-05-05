@@ -81,16 +81,16 @@ impl From<ConfigProfile> for codex_app_server_protocol::Profile {
             model_provider: config_profile.model_provider,
             approval_policy: config_profile
                 .approval_policy
-                .and_then(|value| value.into_valid("approval_policy", None)),
+                .and_then(|value| value.into_valid()),
             model_reasoning_effort: config_profile
                 .model_reasoning_effort
-                .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+                .and_then(|value| value.into_valid()),
             model_reasoning_summary: config_profile
                 .model_reasoning_summary
-                .and_then(|value| value.into_valid("model_reasoning_summary", None)),
+                .and_then(|value| value.into_valid()),
             model_verbosity: config_profile
                 .model_verbosity
-                .and_then(|value| value.into_valid("model_verbosity", None)),
+                .and_then(|value| value.into_valid()),
             chatgpt_base_url: config_profile.chatgpt_base_url,
         }
     }

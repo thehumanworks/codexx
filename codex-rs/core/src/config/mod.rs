@@ -1678,7 +1678,7 @@ fn valid_lenient<T>(
     field_path: &str,
     warnings: &mut Vec<String>,
 ) -> Option<T> {
-    value.and_then(|value| value.into_valid(field_path, Some(warnings)))
+    value.and_then(|value| value.into_valid_with_warning(field_path, warnings))
 }
 
 fn valid_lenient_ref<T: Clone>(
@@ -1688,7 +1688,7 @@ fn valid_lenient_ref<T: Clone>(
 ) -> Option<T> {
     value
         .clone()
-        .and_then(|value| value.into_valid(field_path, Some(warnings)))
+        .and_then(|value| value.into_valid_with_warning(field_path, warnings))
 }
 
 fn valid_lenient_ref_silent<T: Clone>(value: &Option<Lenient<T>>) -> Option<T> {

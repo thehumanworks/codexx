@@ -148,7 +148,7 @@ sandbox_mode = "make-it-so"
     let mut enum_warnings = Vec::new();
     let sandbox_mode = config_toml
         .sandbox_mode
-        .and_then(|value| value.into_valid("sandbox_mode", Some(&mut enum_warnings)));
+        .and_then(|value| value.into_valid_with_warning("sandbox_mode", &mut enum_warnings));
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"

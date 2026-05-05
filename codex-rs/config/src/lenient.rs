@@ -28,15 +28,24 @@ impl<T> Lenient<T> {
         }
     }
 
-    pub fn into_valid(self, field_path: &str, warnings: Option<&mut Vec<String>>) -> Option<T> {
+    pub fn into_valid(self) -> Option<T> {
+        match self {
+            Self::Valid(value) => Some(value),
+            Self::Invalid(_) => None,
+        }
+    }
+
+    pub fn into_valid_with_warning(
+        self,
+        field_path: &str,
+        warnings: &mut Vec<String>,
+    ) -> Option<T> {
         match self {
             Self::Valid(value) => Some(value),
             Self::Invalid(value) => {
-                if let Some(warnings) = warnings {
-                    warnings.push(format!(
-                        "Ignoring invalid config value at {field_path}: {value}"
-                    ));
-                }
+                warnings.push(format!(
+                    "Ignoring invalid config value at {field_path}: {value}"
+                ));
                 None
             }
         }

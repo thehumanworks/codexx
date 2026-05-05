@@ -512,25 +512,25 @@ impl From<ConfigToml> for UserSavedConfig {
         Self {
             approval_policy: config_toml
                 .approval_policy
-                .and_then(|value| value.into_valid("approval_policy", None)),
+                .and_then(|value| value.into_valid()),
             sandbox_mode: config_toml
                 .sandbox_mode
-                .and_then(|value| value.into_valid("sandbox_mode", None)),
+                .and_then(|value| value.into_valid()),
             sandbox_settings: config_toml.sandbox_workspace_write.map(From::from),
             forced_chatgpt_workspace_id: config_toml.forced_chatgpt_workspace_id,
             forced_login_method: config_toml
                 .forced_login_method
-                .and_then(|value| value.into_valid("forced_login_method", None)),
+                .and_then(|value| value.into_valid()),
             model: config_toml.model,
             model_reasoning_effort: config_toml
                 .model_reasoning_effort
-                .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+                .and_then(|value| value.into_valid()),
             model_reasoning_summary: config_toml
                 .model_reasoning_summary
-                .and_then(|value| value.into_valid("model_reasoning_summary", None)),
+                .and_then(|value| value.into_valid()),
             model_verbosity: config_toml
                 .model_verbosity
-                .and_then(|value| value.into_valid("model_verbosity", None)),
+                .and_then(|value| value.into_valid()),
             tools: config_toml.tools.map(From::from),
             profile: config_toml.profile,
             profiles,

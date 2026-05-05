@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(
             lock.model_reasoning_effort
                 .clone()
-                .and_then(|value| value.into_valid("model_reasoning_effort", None)),
+                .and_then(|value| value.into_valid()),
             sc.collaboration_mode.reasoning_effort()
         );
         assert_eq!(lock.profile, None);
