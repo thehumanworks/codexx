@@ -881,38 +881,40 @@ pub async fn run_main(
         AppServerTarget::Remote { .. } => state_db::get_state_db(&config).await,
     };
 
-    let effective_toml = config.config_layer_stack.effective_config();
-    match effective_toml.try_into() {
-        Ok(config_toml) => {
-            match crate::legacy_core::personality_migration::maybe_migrate_personality(
-                &config.codex_home,
-                &config_toml,
-                state_db.clone(),
-            )
-            .await
-            {
-                Ok(
-                    crate::legacy_core::personality_migration::PersonalityMigrationStatus::Applied,
-                ) => {
-                    config = load_config_or_exit(
-                        cli_kv_overrides.clone(),
-                        overrides.clone(),
-                        cloud_requirements.clone(),
-                    )
-                    .await;
-                }
-                Ok(
-                    crate::legacy_core::personality_migration::PersonalityMigrationStatus::SkippedMarker
-                    | crate::legacy_core::personality_migration::PersonalityMigrationStatus::SkippedExplicitPersonality
-                    | crate::legacy_core::personality_migration::PersonalityMigrationStatus::SkippedNoSessions,
-                ) => {}
-                Err(err) => {
-                    tracing::warn!(error = %err, "failed to run personality migration");
+    if let Some(state_db) = state_db.clone() {
+        let effective_toml = config.config_layer_stack.effective_config();
+        match effective_toml.try_into() {
+            Ok(config_toml) => {
+                match crate::legacy_core::personality_migration::maybe_migrate_personality(
+                    &config.codex_home,
+                    &config_toml,
+                    state_db,
+                )
+                .await
+                {
+                    Ok(
+                        crate::legacy_core::personality_migration::PersonalityMigrationStatus::Applied,
+                    ) => {
+                        config = load_config_or_exit(
+                            cli_kv_overrides.clone(),
+                            overrides.clone(),
+                            cloud_requirements.clone(),
+                        )
+                        .await;
+                    }
+                    Ok(
+                        crate::legacy_core::personality_migration::PersonalityMigrationStatus::SkippedMarker
+                        | crate::legacy_core::personality_migration::PersonalityMigrationStatus::SkippedExplicitPersonality
+                        | crate::legacy_core::personality_migration::PersonalityMigrationStatus::SkippedNoSessions,
+                    ) => {}
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to run personality migration");
+                    }
                 }
             }
-        }
-        Err(err) => {
-            tracing::warn!(error = %err, "failed to deserialize config for personality migration");
+            Err(err) => {
+                tracing::warn!(error = %err, "failed to deserialize config for personality migration");
+            }
         }
     }
 
@@ -1430,6 +1432,11 @@ async fn run_ratatui_app(
         None => None,
     };
 
+    let picker_cancelled_without_selection = matches!(
+        session_selection,
+        resume_picker::SessionSelection::StartFresh
+    ) && (cli.resume_picker || cli.fork_picker);
+
     let mut config = match &session_selection {
         resume_picker::SessionSelection::Resume(_) | resume_picker::SessionSelection::Fork(_) => {
             load_config_or_exit_with_fallback_cwd(
@@ -1437,6 +1444,14 @@ async fn run_ratatui_app(
                 overrides.clone(),
                 cloud_requirements.clone(),
                 fallback_cwd,
+            )
+            .await
+        }
+        resume_picker::SessionSelection::StartFresh if picker_cancelled_without_selection => {
+            load_config_or_exit(
+                cli_kv_overrides.clone(),
+                overrides.clone(),
+                cloud_requirements.clone(),
             )
             .await
         }
