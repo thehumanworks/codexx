@@ -84,7 +84,6 @@ mod windows_impl {
         log_start(&command, logs_base_dir);
         let mut protected_metadata_guard =
             prepare_protected_metadata_targets(protected_metadata_targets)?;
-        protected_metadata_guard.arm_sentinel_cleanup()?;
         let sandbox_creds = require_logon_sandbox_creds(
             &policy,
             sandbox_policy_cwd,
@@ -132,6 +131,7 @@ mod windows_impl {
             allow_null_device(psid_to_use);
             allow_named_pipe_device(psid_to_use);
         }
+        protected_metadata_guard.arm_sentinel_cleanup()?;
         let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
 
         (|| -> Result<CaptureResult> {
