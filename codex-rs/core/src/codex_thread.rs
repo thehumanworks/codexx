@@ -58,6 +58,7 @@ pub struct ThreadConfigSnapshot {
     pub permission_profile: PermissionProfile,
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub cwd: AbsolutePathBuf,
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
@@ -66,11 +67,15 @@ pub struct ThreadConfigSnapshot {
 
 impl ThreadConfigSnapshot {
     pub fn sandbox_policy(&self) -> SandboxPolicy {
-        let file_system_sandbox_policy = self.permission_profile.file_system_sandbox_policy();
+        let permission_profile = self
+            .permission_profile
+            .clone()
+            .materialize_project_roots_with_workspace_roots(&self.workspace_roots);
+        let file_system_sandbox_policy = permission_profile.file_system_sandbox_policy();
         codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
-            &self.permission_profile,
+            &permission_profile,
             &file_system_sandbox_policy,
-            self.permission_profile.network_sandbox_policy(),
+            permission_profile.network_sandbox_policy(),
             self.cwd.as_path(),
         )
     }
@@ -80,6 +85,7 @@ impl ThreadConfigSnapshot {
 #[derive(Clone, Default)]
 pub struct CodexThreadTurnContextOverrides {
     pub cwd: Option<PathBuf>,
+    pub workspace_roots: Option<Vec<PathBuf>>,
     pub approval_policy: Option<AskForApproval>,
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub sandbox_policy: Option<SandboxPolicy>,
@@ -239,6 +245,7 @@ impl CodexThread {
     ) -> ConstraintResult<()> {
         let CodexThreadTurnContextOverrides {
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,
@@ -264,6 +271,7 @@ impl CodexThread {
 
         let updates = SessionSettingsUpdate {
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,

@@ -42,7 +42,6 @@ use codex_protocol::mcp::Tool as McpTool;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::ActivePermissionProfile as CoreActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification as CoreActivePermissionProfileModification;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
 use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
@@ -1727,41 +1726,6 @@ pub struct ActivePermissionProfile {
     /// inheritance. This is currently always `null`.
     #[serde(default)]
     pub extends: Option<String>,
-    /// Bounded user-requested modifications applied on top of the named
-    /// profile, if any.
-    #[serde(default)]
-    pub modifications: Vec<ActivePermissionProfileModification>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type")]
-#[ts(export_to = "v2/")]
-pub enum ActivePermissionProfileModification {
-    /// Additional concrete directory that should be writable.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    AdditionalWritableRoot { path: AbsolutePathBuf },
-}
-
-impl From<CoreActivePermissionProfileModification> for ActivePermissionProfileModification {
-    fn from(value: CoreActivePermissionProfileModification) -> Self {
-        match value {
-            CoreActivePermissionProfileModification::AdditionalWritableRoot { path } => {
-                Self::AdditionalWritableRoot { path }
-            }
-        }
-    }
-}
-
-impl From<ActivePermissionProfileModification> for CoreActivePermissionProfileModification {
-    fn from(value: ActivePermissionProfileModification) -> Self {
-        match value {
-            ActivePermissionProfileModification::AdditionalWritableRoot { path } => {
-                Self::AdditionalWritableRoot { path }
-            }
-        }
-    }
 }
 
 impl From<CoreActivePermissionProfile> for ActivePermissionProfile {
@@ -1769,11 +1733,6 @@ impl From<CoreActivePermissionProfile> for ActivePermissionProfile {
         Self {
             id: value.id,
             extends: value.extends,
-            modifications: value
-                .modifications
-                .into_iter()
-                .map(ActivePermissionProfileModification::from)
-                .collect(),
         }
     }
 }
@@ -1783,11 +1742,6 @@ impl From<ActivePermissionProfile> for CoreActivePermissionProfile {
         Self {
             id: value.id,
             extends: value.extends,
-            modifications: value
-                .modifications
-                .into_iter()
-                .map(CoreActivePermissionProfileModification::from)
-                .collect(),
         }
     }
 }
@@ -1797,26 +1751,12 @@ impl From<ActivePermissionProfile> for CoreActivePermissionProfile {
 #[ts(tag = "type")]
 #[ts(export_to = "v2/")]
 pub enum PermissionProfileSelectionParams {
-    /// Select a named built-in or user-defined profile and optionally apply
-    /// bounded modifications that Codex knows how to validate.
+    /// Select a named built-in or user-defined profile. This updates profile
+    /// identity metadata only; it does not replace the thread's effective
+    /// permissions profile.
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    Profile {
-        id: String,
-        #[ts(optional = nullable)]
-        modifications: Option<Vec<PermissionProfileModificationParams>>,
-    },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type")]
-#[ts(export_to = "v2/")]
-pub enum PermissionProfileModificationParams {
-    /// Additional concrete directory that should be writable.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    AdditionalWritableRoot { path: AbsolutePathBuf },
+    Profile { id: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1912,8 +1852,6 @@ pub enum SandboxPolicy {
     #[ts(rename_all = "camelCase")]
     WorkspaceWrite {
         #[serde(default)]
-        writable_roots: Vec<AbsolutePathBuf>,
-        #[serde(default)]
         network_access: bool,
         #[serde(default)]
         exclude_tmpdir_env_var: bool,
@@ -1982,7 +1920,7 @@ impl<'de> Deserialize<'de> for SandboxPolicy {
                 Ok(SandboxPolicy::ExternalSandbox { network_access })
             }
             SandboxPolicyDeserialize::WorkspaceWrite {
-                writable_roots,
+                writable_roots: _writable_roots,
                 read_only_access,
                 network_access,
                 exclude_tmpdir_env_var,
@@ -1994,7 +1932,6 @@ impl<'de> Deserialize<'de> for SandboxPolicy {
                     ));
                 }
                 Ok(SandboxPolicy::WorkspaceWrite {
-                    writable_roots,
                     network_access,
                     exclude_tmpdir_env_var,
                     exclude_slash_tmp,
@@ -2024,12 +1961,10 @@ impl SandboxPolicy {
                 }
             }
             SandboxPolicy::WorkspaceWrite {
-                writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
             } => codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: writable_roots.clone(),
                 network_access: *network_access,
                 exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
                 exclude_slash_tmp: *exclude_slash_tmp,
@@ -2056,12 +1991,10 @@ impl From<codex_protocol::protocol::SandboxPolicy> for SandboxPolicy {
                 }
             }
             codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
             } => SandboxPolicy::WorkspaceWrite {
-                writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
@@ -3797,6 +3730,11 @@ pub struct ThreadStartParams {
     pub service_tier: Option<Option<ServiceTier>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional workspace roots for this thread. Omitted uses the server's
+    /// configured roots, usually seeded from `cwd`.
+    #[experimental("thread/start.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -3806,9 +3744,8 @@ pub struct ThreadStartParams {
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
-    /// Named profile selection for this thread. Cannot be combined with
-    /// `sandbox`. Use bounded `modifications` for supported turn/thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// Named profile selection for this new thread's initial permissions.
+    /// Cannot be combined with `sandbox`.
     #[experimental("thread/start.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -3882,6 +3819,11 @@ pub struct ThreadStartResponse {
     pub model_provider: String,
     pub service_tier: Option<ServiceTier>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/start.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -3951,6 +3893,11 @@ pub struct ThreadResumeParams {
     pub service_tier: Option<Option<ServiceTier>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional replacement workspace roots for the resumed thread. Omitted
+    /// preserves the persisted or configured roots.
+    #[experimental("thread/resume.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -3958,11 +3905,13 @@ pub struct ThreadResumeParams {
     /// and subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// Deprecated for resume. The server rejects this field because the
+    /// persisted permission profile value is preserved across resume.
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
     /// Named profile selection for the resumed thread. Cannot be combined
-    /// with `sandbox`. Use bounded `modifications` for supported thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// with `sandbox`. This updates profile identity metadata without
+    /// replacing the effective permissions profile.
     #[experimental("thread/resume.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -3997,6 +3946,11 @@ pub struct ThreadResumeResponse {
     pub model_provider: String,
     pub service_tier: Option<ServiceTier>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/resume.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -4057,6 +4011,11 @@ pub struct ThreadForkParams {
     pub service_tier: Option<Option<ServiceTier>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional replacement workspace roots for the forked thread. Omitted
+    /// preserves the source thread roots when available.
+    #[experimental("thread/fork.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -4064,11 +4023,13 @@ pub struct ThreadForkParams {
     /// and subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// Deprecated for fork. The server rejects this field because the source
+    /// permission profile value is preserved across fork.
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
     /// Named profile selection for the forked thread. Cannot be combined with
-    /// `sandbox`. Use bounded `modifications` for supported thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// `sandbox`. This updates profile identity metadata without replacing the
+    /// effective permissions profile.
     #[experimental("thread/fork.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -4103,6 +4064,11 @@ pub struct ThreadForkResponse {
     pub model_provider: String,
     pub service_tier: Option<ServiceTier>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/fork.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -5800,6 +5766,11 @@ pub struct TurnStartParams {
     /// Override the working directory for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub cwd: Option<PathBuf>,
+    /// Replace the workspace roots for this turn and subsequent turns. Omitted
+    /// preserves the current roots.
+    #[experimental("turn/start.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     /// Override the approval policy for this turn and subsequent turns.
     #[experimental(nested)]
     #[ts(optional = nullable)]
@@ -5808,13 +5779,13 @@ pub struct TurnStartParams {
     /// subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
-    /// Override the sandbox policy for this turn and subsequent turns.
+    /// Deprecated for turns. The server rejects this field because the
+    /// thread permission profile value is not mutable through `turn/start`.
     #[ts(optional = nullable)]
     pub sandbox_policy: Option<SandboxPolicy>,
     /// Select a named permissions profile for this turn and subsequent turns.
-    /// Cannot be combined with `sandboxPolicy`. Use bounded `modifications`
-    /// for supported turn adjustments instead of replacing the full
-    /// permissions profile.
+    /// Cannot be combined with `sandboxPolicy`. This updates profile identity
+    /// metadata without replacing the effective permissions profile.
     #[experimental("turn/start.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -10518,7 +10489,6 @@ mod tests {
     #[test]
     fn sandbox_policy_round_trips_workspace_write_access() {
         let v2_policy = SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
@@ -10528,7 +10498,6 @@ mod tests {
         assert_eq!(
             core_policy,
             codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![],
                 network_access: true,
                 exclude_tmpdir_env_var: false,
                 exclude_slash_tmp: false,
@@ -10574,7 +10543,6 @@ mod tests {
         assert_eq!(
             policy,
             SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![absolute_path("/workspace")],
                 network_access: true,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
@@ -11829,6 +11797,7 @@ mod tests {
             responsesapi_client_metadata: None,
             environments: None,
             cwd: None,
+            workspace_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox_policy: None,

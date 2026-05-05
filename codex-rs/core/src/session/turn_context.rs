@@ -67,6 +67,7 @@ pub(crate) struct TurnContext {
     /// by the model as well as sandbox policies are resolved against this path
     /// instead of `std::env::current_dir()`.
     pub(crate) cwd: AbsolutePathBuf,
+    pub(crate) workspace_roots: Vec<AbsolutePathBuf>,
     pub(crate) current_date: Option<String>,
     pub(crate) timezone: Option<String>,
     pub(crate) app_server_client_name: Option<String>,
@@ -101,7 +102,10 @@ impl TurnContext {
     }
 
     pub(crate) fn file_system_sandbox_policy(&self) -> FileSystemSandboxPolicy {
-        self.permission_profile.file_system_sandbox_policy()
+        self.permission_profile
+            .clone()
+            .materialize_project_roots_with_workspace_roots(&self.workspace_roots)
+            .file_system_sandbox_policy()
     }
 
     pub(crate) fn network_sandbox_policy(&self) -> NetworkSandboxPolicy {
@@ -248,6 +252,7 @@ impl TurnContext {
             session_source: self.session_source.clone(),
             environments: self.environments.clone(),
             cwd: self.cwd.clone(),
+            workspace_roots: self.workspace_roots.clone(),
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
             app_server_client_name: self.app_server_client_name.clone(),
@@ -309,6 +314,7 @@ impl TurnContext {
         FileSystemSandboxContext {
             permissions,
             cwd: Some(self.cwd.clone()),
+            workspace_roots: self.workspace_roots.clone(),
             windows_sandbox_level: self.windows_sandbox_level,
             windows_sandbox_private_desktop: self
                 .config
@@ -344,6 +350,7 @@ impl TurnContext {
             turn_id: Some(self.sub_id.clone()),
             trace_id: self.trace_id.clone(),
             cwd: self.cwd.to_path_buf(),
+            workspace_roots: self.workspace_roots.clone(),
             current_date: self.current_date.clone(),
             timezone: self.timezone.clone(),
             approval_policy: self.approval_policy.value(),
@@ -406,6 +413,7 @@ impl Session {
         let config = session_configuration.original_config_do_not_use.clone();
         let mut per_turn_config = (*config).clone();
         per_turn_config.cwd = cwd;
+        per_turn_config.workspace_roots = session_configuration.workspace_roots.clone();
         per_turn_config.model_reasoning_effort =
             session_configuration.collaboration_mode.reasoning_effort();
         per_turn_config.model_reasoning_summary = session_configuration.model_reasoning_summary;
@@ -540,6 +548,7 @@ impl Session {
             session_source,
             environments,
             cwd,
+            workspace_roots: session_configuration.workspace_roots.clone(),
             current_date: Some(current_date),
             timezone: Some(timezone),
             app_server_client_name: session_configuration.app_server_client_name.clone(),

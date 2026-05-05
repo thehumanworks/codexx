@@ -35,6 +35,7 @@ async fn state_db_for_test_with_sqlite_home(
         codex_home: codex_home.to_path_buf(),
         sqlite_home: sqlite_home.to_path_buf(),
         cwd: codex_home.to_path_buf(),
+        workspace_roots: Vec::new(),
         model_provider_id: "openai".to_string(),
         generate_memories: false,
     };
@@ -70,6 +71,7 @@ async fn write_rollout_with_user_event(dir: &Path, thread_id: ThreadId) -> io::R
             forked_from_id: None,
             timestamp: TEST_TIMESTAMP.to_string(),
             cwd: std::path::PathBuf::from("."),
+            workspace_roots: Vec::new(),
             originator: "test_originator".to_string(),
             cli_version: "test_version".to_string(),
             source: SessionSource::Cli,

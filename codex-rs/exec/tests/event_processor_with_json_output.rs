@@ -117,6 +117,7 @@ fn session_configured_produces_thread_started_event() {
         permission_profile: PermissionProfile::read_only(),
         active_permission_profile: None,
         cwd: test_path_buf("/tmp/project").abs(),
+        workspace_roots: Vec::new(),
         reasoning_effort: None,
         history_log_id: 0,
         history_entry_count: 0,
