@@ -1,6 +1,7 @@
 use super::*;
 use std::path::PathBuf;
 use std::process::Command;
+use tempfile::tempdir;
 
 #[test]
 #[cfg(target_os = "macos")]
@@ -189,4 +190,37 @@ fn finds_powershell() {
     let shell_path = powershell_shell.shell_path;
 
     assert!(shell_path.ends_with("pwsh.exe") || shell_path.ends_with("powershell.exe"));
+}
+
+#[test]
+fn detects_windowsapps_app_execution_alias() {
+    assert!(is_windowsapps_app_execution_alias(&PathBuf::from(
+        r#"C:\Users\alice\AppData\Local\Microsoft\WindowsApps\pwsh.exe"#
+    )));
+    assert!(!is_windowsapps_app_execution_alias(&PathBuf::from(
+        r#"C:\Program Files\PowerShell\7\pwsh.exe"#
+    )));
+}
+
+#[test]
+fn prefers_real_shell_binary_over_windowsapps_alias() {
+    let temp = tempdir().unwrap();
+    let fallback = temp.path().join("pwsh.exe");
+    std::fs::write(&fallback, b"").unwrap();
+
+    let selected = prefer_real_windows_shell_path(
+        PathBuf::from(r#"C:\Users\alice\AppData\Local\Microsoft\WindowsApps\pwsh.exe"#),
+        &[fallback.to_str().unwrap()],
+    );
+
+    assert_eq!(selected, fallback);
+}
+
+#[test]
+fn keeps_windowsapps_alias_when_no_real_shell_exists() {
+    let alias = PathBuf::from(r#"C:\Users\alice\AppData\Local\Microsoft\WindowsApps\pwsh.exe"#);
+
+    let selected = prefer_real_windows_shell_path(alias.clone(), &[]);
+
+    assert_eq!(selected, alias);
 }

@@ -162,6 +162,32 @@ fn file_exists(path: &PathBuf) -> Option<PathBuf> {
     }
 }
 
+fn is_windowsapps_app_execution_alias(path: &std::path::Path) -> bool {
+    path.to_string_lossy()
+        .to_ascii_lowercase()
+        .contains(r#"\appdata\local\microsoft\windowsapps\"#)
+}
+
+fn first_existing_fallback_path(fallback_paths: &[&str]) -> Option<PathBuf> {
+    for path in fallback_paths {
+        if let Some(path) = file_exists(&PathBuf::from(path)) {
+            return Some(path);
+        }
+    }
+
+    None
+}
+
+fn prefer_real_windows_shell_path(path: PathBuf, fallback_paths: &[&str]) -> PathBuf {
+    if is_windowsapps_app_execution_alias(&path)
+        && let Some(fallback) = first_existing_fallback_path(fallback_paths)
+    {
+        return fallback;
+    }
+
+    path
+}
+
 fn get_shell_path(
     shell_type: ShellType,
     provided_path: Option<&PathBuf>,
@@ -180,21 +206,17 @@ fn get_shell_path(
         && detect_shell_type(&default_shell_path) == Some(shell_type)
         && file_exists(&default_shell_path).is_some()
     {
-        return Some(default_shell_path);
+        return Some(prefer_real_windows_shell_path(
+            default_shell_path,
+            fallback_paths,
+        ));
     }
 
     if let Ok(path) = which::which(binary_name) {
-        return Some(path);
+        return Some(prefer_real_windows_shell_path(path, fallback_paths));
     }
 
-    for path in fallback_paths {
-        //check exists
-        if let Some(path) = file_exists(&PathBuf::from(path)) {
-            return Some(path);
-        }
-    }
-
-    None
+    first_existing_fallback_path(fallback_paths)
 }
 
 const ZSH_FALLBACK_PATHS: &[&str] = &["/bin/zsh"];
