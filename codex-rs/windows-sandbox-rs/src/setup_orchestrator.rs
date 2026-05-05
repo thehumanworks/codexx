@@ -156,11 +156,14 @@ pub fn run_setup_refresh_with_extra_read_roots(
     )
 }
 
-fn setup_refresh_spawn_cwd(codex_home: &Path) -> PathBuf {
-    std::env::current_dir().unwrap_or_else(|_| codex_home.to_path_buf())
+fn setup_helper_spawn_cwd(exe: &Path, codex_home: &Path) -> PathBuf {
+    exe.parent()
+        .filter(|parent| parent.is_absolute())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| codex_home.to_path_buf())
 }
 
-fn build_setup_refresh_command(exe: &Path, payload_b64: &str, cwd: &Path) -> Command {
+fn build_setup_helper_command(exe: &Path, payload_b64: &str, cwd: &Path) -> Command {
     let mut cmd = Command::new(exe);
     cmd.arg(payload_b64)
         .current_dir(cwd)
@@ -204,8 +207,8 @@ fn run_setup_refresh_inner(
     let b64 = BASE64_STANDARD.encode(json);
     let exe = find_setup_exe();
     // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
-    let cwd = setup_refresh_spawn_cwd(request.codex_home);
-    let mut cmd = build_setup_refresh_command(&exe, &b64, &cwd);
+    let cwd = setup_helper_spawn_cwd(&exe, request.codex_home);
+    let mut cmd = build_setup_helper_command(&exe, &b64, &cwd);
     log_note(
         &format!(
             "setup refresh: spawning {} (cwd={}, payload_len={})",
@@ -640,18 +643,19 @@ fn run_setup_exe(
         }
     };
 
+    let cwd = setup_helper_spawn_cwd(&exe, codex_home);
     if !needs_elevation {
-        let status = Command::new(&exe)
-            .arg(&payload_b64)
+        let status = build_setup_helper_command(&exe, &payload_b64, &cwd)
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
             .status()
             .map_err(|err| {
                 failure(
                     SetupErrorCode::OrchestratorHelperLaunchFailed,
-                    format!("failed to launch setup helper (non-elevated): {err}"),
+                    format!(
+                        "failed to launch setup helper (non-elevated, cwd={}): {err}",
+                        cwd.display()
+                    ),
                 )
             })?;
         if !status.success() {
@@ -682,6 +686,8 @@ fn run_setup_exe(
     sei.lpVerb = verb_w.as_ptr();
     sei.lpFile = exe_w.as_ptr();
     sei.lpParameters = params_w.as_ptr();
+    let cwd_w = crate::winutil::to_wide(cwd.as_os_str());
+    sei.lpDirectory = cwd_w.as_ptr();
     // Hide the window for the elevated helper.
     sei.nShow = 0; // SW_HIDE
     let ok = unsafe { ShellExecuteExW(&mut sei) };
@@ -1468,13 +1474,35 @@ mod tests {
     }
 
     #[test]
-    fn setup_refresh_command_runs_from_stable_cwd() {
+    fn setup_helper_command_runs_from_stable_cwd() {
         let exe = Path::new(r"C:\codex\codex-windows-sandbox-setup.exe");
         let cwd = Path::new(r"C:\Users\tester\.codex");
-        let cmd = super::build_setup_refresh_command(exe, "payload", cwd);
+        let cmd = super::build_setup_helper_command(exe, "payload", cwd);
 
         assert_eq!(cmd.get_program(), exe);
         assert_eq!(cmd.get_args().collect::<Vec<_>>(), vec!["payload"]);
         assert_eq!(cmd.get_current_dir(), Some(cwd));
+    }
+
+    #[test]
+    fn setup_helper_spawn_cwd_prefers_helper_parent() {
+        let exe = Path::new(r"C:\Program Files\Codex\codex-windows-sandbox-setup.exe");
+        let codex_home = Path::new(r"C:\Users\tester\.codex");
+
+        assert_eq!(
+            super::setup_helper_spawn_cwd(exe, codex_home),
+            PathBuf::from(r"C:\Program Files\Codex")
+        );
+    }
+
+    #[test]
+    fn setup_helper_spawn_cwd_falls_back_to_codex_home_for_relative_helper_paths() {
+        let exe = Path::new("codex-windows-sandbox-setup.exe");
+        let codex_home = Path::new(r"C:\Users\tester\.codex");
+
+        assert_eq!(
+            super::setup_helper_spawn_cwd(exe, codex_home),
+            codex_home.to_path_buf()
+        );
     }
 }
