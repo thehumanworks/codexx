@@ -2532,14 +2532,12 @@ impl Config {
             value.into_valid_with_warning("approval_policy", &mut startup_warnings)
         }) {
             approval_policy
+        } else if active_project.is_trusted() {
+            AskForApproval::OnRequest
+        } else if active_project.is_untrusted() {
+            AskForApproval::UnlessTrusted
         } else {
-                if active_project.is_trusted() {
-                    AskForApproval::OnRequest
-                } else if active_project.is_untrusted() {
-                    AskForApproval::UnlessTrusted
-                } else {
-                    AskForApproval::default()
-                }
+            AskForApproval::default()
         };
         if !approval_policy_was_explicit
             && let Err(err) = constrained_approval_policy.can_set(&approval_policy)

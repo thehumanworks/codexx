@@ -50,6 +50,7 @@ use codex_app_server_protocol::TurnStartedNotification;
 use codex_app_server_protocol::TurnStatus;
 use codex_app_server_protocol::UserInput as V2UserInput;
 use codex_app_server_protocol::WarningNotification;
+use codex_config::Lenient;
 use codex_config::config_toml::ConfigToml;
 use codex_core::personality_migration::PERSONALITY_MIGRATION_FILENAME;
 use codex_features::FEATURES;
@@ -1323,7 +1324,10 @@ async fn turn_start_uses_migrated_pragmatic_personality_without_override_v2() ->
     let persisted_toml: ConfigToml = toml::from_str(&std::fs::read_to_string(
         codex_home.path().join("config.toml"),
     )?)?;
-    assert_eq!(persisted_toml.personality, Some(Personality::Pragmatic));
+    assert_eq!(
+        persisted_toml.personality,
+        Some(Lenient::from(Personality::Pragmatic))
+    );
     assert!(
         codex_home
             .path()

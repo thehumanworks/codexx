@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(
             lock.model_reasoning_effort
                 .clone()
-                .and_then(|value| value.into_valid()),
+                .and_then(codex_config::Lenient::into_valid),
             sc.collaboration_mode.reasoning_effort()
         );
         assert_eq!(lock.profile, None);

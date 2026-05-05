@@ -3111,7 +3111,10 @@ async fn feedback_enabled_defaults_to_true() -> std::io::Result<()> {
 fn web_search_mode_defaults_to_none_if_unset() {
     let features = Features::with_defaults();
 
-    assert_eq!(resolve_web_search_mode(None, &features), None);
+    assert_eq!(
+        resolve_web_search_mode(/*configured_mode*/ None, &features),
+        None
+    );
 }
 
 #[test]
