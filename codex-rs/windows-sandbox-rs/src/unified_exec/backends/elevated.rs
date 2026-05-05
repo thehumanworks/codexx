@@ -34,6 +34,10 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
     protected_metadata_targets: &[ProtectedMetadataTarget],
     use_private_desktop: bool,
 ) -> Result<SpawnedProcess> {
+    let mut protected_metadata_guard =
+        prepare_protected_metadata_targets(protected_metadata_targets)?;
+    protected_metadata_guard.arm_sentinel_cleanup()?;
+
     let elevated = prepare_elevated_spawn_context(
         policy_json_or_preset,
         sandbox_policy_cwd,
@@ -44,7 +48,6 @@ pub(crate) async fn spawn_windows_sandbox_session_elevated(
         protected_metadata_targets,
     )?;
 
-    let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
     let protected_metadata_runtime = protected_metadata_guard.into_runtime()?;
     let spawn_request = SpawnRequest {
         command: command.clone(),

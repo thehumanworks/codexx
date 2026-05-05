@@ -328,9 +328,11 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     allow_null_device_for_workspace_write(common.is_workspace_write);
 
     let persist_aces = common.is_workspace_write;
-    let protected_metadata_guard = prepare_protected_metadata_targets(protected_metadata_targets);
+    let mut protected_metadata_guard =
+        prepare_protected_metadata_targets(protected_metadata_targets)?;
     let additional_deny_write_paths: Vec<PathBuf> =
         protected_metadata_guard.deny_paths().cloned().collect();
+    protected_metadata_guard.arm_sentinel_cleanup()?;
     let guards = apply_legacy_session_acl_rules(
         &common.policy,
         sandbox_policy_cwd,
