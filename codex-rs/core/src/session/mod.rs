@@ -41,6 +41,7 @@ use crate::session_prefix::format_subagent_notification_message;
 use crate::skills::SkillRenderSideEffects;
 use crate::skills_load_input_from_config;
 use crate::turn_metadata::TurnMetadataState;
+use crate::turn_timing::now_unix_timestamp_ms;
 use async_channel::Receiver;
 use async_channel::Sender;
 use chrono::Local;
@@ -475,7 +476,7 @@ impl Codex {
         let fs = environment_selections.primary_filesystem();
         let plugins_input = config.plugins_config_input();
         let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
-        let effective_skill_roots = plugin_outcome.effective_skill_roots();
+        let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
         let skills_input = skills_load_input_from_config(&config, effective_skill_roots);
         let loaded_skills = skills_manager.skills_for_config(&skills_input, fs).await;
 
@@ -1652,6 +1653,7 @@ impl Session {
                 thread_id: self.conversation_id,
                 turn_id: turn_context.sub_id.clone(),
                 item: item.clone(),
+                started_at_ms: now_unix_timestamp_ms(),
             }),
         )
         .await;
@@ -1669,6 +1671,7 @@ impl Session {
                 thread_id: self.conversation_id,
                 turn_id: turn_context.sub_id.clone(),
                 item,
+                completed_at_ms: now_unix_timestamp_ms(),
             }),
         )
         .await;
