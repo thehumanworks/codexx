@@ -37,14 +37,12 @@ impl ToolDispatchTrace {
         call_id: &str,
         payload: &ToolPayload,
         result: &dyn ToolOutput,
-        model_visible_override: Option<&dyn ToolOutput>,
     ) {
         if !self.context.is_enabled() {
             return;
         }
 
-        let Some(result_payload) =
-            tool_dispatch_result(invocation, call_id, payload, result, model_visible_override)
+        let Some(result_payload) = tool_dispatch_result(invocation, call_id, payload, result)
         else {
             return;
         };
@@ -91,13 +89,10 @@ fn tool_dispatch_result(
     call_id: &str,
     payload: &ToolPayload,
     result: &dyn ToolOutput,
-    model_visible_override: Option<&dyn ToolOutput>,
 ) -> Option<ToolDispatchResult> {
     match invocation.source {
         ToolCallSource::Direct => Some(ToolDispatchResult::DirectResponse {
-            response_item: model_visible_override
-                .unwrap_or(result)
-                .to_response_item(call_id, payload),
+            response_item: result.to_response_item(call_id, payload),
         }),
         ToolCallSource::CodeMode { .. } => Some(ToolDispatchResult::CodeModeResponse {
             value: result.code_mode_result(payload),

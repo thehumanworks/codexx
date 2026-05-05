@@ -13,6 +13,7 @@ use crate::sandbox_tags::permission_profile_policy_tag;
 use crate::sandbox_tags::permission_profile_sandbox_tag;
 use crate::session::turn_context::TurnContext;
 use crate::tools::context::FunctionToolOutput;
+use crate::tools::context::ModelVisibleRewriteOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -109,7 +110,6 @@ pub(crate) struct AnyToolResult {
     pub(crate) payload: ToolPayload,
     pub(crate) result: Box<dyn ToolOutput>,
     pub(crate) post_tool_use_payload: Option<PostToolUsePayload>,
-    pub(crate) model_visible_override: Option<FunctionToolOutput>,
 }
 
 impl AnyToolResult {
@@ -118,13 +118,9 @@ impl AnyToolResult {
             call_id,
             payload,
             result,
-            model_visible_override,
             ..
         } = self;
-        model_visible_override.map_or_else(
-            || result.to_response_item(&call_id, &payload),
-            |override_output| override_output.to_response_item(&call_id, &payload),
-        )
+        result.to_response_item(&call_id, &payload)
     }
 
     pub(crate) fn code_mode_result(self) -> serde_json::Value {
@@ -212,7 +208,6 @@ where
                 payload,
                 result: Box::new(output),
                 post_tool_use_payload,
-                model_visible_override: None,
             })
         })
     }
@@ -486,14 +481,18 @@ impl ToolRegistry {
                 }
             } else if let Some(updated_tool_output) = &outcome.updated_tool_output {
                 let mut guard = response_cell.lock().await;
-                if let Some(result) = guard.as_mut() {
-                    result.model_visible_override = Some(FunctionToolOutput::from_text(
-                        match updated_tool_output {
-                            Value::String(text) => text.clone(),
-                            _ => updated_tool_output.to_string(),
-                        },
-                        Some(true),
+                if let Some(mut result) = guard.take() {
+                    result.result = Box::new(ModelVisibleRewriteOutput::new(
+                        result.result,
+                        FunctionToolOutput::from_text(
+                            match updated_tool_output {
+                                Value::String(text) => text.clone(),
+                                _ => updated_tool_output.to_string(),
+                            },
+                            Some(true),
+                        ),
                     ));
+                    *guard = Some(result);
                 }
             }
         }
@@ -520,10 +519,6 @@ impl ToolRegistry {
                     &result.call_id,
                     &result.payload,
                     result.result.as_ref(),
-                    result
-                        .model_visible_override
-                        .as_ref()
-                        .map(|override_output| override_output as &dyn ToolOutput),
                 );
                 Ok(result)
             }

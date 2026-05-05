@@ -1,5 +1,6 @@
 use super::*;
 use crate::tools::context::McpToolOutput;
+use crate::tools::context::ModelVisibleRewriteOutput;
 use codex_protocol::mcp::CallToolResult;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -59,8 +60,8 @@ fn handler_looks_up_namespaced_aliases_explicitly() {
 }
 
 #[test]
-fn model_visible_override_does_not_replace_typed_tool_output() {
-    let result = mcp_result_with_model_visible_override();
+fn model_visible_rewrite_does_not_replace_typed_tool_output() {
+    let result = mcp_result_with_model_visible_rewrite();
 
     match result.into_response() {
         ResponseInputItem::FunctionCallOutput { call_id, output } => {
@@ -71,7 +72,7 @@ fn model_visible_override_does_not_replace_typed_tool_output() {
     }
 
     assert_eq!(
-        mcp_result_with_model_visible_override().code_mode_result(),
+        mcp_result_with_model_visible_rewrite().code_mode_result(),
         json!({
             "content": [],
             "structuredContent": {
@@ -82,7 +83,7 @@ fn model_visible_override_does_not_replace_typed_tool_output() {
     );
 }
 
-fn mcp_result_with_model_visible_override() -> AnyToolResult {
+fn mcp_result_with_model_visible_rewrite() -> AnyToolResult {
     AnyToolResult {
         call_id: "mcp-call-1".to_string(),
         payload: ToolPayload::Mcp {
@@ -90,22 +91,21 @@ fn mcp_result_with_model_visible_override() -> AnyToolResult {
             tool: "lookup".to_string(),
             raw_arguments: "{}".to_string(),
         },
-        result: Box::new(McpToolOutput {
-            result: CallToolResult {
-                content: Vec::new(),
-                structured_content: Some(json!({ "echo": "original" })),
-                is_error: Some(false),
-                meta: None,
-            },
-            tool_input: json!({}),
-            wall_time: Duration::ZERO,
-            original_image_detail_supported: false,
-            truncation_policy: codex_utils_output_truncation::TruncationPolicy::Bytes(1024),
-        }),
-        post_tool_use_payload: None,
-        model_visible_override: Some(FunctionToolOutput::from_text(
-            "[redacted]".to_string(),
-            Some(true),
+        result: Box::new(ModelVisibleRewriteOutput::new(
+            Box::new(McpToolOutput {
+                result: CallToolResult {
+                    content: Vec::new(),
+                    structured_content: Some(json!({ "echo": "original" })),
+                    is_error: Some(false),
+                    meta: None,
+                },
+                tool_input: json!({}),
+                wall_time: Duration::ZERO,
+                original_image_detail_supported: false,
+                truncation_policy: codex_utils_output_truncation::TruncationPolicy::Bytes(1024),
+            }),
+            FunctionToolOutput::from_text("[redacted]".to_string(), Some(true)),
         )),
+        post_tool_use_payload: None,
     }
 }

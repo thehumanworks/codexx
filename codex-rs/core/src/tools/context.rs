@@ -303,6 +303,40 @@ impl ToolOutput for FunctionToolOutput {
     }
 }
 
+/// Preserves the original typed tool output while rewriting what direct model
+/// callers see.
+pub(crate) struct ModelVisibleRewriteOutput {
+    original: Box<dyn ToolOutput>,
+    rewritten: FunctionToolOutput,
+}
+
+impl ModelVisibleRewriteOutput {
+    pub(crate) fn new(original: Box<dyn ToolOutput>, rewritten: FunctionToolOutput) -> Self {
+        Self {
+            original,
+            rewritten,
+        }
+    }
+}
+
+impl ToolOutput for ModelVisibleRewriteOutput {
+    fn log_preview(&self) -> String {
+        self.original.log_preview()
+    }
+
+    fn success_for_logging(&self) -> bool {
+        self.original.success_for_logging()
+    }
+
+    fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
+        self.rewritten.to_response_item(call_id, payload)
+    }
+
+    fn code_mode_result(&self, payload: &ToolPayload) -> JsonValue {
+        self.original.code_mode_result(payload)
+    }
+}
+
 pub struct ApplyPatchToolOutput {
     pub text: String,
 }
