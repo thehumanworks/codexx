@@ -46,11 +46,28 @@ pub enum McpServerStatusDetail {
     ToolsAndAuthOnly,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(tag = "type")]
+#[ts(tag = "type")]
+#[ts(export_to = "v2/")]
+pub enum McpServerProvider {
+    #[serde(rename = "codex-apps")]
+    #[ts(rename = "codex-apps")]
+    CodexApps,
+    #[serde(rename = "mcp")]
+    #[ts(rename = "mcp")]
+    Mcp,
+    #[serde(rename = "plugin-mcp", rename_all = "camelCase")]
+    #[ts(rename = "plugin-mcp", rename_all = "camelCase")]
+    PluginMcp { plugin_id: String },
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct McpServerStatus {
     pub name: String,
+    pub provider: McpServerProvider,
     pub tools: std::collections::HashMap<String, McpTool>,
     pub resources: Vec<McpResource>,
     pub resource_templates: Vec<McpResourceTemplate>,
