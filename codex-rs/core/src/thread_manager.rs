@@ -296,6 +296,7 @@ async fn state_db_from_roots_for_tests(
         codex_home: codex_home.clone(),
         sqlite_home,
         cwd: codex_home,
+        workspace_roots: Vec::new(),
         model_provider_id: default_model_provider_id,
         generate_memories: false,
     };
