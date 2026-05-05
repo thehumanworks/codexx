@@ -1264,6 +1264,83 @@ impl HistoryCell for PatchHistoryCell {
 }
 
 #[derive(Debug)]
+pub(crate) struct StreamingPatchHistoryCell {
+    call_id: String,
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: PathBuf,
+    start_time: Instant,
+    animations_enabled: bool,
+}
+
+impl StreamingPatchHistoryCell {
+    pub(crate) fn call_id(&self) -> &str {
+        &self.call_id
+    }
+
+    pub(crate) fn update(&mut self, changes: HashMap<PathBuf, FileChange>) {
+        self.changes = changes;
+    }
+}
+
+impl HistoryCell for StreamingPatchHistoryCell {
+    fn display_lines(&self, _width: u16) -> Vec<Line<'static>> {
+        let bullet = activity_indicator(
+            Some(self.start_time),
+            MotionMode::from_animations_enabled(self.animations_enabled),
+            ReducedMotionIndicator::StaticBullet,
+        )
+        .unwrap_or_else(|| "•".dim());
+
+        let mut paths: Vec<_> = self.changes.iter().collect();
+        paths.sort_by_key(|(path, _)| *path);
+
+        let file_count = paths.len();
+        let mut lines = Vec::new();
+        let header = if let [(path, change)] = paths.as_slice() {
+            let verb = match change {
+                FileChange::Add { .. } => "Creating",
+                FileChange::Delete { .. } => "Deleting",
+                FileChange::Update { .. } => "Editing",
+            };
+            Line::from(vec![
+                bullet,
+                " ".into(),
+                verb.bold(),
+                " ".into(),
+                display_path_for(path, &self.cwd).into(),
+            ])
+        } else {
+            let noun = if file_count == 1 { "file" } else { "files" };
+            Line::from(vec![
+                bullet,
+                " ".into(),
+                "Editing".bold(),
+                format!(" {file_count} {noun}").into(),
+            ])
+        };
+        lines.push(header);
+
+        if file_count > 1 {
+            for (path, _) in paths {
+                lines.push(Line::from(vec![
+                    "  └ ".dim(),
+                    display_path_for(path, &self.cwd).into(),
+                ]));
+            }
+        }
+
+        lines
+    }
+
+    fn transcript_animation_tick(&self) -> Option<u64> {
+        if !self.animations_enabled {
+            return None;
+        }
+        Some((self.start_time.elapsed().as_millis() / 50) as u64)
+    }
+}
+
+#[derive(Debug)]
 struct CompletedMcpToolCallWithImageOutput {
     _image: DynamicImage,
 }
@@ -3140,6 +3217,21 @@ pub(crate) fn new_patch_event(
     PatchHistoryCell {
         changes,
         cwd: cwd.to_path_buf(),
+    }
+}
+
+pub(crate) fn new_active_patch_event(
+    call_id: String,
+    changes: HashMap<PathBuf, FileChange>,
+    cwd: &Path,
+    animations_enabled: bool,
+) -> StreamingPatchHistoryCell {
+    StreamingPatchHistoryCell {
+        call_id,
+        changes,
+        cwd: cwd.to_path_buf(),
+        start_time: Instant::now(),
+        animations_enabled,
     }
 }
 

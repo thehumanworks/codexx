@@ -1427,6 +1427,68 @@ async fn apply_patch_manual_approval_adjusts_header() {
 }
 
 #[tokio::test]
+async fn apply_patch_streaming_updates_render_live_state_until_apply_begins() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    let mut first_changes = HashMap::new();
+    first_changes.insert(
+        PathBuf::from("foo.txt"),
+        FileChange::Add {
+            content: "hello\n".to_string(),
+        },
+    );
+    handle_patch_apply_updated(&mut chat, "c1", "turn-c1", first_changes);
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "streaming patch previews should stay transient"
+    );
+    let first_live = chat
+        .active_cell_transcript_lines(/*width*/ 80)
+        .expect("live patch transcript lines");
+    assert!(
+        lines_to_single_string(&first_live).contains("Creating foo.txt"),
+        "expected a live single-file preview: {first_live:?}"
+    );
+
+    let mut second_changes = HashMap::new();
+    second_changes.insert(
+        PathBuf::from("foo.txt"),
+        FileChange::Add {
+            content: "hello\n".to_string(),
+        },
+    );
+    second_changes.insert(
+        PathBuf::from("bar.rs"),
+        FileChange::Update {
+            unified_diff: "@@ -1 +1 @@\n-old\n+new\n".to_string(),
+            move_path: None,
+        },
+    );
+    handle_patch_apply_updated(&mut chat, "c1", "turn-c1", second_changes.clone());
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "streaming patch updates should mutate the existing active cell"
+    );
+    let second_live = chat
+        .active_cell_transcript_lines(/*width*/ 80)
+        .expect("updated live patch transcript lines");
+    let second_blob = lines_to_single_string(&second_live);
+    assert!(second_blob.contains("Editing 2 files"), "{second_blob:?}");
+    assert!(second_blob.contains("bar.rs"), "{second_blob:?}");
+    assert!(second_blob.contains("foo.txt"), "{second_blob:?}");
+
+    handle_patch_apply_begin(&mut chat, "c1", "turn-c1", second_changes);
+    assert!(
+        chat.active_cell_transcript_lines(/*width*/ 80).is_none(),
+        "the provisional live preview should clear when the real patch item starts"
+    );
+    let cells = drain_insert_history(&mut rx);
+    assert_eq!(cells.len(), 1, "expected only the durable patch summary");
+    let durable_blob = lines_to_single_string(&cells[0]);
+    assert!(durable_blob.contains("Edited 2 files"), "{durable_blob:?}");
+}
+
+#[tokio::test]
 async fn apply_patch_manual_flow_snapshot() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

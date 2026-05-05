@@ -3804,7 +3804,47 @@ impl ChatWidget {
         }
     }
 
-    fn on_patch_apply_begin(&mut self, changes: HashMap<PathBuf, FileChange>) {
+    fn on_patch_apply_updated(&mut self, call_id: String, changes: HashMap<PathBuf, FileChange>) {
+        if changes.is_empty() {
+            return;
+        }
+
+        self.flush_answer_stream_with_separator();
+        if let Some(cell) = self.active_cell.as_mut().and_then(|cell| {
+            cell.as_any_mut()
+                .downcast_mut::<history_cell::StreamingPatchHistoryCell>()
+        }) && cell.call_id() == call_id
+        {
+            cell.update(changes);
+            self.bump_active_cell_revision();
+            self.request_redraw();
+            return;
+        }
+
+        self.flush_active_cell();
+        self.active_cell = Some(Box::new(history_cell::new_active_patch_event(
+            call_id,
+            changes,
+            &self.config.cwd,
+            self.config.animations,
+        )));
+        self.bump_active_cell_revision();
+        self.request_redraw();
+    }
+
+    fn on_patch_apply_begin(&mut self, call_id: String, changes: HashMap<PathBuf, FileChange>) {
+        if self
+            .active_cell
+            .as_ref()
+            .and_then(|cell| {
+                cell.as_any()
+                    .downcast_ref::<history_cell::StreamingPatchHistoryCell>()
+            })
+            .is_some_and(|cell| cell.call_id() == call_id)
+        {
+            self.active_cell = None;
+            self.bump_active_cell_revision();
+        }
         self.add_to_history(history_cell::new_patch_event(changes, &self.config.cwd));
     }
 
@@ -6440,7 +6480,6 @@ impl ChatWidget {
             | ServerNotification::CommandExecOutputDelta(_)
             | ServerNotification::ProcessOutputDelta(_)
             | ServerNotification::ProcessExited(_)
-            | ServerNotification::FileChangePatchUpdated(_)
             | ServerNotification::McpToolCallProgress(_)
             | ServerNotification::McpServerOauthLoginCompleted(_)
             | ServerNotification::AppListUpdated(_)
@@ -6454,6 +6493,14 @@ impl ChatWidget {
             | ServerNotification::WindowsWorldWritableWarning(_)
             | ServerNotification::WindowsSandboxSetupCompleted(_)
             | ServerNotification::AccountLoginCompleted(_) => {}
+            ServerNotification::FileChangePatchUpdated(notification) => {
+                if !from_replay {
+                    self.on_patch_apply_updated(
+                        notification.item_id,
+                        file_update_changes_to_display(notification.changes),
+                    );
+                }
+            }
             ServerNotification::ContextCompacted(_) => {}
         }
     }
@@ -6515,8 +6562,8 @@ impl ChatWidget {
     ) {
         match notification.item {
             item @ ThreadItem::CommandExecution { .. } => self.on_command_execution_started(item),
-            ThreadItem::FileChange { id: _, changes, .. } => {
-                self.on_patch_apply_begin(file_update_changes_to_display(changes));
+            ThreadItem::FileChange { id, changes, .. } => {
+                self.on_patch_apply_begin(id, file_update_changes_to_display(changes));
             }
             item @ ThreadItem::McpToolCall { .. } => self.on_mcp_tool_call_started(item),
             ThreadItem::WebSearch { id, .. } => {
@@ -6780,6 +6827,12 @@ impl ChatWidget {
                 exec.mark_failed();
             } else if let Some(tool) = cell.as_any_mut().downcast_mut::<McpToolCallCell>() {
                 tool.mark_failed();
+            } else if cell
+                .as_any()
+                .is::<history_cell::StreamingPatchHistoryCell>()
+            {
+                self.bump_active_cell_revision();
+                return;
             }
             self.add_boxed_history(cell);
         }
