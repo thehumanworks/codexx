@@ -561,6 +561,11 @@ pub struct Config {
     /// layer are resolved against this path.
     pub cwd: AbsolutePathBuf,
 
+    /// Absolute project roots for the session. This is the cwd plus any
+    /// user-requested additional roots, before implicit writable roots are
+    /// added to the effective permission profile.
+    pub project_roots: Vec<AbsolutePathBuf>,
+
     /// Preferred store for CLI auth credentials.
     /// file (default): Use a file in the Codex home directory.
     /// keyring: Use an OS-specific keyring service.
@@ -2950,6 +2955,9 @@ impl Config {
             .value
             .set(effective_permission_profile)
             .map_err(std::io::Error::from)?;
+        let project_roots = std::iter::once(resolved_cwd.clone())
+            .chain(requested_additional_writable_roots.iter().cloned())
+            .collect::<Vec<_>>();
         let config = Self {
             model,
             service_tier,
@@ -2959,6 +2967,7 @@ impl Config {
             model_provider_id,
             model_provider,
             cwd: resolved_cwd,
+            project_roots,
             startup_warnings,
             permissions: Permissions {
                 approval_policy: constrained_approval_policy.value,

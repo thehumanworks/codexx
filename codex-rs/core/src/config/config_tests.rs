@@ -2854,7 +2854,7 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
     std::fs::create_dir_all(&backend)?;
 
     let overrides = ConfigOverrides {
-        cwd: Some(frontend),
+        cwd: Some(frontend.clone()),
         sandbox_mode: Some(SandboxMode::WorkspaceWrite),
         additional_writable_roots: vec![PathBuf::from("../backend"), backend.clone()],
         ..Default::default()
@@ -2868,6 +2868,14 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
     .await?;
 
     let expected_backend = backend.abs();
+    assert_eq!(
+        config.project_roots,
+        vec![
+            frontend.abs(),
+            expected_backend.clone(),
+            expected_backend.clone()
+        ]
+    );
     if cfg!(target_os = "windows") {
         match &config.legacy_sandbox_policy() {
             SandboxPolicy::ReadOnly { .. } => {}
@@ -6366,6 +6374,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
+            project_roots: vec![fixture.cwd()],
             cli_auth_credentials_store_mode: Default::default(),
             mcp_servers: Constrained::allow_any(HashMap::new()),
             mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -6568,6 +6577,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         user_instructions: None,
         notify: None,
         cwd: fixture.cwd(),
+        project_roots: vec![fixture.cwd()],
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -6724,6 +6734,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         user_instructions: None,
         notify: None,
         cwd: fixture.cwd(),
+        project_roots: vec![fixture.cwd()],
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -6865,6 +6876,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         user_instructions: None,
         notify: None,
         cwd: fixture.cwd(),
+        project_roots: vec![fixture.cwd()],
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
