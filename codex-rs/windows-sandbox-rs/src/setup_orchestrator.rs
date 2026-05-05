@@ -192,13 +192,16 @@ fn run_setup_refresh_inner(
     let exe = find_setup_exe();
     // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
     let mut cmd = Command::new(&exe);
-    cmd.arg(&b64).stdout(Stdio::null()).stderr(Stdio::null());
-    let cwd = std::env::current_dir().unwrap_or_else(|_| request.codex_home.to_path_buf());
+    let launch_cwd = helper_launch_cwd(request.codex_home)?;
+    cmd.arg(&b64)
+        .current_dir(&launch_cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     log_note(
         &format!(
             "setup refresh: spawning {} (cwd={}, payload_len={})",
             exe.display(),
-            cwd.display(),
+            launch_cwd.display(),
             b64.len()
         ),
         Some(&sandbox_dir(request.codex_home)),
@@ -577,6 +580,12 @@ fn find_setup_exe() -> PathBuf {
     PathBuf::from("codex-windows-sandbox-setup.exe")
 }
 
+fn helper_launch_cwd(codex_home: &Path) -> std::io::Result<PathBuf> {
+    let launch_cwd = sandbox_dir(codex_home);
+    std::fs::create_dir_all(&launch_cwd)?;
+    Ok(launch_cwd)
+}
+
 fn report_helper_failure(
     codex_home: &Path,
     cleared_report: bool,
@@ -629,8 +638,15 @@ fn run_setup_exe(
     };
 
     if !needs_elevation {
+        let launch_cwd = helper_launch_cwd(codex_home).map_err(|err| {
+            failure(
+                SetupErrorCode::OrchestratorHelperLaunchFailed,
+                format!("failed to prepare setup helper launch cwd: {err}"),
+            )
+        })?;
         let status = Command::new(&exe)
             .arg(&payload_b64)
+            .current_dir(&launch_cwd)
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -946,6 +962,7 @@ mod tests {
     use super::build_payload_roots;
     use super::gather_legacy_full_read_roots;
     use super::gather_read_roots;
+    use super::helper_launch_cwd;
     use super::loopback_proxy_port_from_url;
     use super::offline_proxy_settings_from_env;
     use super::profile_read_roots;
@@ -1011,6 +1028,16 @@ mod tests {
         );
 
         assert_eq!(proxy_ports_from_env(&env), vec![1081, 8080]);
+    }
+
+    #[test]
+    fn helper_launch_cwd_uses_local_sandbox_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+
+        let launch_cwd = helper_launch_cwd(temp.path()).expect("launch cwd");
+
+        assert_eq!(launch_cwd, temp.path().join(".sandbox"));
+        assert!(launch_cwd.is_dir());
     }
 
     #[test]
