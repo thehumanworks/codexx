@@ -488,7 +488,10 @@ impl ToolRegistry {
                 let mut guard = response_cell.lock().await;
                 if let Some(result) = guard.as_mut() {
                     result.model_visible_override = Some(FunctionToolOutput::from_text(
-                        post_tool_use_output_to_model_text(updated_tool_output),
+                        match updated_tool_output {
+                            Value::String(text) => text.clone(),
+                            _ => updated_tool_output.to_string(),
+                        },
                         Some(true),
                     ));
                 }
@@ -529,18 +532,6 @@ impl ToolRegistry {
                 Err(err)
             }
         }
-    }
-}
-
-/// Converts hook-facing JSON output into the text-only function output sent to the model.
-///
-/// Hook authors may return either plain strings or structured JSON values. Preserve
-/// strings without JSON quoting, and serialize structured values so the model still
-/// sees the replacement faithfully through the text-only response channel.
-fn post_tool_use_output_to_model_text(output: &Value) -> String {
-    match output {
-        Value::String(text) => text.clone(),
-        _ => output.to_string(),
     }
 }
 

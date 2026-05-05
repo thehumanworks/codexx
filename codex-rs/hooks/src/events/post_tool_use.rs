@@ -105,7 +105,7 @@ pub(crate) async fn run(
         }
     };
 
-    let results = dispatcher::execute_handlers(
+    let mut results = dispatcher::execute_handlers(
         shell,
         matched,
         input_json,
@@ -115,7 +115,6 @@ pub(crate) async fn run(
     )
     .await;
 
-    let mut results = results;
     let updated_tool_output =
         select_updated_tool_output(&mut results, &request.tool_name, &request.tool_response);
     let additional_contexts = common::flatten_additional_contexts(
@@ -346,10 +345,10 @@ fn select_updated_tool_output(
     let mut selected = None;
 
     for result in results {
-        let candidate = if let Some(updated_tool_output) = result.data.updated_tool_output.clone() {
+        let candidate = if let Some(updated_tool_output) = result.data.updated_tool_output.take() {
             Some(updated_tool_output)
         } else if is_mcp_tool {
-            result.data.updated_mcp_tool_output.clone()
+            result.data.updated_mcp_tool_output.take()
         } else if result.data.updated_mcp_tool_output.is_some() {
             result.completed.run.entries.push(HookOutputEntry {
                 kind: HookOutputEntryKind::Warning,
@@ -364,7 +363,7 @@ fn select_updated_tool_output(
             continue;
         };
 
-        if is_mcp_tool || json_kind_matches(original_tool_response, &candidate) {
+        if is_mcp_tool || json_kind_name(original_tool_response) == json_kind_name(&candidate) {
             selected = Some(candidate);
         } else {
             result.completed.run.entries.push(HookOutputEntry {
@@ -378,10 +377,6 @@ fn select_updated_tool_output(
     }
 
     selected
-}
-
-fn json_kind_matches(left: &Value, right: &Value) -> bool {
-    json_kind_name(left) == json_kind_name(right)
 }
 
 fn json_kind_name(value: &Value) -> &'static str {
