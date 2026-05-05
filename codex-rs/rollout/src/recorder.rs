@@ -45,7 +45,7 @@ use super::list::parse_cursor;
 use super::list::parse_timestamp_uuid_from_filename;
 use super::metadata;
 use super::policy::EventPersistenceMode;
-use super::policy::is_persisted_response_item;
+use super::policy::is_persisted_rollout_item;
 use super::session_index::find_thread_names_by_ids;
 use crate::config::RolloutConfigView;
 use crate::default_client::originator;
@@ -79,7 +79,6 @@ pub struct RolloutRecorder {
     tx: Sender<RolloutCmd>,
     writer_task: Arc<RolloutWriterTask>,
     pub(crate) rollout_path: PathBuf,
-    state_db: Option<StateDbHandle>,
     event_persistence_mode: EventPersistenceMode,
 }
 
@@ -230,6 +229,7 @@ impl RolloutRecorder {
     /// List threads (rollout files) under the provided Codex home directory.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_threads(
+        state_db_ctx: Option<StateDbHandle>,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -242,6 +242,7 @@ impl RolloutRecorder {
         search_term: Option<&str>,
     ) -> std::io::Result<ThreadsPage> {
         Self::list_threads_with_db_fallback(
+            state_db_ctx,
             config,
             page_size,
             cursor,
@@ -260,6 +261,7 @@ impl RolloutRecorder {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn list_threads_from_state_db(
+        state_db_ctx: Option<StateDbHandle>,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -272,6 +274,7 @@ impl RolloutRecorder {
         search_term: Option<&str>,
     ) -> std::io::Result<ThreadsPage> {
         Self::list_threads_with_db_fallback(
+            state_db_ctx,
             config,
             page_size,
             cursor,
@@ -291,6 +294,7 @@ impl RolloutRecorder {
     /// List archived threads (rollout files) under the archived sessions directory.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_archived_threads(
+        state_db_ctx: Option<StateDbHandle>,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -303,6 +307,7 @@ impl RolloutRecorder {
         search_term: Option<&str>,
     ) -> std::io::Result<ThreadsPage> {
         Self::list_threads_with_db_fallback(
+            state_db_ctx,
             config,
             page_size,
             cursor,
@@ -321,6 +326,7 @@ impl RolloutRecorder {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn list_archived_threads_from_state_db(
+        state_db_ctx: Option<StateDbHandle>,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -333,6 +339,7 @@ impl RolloutRecorder {
         search_term: Option<&str>,
     ) -> std::io::Result<ThreadsPage> {
         Self::list_threads_with_db_fallback(
+            state_db_ctx,
             config,
             page_size,
             cursor,
@@ -351,6 +358,7 @@ impl RolloutRecorder {
 
     #[allow(clippy::too_many_arguments)]
     async fn list_threads_with_db_fallback(
+        state_db_ctx: Option<StateDbHandle>,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -365,7 +373,6 @@ impl RolloutRecorder {
         search_term: Option<&str>,
     ) -> std::io::Result<ThreadsPage> {
         let codex_home = config.codex_home();
-        let state_db_ctx = state_db::get_state_db(config).await;
         let archived = match archive_filter {
             ThreadListArchiveFilter::Active => false,
             ThreadListArchiveFilter::Archived => true,
@@ -444,9 +451,19 @@ impl RolloutRecorder {
             ));
         }
 
-        // Warm the DB by repairing every filesystem hit before querying SQLite.
+        // For metadata-filtered listings the filesystem page is the page we return. Track those
+        // IDs so the later DB page only triggers full reconciliation for DB-only hits.
+        let fs_page_thread_ids = fs_page
+            .items
+            .iter()
+            .filter_map(|item| item.thread_id)
+            .collect::<HashSet<_>>();
+
+        // Warm the DB by repairing every filesystem hit before querying SQLite. Source/provider/cwd
+        // filters are already validated from rollout head metadata, so lightweight read-repair is
+        // enough there. Search can depend on full title metadata, so keep full reconciliation.
         for item in &fs_page.items {
-            if listing_has_metadata_filters {
+            if search_term.is_some() {
                 state_db::reconcile_rollout(
                     state_db_ctx.as_deref(),
                     item.path.as_path(),
@@ -517,6 +534,12 @@ impl RolloutRecorder {
             }
             if listing_has_metadata_filters {
                 for item in &db_page.items {
+                    // Rows that also appeared in the filesystem page were just validated from the
+                    // rollout head. Rows only found by SQLite may be stale filter matches, so fully
+                    // reconcile those before returning the filesystem-backed page.
+                    if fs_page_thread_ids.contains(&item.id) {
+                        continue;
+                    }
                     state_db::reconcile_rollout(
                         state_db_ctx.as_deref(),
                         item.rollout_path.as_path(),
@@ -528,22 +551,22 @@ impl RolloutRecorder {
                     )
                     .await;
                 }
-                return Ok(page_from_filesystem_scan(
-                    fs_page,
-                    sort_direction,
-                    page_size,
-                    sort_key,
-                ));
+                let page = page_from_filesystem_scan(fs_page, sort_direction, page_size, sort_key);
+                return Ok(fill_missing_thread_item_metadata_from_state_db(
+                    state_db_ctx.as_deref(),
+                    page,
+                )
+                .await);
             }
             return Ok(db_page.into());
         }
         if listing_has_metadata_filters {
-            return Ok(page_from_filesystem_scan(
-                fs_page,
-                sort_direction,
-                page_size,
-                sort_key,
-            ));
+            let page = page_from_filesystem_scan(fs_page, sort_direction, page_size, sort_key);
+            return Ok(fill_missing_thread_item_metadata_from_state_db(
+                state_db_ctx.as_deref(),
+                page,
+            )
+            .await);
         }
         // If SQLite listing still fails, return the filesystem page rather than failing the list.
         tracing::error!("Falling back on rollout system");
@@ -559,6 +582,7 @@ impl RolloutRecorder {
     /// Find the newest recorded thread path, optionally filtering to a matching cwd.
     #[allow(clippy::too_many_arguments)]
     pub async fn find_latest_thread_path(
+        state_db_ctx: Option<StateDbHandle>,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -569,7 +593,6 @@ impl RolloutRecorder {
         filter_cwd: Option<&Path>,
     ) -> std::io::Result<Option<PathBuf>> {
         let codex_home = config.codex_home();
-        let state_db_ctx = state_db::get_state_db(config).await;
         let cwd_filter = filter_cwd.map(Path::to_path_buf);
         if state_db_ctx.is_some() {
             let mut db_cursor = cursor.cloned();
@@ -754,7 +777,6 @@ impl RolloutRecorder {
             tx,
             writer_task,
             rollout_path,
-            state_db: state_db_ctx,
             event_persistence_mode,
         })
     }
@@ -763,17 +785,13 @@ impl RolloutRecorder {
         self.rollout_path.as_path()
     }
 
-    pub fn state_db(&self) -> Option<StateDbHandle> {
-        self.state_db.clone()
-    }
-
     pub async fn record_items(&self, items: &[RolloutItem]) -> std::io::Result<()> {
         let mut filtered = Vec::new();
         for item in items {
             // Note that function calls may look a bit strange if they are
             // "fully qualified MCP tool calls," so we could consider
             // reformatting them in that case.
-            if is_persisted_response_item(item, self.event_persistence_mode) {
+            if is_persisted_rollout_item(item, self.event_persistence_mode) {
                 filtered.push(sanitize_rollout_item_for_persistence(
                     item.clone(),
                     self.event_persistence_mode,
@@ -851,7 +869,7 @@ impl RolloutRecorder {
             if line.trim().is_empty() {
                 continue;
             }
-            let v: Value = match serde_json::from_str(line) {
+            let mut v: Value = match serde_json::from_str(line) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("failed to parse line as JSON: {line:?}, error: {e}");
@@ -859,6 +877,10 @@ impl RolloutRecorder {
                     continue;
                 }
             };
+            if strip_legacy_ghost_snapshot_rollout_line(&mut v) {
+                trace!("skipping legacy ghost_snapshot rollout line");
+                continue;
+            }
 
             // Parse the rollout line structure
             match serde_json::from_value::<RolloutLine>(v.clone()) {
@@ -913,7 +935,7 @@ impl RolloutRecorder {
         Ok(InitialHistory::Resumed(ResumedHistory {
             conversation_id,
             history: items,
-            rollout_path: path.to_path_buf(),
+            rollout_path: Some(path.to_path_buf()),
         }))
     }
 
@@ -943,6 +965,29 @@ impl RolloutRecorder {
         };
         Ok(())
     }
+}
+
+fn strip_legacy_ghost_snapshot_rollout_line(value: &mut Value) -> bool {
+    match value.get("type").and_then(Value::as_str) {
+        Some("response_item") => value
+            .get("payload")
+            .is_some_and(is_legacy_ghost_snapshot_response_item),
+        Some("compacted") => {
+            if let Some(replacement_history) = value
+                .get_mut("payload")
+                .and_then(|payload| payload.get_mut("replacement_history"))
+                .and_then(Value::as_array_mut)
+            {
+                replacement_history.retain(|item| !is_legacy_ghost_snapshot_response_item(item));
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn is_legacy_ghost_snapshot_response_item(value: &Value) -> bool {
+    value.get("type").and_then(Value::as_str) == Some("ghost_snapshot")
 }
 
 fn truncate_fs_page(
@@ -975,6 +1020,90 @@ fn page_from_filesystem_scan(
     match sort_direction {
         SortDirection::Asc => page,
         SortDirection::Desc => truncate_fs_page(page, page_size, sort_key),
+    }
+}
+
+async fn fill_missing_thread_item_metadata_from_state_db(
+    state_db_ctx: Option<&StateRuntime>,
+    mut page: ThreadsPage,
+) -> ThreadsPage {
+    let Some(state_db_ctx) = state_db_ctx else {
+        return page;
+    };
+
+    for item in &mut page.items {
+        let Some(thread_id) = item.thread_id else {
+            continue;
+        };
+        let metadata = match state_db_ctx.get_thread(thread_id).await {
+            Ok(Some(metadata)) => metadata,
+            Ok(None) => continue,
+            Err(err) => {
+                warn!(
+                    "state db get_thread failed while overlaying filesystem scan thread metadata: {err}"
+                );
+                continue;
+            }
+        };
+        fill_missing_thread_item_metadata(item, thread_item_from_state_metadata(metadata));
+    }
+
+    page
+}
+
+fn fill_missing_thread_item_metadata(item: &mut ThreadItem, state_item: ThreadItem) {
+    let ThreadItem {
+        path: _state_path,
+        thread_id: _state_thread_id,
+        first_user_message,
+        cwd,
+        git_branch,
+        git_sha,
+        git_origin_url,
+        source,
+        agent_nickname,
+        agent_role,
+        model_provider,
+        cli_version,
+        created_at,
+        updated_at,
+    } = state_item;
+
+    if item.first_user_message.is_none() {
+        item.first_user_message = first_user_message;
+    }
+    if item.cwd.is_none() {
+        item.cwd = cwd;
+    }
+    if git_branch.is_some() {
+        item.git_branch = git_branch;
+    }
+    if git_sha.is_some() {
+        item.git_sha = git_sha;
+    }
+    if git_origin_url.is_some() {
+        item.git_origin_url = git_origin_url;
+    }
+    if item.source.is_none() {
+        item.source = source;
+    }
+    if item.agent_nickname.is_none() {
+        item.agent_nickname = agent_nickname;
+    }
+    if item.agent_role.is_none() {
+        item.agent_role = agent_role;
+    }
+    if item.model_provider.is_none() {
+        item.model_provider = model_provider;
+    }
+    if item.cli_version.is_none() {
+        item.cli_version = cli_version;
+    }
+    if item.created_at.is_none() {
+        item.created_at = created_at;
+    }
+    if item.updated_at.is_none() {
+        item.updated_at = updated_at;
     }
 }
 
@@ -1684,26 +1813,7 @@ impl From<codex_state::ThreadsPage> for ThreadsPage {
         let items = db_page
             .items
             .into_iter()
-            .map(|item| ThreadItem {
-                path: item.rollout_path,
-                thread_id: Some(item.id),
-                first_user_message: item.first_user_message,
-                cwd: Some(item.cwd),
-                git_branch: item.git_branch,
-                git_sha: item.git_sha,
-                git_origin_url: item.git_origin_url,
-                source: Some(
-                    serde_json::from_str(item.source.as_str())
-                        .or_else(|_| serde_json::from_value(Value::String(item.source)))
-                        .unwrap_or(SessionSource::Unknown),
-                ),
-                agent_nickname: item.agent_nickname,
-                agent_role: item.agent_role,
-                model_provider: Some(item.model_provider),
-                cli_version: Some(item.cli_version),
-                created_at: Some(item.created_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
-                updated_at: Some(item.updated_at.to_rfc3339_opts(SecondsFormat::Millis, true)),
-            })
+            .map(thread_item_from_state_metadata)
             .collect();
         Self {
             items,
@@ -1711,6 +1821,29 @@ impl From<codex_state::ThreadsPage> for ThreadsPage {
             num_scanned_files: db_page.num_scanned_rows,
             reached_scan_cap: false,
         }
+    }
+}
+
+fn thread_item_from_state_metadata(item: codex_state::ThreadMetadata) -> ThreadItem {
+    ThreadItem {
+        path: item.rollout_path,
+        thread_id: Some(item.id),
+        first_user_message: item.first_user_message,
+        cwd: Some(item.cwd),
+        git_branch: item.git_branch,
+        git_sha: item.git_sha,
+        git_origin_url: item.git_origin_url,
+        source: Some(
+            serde_json::from_str(item.source.as_str())
+                .or_else(|_| serde_json::from_value(Value::String(item.source)))
+                .unwrap_or(SessionSource::Unknown),
+        ),
+        agent_nickname: item.agent_nickname,
+        agent_role: item.agent_role,
+        model_provider: Some(item.model_provider),
+        cli_version: Some(item.cli_version),
+        created_at: Some(item.created_at.to_rfc3339_opts(SecondsFormat::Secs, true)),
+        updated_at: Some(item.updated_at.to_rfc3339_opts(SecondsFormat::Millis, true)),
     }
 }
 

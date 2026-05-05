@@ -18,10 +18,8 @@ pub enum ToolHandlerKind {
     CodeModeWait,
     DynamicTool,
     FollowupTaskV2,
-    JsRepl,
-    JsReplReset,
+    Goal,
     ListAgentsV2,
-    ListDir,
     Mcp,
     McpResource,
     Plan,
@@ -36,7 +34,7 @@ pub enum ToolHandlerKind {
     SpawnAgentV2,
     TestSync,
     ToolSearch,
-    ToolSuggest,
+    RequestPluginInstall,
     UnifiedExec,
     ViewImage,
     WaitAgentV1,
@@ -86,7 +84,7 @@ pub struct ToolRegistryPlanDeferredTool<'a> {
     pub name: ToolName,
     pub server_name: &'a str,
     pub connector_name: Option<&'a str>,
-    pub connector_description: Option<&'a str>,
+    pub description: Option<&'a str>,
 }
 
 impl ToolRegistryPlan {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::agent::next_thread_spawn_depth;
+use crate::turn_timing::now_unix_timestamp_ms;
 use std::sync::Arc;
 
 pub(crate) struct Handler;
@@ -46,6 +47,7 @@ impl ToolHandler for Handler {
                 &turn,
                 CollabResumeBeginEvent {
                     call_id: call_id.clone(),
+                    started_at_ms: now_unix_timestamp_ms(),
                     sender_thread_id: session.conversation_id,
                     receiver_thread_id,
                     receiver_agent_nickname: receiver_agent.agent_nickname.clone(),
@@ -61,7 +63,14 @@ impl ToolHandler for Handler {
             .get_status(receiver_thread_id)
             .await;
         let (receiver_agent, error) = if matches!(status, AgentStatus::NotFound) {
-            match try_resume_closed_agent(&session, &turn, receiver_thread_id, child_depth).await {
+            match Box::pin(try_resume_closed_agent(
+                &session,
+                &turn,
+                receiver_thread_id,
+                child_depth,
+            ))
+            .await
+            {
                 Ok(()) => {
                     status = session
                         .services
@@ -94,6 +103,7 @@ impl ToolHandler for Handler {
                 &turn,
                 CollabResumeEndEvent {
                     call_id,
+                    completed_at_ms: now_unix_timestamp_ms(),
                     sender_thread_id: session.conversation_id,
                     receiver_thread_id,
                     receiver_agent_nickname: receiver_agent.agent_nickname,
@@ -149,21 +159,18 @@ async fn try_resume_closed_agent(
     child_depth: i32,
 ) -> Result<(), FunctionCallError> {
     let config = build_agent_resume_config(turn.as_ref(), child_depth)?;
-    session
-        .services
-        .agent_control
-        .resume_agent_from_rollout(
-            config,
-            receiver_thread_id,
-            thread_spawn_source(
-                session.conversation_id,
-                &turn.session_source,
-                child_depth,
-                /*agent_role*/ None,
-                /*task_name*/ None,
-            )?,
-        )
-        .await
-        .map(|_| ())
-        .map_err(|err| collab_agent_error(receiver_thread_id, err))
+    Box::pin(session.services.agent_control.resume_agent_from_rollout(
+        config,
+        receiver_thread_id,
+        thread_spawn_source(
+            session.conversation_id,
+            &turn.session_source,
+            child_depth,
+            /*agent_role*/ None,
+            /*task_name*/ None,
+        )?,
+    ))
+    .await
+    .map(|_| ())
+    .map_err(|err| collab_agent_error(receiver_thread_id, err))
 }
