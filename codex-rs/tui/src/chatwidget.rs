@@ -5523,6 +5523,7 @@ impl ChatWidget {
                 if !self.active_cell_is_stream_tail {
                     self.flush_active_cell();
                 }
+                self.bottom_pane.hide_status_indicator();
                 self.active_cell = Some(cell);
                 self.active_cell_is_stream_tail = true;
                 self.bump_active_cell_revision();
