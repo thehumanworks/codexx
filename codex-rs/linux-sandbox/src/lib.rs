@@ -13,8 +13,6 @@ mod launcher;
 mod linux_run_main;
 #[cfg(target_os = "linux")]
 mod proxy_routing;
-#[cfg(target_os = "linux")]
-mod vendored_bwrap;
 
 #[cfg(target_os = "linux")]
 pub fn run_main() -> ! {
