@@ -407,22 +407,20 @@ async fn thread_lifecycle_params_include_legacy_sandbox_when_no_active_profile()
         .await
         .expect("build config with legacy sandbox override");
     let project_roots = vec![config.cwd.clone(), extra];
+    let expected_sandbox = sandbox_mode_from_permission_profile(
+        &config.permissions.permission_profile(),
+        config.cwd.as_path(),
+    );
 
     let start_params = thread_start_params_from_config(&config, Some(&project_roots));
     let resume_params =
         thread_resume_params_from_config(&config, "thread-id".to_string(), Some(&project_roots));
 
     assert_eq!(config.permissions.active_permission_profile(), None);
-    assert_eq!(
-        start_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
-    );
+    assert_eq!(start_params.sandbox, expected_sandbox);
     assert_eq!(start_params.permissions, None);
     assert_eq!(start_params.project_roots, Some(project_roots.clone()));
-    assert_eq!(
-        resume_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
-    );
+    assert_eq!(resume_params.sandbox, expected_sandbox);
     assert_eq!(resume_params.permissions, None);
     assert_eq!(resume_params.project_roots, Some(project_roots));
 }
