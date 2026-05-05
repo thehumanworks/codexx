@@ -19,10 +19,15 @@ pub struct UsageLimitNudge {
     pub action: UsageLimitNudgeAction,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize, Default,
+)]
 pub enum UsageLimitNudgeAction {
     #[serde(rename = "add_credits")]
     AddCredits,
     #[serde(rename = "upgrade")]
     Upgrade,
+    #[serde(rename = "unknown", other)]
+    #[default]
+    Unknown,
 }

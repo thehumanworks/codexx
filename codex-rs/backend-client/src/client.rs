@@ -456,7 +456,7 @@ impl Client {
             .and_then(|details| Self::map_rate_limit_reached_type(details.kind));
         let current_usage_limit_nudge = payload
             .current_usage_limit_nudge
-            .map(|nudge| Self::map_usage_limit_nudge(*nudge));
+            .and_then(|nudge| Self::map_usage_limit_nudge(*nudge));
         let mut snapshots = vec![Self::make_rate_limit_snapshot(
             Some("codex".to_string()),
             /*limit_name*/ None,
@@ -510,16 +510,18 @@ impl Client {
         }
     }
 
-    fn map_usage_limit_nudge(nudge: crate::types::UsageLimitNudge) -> UsageLimitNudgePayload {
-        UsageLimitNudgePayload {
+    fn map_usage_limit_nudge(
+        nudge: crate::types::UsageLimitNudge,
+    ) -> Option<UsageLimitNudgePayload> {
+        let action = match nudge.action {
+            crate::types::UsageLimitNudgeAction::AddCredits => UsageLimitNudgeAction::AddCredits,
+            crate::types::UsageLimitNudgeAction::Upgrade => UsageLimitNudgeAction::Upgrade,
+            crate::types::UsageLimitNudgeAction::Unknown => return None,
+        };
+        Some(UsageLimitNudgePayload {
             threshold: nudge.threshold,
-            action: match nudge.action {
-                crate::types::UsageLimitNudgeAction::AddCredits => {
-                    UsageLimitNudgeAction::AddCredits
-                }
-                crate::types::UsageLimitNudgeAction::Upgrade => UsageLimitNudgeAction::Upgrade,
-            },
-        }
+            action,
+        })
     }
 
     fn map_rate_limit_reached_type(
@@ -878,6 +880,21 @@ mod tests {
             rate_limit_reached_type: None,
             current_usage_limit_nudge: None,
         };
+
+        let snapshots = Client::rate_limit_snapshots_from_payload(payload);
+        assert_eq!(snapshots[0].current_usage_limit_nudge, None);
+    }
+
+    #[test]
+    fn usage_payload_drops_unknown_current_usage_limit_nudge_action() {
+        let payload: RateLimitStatusPayload = serde_json::from_value(serde_json::json!({
+            "plan_type": "plus",
+            "current_usage_limit_nudge": {
+                "threshold": 75,
+                "action": "future_action"
+            }
+        }))
+        .expect("unknown nudge action should deserialize");
 
         let snapshots = Client::rate_limit_snapshots_from_payload(payload);
         assert_eq!(snapshots[0].current_usage_limit_nudge, None);
