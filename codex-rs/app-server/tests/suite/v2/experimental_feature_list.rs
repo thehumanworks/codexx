@@ -307,12 +307,15 @@ async fn experimental_feature_enablement_set_only_updates_named_features() -> Re
 }
 
 #[tokio::test]
-async fn experimental_feature_enablement_set_allows_remote_control() -> Result<()> {
+async fn experimental_feature_enablement_set_allows_desktop_runtime_features() -> Result<()> {
     let codex_home = TempDir::new()?;
     let mut mcp = McpProcess::new(codex_home.path()).await?;
     timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
-    let remote_control_enabled = false;
-    let enablement = BTreeMap::from([("remote_control".to_string(), remote_control_enabled)]);
+    let enablement = BTreeMap::from([
+        ("browser_use".to_string(), true),
+        ("browser_use_external".to_string(), true),
+        ("remote_control".to_string(), false),
+    ]);
 
     let actual = set_experimental_feature_enablement(&mut mcp, enablement.clone()).await?;
 

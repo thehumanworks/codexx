@@ -46,6 +46,8 @@ use tracing::warn;
 
 const SUPPORTED_EXPERIMENTAL_FEATURE_ENABLEMENT: &[&str] = &[
     "apps",
+    "browser_use",
+    "browser_use_external",
     "memories",
     "plugins",
     "remote_control",
