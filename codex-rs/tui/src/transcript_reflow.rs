@@ -148,8 +148,13 @@ impl TranscriptReflowState {
     /// This is a draining read because each resize-during-stream episode should force at most one
     /// post-consolidation repair. Calling it before consolidation would drop the repair request and
     /// leave finalized scrollback shaped by transient stream rows.
-    pub(crate) fn take_stream_finish_reflow_needed(&mut self) -> bool {
-        let needed = self.ran_during_stream || self.resize_requested_during_stream;
+    pub(crate) fn take_stream_finish_reflow_needed(
+        &mut self,
+        force_source_backed_reflow: bool,
+    ) -> bool {
+        let needed = self.ran_during_stream
+            || self.resize_requested_during_stream
+            || force_source_backed_reflow;
         self.ran_during_stream = false;
         self.resize_requested_during_stream = false;
         needed
@@ -276,8 +281,8 @@ mod tests {
         let mut state = TranscriptReflowState::default();
         state.mark_resize_requested_during_stream();
 
-        assert!(state.take_stream_finish_reflow_needed());
-        assert!(!state.take_stream_finish_reflow_needed());
+        assert!(state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ false));
+        assert!(!state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ false));
     }
 
     #[test]
@@ -285,8 +290,22 @@ mod tests {
         let mut state = TranscriptReflowState::default();
         state.mark_ran_during_stream();
 
-        assert!(state.take_stream_finish_reflow_needed());
-        assert!(!state.take_stream_finish_reflow_needed());
+        assert!(state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ false));
+        assert!(!state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ false));
+    }
+
+    #[test]
+    fn take_stream_finish_reflow_needed_reflows_when_forced() {
+        let mut state = TranscriptReflowState::default();
+
+        assert!(state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ true));
+    }
+
+    #[test]
+    fn take_stream_finish_reflow_needed_ignores_unforced_finalization() {
+        let mut state = TranscriptReflowState::default();
+
+        assert!(!state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ false));
     }
 
     #[test]
@@ -297,6 +316,6 @@ mod tests {
 
         state.clear();
 
-        assert!(!state.take_stream_finish_reflow_needed());
+        assert!(!state.take_stream_finish_reflow_needed(/*force_source_backed_reflow*/ false));
     }
 }

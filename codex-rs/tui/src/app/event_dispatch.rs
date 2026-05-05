@@ -218,9 +218,10 @@ impl App {
                 let end = self.transcript_cells.len();
                 let start =
                     trailing_run_start::<history_cell::AgentMessageCell>(&self.transcript_cells);
-                if start < end {
-                    let consolidated: Arc<dyn HistoryCell> =
-                        Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
+                let replaced_stream_cells = start < end;
+                let consolidated: Arc<dyn HistoryCell> =
+                    Arc::new(history_cell::AgentMarkdownCell::new(source, &cwd));
+                if replaced_stream_cells {
                     self.transcript_cells
                         .splice(start..end, std::iter::once(consolidated.clone()));
 
@@ -228,11 +229,20 @@ impl App {
                         t.consolidate_cells(start..end, consolidated.clone());
                         tui.frame_requester().schedule_frame();
                     }
-
-                    self.maybe_finish_stream_reflow(tui)?;
                 } else {
-                    self.maybe_finish_stream_reflow(tui)?;
+                    self.transcript_cells.push(consolidated.clone());
+                    if let Some(Overlay::Transcript(t)) = &mut self.overlay {
+                        t.insert_cell(consolidated.clone());
+                        tui.frame_requester().schedule_frame();
+                    }
+                    self.insert_history_cell_lines(
+                        tui,
+                        consolidated.as_ref(),
+                        tui.terminal.last_known_screen_size.width,
+                    );
                 }
+                let force_source_backed_reflow = tui.uses_newline_history_insert();
+                self.maybe_finish_stream_reflow(tui, force_source_backed_reflow)?;
             }
             AppEvent::ConsolidateProposedPlan(source) => {
                 if !self.terminal_resize_reflow_enabled() {
@@ -268,7 +278,9 @@ impl App {
                         tui.terminal.last_known_screen_size.width,
                     );
 
-                    self.maybe_finish_stream_reflow(tui)?;
+                    self.maybe_finish_stream_reflow(
+                        tui, /*force_source_backed_reflow*/ false,
+                    )?;
                 }
             }
             AppEvent::ApplyThreadRollback { num_turns } => {

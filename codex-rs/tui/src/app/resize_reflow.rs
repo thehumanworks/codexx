@@ -239,13 +239,20 @@ impl App {
     /// was active or while its transient cells were still present, this method runs an immediate
     /// source-backed reflow so terminal scrollback reflects the finalized cell instead of the
     /// transient stream rows.
-    pub(super) fn maybe_finish_stream_reflow(&mut self, tui: &mut tui::Tui) -> Result<()> {
+    pub(super) fn maybe_finish_stream_reflow(
+        &mut self,
+        tui: &mut tui::Tui,
+        force_source_backed_reflow: bool,
+    ) -> Result<()> {
         if !self.terminal_resize_reflow_enabled() {
             self.transcript_reflow.clear();
             return Ok(());
         }
 
-        if self.transcript_reflow.take_stream_finish_reflow_needed() {
+        if self
+            .transcript_reflow
+            .take_stream_finish_reflow_needed(force_source_backed_reflow)
+        {
             self.schedule_immediate_resize_reflow(tui);
             self.maybe_run_resize_reflow(tui)?;
         } else if self.transcript_reflow.pending_is_due(Instant::now()) {
