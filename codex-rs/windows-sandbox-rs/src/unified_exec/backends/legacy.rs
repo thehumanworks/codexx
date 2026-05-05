@@ -225,7 +225,6 @@ fn finalize_exit(
         raw_exit as i32
     };
 
-    let _ = output_join.join();
     let protected_metadata_failure = match protected_metadata_runtime.finish() {
         Ok(paths) => {
             if !paths.is_empty() && exit_code == 0 {
@@ -240,8 +239,6 @@ fn finalize_exit(
             Some(format!("protected metadata cleanup failed: {err:#}"))
         }
     };
-    let _ = exit_tx.send(exit_code);
-
     unsafe {
         if thread_handle != 0 && thread_handle != INVALID_HANDLE_VALUE {
             CloseHandle(thread_handle);
@@ -270,6 +267,12 @@ fn finalize_exit(
             }
         }
     }
+
+    // Publish the process result after policy cleanup. Output readers may wait
+    // for late pipe EOF from console helpers, but callers already have their
+    // own bounded output drain after observing the exit.
+    let _ = exit_tx.send(exit_code);
+    let _ = output_join.join();
 }
 
 fn resize_conpty_handle(hpc: &Arc<StdMutex<Option<HANDLE>>>, size: TerminalSize) -> Result<()> {
