@@ -125,8 +125,14 @@ fn spawn_read_acl_helper(payload: &Payload, _log: &mut File) -> Result<()> {
     let payload_json = serde_json::to_vec(&read_payload)?;
     let payload_b64 = BASE64.encode(payload_json);
     let exe = std::env::current_exe().context("locate setup helper")?;
+    let helper_cwd = exe
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| sandbox_bin_dir(&payload.codex_home));
     Command::new(&exe)
         .arg(payload_b64)
+        .current_dir(&helper_cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

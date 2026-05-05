@@ -190,15 +190,18 @@ fn run_setup_refresh_inner(
     let json = serde_json::to_vec(&payload)?;
     let b64 = BASE64_STANDARD.encode(json);
     let exe = find_setup_exe();
+    let helper_cwd = helper_launch_cwd(&exe, request.codex_home);
     // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
     let mut cmd = Command::new(&exe);
-    cmd.arg(&b64).stdout(Stdio::null()).stderr(Stdio::null());
-    let cwd = std::env::current_dir().unwrap_or_else(|_| request.codex_home.to_path_buf());
+    cmd.arg(&b64)
+        .current_dir(&helper_cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     log_note(
         &format!(
             "setup refresh: spawning {} (cwd={}, payload_len={})",
             exe.display(),
-            cwd.display(),
+            helper_cwd.display(),
             b64.len()
         ),
         Some(&sandbox_dir(request.codex_home)),
@@ -577,6 +580,14 @@ fn find_setup_exe() -> PathBuf {
     PathBuf::from("codex-windows-sandbox-setup.exe")
 }
 
+fn helper_launch_cwd(helper_exe: &Path, codex_home: &Path) -> PathBuf {
+    helper_exe
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| helper_bin_dir(codex_home))
+}
+
 fn report_helper_failure(
     codex_home: &Path,
     cleared_report: bool,
@@ -608,6 +619,7 @@ fn run_setup_exe(
     use windows_sys::Win32::UI::Shell::SHELLEXECUTEINFOW;
     use windows_sys::Win32::UI::Shell::ShellExecuteExW;
     let exe = find_setup_exe();
+    let helper_cwd = helper_launch_cwd(&exe, codex_home);
     let payload_json = serde_json::to_string(payload).map_err(|err| {
         failure(
             SetupErrorCode::OrchestratorPayloadSerializeFailed,
@@ -631,6 +643,7 @@ fn run_setup_exe(
     if !needs_elevation {
         let status = Command::new(&exe)
             .arg(&payload_b64)
+            .current_dir(&helper_cwd)
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -664,12 +677,14 @@ fn run_setup_exe(
     let params = quote_arg(&payload_b64);
     let params_w = crate::winutil::to_wide(params);
     let verb_w = crate::winutil::to_wide("runas");
+    let helper_cwd_w = crate::winutil::to_wide(&helper_cwd);
     let mut sei: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
     sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
     sei.fMask = SEE_MASK_NOCLOSEPROCESS;
     sei.lpVerb = verb_w.as_ptr();
     sei.lpFile = exe_w.as_ptr();
     sei.lpParameters = params_w.as_ptr();
+    sei.lpDirectory = helper_cwd_w.as_ptr();
     // Hide the window for the elevated helper.
     sei.nShow = 0; // SW_HIDE
     let ok = unsafe { ShellExecuteExW(&mut sei) };
@@ -946,6 +961,7 @@ mod tests {
     use super::build_payload_roots;
     use super::gather_legacy_full_read_roots;
     use super::gather_read_roots;
+    use super::helper_launch_cwd;
     use super::loopback_proxy_port_from_url;
     use super::offline_proxy_settings_from_env;
     use super::profile_read_roots;
@@ -957,6 +973,7 @@ mod tests {
     use std::collections::HashMap;
     use std::collections::HashSet;
     use std::fs;
+    use std::path::Path;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -1452,6 +1469,27 @@ mod tests {
             canonical_windows_platform_default_roots()
                 .into_iter()
                 .all(|path| roots.contains(&path))
+        );
+    }
+
+    #[test]
+    fn helper_launch_cwd_prefers_helper_parent() {
+        let codex_home = PathBuf::from(r"C:\codex-home");
+        let helper = PathBuf::from(r"C:\Program Files\Codex\codex-windows-sandbox-setup.exe");
+
+        assert_eq!(
+            helper_launch_cwd(&helper, &codex_home),
+            PathBuf::from(r"C:\Program Files\Codex")
+        );
+    }
+
+    #[test]
+    fn helper_launch_cwd_falls_back_to_helper_bin_dir() {
+        let codex_home = PathBuf::from(r"C:\codex-home");
+
+        assert_eq!(
+            helper_launch_cwd(Path::new("codex-windows-sandbox-setup.exe"), &codex_home),
+            helper_bin_dir(&codex_home)
         );
     }
 }
