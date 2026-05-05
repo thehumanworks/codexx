@@ -52,6 +52,8 @@ use codex_protocol::request_permissions::PermissionGrantScope;
 use codex_protocol::request_permissions::RequestPermissionProfile;
 use tracing::Span;
 
+use crate::goals::ExternalGoalPreviousStatus;
+use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
 use crate::goals::SetGoalRequest;
 use crate::rollout::recorder::RolloutRecorder;
@@ -1171,15 +1173,17 @@ async fn reload_user_config_layer_refreshes_hooks() -> anyhow::Result<()> {
     .await?;
     let codex_home = session.codex_home().await;
     std::fs::create_dir_all(&codex_home)?;
-    std::fs::write(
-        codex_home.join(CONFIG_TOML_FILE),
-        r#"
-[hooks]
-
-[[hooks.SessionStart]]
-hooks = [{ type = "command", command = "python3 /tmp/user.py" }]
-"#,
-    )?;
+    let config_toml_path = codex_home.join(CONFIG_TOML_FILE);
+    let user_config: codex_config::TomlValue = serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "SessionStart": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "python3 /tmp/user.py",
+                }],
+            }],
+        },
+    }))?;
 
     let request = codex_hooks::SessionStartRequest {
         session_id: session.conversation_id,
@@ -1190,6 +1194,39 @@ hooks = [{ type = "command", command = "python3 /tmp/user.py" }]
         source: codex_hooks::SessionStartSource::Startup,
     };
     assert!(session.hooks().preview_session_start(&request).is_empty());
+
+    let config = session.get_config().await;
+    let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
+        feature_enabled: true,
+        config_layer_stack: Some(
+            config
+                .config_layer_stack
+                .with_user_config(&config_toml_path, user_config.clone()),
+        ),
+        ..codex_hooks::HooksConfig::default()
+    });
+    assert_eq!(hook_list.hooks.len(), 1);
+    assert_eq!(
+        hook_list.hooks[0].trust_status,
+        codex_protocol::protocol::HookTrustStatus::Untrusted
+    );
+
+    let trusted_user_config: codex_config::TomlValue = serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "SessionStart": [{
+                "hooks": [{
+                    "type": "command",
+                    "command": "python3 /tmp/user.py",
+                }],
+            }],
+            "state": {
+                hook_list.hooks[0].key.clone(): {
+                    "trusted_hash": hook_list.hooks[0].current_hash.clone(),
+                },
+            },
+        },
+    }))?;
+    std::fs::write(&config_toml_path, toml::to_string(&trusted_user_config)?)?;
 
     session.reload_user_config_layer().await;
 
@@ -1760,6 +1797,7 @@ async fn record_initial_history_forked_hydrates_previous_turn_settings() {
         turn_id: Some(turn_context.sub_id.clone()),
         trace_id: turn_context.trace_id.clone(),
         cwd: turn_context.cwd.to_path_buf(),
+        workspace_roots: turn_context.workspace_roots.clone(),
         current_date: turn_context.current_date.clone(),
         timezone: turn_context.timezone.clone(),
         approval_policy: turn_context.approval_policy.value(),
@@ -2365,6 +2403,7 @@ async fn set_rate_limits_retains_previous_credits() {
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -2468,6 +2507,7 @@ async fn set_rate_limits_updates_plan_type_when_present() {
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -2732,6 +2772,7 @@ async fn attach_thread_persistence(session: &mut Session) -> PathBuf {
             dynamic_tools: Vec::new(),
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
+                workspace_roots: config.workspace_roots.clone(),
                 model_provider: config.model_provider_id.clone(),
                 memory_mode: if config.memories.generate_memories {
                     ThreadMemoryMode::Enabled
@@ -2926,6 +2967,7 @@ pub(crate) async fn make_session_configuration_for_tests() -> SessionConfigurati
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -2967,7 +3009,6 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
 
     session_configuration.cwd = original_cwd.abs();
     let sandbox_policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: Vec::new(),
         network_access: false,
         exclude_tmpdir_env_var: true,
         exclude_slash_tmp: true,
@@ -3001,8 +3042,14 @@ async fn session_configuration_apply_preserves_profile_file_system_policy_on_cwd
         .expect("cwd-only update should succeed");
 
     assert_eq!(
-        updated.file_system_sandbox_policy(),
+        updated.permission_profile().file_system_sandbox_policy(),
         file_system_sandbox_policy
+    );
+    let expected_materialized_file_system_policy = file_system_sandbox_policy
+        .materialize_project_roots_with_workspace_roots(&updated.workspace_roots);
+    assert_eq!(
+        updated.file_system_sandbox_policy(),
+        expected_materialized_file_system_policy
     );
 }
 
@@ -3053,8 +3100,15 @@ async fn session_configuration_apply_permission_profile_preserves_existing_deny_
     expected_file_system_policy.glob_scan_max_depth = Some(2);
     expected_file_system_policy.entries.push(deny_entry);
     assert_eq!(
-        updated.file_system_sandbox_policy(),
+        updated.permission_profile().file_system_sandbox_policy(),
         expected_file_system_policy
+    );
+    let expected_materialized_file_system_policy = expected_file_system_policy
+        .clone()
+        .materialize_project_roots_with_workspace_roots(&updated.workspace_roots);
+    assert_eq!(
+        updated.file_system_sandbox_policy(),
+        expected_materialized_file_system_policy
     );
 }
 
@@ -3072,7 +3126,7 @@ async fn session_configuration_apply_permission_profile_accepts_direct_write_roo
     let file_system_sandbox_policy =
         FileSystemSandboxPolicy::restricted(vec![FileSystemSandboxEntry {
             path: FileSystemPath::Path {
-                path: external_write_path.clone(),
+                path: external_write_path,
             },
             access: FileSystemAccessMode::Write,
         }]);
@@ -3096,7 +3150,6 @@ async fn session_configuration_apply_permission_profile_accepts_direct_write_roo
     assert_eq!(
         updated.sandbox_policy(),
         SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![external_write_path],
             network_access: false,
             exclude_tmpdir_env_var: true,
             exclude_slash_tmp: true,
@@ -3191,14 +3244,15 @@ enabled = false
 }
 
 #[tokio::test]
-async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_update() {
+async fn session_configuration_apply_preserves_legacy_workspace_roots_on_cwd_update() {
     let mut session_configuration = make_session_configuration_for_tests().await;
     let workspace = tempfile::tempdir().expect("create temp dir");
     let project_root = workspace.path().join("project");
     let original_cwd = project_root.join("subdir");
-    session_configuration.cwd = original_cwd.abs();
+    let original_cwd = original_cwd.abs();
+    session_configuration.cwd = original_cwd.clone();
+    session_configuration.workspace_roots = vec![original_cwd.clone()];
     let sandbox_policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: Vec::new(),
         network_access: false,
         exclude_tmpdir_env_var: true,
         exclude_slash_tmp: true,
@@ -3217,20 +3271,19 @@ async fn session_configuration_apply_rederives_legacy_file_system_policy_on_cwd_
 
     let updated = session_configuration
         .apply(&SessionSettingsUpdate {
-            cwd: Some(project_root.clone()),
+            cwd: Some(project_root),
             ..Default::default()
         })
         .expect("cwd-only update should succeed");
 
-    let expected_file_system_policy = FileSystemSandboxPolicy::from_legacy_sandbox_policy_for_cwd(
-        &updated.sandbox_policy(),
-        &project_root,
-    );
+    let expected_file_system_policy = file_system_sandbox_policy
+        .materialize_project_roots_with_workspace_roots(std::slice::from_ref(&original_cwd));
+    assert_eq!(updated.workspace_roots, vec![original_cwd.clone()]);
     assert!(
         updated
             .file_system_sandbox_policy()
-            .is_semantically_equivalent_to(&expected_file_system_policy, &project_root),
-        "cwd-only update should rederive the legacy filesystem policy for the new cwd"
+            .is_semantically_equivalent_to(&expected_file_system_policy, original_cwd.as_path()),
+        "cwd-only update should preserve the existing workspace roots"
     );
 }
 
@@ -3451,6 +3504,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: Vec::new(),
@@ -3557,6 +3611,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: default_environments,
@@ -3661,7 +3716,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         .plugins_manager
         .plugins_for_config(&per_turn_config.plugins_config_input())
         .await;
-    let effective_skill_roots = plugin_outcome.effective_skill_roots();
+    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input =
         crate::skills_load_input_from_config(&per_turn_config, effective_skill_roots);
     let skill_fs = environment.get_filesystem();
@@ -3770,6 +3825,7 @@ async fn make_session_with_config_and_rx(
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: default_environments,
@@ -4346,6 +4402,7 @@ fn op_kind_distinguishes_turn_ops() {
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
             cwd: None,
+            workspace_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox_policy: None,
@@ -4740,6 +4797,7 @@ async fn shutdown_complete_does_not_append_to_thread_store_after_shutdown() {
             dynamic_tools: Vec::new(),
             metadata: ThreadPersistenceMetadata {
                 cwd: Some(config.cwd.to_path_buf()),
+                workspace_roots: config.workspace_roots.clone(),
                 model_provider: config.model_provider_id.clone(),
                 memory_mode: if config.memories.generate_memories {
                     ThreadMemoryMode::Enabled
@@ -5085,6 +5143,7 @@ where
         active_permission_profile: config.permissions.active_permission_profile(),
         windows_sandbox_level: WindowsSandboxLevel::from_config(&config),
         cwd: config.cwd.clone(),
+        workspace_roots: config.workspace_roots.clone(),
         codex_home: config.codex_home.clone(),
         thread_name: None,
         environments: default_environments,
@@ -5189,7 +5248,7 @@ where
         .plugins_manager
         .plugins_for_config(&per_turn_config.plugins_config_input())
         .await;
-    let effective_skill_roots = plugin_outcome.effective_skill_roots();
+    let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
     let skills_input =
         crate::skills_load_input_from_config(&per_turn_config, effective_skill_roots);
     let skill_fs = environment.get_filesystem();
@@ -5829,6 +5888,7 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/admin-skill/SKILL.md").abs(),
             scope: SkillScope::Admin,
+            plugin_id: None,
         },
         SkillMetadata {
             name: "repo-skill".to_string(),
@@ -5839,6 +5899,7 @@ async fn build_initial_context_trims_skill_metadata_from_context_window_budget()
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
+            plugin_id: None,
         },
     ];
     turn_context.model_info.context_window = Some(100);
@@ -5874,6 +5935,7 @@ fn emit_thread_start_skill_metrics_records_enabled_kept_and_truncated_values() {
         policy: None,
         path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
         scope: SkillScope::Repo,
+        plugin_id: None,
     }];
     let rendered = build_available_skills(
         &outcome,
@@ -5918,6 +5980,7 @@ fn emit_thread_start_skill_metrics_records_description_truncated_chars_without_o
         policy: None,
         path_to_skills_md: test_path_buf("/tmp/alpha-skill/SKILL.md").abs(),
         scope: SkillScope::Repo,
+        plugin_id: None,
     };
     let beta = SkillMetadata {
         name: "beta-skill".to_string(),
@@ -5928,6 +5991,7 @@ fn emit_thread_start_skill_metrics_records_description_truncated_chars_without_o
         policy: None,
         path_to_skills_md: test_path_buf("/tmp/beta-skill/SKILL.md").abs(),
         scope: SkillScope::Repo,
+        plugin_id: None,
     };
     let minimum_skill_line_cost = |skill: &SkillMetadata| {
         let path = skill.path_to_skills_md.to_string_lossy().replace('\\', "/");
@@ -5975,6 +6039,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_on_repeated_buil
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/admin-skill/SKILL.md").abs(),
             scope: SkillScope::Admin,
+            plugin_id: None,
         },
         SkillMetadata {
             name: "repo-skill".to_string(),
@@ -5985,6 +6050,7 @@ async fn build_initial_context_emits_thread_start_skill_warning_on_repeated_buil
             policy: None,
             path_to_skills_md: test_path_buf("/tmp/repo-skill/SKILL.md").abs(),
             scope: SkillScope::Repo,
+            plugin_id: None,
         },
     ];
     turn_context.model_info.context_window = Some(100);
@@ -7498,19 +7564,24 @@ async fn external_goal_mutation_accounts_active_turn_before_status_change() -> a
         .expect("goal should remain persisted");
     assert_eq!(70, goal.tokens_used);
 
-    state_db
+    let previous_status = goal.status;
+    let goal_id = goal.goal_id.clone();
+    let updated_goal = state_db
         .update_thread_goal(
             sess.conversation_id,
             codex_state::ThreadGoalUpdate {
                 status: Some(codex_state::ThreadGoalStatus::Complete),
                 token_budget: None,
-                expected_goal_id: Some(goal.goal_id),
+                expected_goal_id: Some(goal_id),
             },
         )
         .await?
         .expect("goal status update should succeed");
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: codex_state::ThreadGoalStatus::Complete,
+        external_set: ExternalGoalSet {
+            goal: updated_goal,
+            previous_status: ExternalGoalPreviousStatus::Existing(previous_status),
+        },
     })
     .await?;
 
@@ -7542,7 +7613,7 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
     set_total_token_usage(&sess, post_goal_token_usage()).await;
 
     let state_db = goal_test_state_db(sess.as_ref()).await?;
-    state_db
+    let goal = state_db
         .replace_thread_goal(
             sess.conversation_id,
             "Keep improving the benchmark",
@@ -7551,7 +7622,10 @@ async fn external_active_goal_set_marks_current_turn_for_accounting() -> anyhow:
         )
         .await?;
     sess.goal_runtime_apply(GoalRuntimeEvent::ExternalSet {
-        status: codex_state::ThreadGoalStatus::Active,
+        external_set: ExternalGoalSet {
+            goal,
+            previous_status: ExternalGoalPreviousStatus::NewGoal,
+        },
     })
     .await?;
 
@@ -8551,17 +8625,27 @@ async fn session_start_hooks_only_load_from_trusted_project_layers() -> std::io:
         .build()
         .await?;
 
-    let preview = preview_session_start_hooks(&config).await?;
+    let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
+        feature_enabled: true,
+        config_layer_stack: Some(config.config_layer_stack.clone()),
+        ..codex_hooks::HooksConfig::default()
+    });
     let expected_source_path = codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
         nested_dot_codex.join("hooks.json"),
     )?;
     assert_eq!(
-        preview
+        hook_list
+            .hooks
             .iter()
-            .map(|run| &run.source_path)
+            .map(|hook| &hook.source_path)
             .collect::<Vec<_>>(),
         vec![&expected_source_path],
     );
+    assert_eq!(
+        hook_list.hooks[0].trust_status,
+        codex_protocol::protocol::HookTrustStatus::Untrusted
+    );
+    assert!(preview_session_start_hooks(&config).await?.is_empty());
 
     Ok(())
 }
@@ -8601,11 +8685,23 @@ async fn session_start_hooks_require_project_trust_without_config_toml() -> std:
             .build()
             .await?;
 
+        let hook_list = codex_hooks::list_hooks(codex_hooks::HooksConfig {
+            feature_enabled: true,
+            config_layer_stack: Some(config.config_layer_stack.clone()),
+            ..codex_hooks::HooksConfig::default()
+        });
         assert_eq!(
-            preview_session_start_hooks(&config).await?.len(),
+            hook_list.hooks.len(),
             expected_hooks,
-            "unexpected hook count for {name}",
+            "unexpected discovered hook count for {name}",
         );
+        assert!(preview_session_start_hooks(&config).await?.is_empty());
+        if expected_hooks == 1 {
+            assert_eq!(
+                hook_list.hooks[0].trust_status,
+                codex_protocol::protocol::HookTrustStatus::Untrusted
+            );
+        }
     }
 
     Ok(())

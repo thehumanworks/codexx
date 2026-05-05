@@ -52,6 +52,7 @@ mod thread_processor_behavior_tests {
     use chrono::DateTime;
     use chrono::Utc;
     use codex_app_server_protocol::ServerRequestPayload;
+    use codex_app_server_protocol::ThreadItem;
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_config::CloudRequirementsLoader;
     use codex_config::LoaderOverrides;
@@ -70,6 +71,7 @@ mod thread_processor_behavior_tests {
     use codex_protocol::protocol::SandboxPolicy;
     use codex_protocol::protocol::SessionSource;
     use codex_protocol::protocol::SubAgentSource;
+    use codex_state::ThreadMetadataBuilder;
     use codex_thread_store::StoredThread;
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
@@ -204,6 +206,7 @@ mod thread_processor_behavior_tests {
                     text_elements: Vec::new(),
                 }],
             }],
+            items_view: TurnItemsView::Full,
             error: None,
             status: TurnStatus::InProgress,
             started_at: None,
@@ -513,6 +516,7 @@ mod thread_processor_behavior_tests {
             model_provider: None,
             service_tier: Some(Some(codex_protocol::config_types::ServiceTier::Fast)),
             cwd: None,
+            workspace_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox: None,
@@ -533,6 +537,7 @@ mod thread_processor_behavior_tests {
             permission_profile: codex_protocol::models::PermissionProfile::Disabled,
             active_permission_profile: None,
             cwd,
+            workspace_roots: Vec::new(),
             ephemeral: false,
             reasoning_effort: None,
             personality: None,

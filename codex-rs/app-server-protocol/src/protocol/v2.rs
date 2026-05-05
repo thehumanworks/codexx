@@ -42,7 +42,6 @@ use codex_protocol::mcp::Tool as McpTool;
 use codex_protocol::memory_citation::MemoryCitation as CoreMemoryCitation;
 use codex_protocol::memory_citation::MemoryCitationEntry as CoreMemoryCitationEntry;
 use codex_protocol::models::ActivePermissionProfile as CoreActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification as CoreActivePermissionProfileModification;
 use codex_protocol::models::AdditionalPermissionProfile as CoreAdditionalPermissionProfile;
 use codex_protocol::models::FileSystemPermissions as CoreFileSystemPermissions;
 use codex_protocol::models::ManagedFileSystemPermissions as CoreManagedFileSystemPermissions;
@@ -80,6 +79,7 @@ use codex_protocol::protocol::HookRunStatus as CoreHookRunStatus;
 use codex_protocol::protocol::HookRunSummary as CoreHookRunSummary;
 use codex_protocol::protocol::HookScope as CoreHookScope;
 use codex_protocol::protocol::HookSource as CoreHookSource;
+use codex_protocol::protocol::HookTrustStatus as CoreHookTrustStatus;
 use codex_protocol::protocol::ModelRerouteReason as CoreModelRerouteReason;
 use codex_protocol::protocol::ModelVerification as CoreModelVerification;
 use codex_protocol::protocol::NetworkAccess as CoreNetworkAccess;
@@ -479,6 +479,12 @@ v2_enum_from_core!(
         LegacyManagedConfigFile,
         LegacyManagedConfigMdm,
         Unknown,
+    }
+);
+
+v2_enum_from_core!(
+    pub enum HookTrustStatus from CoreHookTrustStatus {
+        Managed, Untrusted, Trusted, Modified
     }
 );
 
@@ -1720,41 +1726,6 @@ pub struct ActivePermissionProfile {
     /// inheritance. This is currently always `null`.
     #[serde(default)]
     pub extends: Option<String>,
-    /// Bounded user-requested modifications applied on top of the named
-    /// profile, if any.
-    #[serde(default)]
-    pub modifications: Vec<ActivePermissionProfileModification>,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type")]
-#[ts(export_to = "v2/")]
-pub enum ActivePermissionProfileModification {
-    /// Additional concrete directory that should be writable.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    AdditionalWritableRoot { path: AbsolutePathBuf },
-}
-
-impl From<CoreActivePermissionProfileModification> for ActivePermissionProfileModification {
-    fn from(value: CoreActivePermissionProfileModification) -> Self {
-        match value {
-            CoreActivePermissionProfileModification::AdditionalWritableRoot { path } => {
-                Self::AdditionalWritableRoot { path }
-            }
-        }
-    }
-}
-
-impl From<ActivePermissionProfileModification> for CoreActivePermissionProfileModification {
-    fn from(value: ActivePermissionProfileModification) -> Self {
-        match value {
-            ActivePermissionProfileModification::AdditionalWritableRoot { path } => {
-                Self::AdditionalWritableRoot { path }
-            }
-        }
-    }
 }
 
 impl From<CoreActivePermissionProfile> for ActivePermissionProfile {
@@ -1762,11 +1733,6 @@ impl From<CoreActivePermissionProfile> for ActivePermissionProfile {
         Self {
             id: value.id,
             extends: value.extends,
-            modifications: value
-                .modifications
-                .into_iter()
-                .map(ActivePermissionProfileModification::from)
-                .collect(),
         }
     }
 }
@@ -1776,11 +1742,6 @@ impl From<ActivePermissionProfile> for CoreActivePermissionProfile {
         Self {
             id: value.id,
             extends: value.extends,
-            modifications: value
-                .modifications
-                .into_iter()
-                .map(CoreActivePermissionProfileModification::from)
-                .collect(),
         }
     }
 }
@@ -1790,26 +1751,12 @@ impl From<ActivePermissionProfile> for CoreActivePermissionProfile {
 #[ts(tag = "type")]
 #[ts(export_to = "v2/")]
 pub enum PermissionProfileSelectionParams {
-    /// Select a named built-in or user-defined profile and optionally apply
-    /// bounded modifications that Codex knows how to validate.
+    /// Select a named built-in or user-defined profile. This updates profile
+    /// identity metadata only; it does not replace the thread's effective
+    /// permissions profile.
     #[serde(rename_all = "camelCase")]
     #[ts(rename_all = "camelCase")]
-    Profile {
-        id: String,
-        #[ts(optional = nullable)]
-        modifications: Option<Vec<PermissionProfileModificationParams>>,
-    },
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
-#[serde(tag = "type", rename_all = "camelCase")]
-#[ts(tag = "type")]
-#[ts(export_to = "v2/")]
-pub enum PermissionProfileModificationParams {
-    /// Additional concrete directory that should be writable.
-    #[serde(rename_all = "camelCase")]
-    #[ts(rename_all = "camelCase")]
-    AdditionalWritableRoot { path: AbsolutePathBuf },
+    Profile { id: String },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -1905,8 +1852,6 @@ pub enum SandboxPolicy {
     #[ts(rename_all = "camelCase")]
     WorkspaceWrite {
         #[serde(default)]
-        writable_roots: Vec<AbsolutePathBuf>,
-        #[serde(default)]
         network_access: bool,
         #[serde(default)]
         exclude_tmpdir_env_var: bool,
@@ -1975,7 +1920,7 @@ impl<'de> Deserialize<'de> for SandboxPolicy {
                 Ok(SandboxPolicy::ExternalSandbox { network_access })
             }
             SandboxPolicyDeserialize::WorkspaceWrite {
-                writable_roots,
+                writable_roots: _writable_roots,
                 read_only_access,
                 network_access,
                 exclude_tmpdir_env_var,
@@ -1987,7 +1932,6 @@ impl<'de> Deserialize<'de> for SandboxPolicy {
                     ));
                 }
                 Ok(SandboxPolicy::WorkspaceWrite {
-                    writable_roots,
                     network_access,
                     exclude_tmpdir_env_var,
                     exclude_slash_tmp,
@@ -2017,12 +1961,10 @@ impl SandboxPolicy {
                 }
             }
             SandboxPolicy::WorkspaceWrite {
-                writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
             } => codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: writable_roots.clone(),
                 network_access: *network_access,
                 exclude_tmpdir_env_var: *exclude_tmpdir_env_var,
                 exclude_slash_tmp: *exclude_slash_tmp,
@@ -2049,12 +1991,10 @@ impl From<codex_protocol::protocol::SandboxPolicy> for SandboxPolicy {
                 }
             }
             codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
             } => SandboxPolicy::WorkspaceWrite {
-                writable_roots,
                 network_access,
                 exclude_tmpdir_env_var,
                 exclude_slash_tmp,
@@ -2514,6 +2454,15 @@ impl From<CoreModelAvailabilityNux> for ModelAvailabilityNux {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
+pub struct ModelServiceTier {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
 pub struct Model {
     pub id: String,
     pub model: String,
@@ -2529,8 +2478,11 @@ pub struct Model {
     pub input_modalities: Vec<InputModality>,
     #[serde(default)]
     pub supports_personality: bool,
+    /// Deprecated: use `serviceTiers` instead.
     #[serde(default)]
     pub additional_speed_tiers: Vec<String>,
+    #[serde(default)]
+    pub service_tiers: Vec<ModelServiceTier>,
     // Only one model should be marked as default.
     pub is_default: bool,
 }
@@ -3558,6 +3510,204 @@ pub enum CommandExecOutputStream {
     Stderr,
 }
 
+/// PTY size in character cells for `process/spawn` PTY sessions.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessTerminalSize {
+    /// Terminal height in character cells.
+    pub rows: u16,
+    /// Terminal width in character cells.
+    pub cols: u16,
+}
+
+/// Spawn a standalone process (argv vector) without a Codex sandbox on the host
+/// where the app server is running.
+///
+/// `process/spawn` returns after the process has started and the connection-scoped
+/// `processHandle` has been registered. Process output and exit are reported via
+/// `process/outputDelta` and `process/exited` notifications.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessSpawnParams {
+    /// Command argv vector. Empty arrays are rejected.
+    pub command: Vec<String>,
+    /// Client-supplied, connection-scoped process handle.
+    ///
+    /// Duplicate active handles are rejected on the same connection. The same
+    /// handle can be reused after the prior process exits.
+    pub process_handle: String,
+    /// Absolute working directory for the process.
+    pub cwd: AbsolutePathBuf,
+    /// Enable PTY mode.
+    ///
+    /// This implies `streamStdin` and `streamStdoutStderr`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tty: bool,
+    /// Allow follow-up `process/writeStdin` requests to write stdin bytes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stream_stdin: bool,
+    /// Stream stdout/stderr via `process/outputDelta` notifications.
+    ///
+    /// Streamed bytes are not duplicated into the `process/exited` notification.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stream_stdout_stderr: bool,
+    /// Optional per-stream stdout/stderr capture cap in bytes.
+    ///
+    /// When omitted, the server default applies. Set to `null` to disable the
+    /// cap.
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_double_option",
+        serialize_with = "super::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(type = "number | null")]
+    #[ts(optional = nullable)]
+    pub output_bytes_cap: Option<Option<usize>>,
+    /// Optional timeout in milliseconds.
+    ///
+    /// When omitted, the server default applies. Set to `null` to disable the
+    /// timeout.
+    #[serde(
+        default,
+        deserialize_with = "super::serde_helpers::deserialize_double_option",
+        serialize_with = "super::serde_helpers::serialize_double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(type = "number | null")]
+    #[ts(optional = nullable)]
+    pub timeout_ms: Option<Option<i64>>,
+    /// Optional environment overrides merged into the app-server process
+    /// environment.
+    ///
+    /// Matching names override inherited values. Set a key to `null` to unset
+    /// an inherited variable.
+    #[ts(optional = nullable)]
+    pub env: Option<HashMap<String, Option<String>>>,
+    /// Optional initial PTY size in character cells. Only valid when `tty` is
+    /// true.
+    #[ts(optional = nullable)]
+    pub size: Option<ProcessTerminalSize>,
+}
+
+/// Successful response for `process/spawn`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessSpawnResponse {}
+
+/// Write stdin bytes to a running `process/spawn` session, close stdin, or
+/// both.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessWriteStdinParams {
+    /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
+    pub process_handle: String,
+    /// Optional base64-encoded stdin bytes to write.
+    #[ts(optional = nullable)]
+    pub delta_base64: Option<String>,
+    /// Close stdin after writing `deltaBase64`, if present.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub close_stdin: bool,
+}
+
+/// Empty success response for `process/writeStdin`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessWriteStdinResponse {}
+
+/// Terminate a running `process/spawn` session.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessKillParams {
+    /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
+    pub process_handle: String,
+}
+
+/// Empty success response for `process/kill`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessKillResponse {}
+
+/// Resize a running PTY-backed `process/spawn` session.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessResizePtyParams {
+    /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
+    pub process_handle: String,
+    /// New PTY size in character cells.
+    pub size: ProcessTerminalSize,
+}
+
+/// Empty success response for `process/resizePty`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessResizePtyResponse {}
+
+/// Stream label for `process/outputDelta` notifications.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum ProcessOutputStream {
+    /// stdout stream. PTY mode multiplexes terminal output here.
+    Stdout,
+    /// stderr stream.
+    Stderr,
+}
+
+/// Base64-encoded output chunk emitted for a streaming `process/spawn` request.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessOutputDeltaNotification {
+    /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
+    pub process_handle: String,
+    /// Output stream this chunk belongs to.
+    pub stream: ProcessOutputStream,
+    /// Base64-encoded output bytes.
+    pub delta_base64: String,
+    /// True on the final streamed chunk for this stream when output was
+    /// truncated by `outputBytesCap`.
+    pub cap_reached: bool,
+}
+
+/// Final process exit notification for `process/spawn`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct ProcessExitedNotification {
+    /// Client-supplied, connection-scoped `processHandle` from `process/spawn`.
+    pub process_handle: String,
+    /// Process exit code.
+    pub exit_code: i32,
+    /// Buffered stdout capture.
+    ///
+    /// Empty when stdout was streamed via `process/outputDelta`.
+    pub stdout: String,
+    /// Whether stdout reached `outputBytesCap`.
+    ///
+    /// In streaming mode, stdout is empty and cap state is also reported on the
+    /// final stdout `process/outputDelta` notification.
+    pub stdout_cap_reached: bool,
+    /// Buffered stderr capture.
+    ///
+    /// Empty when stderr was streamed via `process/outputDelta`.
+    pub stderr: String,
+    /// Whether stderr reached `outputBytesCap`.
+    ///
+    /// In streaming mode, stderr is empty and cap state is also reported on the
+    /// final stderr `process/outputDelta` notification.
+    pub stderr_cap_reached: bool,
+}
+
 // === Threads, Turns, and Items ===
 // Thread APIs
 #[derive(
@@ -3580,6 +3730,11 @@ pub struct ThreadStartParams {
     pub service_tier: Option<Option<ServiceTier>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional workspace roots for this thread. Omitted uses the server's
+    /// configured roots, usually seeded from `cwd`.
+    #[experimental("thread/start.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -3589,9 +3744,8 @@ pub struct ThreadStartParams {
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
-    /// Named profile selection for this thread. Cannot be combined with
-    /// `sandbox`. Use bounded `modifications` for supported turn/thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// Named profile selection for this new thread's initial permissions.
+    /// Cannot be combined with `sandbox`.
     #[experimental("thread/start.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -3631,9 +3785,9 @@ pub struct ThreadStartParams {
     #[experimental("thread/start.experimentalRawEvents")]
     #[serde(default)]
     pub experimental_raw_events: bool,
-    /// If true, persist additional EventMsg variants to the rollout file.
-    /// However, `thread/read`, `thread/resume`, and `thread/fork` still only
-    /// return the limited form of thread history for scalability reasons.
+    /// Deprecated and ignored by app-server. Kept only so older clients can
+    /// continue sending the field while rollout persistence always uses the
+    /// limited history policy.
     #[experimental("thread/start.persistFullHistory")]
     #[serde(default)]
     pub persist_extended_history: bool,
@@ -3665,6 +3819,11 @@ pub struct ThreadStartResponse {
     pub model_provider: String,
     pub service_tier: Option<ServiceTier>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/start.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -3734,6 +3893,11 @@ pub struct ThreadResumeParams {
     pub service_tier: Option<Option<ServiceTier>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional replacement workspace roots for the resumed thread. Omitted
+    /// preserves the persisted or configured roots.
+    #[experimental("thread/resume.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -3741,11 +3905,13 @@ pub struct ThreadResumeParams {
     /// and subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// Deprecated for resume. The server rejects this field because the
+    /// persisted permission profile value is preserved across resume.
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
     /// Named profile selection for the resumed thread. Cannot be combined
-    /// with `sandbox`. Use bounded `modifications` for supported thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// with `sandbox`. This updates profile identity metadata without
+    /// replacing the effective permissions profile.
     #[experimental("thread/resume.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -3763,9 +3929,9 @@ pub struct ThreadResumeParams {
     #[experimental("thread/resume.excludeTurns")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
-    /// If true, persist additional EventMsg variants to the rollout file.
-    /// However, `thread/read`, `thread/resume`, and `thread/fork` still only
-    /// return the limited form of thread history for scalability reasons.
+    /// Deprecated and ignored by app-server. Kept only so older clients can
+    /// continue sending the field while rollout persistence always uses the
+    /// limited history policy.
     #[experimental("thread/resume.persistFullHistory")]
     #[serde(default)]
     pub persist_extended_history: bool,
@@ -3780,6 +3946,11 @@ pub struct ThreadResumeResponse {
     pub model_provider: String,
     pub service_tier: Option<ServiceTier>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/resume.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -3840,6 +4011,11 @@ pub struct ThreadForkParams {
     pub service_tier: Option<Option<ServiceTier>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional replacement workspace roots for the forked thread. Omitted
+    /// preserves the source thread roots when available.
+    #[experimental("thread/fork.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -3847,11 +4023,13 @@ pub struct ThreadForkParams {
     /// and subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// Deprecated for fork. The server rejects this field because the source
+    /// permission profile value is preserved across fork.
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
     /// Named profile selection for the forked thread. Cannot be combined with
-    /// `sandbox`. Use bounded `modifications` for supported thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// `sandbox`. This updates profile identity metadata without replacing the
+    /// effective permissions profile.
     #[experimental("thread/fork.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -3869,9 +4047,9 @@ pub struct ThreadForkParams {
     #[experimental("thread/fork.excludeTurns")]
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_turns: bool,
-    /// If true, persist additional EventMsg variants to the rollout file.
-    /// However, `thread/read`, `thread/resume`, and `thread/fork` still only
-    /// return the limited form of thread history for scalability reasons.
+    /// Deprecated and ignored by app-server. Kept only so older clients can
+    /// continue sending the field while rollout persistence always uses the
+    /// limited history policy.
     #[experimental("thread/fork.persistFullHistory")]
     #[serde(default)]
     pub persist_extended_history: bool,
@@ -3886,6 +4064,11 @@ pub struct ThreadForkResponse {
     pub model_provider: String,
     pub service_tier: Option<ServiceTier>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/fork.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -4822,6 +5005,8 @@ pub struct HookMetadata {
     pub display_order: i64,
     pub enabled: bool,
     pub is_managed: bool,
+    pub current_hash: String,
+    pub trust_status: HookTrustStatus,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -5215,10 +5400,11 @@ impl From<CoreTokenUsage> for TokenUsageBreakdown {
 #[ts(export_to = "v2/")]
 pub struct Turn {
     pub id: String,
-    /// Only populated on a `thread/resume` or `thread/fork` response.
-    /// For all other responses and notifications returning a Turn,
-    /// the items field will be an empty list.
+    /// Thread items currently included in this turn payload.
     pub items: Vec<ThreadItem>,
+    /// Describes how much of `items` has been loaded for this turn.
+    #[serde(default)]
+    pub items_view: TurnItemsView,
     pub status: TurnStatus,
     /// Only populated when the Turn's status is failed.
     pub error: Option<TurnError>,
@@ -5231,6 +5417,19 @@ pub struct Turn {
     /// Duration between turn start and completion in milliseconds, if known.
     #[ts(type = "number | null")]
     pub duration_ms: Option<i64>,
+}
+
+#[derive(Default, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum TurnItemsView {
+    /// `items` was not loaded for this turn. The field is intentionally empty.
+    NotLoaded,
+    /// `items` contains only a display summary for this turn.
+    Summary,
+    /// `items` contains every ThreadItem available from persisted app-server history for this turn.
+    #[default]
+    Full,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
@@ -5567,6 +5766,11 @@ pub struct TurnStartParams {
     /// Override the working directory for this turn and subsequent turns.
     #[ts(optional = nullable)]
     pub cwd: Option<PathBuf>,
+    /// Replace the workspace roots for this turn and subsequent turns. Omitted
+    /// preserves the current roots.
+    #[experimental("turn/start.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     /// Override the approval policy for this turn and subsequent turns.
     #[experimental(nested)]
     #[ts(optional = nullable)]
@@ -5575,13 +5779,13 @@ pub struct TurnStartParams {
     /// subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
-    /// Override the sandbox policy for this turn and subsequent turns.
+    /// Deprecated for turns. The server rejects this field because the
+    /// thread permission profile value is not mutable through `turn/start`.
     #[ts(optional = nullable)]
     pub sandbox_policy: Option<SandboxPolicy>,
     /// Select a named permissions profile for this turn and subsequent turns.
-    /// Cannot be combined with `sandboxPolicy`. Use bounded `modifications`
-    /// for supported turn adjustments instead of replacing the full
-    /// permissions profile.
+    /// Cannot be combined with `sandboxPolicy`. This updates profile identity
+    /// metadata without replacing the effective permissions profile.
     #[experimental("turn/start.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -6928,6 +7132,9 @@ pub struct ItemStartedNotification {
     pub item: ThreadItem,
     pub thread_id: String,
     pub turn_id: String,
+    /// Unix timestamp (in milliseconds) when this item lifecycle started.
+    #[ts(type = "number")]
+    pub started_at_ms: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -6990,6 +7197,9 @@ pub struct ItemCompletedNotification {
     pub item: ThreadItem,
     pub thread_id: String,
     pub turn_id: String,
+    /// Unix timestamp (in milliseconds) when this item lifecycle completed.
+    #[ts(type = "number")]
+    pub completed_at_ms: i64,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -7189,6 +7399,15 @@ pub enum WindowsSandboxSetupMode {
     Unelevated,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub enum WindowsSandboxReadiness {
+    Ready,
+    NotConfigured,
+    UpdateRequired,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
@@ -7203,6 +7422,13 @@ pub struct WindowsSandboxSetupStartParams {
 #[ts(export_to = "v2/")]
 pub struct WindowsSandboxSetupStartResponse {
     pub started: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct WindowsSandboxReadinessResponse {
+    pub status: WindowsSandboxReadiness,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
@@ -8201,6 +8427,22 @@ mod tests {
     }
 
     #[test]
+    fn turn_defaults_legacy_missing_items_view_to_full() {
+        let turn: Turn = serde_json::from_value(json!({
+            "id": "turn_123",
+            "items": [],
+            "status": "completed",
+            "error": null,
+            "startedAt": null,
+            "completedAt": null,
+            "durationMs": null,
+        }))
+        .expect("legacy turn should deserialize");
+
+        assert_eq!(turn.items_view, TurnItemsView::Full);
+    }
+
+    #[test]
     fn thread_list_params_accepts_single_cwd() {
         let params = serde_json::from_value::<ThreadListParams>(json!({
             "cwd": "/workspace",
@@ -9142,6 +9384,97 @@ mod tests {
     }
 
     #[test]
+    fn process_spawn_params_round_trips_without_sandbox_policy() {
+        let params = ProcessSpawnParams {
+            command: vec!["sleep".to_string(), "30".to_string()],
+            process_handle: "sleep-1".to_string(),
+            cwd: test_absolute_path(),
+            tty: false,
+            stream_stdin: false,
+            stream_stdout_stderr: false,
+            output_bytes_cap: None,
+            timeout_ms: None,
+            env: None,
+            size: None,
+        };
+
+        let value = serde_json::to_value(&params).expect("serialize process/spawn params");
+        assert_eq!(
+            value,
+            json!({
+                "command": ["sleep", "30"],
+                "processHandle": "sleep-1",
+                "cwd": absolute_path_string("readable"),
+                "env": null,
+                "size": null,
+            })
+        );
+
+        let decoded =
+            serde_json::from_value::<ProcessSpawnParams>(value).expect("deserialize round-trip");
+        assert_eq!(decoded, params);
+    }
+
+    #[test]
+    fn process_spawn_params_distinguish_omitted_null_and_value_limits() {
+        let base = json!({
+            "command": ["sleep", "30"],
+            "processHandle": "sleep-1",
+            "cwd": absolute_path_string("readable"),
+        });
+
+        let expected_omitted = ProcessSpawnParams {
+            command: vec!["sleep".to_string(), "30".to_string()],
+            process_handle: "sleep-1".to_string(),
+            cwd: test_absolute_path(),
+            tty: false,
+            stream_stdin: false,
+            stream_stdout_stderr: false,
+            output_bytes_cap: None,
+            timeout_ms: None,
+            env: None,
+            size: None,
+        };
+        let decoded =
+            serde_json::from_value::<ProcessSpawnParams>(base).expect("deserialize omitted limits");
+        assert_eq!(decoded, expected_omitted);
+
+        let decoded = serde_json::from_value::<ProcessSpawnParams>(json!({
+            "command": ["sleep", "30"],
+            "processHandle": "sleep-1",
+            "cwd": absolute_path_string("readable"),
+            "outputBytesCap": null,
+            "timeoutMs": null,
+        }))
+        .expect("deserialize disabled limits");
+        assert_eq!(
+            decoded,
+            ProcessSpawnParams {
+                output_bytes_cap: Some(None),
+                timeout_ms: Some(None),
+                ..expected_omitted.clone()
+            }
+        );
+
+        let decoded = serde_json::from_value::<ProcessSpawnParams>(json!({
+            "command": ["sleep", "30"],
+            "processHandle": "sleep-1",
+            "cwd": absolute_path_string("readable"),
+            "outputBytesCap": 123,
+            "timeoutMs": 456,
+        }))
+        .expect("deserialize explicit limits");
+        assert_eq!(
+            decoded,
+            ProcessSpawnParams {
+                output_bytes_cap: Some(Some(123)),
+                timeout_ms: Some(Some(456)),
+                ..expected_omitted
+            }
+        );
+    }
+
+    #[test]
     fn command_exec_params_round_trips_disable_output_cap() {
         let params = CommandExecParams {
             command: vec!["yes".to_string()],
@@ -9371,6 +9704,110 @@ mod tests {
         let decoded = serde_json::from_value::<CommandExecOutputDeltaNotification>(value)
             .expect("deserialize round-trip");
         assert_eq!(decoded, notification);
+    }
+
+    #[test]
+    fn process_control_params_round_trip() {
+        let write = ProcessWriteStdinParams {
+            process_handle: "proc-7".to_string(),
+            delta_base64: None,
+            close_stdin: true,
+        };
+        let value = serde_json::to_value(&write).expect("serialize process/writeStdin params");
+        assert_eq!(
+            value,
+            json!({
+                "processHandle": "proc-7",
+                "deltaBase64": null,
+                "closeStdin": true,
+            })
+        );
+        let decoded = serde_json::from_value::<ProcessWriteStdinParams>(value)
+            .expect("deserialize process/writeStdin params");
+        assert_eq!(decoded, write);
+
+        let resize = ProcessResizePtyParams {
+            process_handle: "proc-7".to_string(),
+            size: ProcessTerminalSize {
+                rows: 50,
+                cols: 160,
+            },
+        };
+        let value = serde_json::to_value(&resize).expect("serialize process/resizePty params");
+        assert_eq!(
+            value,
+            json!({
+                "processHandle": "proc-7",
+                "size": {
+                    "rows": 50,
+                    "cols": 160,
+                },
+            })
+        );
+        let decoded = serde_json::from_value::<ProcessResizePtyParams>(value)
+            .expect("deserialize process/resizePty params");
+        assert_eq!(decoded, resize);
+
+        let kill = ProcessKillParams {
+            process_handle: "proc-7".to_string(),
+        };
+        let value = serde_json::to_value(&kill).expect("serialize process/kill params");
+        assert_eq!(
+            value,
+            json!({
+                "processHandle": "proc-7",
+            })
+        );
+        let decoded =
+            serde_json::from_value::<ProcessKillParams>(value).expect("deserialize process/kill");
+        assert_eq!(decoded, kill);
+    }
+
+    #[test]
+    fn process_notifications_round_trip() {
+        let delta = ProcessOutputDeltaNotification {
+            process_handle: "proc-1".to_string(),
+            stream: ProcessOutputStream::Stdout,
+            delta_base64: "AQI=".to_string(),
+            cap_reached: false,
+        };
+        let value = serde_json::to_value(&delta).expect("serialize process/outputDelta");
+        assert_eq!(
+            value,
+            json!({
+                "processHandle": "proc-1",
+                "stream": "stdout",
+                "deltaBase64": "AQI=",
+                "capReached": false,
+            })
+        );
+        let decoded = serde_json::from_value::<ProcessOutputDeltaNotification>(value)
+            .expect("deserialize process/outputDelta");
+        assert_eq!(decoded, delta);
+
+        let exited = ProcessExitedNotification {
+            process_handle: "proc-1".to_string(),
+            exit_code: 0,
+            stdout: "out".to_string(),
+            stdout_cap_reached: false,
+            stderr: "err".to_string(),
+            stderr_cap_reached: true,
+        };
+        let value = serde_json::to_value(&exited).expect("serialize process/exited");
+        assert_eq!(
+            value,
+            json!({
+                "processHandle": "proc-1",
+                "exitCode": 0,
+                "stdout": "out",
+                "stdoutCapReached": false,
+                "stderr": "err",
+                "stderrCapReached": true,
+            })
+        );
+        let decoded = serde_json::from_value::<ProcessExitedNotification>(value)
+            .expect("deserialize process/exited");
+        assert_eq!(decoded, exited);
     }
 
     #[test]
@@ -10052,7 +10489,6 @@ mod tests {
     #[test]
     fn sandbox_policy_round_trips_workspace_write_access() {
         let v2_policy = SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
@@ -10062,7 +10498,6 @@ mod tests {
         assert_eq!(
             core_policy,
             codex_protocol::protocol::SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![],
                 network_access: true,
                 exclude_tmpdir_env_var: false,
                 exclude_slash_tmp: false,
@@ -10108,7 +10543,6 @@ mod tests {
         assert_eq!(
             policy,
             SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![absolute_path("/workspace")],
                 network_access: true,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
@@ -11363,6 +11797,7 @@ mod tests {
             responsesapi_client_metadata: None,
             environments: None,
             cwd: None,
+            workspace_roots: None,
             approval_policy: None,
             approvals_reviewer: None,
             sandbox_policy: None,

@@ -415,7 +415,6 @@ fn create_seatbelt_args_allows_local_binding_when_explicitly_enabled() {
 fn dynamic_network_policy_preserves_restricted_policy_when_proxy_config_without_ports() {
     let policy = dynamic_network_policy(
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
@@ -451,7 +450,6 @@ fn dynamic_network_policy_preserves_restricted_policy_when_proxy_config_without_
 fn dynamic_network_policy_blocks_dns_when_local_binding_has_no_proxy_ports() {
     let policy = dynamic_network_policy(
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
@@ -479,7 +477,6 @@ fn dynamic_network_policy_blocks_dns_when_local_binding_has_no_proxy_ports() {
 fn dynamic_network_policy_preserves_restricted_policy_for_managed_network_without_proxy_config() {
     let policy = dynamic_network_policy(
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
@@ -769,7 +766,6 @@ fn create_seatbelt_args_allows_all_unix_sockets_when_enabled() {
 fn create_seatbelt_args_full_network_with_proxy_is_still_proxy_only() {
     let policy = dynamic_network_policy(
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: true,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
@@ -816,15 +812,15 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
 
     // Build a policy that only includes the two test roots as writable and
     // does not automatically include defaults TMPDIR or /tmp.
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![vulnerable_root, empty_root]
-            .into_iter()
-            .map(|p| p.try_into().unwrap())
-            .collect(),
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
+    let writable_roots = vec![vulnerable_root, empty_root]
+        .into_iter()
+        .map(|path| AbsolutePathBuf::from_absolute_path(path).expect("absolute writable root"))
+        .collect::<Vec<_>>();
+    let file_system_sandbox_policy = FileSystemSandboxPolicy::workspace_write(
+        &writable_roots,
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ true,
+    );
 
     // Create the Seatbelt command to wrap a shell command that tries to
     // write to .codex/config.toml in the vulnerable root.
@@ -841,13 +837,15 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
     .iter()
     .map(std::string::ToString::to_string)
     .collect();
-    let args = create_seatbelt_command_args_for_legacy_policy(
-        shell_command.clone(),
-        &policy,
-        &cwd,
-        /*enforce_managed_network*/ false,
-        /*network*/ None,
-    );
+    let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command: shell_command.clone(),
+        file_system_sandbox_policy: &file_system_sandbox_policy,
+        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+        sandbox_policy_cwd: &cwd,
+        enforce_managed_network: false,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    });
 
     let policy_text = seatbelt_policy_arg(&args);
     assert!(
@@ -988,13 +986,15 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
     .iter()
     .map(std::string::ToString::to_string)
     .collect();
-    let write_hooks_file_args = create_seatbelt_command_args_for_legacy_policy(
-        shell_command_git,
-        &policy,
-        &cwd,
-        /*enforce_managed_network*/ false,
-        /*network*/ None,
-    );
+    let write_hooks_file_args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command: shell_command_git,
+        file_system_sandbox_policy: &file_system_sandbox_policy,
+        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+        sandbox_policy_cwd: &cwd,
+        enforce_managed_network: false,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    });
     let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
         .args(&write_hooks_file_args)
         .current_dir(&cwd)
@@ -1024,13 +1024,15 @@ fn create_seatbelt_args_with_read_only_git_and_codex_subpaths() {
     .iter()
     .map(std::string::ToString::to_string)
     .collect();
-    let write_allowed_file_args = create_seatbelt_command_args_for_legacy_policy(
-        shell_command_allowed,
-        &policy,
-        &cwd,
-        /*enforce_managed_network*/ false,
-        /*network*/ None,
-    );
+    let write_allowed_file_args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command: shell_command_allowed,
+        file_system_sandbox_policy: &file_system_sandbox_policy,
+        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+        sandbox_policy_cwd: &cwd,
+        enforce_managed_network: false,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    });
     let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
         .args(&write_allowed_file_args)
         .current_dir(&cwd)
@@ -1071,7 +1073,6 @@ fn create_seatbelt_args_block_first_time_dot_codex_creation_with_metadata_name_r
     let dot_codex = repo_root.join(".codex");
     let config_toml = dot_codex.join("config.toml");
     let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![repo_root.as_path().try_into().expect("absolute repo root")],
         network_access: false,
         exclude_tmpdir_env_var: true,
         exclude_slash_tmp: true,
@@ -1123,12 +1124,13 @@ fn create_seatbelt_args_with_read_only_git_pointer_file() {
     let cwd = tmp.path().join("cwd");
     fs::create_dir_all(&cwd).expect("create cwd");
 
-    let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![worktree_root.try_into().expect("worktree_root is absolute")],
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
+    let worktree_root =
+        AbsolutePathBuf::from_absolute_path(worktree_root).expect("worktree_root is absolute");
+    let file_system_sandbox_policy = FileSystemSandboxPolicy::workspace_write(
+        std::slice::from_ref(&worktree_root),
+        /*exclude_tmpdir_env_var*/ true,
+        /*exclude_slash_tmp*/ true,
+    );
 
     let shell_command: Vec<String> = [
         "bash",
@@ -1140,13 +1142,15 @@ fn create_seatbelt_args_with_read_only_git_pointer_file() {
     .iter()
     .map(std::string::ToString::to_string)
     .collect();
-    let args = create_seatbelt_command_args_for_legacy_policy(
-        shell_command,
-        &policy,
-        &cwd,
-        /*enforce_managed_network*/ false,
-        /*network*/ None,
-    );
+    let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command: shell_command,
+        file_system_sandbox_policy: &file_system_sandbox_policy,
+        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+        sandbox_policy_cwd: &cwd,
+        enforce_managed_network: false,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    });
 
     let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
         .args(&args)
@@ -1176,13 +1180,15 @@ fn create_seatbelt_args_with_read_only_git_pointer_file() {
     .iter()
     .map(std::string::ToString::to_string)
     .collect();
-    let gitdir_args = create_seatbelt_command_args_for_legacy_policy(
-        shell_command_gitdir,
-        &policy,
-        &cwd,
-        /*enforce_managed_network*/ false,
-        /*network*/ None,
-    );
+    let gitdir_args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command: shell_command_gitdir,
+        file_system_sandbox_policy: &file_system_sandbox_policy,
+        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+        sandbox_policy_cwd: &cwd,
+        enforce_managed_network: false,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    });
     let output = Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
         .args(&gitdir_args)
         .current_dir(&cwd)
@@ -1220,7 +1226,6 @@ fn create_seatbelt_args_for_cwd_as_git_repo() {
     // use the default ones (cwd and TMPDIR) and verifies the protected
     // metadata checks are done properly for cwd.
     let policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
         network_access: false,
         exclude_tmpdir_env_var: false,
         exclude_slash_tmp: false,

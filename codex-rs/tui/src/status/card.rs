@@ -1,6 +1,7 @@
 use crate::history_cell::CompositeHistoryCell;
 use crate::history_cell::HistoryCell;
 use crate::history_cell::PlainHistoryCell;
+use crate::history_cell::plain_lines;
 use crate::history_cell::with_border_with_inner_width;
 use crate::legacy_core::config::Config;
 use crate::token_usage::TokenUsage;
@@ -14,7 +15,6 @@ use codex_protocol::ThreadId;
 use codex_protocol::account::PlanType;
 use codex_protocol::config_types::ApprovalsReviewer;
 use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::openai_models::ReasoningEffort;
 use codex_utils_sandbox_summary::summarize_permission_profile;
@@ -566,25 +566,6 @@ fn status_permissions_label(
     approval: &str,
 ) -> String {
     let active_id = active_permission_profile.map(|active| active.id.as_str());
-    let writable_root_modifications = active_permission_profile
-        .map(|active| {
-            active
-                .modifications
-                .iter()
-                .filter(|modification| {
-                    matches!(
-                        modification,
-                        ActivePermissionProfileModification::AdditionalWritableRoot { .. }
-                    )
-                })
-                .count()
-        })
-        .unwrap_or(0);
-    let modification_suffix = match writable_root_modifications {
-        0 => String::new(),
-        1 => " + 1 writable root".to_string(),
-        count => format!(" + {count} writable roots"),
-    };
     match active_id {
         Some(":read-only") => {
             let label = if sandbox == "read-only with network access" {
@@ -592,12 +573,12 @@ fn status_permissions_label(
             } else {
                 "Read Only"
             };
-            return format!("{label}{modification_suffix} ({approval})");
+            return format!("{label} ({approval})");
         }
         Some(":workspace") => match sandbox {
-            "workspace" => return format!("Workspace{modification_suffix} ({approval})"),
+            "workspace" => return format!("Workspace ({approval})"),
             "workspace with network access" => {
-                return format!("Workspace with network access{modification_suffix} ({approval})");
+                return format!("Workspace with network access ({approval})");
             }
             _ => {}
         },
@@ -608,7 +589,7 @@ fn status_permissions_label(
                 format!("No Sandbox ({approval})")
             };
         }
-        Some(id) => return format!("Profile {id}{modification_suffix} ({sandbox}, {approval})"),
+        Some(id) => return format!("Profile {id} ({sandbox}, {approval})"),
         None => {}
     }
 
@@ -787,6 +768,10 @@ impl HistoryCell for StatusHistoryCell {
             .collect();
 
         with_border_with_inner_width(truncated_lines, inner_width)
+    }
+
+    fn raw_lines(&self) -> Vec<Line<'static>> {
+        plain_lines(self.display_lines(u16::MAX))
     }
 }
 

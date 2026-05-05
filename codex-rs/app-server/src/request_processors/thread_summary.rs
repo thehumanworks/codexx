@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(test)]
 pub(crate) async fn read_summary_from_rollout(
     path: &Path,
     fallback_provider: &str,
@@ -74,18 +75,7 @@ pub(crate) async fn read_summary_from_rollout(
     })
 }
 
-pub(crate) async fn read_rollout_items_from_rollout(
-    path: &Path,
-) -> std::io::Result<Vec<RolloutItem>> {
-    let items = match RolloutRecorder::get_rollout_history(path).await? {
-        InitialHistory::New | InitialHistory::Cleared => Vec::new(),
-        InitialHistory::Forked(items) => items,
-        InitialHistory::Resumed(resumed) => resumed.history,
-    };
-
-    Ok(items)
-}
-
+#[cfg(test)]
 fn extract_conversation_summary(
     path: PathBuf,
     head: &[serde_json::Value],
@@ -134,6 +124,7 @@ fn extract_conversation_summary(
     })
 }
 
+#[cfg(test)]
 fn map_git_info(git_info: &CoreGitInfo) -> ConversationGitInfo {
     ConversationGitInfo {
         sha: git_info.commit_hash.as_ref().map(|sha| sha.0.clone()),
@@ -183,30 +174,24 @@ pub(super) fn apply_permission_profile_selection_to_config_overrides(
     overrides: &mut ConfigOverrides,
     permissions: Option<PermissionProfileSelectionParams>,
 ) {
-    let Some(PermissionProfileSelectionParams::Profile { id, modifications }) = permissions else {
+    let Some(PermissionProfileSelectionParams::Profile { id }) = permissions else {
         return;
     };
     overrides.default_permissions = Some(id);
-    overrides
-        .additional_writable_roots
-        .extend(modifications.unwrap_or_default().into_iter().map(
-            |modification| match modification {
-                PermissionProfileModificationParams::AdditionalWritableRoot { path } => {
-                    path.to_path_buf()
-                }
-            },
-        ));
 }
 
 pub(super) fn thread_response_sandbox_policy(
     permission_profile: &codex_protocol::models::PermissionProfile,
+    workspace_roots: &[AbsolutePathBuf],
     cwd: &Path,
 ) -> codex_app_server_protocol::SandboxPolicy {
-    let file_system_policy = permission_profile.file_system_sandbox_policy();
+    let materialized_permission_profile =
+        permission_profile.materialize_project_roots_with_workspace_roots(workspace_roots);
+    let file_system_policy = materialized_permission_profile.file_system_sandbox_policy();
     let sandbox_policy = codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
-        permission_profile,
+        &materialized_permission_profile,
         &file_system_policy,
-        permission_profile.network_sandbox_policy(),
+        materialized_permission_profile.network_sandbox_policy(),
         cwd,
     );
     sandbox_policy.into()
@@ -220,6 +205,7 @@ fn parse_datetime(timestamp: Option<&str>) -> Option<DateTime<Utc>> {
     })
 }
 
+#[cfg(test)]
 async fn read_updated_at(path: &Path, created_at: Option<&str>) -> Option<String> {
     let updated_at = tokio::fs::metadata(path)
         .await

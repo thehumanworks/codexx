@@ -1,6 +1,7 @@
 use crate::agent::AgentStatus;
 use crate::config::ConstraintResult;
 use crate::file_watcher::WatchRegistration;
+use crate::goals::ExternalGoalSet;
 use crate::goals::GoalRuntimeEvent;
 use crate::session::Codex;
 use crate::session::SessionSettingsUpdate;
@@ -32,7 +33,9 @@ use codex_protocol::protocol::ThreadMemoryMode;
 use codex_protocol::protocol::TokenUsageInfo;
 use codex_protocol::protocol::W3cTraceContext;
 use codex_protocol::user_input::UserInput;
+use codex_thread_store::StoredThread;
 use codex_thread_store::StoredThreadHistory;
+use codex_thread_store::ThreadMetadataPatch;
 use codex_thread_store::ThreadStoreError;
 use codex_thread_store::ThreadStoreResult;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -55,6 +58,7 @@ pub struct ThreadConfigSnapshot {
     pub permission_profile: PermissionProfile,
     pub active_permission_profile: Option<ActivePermissionProfile>,
     pub cwd: AbsolutePathBuf,
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     pub ephemeral: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
     pub personality: Option<Personality>,
@@ -63,11 +67,15 @@ pub struct ThreadConfigSnapshot {
 
 impl ThreadConfigSnapshot {
     pub fn sandbox_policy(&self) -> SandboxPolicy {
-        let file_system_sandbox_policy = self.permission_profile.file_system_sandbox_policy();
+        let permission_profile = self
+            .permission_profile
+            .clone()
+            .materialize_project_roots_with_workspace_roots(&self.workspace_roots);
+        let file_system_sandbox_policy = permission_profile.file_system_sandbox_policy();
         codex_sandboxing::compatibility_sandbox_policy_for_permission_profile(
-            &self.permission_profile,
+            &permission_profile,
             &file_system_sandbox_policy,
-            self.permission_profile.network_sandbox_policy(),
+            permission_profile.network_sandbox_policy(),
             self.cwd.as_path(),
         )
     }
@@ -77,6 +85,7 @@ impl ThreadConfigSnapshot {
 #[derive(Clone, Default)]
 pub struct CodexThreadTurnContextOverrides {
     pub cwd: Option<PathBuf>,
+    pub workspace_roots: Option<Vec<PathBuf>>,
     pub approval_policy: Option<AskForApproval>,
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     pub sandbox_policy: Option<SandboxPolicy>,
@@ -158,11 +167,11 @@ impl CodexThread {
         }
     }
 
-    pub async fn apply_external_goal_set(&self, status: codex_state::ThreadGoalStatus) {
+    pub async fn apply_external_goal_set(&self, external_set: ExternalGoalSet) {
         if let Err(err) = self
             .codex
             .session
-            .goal_runtime_apply(GoalRuntimeEvent::ExternalSet { status })
+            .goal_runtime_apply(GoalRuntimeEvent::ExternalSet { external_set })
             .await
         {
             tracing::warn!("failed to apply external goal status runtime effects: {err}");
@@ -231,6 +240,7 @@ impl CodexThread {
     ) -> ConstraintResult<()> {
         let CodexThreadTurnContextOverrides {
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,
@@ -256,6 +266,7 @@ impl CodexThread {
 
         let updates = SessionSettingsUpdate {
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox_policy,
@@ -409,6 +420,38 @@ impl CodexThread {
                 message: err.to_string(),
             })?;
         live_thread.load_history(include_archived).await
+    }
+
+    pub async fn read_thread(
+        &self,
+        include_archived: bool,
+        include_history: bool,
+    ) -> ThreadStoreResult<StoredThread> {
+        let live_thread = self
+            .codex
+            .session
+            .live_thread_for_persistence("read thread")
+            .map_err(|err| ThreadStoreError::Internal {
+                message: err.to_string(),
+            })?;
+        live_thread
+            .read_thread(include_archived, include_history)
+            .await
+    }
+
+    pub async fn update_thread_metadata(
+        &self,
+        patch: ThreadMetadataPatch,
+        include_archived: bool,
+    ) -> ThreadStoreResult<StoredThread> {
+        let live_thread = self
+            .codex
+            .session
+            .live_thread_for_persistence("update thread metadata")
+            .map_err(|err| ThreadStoreError::Internal {
+                message: err.to_string(),
+            })?;
+        live_thread.update_metadata(patch, include_archived).await
     }
 
     pub fn state_db(&self) -> Option<StateDbHandle> {

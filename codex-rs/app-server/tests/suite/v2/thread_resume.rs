@@ -41,6 +41,7 @@ use codex_app_server_protocol::ThreadResumeResponse;
 use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::ThreadStatus;
+use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
@@ -1175,6 +1176,7 @@ stream_max_retries = 0
         forked_from_id: None,
         timestamp: "2025-01-05T12:00:00Z".to_string(),
         cwd: repo_path.clone(),
+        workspace_roots: Vec::new(),
         originator: "codex".to_string(),
         cli_version: "0.0.0".to_string(),
         source: RolloutSessionSource::Cli,
@@ -1629,6 +1631,7 @@ async fn thread_resume_rejects_history_when_thread_is_running() -> Result<()> {
     .await??;
     let TurnStartResponse { turn: running_turn } =
         to_response::<TurnStartResponse>(running_turn_resp)?;
+    assert_eq!(running_turn.items_view, TurnItemsView::NotLoaded);
     timeout(
         DEFAULT_READ_TIMEOUT,
         primary.read_stream_until_notification_message("turn/started"),

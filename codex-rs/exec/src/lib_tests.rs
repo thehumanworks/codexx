@@ -262,6 +262,7 @@ fn turn_items_for_thread_returns_matching_turn_items() {
         turns: vec![
             codex_app_server_protocol::Turn {
                 id: "turn-1".to_string(),
+                items_view: codex_app_server_protocol::TurnItemsView::Full,
                 items: vec![AppServerThreadItem::AgentMessage {
                     id: "msg-1".to_string(),
                     text: "hello".to_string(),
@@ -276,6 +277,7 @@ fn turn_items_for_thread_returns_matching_turn_items() {
             },
             codex_app_server_protocol::Turn {
                 id: "turn-2".to_string(),
+                items_view: codex_app_server_protocol::TurnItemsView::Full,
                 items: vec![AppServerThreadItem::Plan {
                     id: "plan-1".to_string(),
                     text: "ship it".to_string(),
@@ -308,6 +310,7 @@ fn should_backfill_turn_completed_items_skips_ephemeral_threads() {
             thread_id: "thread-1".to_string(),
             turn: codex_app_server_protocol::Turn {
                 id: "turn-1".to_string(),
+                items_view: codex_app_server_protocol::TurnItemsView::Full,
                 items: Vec::new(),
                 status: codex_app_server_protocol::TurnStatus::Completed,
                 error: None,
@@ -484,11 +487,11 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         model_provider: "openai".to_string(),
         service_tier: None,
         cwd: test_path_buf("/tmp").abs(),
+        workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
         approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
         approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::AutoReview,
         sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: false,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,

@@ -88,7 +88,7 @@ Use the thread APIs to create, list, or archive conversations. Drive a conversat
 - Initialize once per connection: Immediately after opening a transport connection, send an `initialize` request with your client metadata, then emit an `initialized` notification. Any other request on that connection before this handshake gets rejected.
 - Start (or resume) a thread: Call `thread/start` to open a fresh conversation. The response returns the thread object and you’ll also get a `thread/started` notification. If you’re continuing an existing conversation, call `thread/resume` with its ID instead. If you want to branch from an existing conversation, call `thread/fork` to create a new thread id with copied history. Like `thread/start`, `thread/fork` also accepts `ephemeral: true` for an in-memory temporary thread.
   The returned `thread.ephemeral` flag tells you whether the session is intentionally in-memory only; when it is `true`, `thread.path` is `null`.
-- Begin a turn: To send user input, call `turn/start` with the target `threadId` and the user's input. Optional fields let you override model, cwd, sandbox policy or experimental `permissions` profile selection, approval policy, approvals reviewer, etc. This immediately returns the new turn object. The app-server emits `turn/started` when that turn actually begins running.
+- Begin a turn: To send user input, call `turn/start` with the target `threadId` and the user's input. Optional fields let you override model, cwd, workspace roots, approval policy, approvals reviewer, and the active permission profile name. The permission profile value associated with the thread is not mutable through `turn/start`. This immediately returns the new turn object. The app-server emits `turn/started` when that turn actually begins running.
 - Stream events: After `turn/start`, keep reading JSON-RPC notifications on stdout. You’ll see `item/started`, `item/completed`, deltas like `item/agentMessage/delta`, tool progress, etc. These represent streaming model output plus any side effects (commands, tool calls, reasoning notes).
 - Finish the turn: When the model is done (or the turn is interrupted via making the `turn/interrupt` call), the server sends `turn/completed` with the final turn state and token usage.
 
@@ -143,8 +143,8 @@ Example with notification opt-out:
 ## API Overview
 
 - `thread/start` — create a new thread; emits `thread/started` (including the current `thread.status`) and auto-subscribes you to turn/item events for that thread. When the request includes a `cwd` and the resolved sandbox is `workspace-write` or full access, app-server also marks that project as trusted in the user `config.toml`. Pass `sessionStartSource: "clear"` when starting a replacement thread after clearing the current session so `SessionStart` hooks receive `source: "clear"` instead of the default `"startup"`. For permissions, prefer experimental `permissions` profile selection; the legacy `sandbox` shorthand is still accepted but cannot be combined with `permissions`. Experimental `environments` selects the sticky execution environments for turns on the thread; omit it to use the server default, pass `[]` to disable environments, or pass explicit environment ids with per-environment `cwd`.
-- `thread/resume` — reopen an existing thread by id so subsequent `turn/start` calls append to it. Accepts the same permission override rules as `thread/start`.
-- `thread/fork` — fork an existing thread into a new thread id by copying the stored history; if the source thread is currently mid-turn, the fork records the same interruption marker as `turn/interrupt` instead of inheriting an unmarked partial turn suffix. The returned `thread.forkedFromId` points at the source thread when known. Accepts `ephemeral: true` for an in-memory temporary fork, emits `thread/started` (including the current `thread.status`), and auto-subscribes you to turn/item events for the new thread. Experimental clients can pass `excludeTurns: true` when they plan to page fork history via `thread/turns/list` instead of receiving the full turn array immediately. Accepts the same permission override rules as `thread/start`.
+- `thread/resume` — reopen an existing thread by id so subsequent `turn/start` calls append to it. The stored permission profile value is preserved; clients may update `workspaceRoots` or use `permissions` to update the active profile name after validating that the profile id exists. The legacy `sandbox` shorthand is not accepted for resume.
+- `thread/fork` — fork an existing thread into a new thread id by copying the stored history; if the source thread is currently mid-turn, the fork records the same interruption marker as `turn/interrupt` instead of inheriting an unmarked partial turn suffix. The returned `thread.forkedFromId` points at the source thread when known. Accepts `ephemeral: true` for an in-memory temporary fork, emits `thread/started` (including the current `thread.status`), and auto-subscribes you to turn/item events for the new thread. Experimental clients can pass `excludeTurns: true` when they plan to page fork history via `thread/turns/list` instead of receiving the full turn array immediately. Like resume, fork preserves the source permission profile value while allowing explicit `workspaceRoots` or active profile name updates.
 - `thread/start`, `thread/resume`, and `thread/fork` responses include the legacy `sandbox` compatibility projection. Experimental clients can read response `permissionProfile` for the exact active runtime permissions and `activePermissionProfile` for the named or implicit built-in profile identity/provenance when known.
 - `thread/list` — page through stored rollouts; supports cursor-based pagination and optional `modelProviders`, `sourceKinds`, `archived`, `cwd`, and `searchTerm` filters. Each returned `thread` includes `status` (`ThreadStatus`), defaulting to `notLoaded` when the thread is not currently loaded.
 - `thread/loaded/list` — list the thread ids currently loaded in memory.
@@ -167,7 +167,7 @@ Example with notification opt-out:
 - `thread/shellCommand` — run a user-initiated `!` shell command against a thread; this runs unsandboxed with full access rather than inheriting the thread sandbox policy. Returns `{}` immediately while progress streams through standard turn/item notifications and any active turn receives the formatted output in its message stream.
 - `thread/backgroundTerminals/clean` — terminate all running background terminals for a thread (experimental; requires `capabilities.experimentalApi`); returns `{}` when the cleanup request is accepted.
 - `thread/rollback` — drop the last N turns from the agent’s in-memory context and persist a rollback marker in the rollout so future resumes see the pruned history; returns the updated `thread` (with `turns` populated) on success.
-- `turn/start` — add user input to a thread and begin Codex generation; responds with the initial `turn` object and streams `turn/started`, `item/*`, and `turn/completed` notifications. Prefer experimental `permissions` profile selection for permission overrides; the legacy `sandboxPolicy` field is still accepted but cannot be combined with `permissions`. For `collaborationMode`, `settings.developer_instructions: null` means "use built-in instructions for the selected mode".
+- `turn/start` — add user input to a thread and begin Codex generation; responds with the initial `turn` object and streams `turn/started`, `item/*`, and `turn/completed` notifications. It can update `workspaceRoots` and use experimental `permissions` profile selection to update the active profile name, but it cannot change the thread's permission profile value; `sandboxPolicy` is rejected. For `collaborationMode`, `settings.developer_instructions: null` means "use built-in instructions for the selected mode".
 - `thread/inject_items` — append raw Responses API items to a loaded thread’s model-visible history without starting a user turn; returns `{}` on success.
 - `turn/steer` — add user input to an already in-flight regular turn without starting a new turn; returns the active `turnId` that accepted the input. Review and manual compaction turns reject `turn/steer`.
 - `turn/interrupt` — request cancellation of an in-flight turn by `(thread_id, turn_id)`; success is an empty `{}` response and the turn finishes with `status: "interrupted"`.
@@ -181,6 +181,12 @@ Example with notification opt-out:
 - `command/exec/resize` — resize a running PTY-backed `command/exec` session by `processId`; returns `{}`.
 - `command/exec/terminate` — terminate a running `command/exec` session by `processId`; returns `{}`.
 - `command/exec/outputDelta` — notification emitted for base64-encoded stdout/stderr chunks from a streaming `command/exec` session.
+- `process/spawn` — experimental; spawn a standalone process without the Codex sandbox on the host where the app server is running; returns after the process starts and emits `process/outputDelta` and `process/exited` notifications.
+- `process/writeStdin` — experimental; write base64-decoded stdin bytes to a running `process/spawn` session or close stdin; returns `{}`.
+- `process/resizePty` — experimental; resize a running PTY-backed `process/spawn` session by `processHandle`; returns `{}`.
+- `process/kill` — experimental; terminate a running `process/spawn` session by `processHandle`; returns `{}`.
+- `process/outputDelta` — experimental; notification emitted for base64-encoded stdout/stderr chunks from a streaming `process/spawn` session.
+- `process/exited` — experimental; notification emitted when a `process/spawn` session exits.
 - `fs/readFile` — read an absolute file path and return `{ dataBase64 }`.
 - `fs/writeFile` — write an absolute file path from base64-encoded `{ dataBase64 }`; returns `{}`.
 - `fs/createDirectory` — create an absolute directory path; `recursive` defaults to `true`.
@@ -238,6 +244,7 @@ Start a fresh thread when you need a new Codex conversation.
     // current config settings.
     "model": "gpt-5.1-codex",
     "cwd": "/Users/me/project",
+    "workspaceRoots": ["/Users/me/project"],
     "approvalPolicy": "never",
     "sandbox": "workspaceWrite",
     // Prefer experimental profile selection:
@@ -275,7 +282,7 @@ Start a fresh thread when you need a new Codex conversation.
 
 Valid `personality` values are `"friendly"`, `"pragmatic"`, and `"none"`. When `"none"` is selected, the personality placeholder is replaced with an empty string.
 
-To continue a stored session, call `thread/resume` with the `thread.id` you previously recorded. The response shape matches `thread/start`. When the stored session includes persisted token usage, the server emits `thread/tokenUsage/updated` immediately after the response so clients can render restored usage before the next turn starts. You can also pass the same configuration overrides supported by `thread/start`, including `approvalsReviewer`.
+To continue a stored session, call `thread/resume` with the `thread.id` you previously recorded. The response shape matches `thread/start`. When the stored session includes persisted token usage, the server emits `thread/tokenUsage/updated` immediately after the response so clients can render restored usage before the next turn starts. You can pass non-permission configuration overrides such as `approvalsReviewer`; the stored permission profile value is preserved unless you start a new thread. Use `workspaceRoots` to replace the thread root list, and use `permissions` only to update the active profile name after validating the id exists.
 
 By default, `thread/resume` includes the reconstructed turn history in `thread.turns`. Experimental clients can pass `excludeTurns: true` to return only thread metadata and live resume state, then call `thread/turns/list` separately if they want to page the turn history over the network. In that mode the server also skips replaying restored `thread/tokenUsage/updated`, which avoids rebuilding turns just to attribute historical usage.
 
@@ -420,6 +427,8 @@ Use `thread/read` to fetch a stored thread by id without resuming it. Pass `incl
 ### Example: List thread turns (experimental)
 
 Use `thread/turns/list` with `capabilities.experimentalApi = true` to page a stored thread’s turn history without resuming it. By default, results are sorted descending so clients can start at the present and fetch older turns with `nextCursor`. The response also includes `backwardsCursor`; pass it as `cursor` on a later request with `sortDirection: "asc"` to fetch turns newer than the first item from the earlier page.
+
+Every returned `Turn` includes `itemsView`, which tells clients whether the `items` array was omitted intentionally (`notLoaded`), contains only summary items (`summary`), or contains every item available from persisted app-server history (`full`). Current `thread/turns/list` responses return `full` turns.
 
 ```json
 { "method": "thread/turns/list", "id": 24, "params": {
@@ -627,19 +636,15 @@ You can optionally specify config overrides on the new turn. If specified, these
     "input": [ { "type": "text", "text": "Run tests" } ],
     // Below are optional config overrides
     "cwd": "/Users/me/project",
+    "workspaceRoots": ["/Users/me/project", "/Users/me/project/packages/api"],
     // Experimental: turn-scoped environment selection.
     "environments": [
         { "environmentId": "local", "cwd": "/Users/me/project" }
     ],
     "approvalPolicy": "unlessTrusted",
-    "sandboxPolicy": {
-        "type": "workspaceWrite",
-        "writableRoots": ["/Users/me/project"],
-        "networkAccess": true
-    },
-    // Prefer experimental profile selection:
+    // Optional: validate and record the active profile name without changing
+    // the thread's permission profile value.
     // "permissions": { "type": "profile", "id": ":workspace" }
-    // Do not send both "sandboxPolicy" and "permissions".
     "model": "gpt-5.1-codex",
     "effort": "medium",
     "summary": "concise",
@@ -930,6 +935,7 @@ Run a standalone command (argv vector) in the server’s sandbox without creatin
 } }
 ```
 
+- Prefer using `process/spawn` when you want an explicitly unsandboxed process execution API with immediate spawn acknowledgement, handle-based control, output notifications, and an exit notification.
 - For clients that are already sandboxed externally, set the legacy `sandboxPolicy` to `{"type":"externalSandbox","networkAccess":"enabled"}` (or omit `networkAccess` to keep it restricted). Codex will not enforce its own sandbox in this mode; it tells the model it has full file-system access and passes the `networkAccess` state through `environment_context`.
 
 Notes:
@@ -1000,6 +1006,83 @@ Streaming stdin/stdout uses base64 so PTY sessions can carry arbitrary bytes:
 - `command/exec/outputDelta.capReached` is `true` on the final streamed chunk for a stream when `outputBytesCap` truncates that stream; later output on that stream is dropped.
 - `command/exec.params.env` overrides the server-computed environment per key; set a key to `null` to unset an inherited variable.
 - `command/exec/resize` is only supported for PTY-backed `command/exec` sessions.
+
+### Example: Process lifecycle execution
+
+Use `process/spawn` to start a standalone argv-based process without the Codex sandbox on the host where the app server is running. The `process/*` API is experimental and requires `initialize.params.capabilities.experimentalApi: true`. The spawn response means the process has started and the `processHandle` is registered; completion is reported later through `process/exited`.
+
+```json
+{ "method": "process/spawn", "id": 40, "params": {
+    "command": ["cargo", "check"],
+    "processHandle": "cargo-check-1",
+    "cwd": "/Users/me/project",                    // required absolute path
+    "env": { "RUST_LOG": null },                    // optional; override or unset app-server env vars
+    "outputBytesCap": 1048576,                     // optional; omit for default, null disables
+    "timeoutMs": 10000                             // optional; omit for default, null disables
+} }
+{ "id": 40, "result": {} }
+{ "method": "process/exited", "params": {
+    "processHandle": "cargo-check-1",
+    "exitCode": 0,
+    "stdout": "...",
+    "stdoutCapReached": false,
+    "stderr": "",
+    "stderrCapReached": false
+} }
+```
+
+For interactive or streaming processes, set `tty: true` or `streamStdoutStderr: true` and route output notifications by `processHandle`:
+
+```json
+{ "method": "process/spawn", "id": 41, "params": {
+    "command": ["bash", "-i"],
+    "processHandle": "bash-1",
+    "cwd": "/Users/me/project",
+    "tty": true,
+    "size": { "rows": 40, "cols": 120 },
+    "outputBytesCap": null,
+    "timeoutMs": null
+} }
+{ "id": 41, "result": {} }
+{ "method": "process/outputDelta", "params": {
+    "processHandle": "bash-1",
+    "stream": "stdout",
+    "deltaBase64": "YmFzaC00LjQkIA==",
+    "capReached": false
+} }
+{ "method": "process/writeStdin", "id": 42, "params": {
+    "processHandle": "bash-1",
+    "deltaBase64": "cHdkCg=="
+} }
+{ "id": 42, "result": {} }
+{ "method": "process/resizePty", "id": 43, "params": {
+    "processHandle": "bash-1",
+    "size": { "rows": 48, "cols": 160 }
+} }
+{ "id": 43, "result": {} }
+{ "method": "process/kill", "id": 44, "params": {
+    "processHandle": "bash-1"
+} }
+{ "id": 44, "result": {} }
+{ "method": "process/exited", "params": {
+    "processHandle": "bash-1",
+    "exitCode": 137,
+    "stdout": "",
+    "stdoutCapReached": false,
+    "stderr": "",
+    "stderrCapReached": false
+} }
+```
+
+- Empty `command` arrays and empty `processHandle` strings are rejected.
+- `cwd` is required and must be absolute.
+- `process/spawn` is intentionally unsandboxed and does not define sandbox-selection fields such as `sandboxPolicy` or `permissionProfile`.
+- Duplicate active `processHandle` values are rejected on the same connection; the same handle can be reused after the prior process exits.
+- `tty: true` implies PTY mode plus `streamStdin: true` and `streamStdoutStderr: true`.
+- `process/writeStdin` accepts either `deltaBase64`, `closeStdin`, or both.
+- When omitted, `timeoutMs` and `outputBytesCap` fall back to server defaults. Set either field to `null` to disable that limit for terminal-style sessions.
+- `outputBytesCap` applies independently to `stdout` and `stderr`; `process/exited.stdoutCapReached` and `stderrCapReached` report whether each stream reached the cap. Streamed bytes are not duplicated into `process/exited`.
+- `process/outputDelta` and `process/exited` notifications are connection-scoped. If the originating connection closes, the server terminates the process.
 
 ### Example: Filesystem utilities
 
@@ -1455,7 +1538,11 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Each entry is evaluated using that `cwd`'s effective config, so feature gating and discovered config layers can differ across entries in the same request. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Hook state is stored under `hooks.state`; clients should treat hooks from managed sources as non-configurable, and user config entries for those keys are ignored during loading. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
+Use `hooks/list` to fetch discovered hooks for one or more `cwds`. Each result is evaluated with that `cwd`'s effective config, so feature gates and discovered config layers can differ within a single response.
+
+Hooks are returned even when disabled so clients can render and re-enable them. User-controlled state lives under `hooks.state`. Managed hooks are non-configurable, and user entries for managed hook keys are ignored during loading.
+
+For unmanaged hooks, `currentHash` and `trustStatus` describe whether the current definition is first-seen, approved, or changed since approval. Only trusted unmanaged hooks become runnable. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
 
 ```json
 {
@@ -1486,7 +1573,9 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Each entr
         "source": "user",
         "pluginId": null,
         "displayOrder": 0,
-        "enabled": true
+        "enabled": true,
+        "currentHash": "sha256:...",
+        "trustStatus": "untrusted"
       }],
       "warnings": [],
       "errors": []

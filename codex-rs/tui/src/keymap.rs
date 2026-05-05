@@ -65,6 +65,8 @@ pub(crate) struct AppKeymap {
     pub(crate) toggle_vim_mode: Vec<KeyBinding>,
     /// Toggle Fast mode.
     pub(crate) toggle_fast_mode: Vec<KeyBinding>,
+    /// Toggle raw scrollback mode for copy-friendly transcript selection.
+    pub(crate) toggle_raw_output: Vec<KeyBinding>,
 }
 
 /// Chat-level keybindings evaluated at the app event layer.
@@ -377,6 +379,11 @@ impl RuntimeKeymap {
                 &defaults.app.toggle_fast_mode,
                 "tui.keymap.global.toggle_fast_mode",
             )?,
+            toggle_raw_output: resolve_bindings(
+                keymap.global.toggle_raw_output.as_ref(),
+                &defaults.app.toggle_raw_output,
+                "tui.keymap.global.toggle_raw_output",
+            )?,
         };
 
         let chat = ChatKeymap {
@@ -546,6 +553,7 @@ impl RuntimeKeymap {
                 clear_terminal: default_bindings![ctrl(KeyCode::Char('l'))],
                 toggle_vim_mode: default_bindings![],
                 toggle_fast_mode: default_bindings![],
+                toggle_raw_output: default_bindings![alt(KeyCode::Char('r'))],
             },
             chat: ChatKeymap {
                 decrease_reasoning_effort: default_bindings![alt(KeyCode::Char(','))],
@@ -588,11 +596,21 @@ impl RuntimeKeymap {
                 move_line_end: default_bindings![plain(KeyCode::End), ctrl(KeyCode::Char('e'))],
                 delete_backward: default_bindings![
                     plain(KeyCode::Backspace),
+                    shift(KeyCode::Backspace),
                     ctrl(KeyCode::Char('h'))
                 ],
-                delete_forward: default_bindings![plain(KeyCode::Delete), ctrl(KeyCode::Char('d'))],
+                delete_forward: default_bindings![
+                    plain(KeyCode::Delete),
+                    shift(KeyCode::Delete),
+                    ctrl(KeyCode::Char('d'))
+                ],
                 delete_backward_word: default_bindings![
                     alt(KeyCode::Backspace),
+                    ctrl(KeyCode::Backspace),
+                    raw(KeyBinding::new(
+                        KeyCode::Backspace,
+                        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                    )),
                     ctrl(KeyCode::Char('w')),
                     raw(KeyBinding::new(
                         KeyCode::Char('h'),
@@ -601,6 +619,11 @@ impl RuntimeKeymap {
                 ],
                 delete_forward_word: default_bindings![
                     alt(KeyCode::Delete),
+                    ctrl(KeyCode::Delete),
+                    raw(KeyBinding::new(
+                        KeyCode::Delete,
+                        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+                    )),
                     alt(KeyCode::Char('d'))
                 ],
                 kill_line_start: default_bindings![ctrl(KeyCode::Char('u'))],
@@ -739,6 +762,7 @@ impl RuntimeKeymap {
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
                     self.chat.decrease_reasoning_effort.as_slice(),
@@ -780,6 +804,7 @@ impl RuntimeKeymap {
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 (
                     "chat.decrease_reasoning_effort",
                     self.chat.decrease_reasoning_effort.as_slice(),
@@ -822,6 +847,7 @@ impl RuntimeKeymap {
                 ("clear_terminal", self.app.clear_terminal.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
             ],
             [
                 ("list.move_up", self.list.move_up.as_slice()),
@@ -871,6 +897,7 @@ impl RuntimeKeymap {
                 ("composer.submit", self.composer.submit.as_slice()),
                 ("toggle_vim_mode", self.app.toggle_vim_mode.as_slice()),
                 ("toggle_fast_mode", self.app.toggle_fast_mode.as_slice()),
+                ("toggle_raw_output", self.app.toggle_raw_output.as_slice()),
                 (
                     "composer.history_search_previous",
                     self.composer.history_search_previous.as_slice(),
@@ -1894,6 +1921,28 @@ mod tests {
     }
 
     #[test]
+    fn raw_output_toggle_defaults_to_alt_r() {
+        let runtime = RuntimeKeymap::defaults();
+        assert_eq!(
+            runtime.app.toggle_raw_output,
+            vec![key_hint::alt(KeyCode::Char('r'))]
+        );
+    }
+
+    #[test]
+    fn raw_output_toggle_can_be_remapped() {
+        let mut keymap = TuiKeymap::default();
+        keymap.global.toggle_raw_output = Some(one("f12"));
+
+        let runtime = RuntimeKeymap::from_config(&keymap).expect("config should parse");
+
+        assert_eq!(
+            runtime.app.toggle_raw_output,
+            vec![key_hint::plain(KeyCode::F(12))]
+        );
+    }
+
+    #[test]
     fn default_editor_insert_newline_includes_current_aliases() {
         let runtime = RuntimeKeymap::defaults();
         assert_eq!(
@@ -1916,6 +1965,54 @@ mod tests {
                 .editor
                 .delete_forward_word
                 .contains(&key_hint::alt(KeyCode::Char('d')))
+        );
+    }
+
+    #[test]
+    fn default_editor_deletion_includes_modified_backspace_delete_aliases() {
+        let runtime = RuntimeKeymap::defaults();
+
+        assert!(
+            runtime
+                .editor
+                .delete_backward
+                .contains(&key_hint::shift(KeyCode::Backspace))
+        );
+        assert!(
+            runtime
+                .editor
+                .delete_forward
+                .contains(&key_hint::shift(KeyCode::Delete))
+        );
+        assert!(
+            runtime
+                .editor
+                .delete_backward_word
+                .contains(&key_hint::ctrl(KeyCode::Backspace))
+        );
+        assert!(
+            runtime
+                .editor
+                .delete_backward_word
+                .contains(&KeyBinding::new(
+                    KeyCode::Backspace,
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ))
+        );
+        assert!(
+            runtime
+                .editor
+                .delete_forward_word
+                .contains(&key_hint::ctrl(KeyCode::Delete))
+        );
+        assert!(
+            runtime
+                .editor
+                .delete_forward_word
+                .contains(&KeyBinding::new(
+                    KeyCode::Delete,
+                    KeyModifiers::CONTROL | KeyModifiers::SHIFT
+                ))
         );
     }
 
