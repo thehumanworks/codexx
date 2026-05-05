@@ -3011,10 +3011,10 @@ fn session_telemetry(
 }
 
 #[test]
-fn get_service_tier_defaults_enterprise_accounts_to_fast() {
+fn get_service_tier_id_defaults_enterprise_accounts_to_fast() {
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::Enterprise),
             /*fast_mode_enabled*/ true,
@@ -3022,8 +3022,8 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         Some(ServiceTier::Fast.request_value().to_string())
     );
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::EnterpriseCbpUsageBased),
             /*fast_mode_enabled*/ true,
@@ -3031,8 +3031,8 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         Some(ServiceTier::Fast.request_value().to_string())
     );
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::Business),
             /*fast_mode_enabled*/ true,
@@ -3040,8 +3040,8 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         Some(ServiceTier::Fast.request_value().to_string())
     );
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::Team),
             /*fast_mode_enabled*/ true,
@@ -3049,8 +3049,8 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
         Some(ServiceTier::Fast.request_value().to_string())
     );
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::SelfServeBusinessUsageBased),
             /*fast_mode_enabled*/ true,
@@ -3060,10 +3060,10 @@ fn get_service_tier_defaults_enterprise_accounts_to_fast() {
 }
 
 #[test]
-fn get_service_tier_respects_fast_default_opt_out() {
+fn get_service_tier_id_respects_fast_default_opt_out() {
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ true,
             Some(AccountPlanType::Enterprise),
             /*fast_mode_enabled*/ true,
@@ -3073,10 +3073,10 @@ fn get_service_tier_respects_fast_default_opt_out() {
 }
 
 #[test]
-fn get_service_tier_does_not_default_non_enterprise_or_disabled_fast_mode() {
+fn get_service_tier_id_does_not_default_non_enterprise_or_disabled_fast_mode() {
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::Pro),
             /*fast_mode_enabled*/ true,
@@ -3084,8 +3084,8 @@ fn get_service_tier_does_not_default_non_enterprise_or_disabled_fast_mode() {
         None
     );
     assert_eq!(
-        get_service_tier(
-            /*configured_service_tier*/ None,
+        get_service_tier_id(
+            /*configured_service_tier_id*/ None,
             /*fast_default_opt_out*/ false,
             Some(AccountPlanType::Enterprise),
             /*fast_mode_enabled*/ false,
