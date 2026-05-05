@@ -180,7 +180,7 @@ async fn file_system_sandbox_context_uses_active_attempt() {
     let expected_permissions =
         PermissionProfile::from_runtime_permissions(&file_system_policy, network_policy);
     assert_eq!(sandbox.permissions, expected_permissions);
-    assert_eq!(sandbox.cwd, Some(req.action.cwd.clone()));
+    assert_eq!(sandbox.cwd.as_ref(), Some(&req.action.cwd));
     assert_eq!(
         sandbox.windows_sandbox_level,
         WindowsSandboxLevel::RestrictedToken
