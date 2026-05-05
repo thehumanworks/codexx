@@ -17,6 +17,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use async_channel::unbounded;
+use codex_client::is_allowed_chatgpt_host;
 use codex_config::Constrained;
 use codex_config::McpServerConfig;
 use codex_config::McpServerProvenance;
@@ -474,13 +475,7 @@ fn is_allowed_codex_apps_chatgpt_host(host: &Option<Host<&str>>) -> bool {
     let Some(Host::Domain(host)) = host else {
         return false;
     };
-    let host = *host;
-
-    host == "chatgpt.com"
-        || host == "chat.openai.com"
-        || host == "chatgpt-staging.com"
-        || host.ends_with(".chatgpt.com")
-        || host.ends_with(".chatgpt-staging.com")
+    is_allowed_chatgpt_host(host)
 }
 
 fn is_localhost_for_codex_apps(host: &Option<Host<&str>>) -> bool {

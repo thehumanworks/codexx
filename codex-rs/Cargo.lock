@@ -2983,6 +2983,7 @@ dependencies = [
  "async-channel",
  "codex-api",
  "codex-async-utils",
+ "codex-client",
  "codex-config",
  "codex-exec-server",
  "codex-login",
