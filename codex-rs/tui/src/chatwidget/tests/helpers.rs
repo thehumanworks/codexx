@@ -188,6 +188,7 @@ pub(super) async fn make_chatwidget_manual(
         codex_op_target: super::CodexOpTarget::Direct(op_tx),
         bottom_pane: bottom,
         active_cell: None,
+        active_cell_is_stream_tail: false,
         active_cell_revision: 0,
         config: cfg,
         effective_service_tier,

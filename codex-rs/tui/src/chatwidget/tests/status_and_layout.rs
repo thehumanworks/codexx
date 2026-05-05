@@ -2954,6 +2954,42 @@ printf 'fenced within fenced\n'
 }
 
 #[tokio::test]
+async fn streamed_markdown_table_uses_active_tail_until_stable() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    handle_turn_started(&mut chat, "turn-table");
+
+    handle_agent_message_delta(
+        &mut chat,
+        "| Tool | Use |\n| --- | --- |\n| rg | find |\n".to_string(),
+    );
+
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("┌──────┬──────┐") && active.contains("│ rg   │ find │"),
+        "expected streamed table preview in active tail, got {active:?}"
+    );
+    assert!(
+        drain_insert_history(&mut rx).is_empty(),
+        "the table tail should not be committed to history yet"
+    );
+
+    handle_agent_message_delta(&mut chat, "\nNext paragraph.\n".to_string());
+    for _ in 0..8 {
+        chat.on_commit_tick();
+    }
+    let history = drain_insert_history(&mut rx);
+    let committed = history
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        committed.contains("┌──────┬──────┐") && committed.contains("│ rg   │ find │"),
+        "expected table to commit after a following block arrived, got {committed:?}"
+    );
+}
+
+#[tokio::test]
 async fn chatwidget_tall() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());

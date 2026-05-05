@@ -23,6 +23,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use super::StreamState;
+use super::source_partition::partition_source;
 
 /// Shared source-retaining stream state for assistant and plan output.
 ///
@@ -36,6 +37,7 @@ struct StreamCore {
     width: Option<usize>,
     raw_source: String,
     rendered_lines: Vec<Line<'static>>,
+    stable_source_end: usize,
     enqueued_len: usize,
     emitted_len: usize,
     cwd: PathBuf,
@@ -48,6 +50,7 @@ impl StreamCore {
             width,
             raw_source: String::with_capacity(1024),
             rendered_lines: Vec::with_capacity(64),
+            stable_source_end: 0,
             enqueued_len: 0,
             emitted_len: 0,
             cwd: cwd.to_path_buf(),
@@ -64,8 +67,7 @@ impl StreamCore {
             && let Some(committed_source) = self.state.collector.commit_complete_source()
         {
             self.raw_source.push_str(&committed_source);
-            self.recompute_render();
-            return self.sync_queue_to_render();
+            return self.sync_stable_partition();
         }
 
         false
@@ -159,14 +161,43 @@ impl StreamCore {
         self.state.clear();
         self.raw_source.clear();
         self.rendered_lines.clear();
+        self.stable_source_end = 0;
         self.enqueued_len = 0;
         self.emitted_len = 0;
     }
 
+    fn active_tail_lines(&self) -> Vec<Line<'static>> {
+        let tail_start = self.stable_source_end.min(self.raw_source.len());
+        let mut source = String::new();
+        source.push_str(&self.raw_source[tail_start..]);
+        source.push_str(self.state.collector.uncommitted_source());
+        if source.trim().is_empty() {
+            return Vec::new();
+        }
+        if !source.ends_with('\n') {
+            source.push('\n');
+        }
+
+        let mut rendered = Vec::new();
+        append_markdown(&source, self.width, Some(self.cwd.as_path()), &mut rendered);
+        rendered
+    }
+
+    fn sync_stable_partition(&mut self) -> bool {
+        let partition = partition_source(&self.raw_source);
+        if partition.stable_end == self.stable_source_end {
+            return false;
+        }
+        self.stable_source_end = partition.stable_end;
+        self.recompute_render();
+        self.sync_queue_to_render()
+    }
+
     fn recompute_render(&mut self) {
         self.rendered_lines.clear();
+        let stable_source = &self.raw_source[..self.stable_source_end.min(self.raw_source.len())];
         append_markdown(
-            &self.raw_source,
+            stable_source,
             self.width,
             Some(self.cwd.as_path()),
             &mut self.rendered_lines,
@@ -289,6 +320,20 @@ impl StreamController {
         self.core.set_width(width);
     }
 
+    pub(crate) fn active_tail_cell(&self) -> Option<Box<dyn HistoryCell>> {
+        if self.core.queued_lines() > 0 {
+            return None;
+        }
+        let lines = self.core.active_tail_lines();
+        if lines.is_empty() {
+            return None;
+        }
+        Some(Box::new(history_cell::AgentMessageCell::new(
+            lines,
+            !self.header_emitted,
+        )))
+    }
+
     fn emit(&mut self, lines: Vec<Line<'static>>) -> Option<Box<dyn HistoryCell>> {
         if lines.is_empty() {
             return None;
@@ -383,6 +428,41 @@ impl PlanStreamController {
 
     pub(crate) fn set_width(&mut self, width: Option<usize>) {
         self.core.set_width(width);
+    }
+
+    pub(crate) fn active_tail_cell(&self) -> Option<Box<dyn HistoryCell>> {
+        if self.core.queued_lines() > 0 {
+            return None;
+        }
+        let lines = self.core.active_tail_lines();
+        if lines.is_empty() {
+            return None;
+        }
+
+        let mut out_lines: Vec<Line<'static>> = Vec::with_capacity(lines.len() + 3);
+        let is_stream_continuation = self.header_emitted;
+        if !self.header_emitted {
+            out_lines.push(vec!["• ".dim(), "Proposed Plan".bold()].into());
+            out_lines.push(Line::from(" "));
+        }
+
+        let mut plan_lines: Vec<Line<'static>> = Vec::with_capacity(lines.len() + 1);
+        if !self.top_padding_emitted {
+            plan_lines.push(Line::from(" "));
+        }
+        plan_lines.extend(lines);
+
+        let plan_style = proposed_plan_style();
+        let plan_lines = prefix_lines(plan_lines, "  ".into(), "  ".into())
+            .into_iter()
+            .map(|line| line.style(plan_style))
+            .collect::<Vec<_>>();
+        out_lines.extend(plan_lines);
+
+        Some(Box::new(history_cell::new_proposed_plan_stream(
+            out_lines,
+            is_stream_continuation,
+        )))
     }
 
     fn emit(
@@ -494,10 +574,75 @@ mod tests {
         lines_to_plain_strings(&lines)
     }
 
+    fn stream_active_tail_lines(ctrl: &StreamController) -> Vec<String> {
+        ctrl.active_tail_cell()
+            .expect("expected active tail cell")
+            .display_lines(u16::MAX)
+            .into_iter()
+            .map(|line| {
+                let plain = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.clone())
+                    .collect::<String>();
+                plain.chars().skip(2).collect::<String>()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn controller_holds_table_as_active_tail_until_following_block() {
+        let mut ctrl = stream_controller(Some(80));
+
+        assert!(!ctrl.push("| Tool | Use |\n"));
+        assert!(!ctrl.push("| --- | --- |\n"));
+        assert!(!ctrl.push("| rg | find |\n"));
+        assert_eq!(
+            ctrl.queued_lines(),
+            0,
+            "a single table should not be committed while it is the mutable tail"
+        );
+        assert_eq!(
+            stream_active_tail_lines(&ctrl),
+            vec![
+                "┌──────┬──────┐",
+                "│ Tool │ Use  │",
+                "├──────┼──────┤",
+                "│ rg   │ find │",
+                "└──────┴──────┘",
+            ]
+        );
+
+        assert!(ctrl.push("\nNext paragraph.\n"));
+        assert!(
+            ctrl.queued_lines() > 0,
+            "the table should become stable once a following block arrives"
+        );
+    }
+
+    #[test]
+    fn controller_active_tail_updates_without_committing_partial_table_rows() {
+        let mut ctrl = stream_controller(Some(80));
+
+        assert!(!ctrl.push("| Name | Value |\n| --- | --- |\n"));
+        assert_eq!(ctrl.queued_lines(), 0);
+
+        assert!(!ctrl.push("| alpha |"));
+        assert_eq!(
+            ctrl.queued_lines(),
+            0,
+            "partial table rows must stay out of committed history"
+        );
+        assert!(
+            stream_active_tail_lines(&ctrl).join("\n").contains("alpha"),
+            "active tail should preview the partial row"
+        );
+    }
+
     #[test]
     fn controller_set_width_rebuilds_queued_lines() {
         let mut ctrl = stream_controller(Some(120));
-        let delta = "This is a long line that should wrap into multiple rows when resized.\n";
+        let delta = "This is a long line that should wrap into multiple rows when resized.\n\nNext block.\n";
         assert!(ctrl.push(delta));
         assert_eq!(ctrl.queued_lines(), 1);
 
@@ -519,8 +664,7 @@ mod tests {
     #[test]
     fn controller_set_width_no_duplicate_after_emit() {
         let mut ctrl = stream_controller(Some(120));
-        let line =
-            "This is a long line that definitely wraps when the terminal shrinks to 24 columns.\n";
+        let line = "This is a long line that definitely wraps when the terminal shrinks to 24 columns.\n\nNext block.\n";
         ctrl.push(line);
         let (cell, _) = ctrl.on_commit_tick_batch(usize::MAX);
         assert!(cell.is_some(), "expected emitted cell");
@@ -538,7 +682,7 @@ mod tests {
     #[test]
     fn controller_tick_batch_zero_is_noop() {
         let mut ctrl = stream_controller(Some(80));
-        assert!(ctrl.push("line one\n"));
+        assert!(ctrl.push("line one\n\nline two\n"));
         assert_eq!(ctrl.queued_lines(), 1);
 
         let (cell, idle) = ctrl.on_commit_tick_batch(/*max_lines*/ 0);
@@ -554,7 +698,7 @@ mod tests {
     #[test]
     fn controller_finalize_returns_raw_source_for_consolidation() {
         let mut ctrl = stream_controller(Some(80));
-        assert!(ctrl.push("hello\n"));
+        assert!(!ctrl.push("hello\n"));
         let (_cell, source) = ctrl.finalize();
         assert_eq!(source, Some("hello\n".to_string()));
     }
@@ -562,7 +706,7 @@ mod tests {
     #[test]
     fn plan_controller_finalize_returns_raw_source_for_consolidation() {
         let mut ctrl = plan_stream_controller(Some(80));
-        assert!(ctrl.push("- step\n"));
+        assert!(!ctrl.push("- step\n"));
         let (_cell, source) = ctrl.finalize();
         assert_eq!(source, Some("- step\n".to_string()));
     }

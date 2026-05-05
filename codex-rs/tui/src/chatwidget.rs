@@ -744,6 +744,7 @@ pub(crate) struct ChatWidget {
     codex_op_target: CodexOpTarget,
     bottom_pane: BottomPane,
     active_cell: Option<Box<dyn HistoryCell>>,
+    active_cell_is_stream_tail: bool,
     /// Monotonic-ish counter used to invalidate transcript overlay caching.
     ///
     /// The transcript overlay appends a cached "live tail" for the current active cell. Most
@@ -1730,6 +1731,7 @@ impl ChatWidget {
 
     fn flush_answer_stream_with_separator(&mut self) {
         let had_stream_controller = self.stream_controller.is_some();
+        self.clear_stream_active_tail();
         if let Some(mut controller) = self.stream_controller.take() {
             let (cell, source) = controller.finalize();
             if let Some(cell) = cell {
@@ -2336,6 +2338,7 @@ impl ChatWidget {
             self.app_event_tx.send(AppEvent::StartCommitAnimation);
             self.run_catch_up_commit_tick();
         }
+        self.sync_plan_stream_active_tail();
         self.request_redraw();
     }
 
@@ -2358,6 +2361,7 @@ impl ChatWidget {
         self.saw_plan_item_this_turn = true;
         let (finalized_streamed_cell, consolidated_plan_source) =
             if let Some(mut controller) = self.plan_stream_controller.take() {
+                self.clear_stream_active_tail();
                 controller.finalize()
             } else {
                 (None, None)
@@ -2443,6 +2447,7 @@ impl ChatWidget {
         self.plan_item_active = false;
         self.adaptive_chunking.reset();
         self.plan_stream_controller = None;
+        self.clear_stream_active_tail();
         self.turn_runtime_metrics = RuntimeMetricsSummary::default();
         self.session_telemetry.reset_runtime_metrics();
         self.bottom_pane.clear_quit_shortcut_hint();
@@ -2499,6 +2504,7 @@ impl ChatWidget {
         // If a stream is currently active, finalize it.
         self.flush_answer_stream_with_separator();
         if let Some(mut controller) = self.plan_stream_controller.take() {
+            self.clear_stream_active_tail();
             let (cell, source) = controller.finalize();
             if let Some(cell) = cell {
                 self.add_boxed_history(cell);
@@ -2997,6 +3003,7 @@ impl ChatWidget {
         self.adaptive_chunking.reset();
         self.stream_controller = None;
         self.plan_stream_controller = None;
+        self.clear_stream_active_tail();
         self.pending_status_indicator_restore = false;
         self.request_status_line_branch_refresh();
         self.request_status_line_git_summary_refresh();
@@ -4267,6 +4274,7 @@ impl ChatWidget {
             self.bottom_pane.hide_status_indicator();
             self.add_boxed_history(cell);
         }
+        self.sync_active_stream_tail();
 
         if outcome.has_controller && outcome.all_idle {
             self.maybe_restore_status_indicator_after_stream_idle();
@@ -4338,6 +4346,7 @@ impl ChatWidget {
             self.app_event_tx.send(AppEvent::StartCommitAnimation);
             self.run_catch_up_commit_tick();
         }
+        self.sync_agent_stream_active_tail();
         self.request_redraw();
     }
 
@@ -4888,6 +4897,7 @@ impl ChatWidget {
                 skills: None,
             }),
             active_cell,
+            active_cell_is_stream_tail: false,
             active_cell_revision: 0,
             config,
             effective_service_tier,
@@ -5489,8 +5499,59 @@ impl ChatWidget {
 
     fn flush_active_cell(&mut self) {
         if let Some(active) = self.active_cell.take() {
+            if self.active_cell_is_stream_tail {
+                self.active_cell_is_stream_tail = false;
+                self.bump_active_cell_revision();
+                return;
+            }
             self.needs_final_message_separator = true;
             self.app_event_tx.send(AppEvent::InsertHistoryCell(active));
+        }
+    }
+
+    fn clear_stream_active_tail(&mut self) {
+        if self.active_cell_is_stream_tail {
+            self.active_cell = None;
+            self.active_cell_is_stream_tail = false;
+            self.bump_active_cell_revision();
+        }
+    }
+
+    fn set_stream_active_tail(&mut self, cell: Option<Box<dyn HistoryCell>>) {
+        match cell {
+            Some(cell) => {
+                if !self.active_cell_is_stream_tail {
+                    self.flush_active_cell();
+                }
+                self.active_cell = Some(cell);
+                self.active_cell_is_stream_tail = true;
+                self.bump_active_cell_revision();
+            }
+            None => self.clear_stream_active_tail(),
+        }
+    }
+
+    fn sync_agent_stream_active_tail(&mut self) {
+        let cell = self
+            .stream_controller
+            .as_ref()
+            .and_then(StreamController::active_tail_cell);
+        self.set_stream_active_tail(cell);
+    }
+
+    fn sync_plan_stream_active_tail(&mut self) {
+        let cell = self
+            .plan_stream_controller
+            .as_ref()
+            .and_then(PlanStreamController::active_tail_cell);
+        self.set_stream_active_tail(cell);
+    }
+
+    fn sync_active_stream_tail(&mut self) {
+        if self.stream_controller.is_some() {
+            self.sync_agent_stream_active_tail();
+        } else {
+            self.sync_plan_stream_active_tail();
         }
     }
 
@@ -6716,6 +6777,10 @@ impl ChatWidget {
 
     /// Mark the active cell as failed (✗) and flush it into history.
     fn finalize_active_cell_as_failed(&mut self) {
+        if self.active_cell_is_stream_tail {
+            self.clear_stream_active_tail();
+            return;
+        }
         if let Some(mut cell) = self.active_cell.take() {
             // Insert finalized cell into history and keep grouping consistent.
             if let Some(exec) = cell.as_any_mut().downcast_mut::<ExecCell>() {
@@ -10291,6 +10356,7 @@ impl ChatWidget {
         if let Some(controller) = self.plan_stream_controller.as_mut() {
             controller.set_width(plan_stream_width);
         }
+        self.sync_active_stream_tail();
         if !had_rendered_width {
             self.request_redraw();
         }

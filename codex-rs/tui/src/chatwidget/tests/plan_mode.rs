@@ -830,6 +830,24 @@ async fn plan_implementation_popup_skips_replayed_turn_complete() {
 }
 
 #[tokio::test]
+async fn streamed_plan_table_uses_active_tail() {
+    let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
+    chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);
+    let plan_mask = collaboration_modes::mask_for_kind(chat.model_catalog.as_ref(), ModeKind::Plan)
+        .expect("expected plan collaboration mask");
+    chat.set_collaboration_mask(plan_mask);
+
+    chat.on_task_started();
+    chat.on_plan_delta("| Step | Owner |\n| --- | --- |\n| Test | Codex |\n".to_string());
+
+    let active = active_blob(&chat);
+    assert!(
+        active.contains("Proposed Plan") && active.contains("│ Test │ Codex │"),
+        "expected streamed plan table preview in active tail, got {active:?}"
+    );
+}
+
+#[tokio::test]
 async fn plan_implementation_popup_shows_once_when_replay_precedes_live_turn_complete() {
     let (mut chat, _rx, _op_rx) = make_chatwidget_manual(Some("gpt-5")).await;
     chat.set_feature_enabled(Feature::CollaborationModes, /*enabled*/ true);

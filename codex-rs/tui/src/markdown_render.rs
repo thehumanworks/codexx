@@ -27,7 +27,15 @@ use regex_lite::Regex;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use unicode_width::UnicodeWidthStr;
 use url::Url;
+
+mod table;
+mod table_cell;
+mod table_state;
+use table::normalize_table_boundaries;
+use table::render_table_lines;
+use table_state::TableState;
 
 struct MarkdownStyles {
     h1: Style,
@@ -108,7 +116,9 @@ pub(crate) fn render_markdown_text_with_width_and_cwd(
 ) -> Text<'static> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
-    let parser = Parser::new_ext(input, options);
+    options.insert(Options::ENABLE_TABLES);
+    let normalized_input = normalize_table_boundaries(input);
+    let parser = Parser::new_ext(normalized_input.as_ref(), options);
     let mut w = Writer::new(parser, width, cwd);
     w.run();
     w.text
@@ -172,6 +182,7 @@ where
     current_subsequent_indent: Vec<Span<'static>>,
     current_line_style: Style,
     current_line_in_code_block: bool,
+    table: Option<TableState>,
 }
 
 impl<'a, I> Writer<'a, I>
@@ -204,6 +215,7 @@ where
             current_subsequent_indent: Vec::new(),
             current_line_style: Style::default(),
             current_line_in_code_block: false,
+            table: None,
         }
     }
 
@@ -277,12 +289,11 @@ where
             Tag::Strong => self.push_inline_style(self.styles.strong),
             Tag::Strikethrough => self.push_inline_style(self.styles.strikethrough),
             Tag::Link { dest_url, .. } => self.push_link(dest_url.to_string()),
+            Tag::Table(_) => self.start_table(),
+            Tag::TableHead | Tag::TableRow => self.start_table_row(),
+            Tag::TableCell => self.start_table_cell(),
             Tag::HtmlBlock
             | Tag::FootnoteDefinition(_)
-            | Tag::Table(_)
-            | Tag::TableHead
-            | Tag::TableRow
-            | Tag::TableCell
             | Tag::Image { .. }
             | Tag::MetadataBlock(_) => {}
         }
@@ -305,13 +316,18 @@ where
                 self.pending_marker_line = false;
             }
             TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => self.pop_inline_style(),
-            TagEnd::Link => self.pop_link(),
+            TagEnd::Link => {
+                if self.table.is_some() {
+                    self.pop_table_link();
+                } else {
+                    self.pop_link();
+                }
+            }
+            TagEnd::Table => self.end_table(),
+            TagEnd::TableHead | TagEnd::TableRow => self.end_table_row(),
+            TagEnd::TableCell => self.end_table_cell(),
             TagEnd::HtmlBlock
             | TagEnd::FootnoteDefinition
-            | TagEnd::Table
-            | TagEnd::TableHead
-            | TagEnd::TableRow
-            | TagEnd::TableCell
             | TagEnd::Image
             | TagEnd::MetadataBlock(_) => {}
         }
@@ -373,7 +389,69 @@ where
         self.needs_newline = true;
     }
 
+    fn start_table(&mut self) {
+        if self.needs_newline {
+            self.push_blank_line();
+            self.needs_newline = false;
+        }
+        self.flush_current_line();
+        self.table = Some(TableState::default());
+    }
+
+    fn end_table(&mut self) {
+        let Some(table) = self.table.take() else {
+            return;
+        };
+        let prefix_width = self
+            .prefix_spans(/*pending_marker_line*/ false)
+            .iter()
+            .map(|span| span.content.width())
+            .sum();
+        let table_width = self
+            .wrap_width
+            .map(|width| width.saturating_sub(prefix_width));
+        for line in render_table_lines(&table.rows, table_width) {
+            self.push_line(line);
+            self.flush_current_line();
+        }
+        self.needs_newline = true;
+    }
+
+    fn start_table_row(&mut self) {
+        if let Some(table) = self.table.as_mut() {
+            table.start_row();
+        }
+    }
+
+    fn end_table_row(&mut self) {
+        if let Some(table) = self.table.as_mut() {
+            table.end_row();
+        }
+    }
+
+    fn start_table_cell(&mut self) {
+        if let Some(table) = self.table.as_mut() {
+            table.start_cell();
+        }
+    }
+
+    fn end_table_cell(&mut self) {
+        if let Some(table) = self.table.as_mut() {
+            table.end_cell();
+        }
+    }
+
     fn text(&mut self, text: CowStr<'a>) {
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(&text, style);
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -427,6 +505,15 @@ where
     }
 
     fn code(&mut self, code: CowStr<'a>) {
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(&code, self.styles.code);
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -440,6 +527,16 @@ where
     }
 
     fn html(&mut self, html: CowStr<'a>, inline: bool) {
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_html(&html, style);
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -460,6 +557,16 @@ where
     }
 
     fn hard_break(&mut self) {
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(" ", style);
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -468,6 +575,16 @@ where
     }
 
     fn soft_break(&mut self) {
+        if self.table.is_some() {
+            if self.suppressing_local_link_label() {
+                return;
+            }
+            let style = self.inline_styles.last().copied().unwrap_or_default();
+            if let Some(table) = self.table.as_mut() {
+                table.push_text(" ", style);
+            }
+            return;
+        }
         if self.suppressing_local_link_label() {
             return;
         }
@@ -637,6 +754,31 @@ where
                 self.push_span(Span::styled(local_target_display, style));
                 self.line_ends_with_local_link_target = true;
             }
+        }
+    }
+
+    fn pop_table_link(&mut self) {
+        let Some(link) = self.link.take() else {
+            return;
+        };
+        let Some(table) = self.table.as_mut() else {
+            return;
+        };
+
+        if link.show_destination {
+            table.push_span(" (".into());
+            table.push_span(Span::styled(link.destination, self.styles.link));
+            table.push_span(")".into());
+        } else if let Some(local_target_display) = link.local_target_display {
+            // Local file links are rendered as code-like path text so the transcript shows the
+            // resolved target instead of arbitrary caller-provided label text.
+            let style = self
+                .inline_styles
+                .last()
+                .copied()
+                .unwrap_or_default()
+                .patch(self.styles.code);
+            table.push_span(Span::styled(local_target_display, style));
         }
     }
 

@@ -95,6 +95,11 @@ impl MarkdownStreamCollector {
         Some(out)
     }
 
+    /// Return source that has arrived but has not crossed a completed-line commit boundary.
+    pub(crate) fn uncommitted_source(&self) -> &str {
+        &self.buffer[self.committed_source_len..]
+    }
+
     /// Finalize the stream and return any remaining raw source.
     ///
     /// Ensures the returned source chunk is newline-terminated when non-empty so callers can

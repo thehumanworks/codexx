@@ -28,6 +28,37 @@ fn plain_lines(text: &Text<'_>) -> Vec<String> {
 }
 
 #[test]
+fn markdown_table_renders_as_box_table() {
+    let text = render_markdown_text("| Tool | Use |\n| --- | --- |\n| rg | find |\n");
+
+    assert_eq!(
+        plain_lines(&text),
+        vec![
+            "┌──────┬──────┐",
+            "│ Tool │ Use  │",
+            "├──────┼──────┤",
+            "│ rg   │ find │",
+            "└──────┴──────┘",
+        ]
+    );
+}
+
+#[test]
+fn markdown_table_preserves_inline_code_pipe() {
+    let text = render_markdown_text("| Expr | Meaning |\n| --- | --- |\n| `a\\|b` | literal pipe |\n");
+    let rendered = plain_lines(&text).join("\n");
+
+    assert!(
+        rendered.contains("a|b"),
+        "inline code pipe should remain inside one cell: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("literal pipe"),
+        "expected the second cell to survive table rendering: {rendered:?}"
+    );
+}
+
+#[test]
 fn empty() {
     assert_eq!(render_markdown_text(""), Text::default());
 }
