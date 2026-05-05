@@ -46,6 +46,9 @@ pub async fn run_command_under_seatbelt(
         permissions_profile,
         cwd,
         include_managed_config,
+        allow_mach_services,
+        allow_appleevent_bundle_ids,
+        allow_lsopen,
         allow_unix_sockets,
         log_denials,
         config_overrides,
@@ -55,8 +58,8 @@ pub async fn run_command_under_seatbelt(
         &permissions_profile,
         include_managed_config,
     );
-    run_command_under_sandbox(
-        DebugSandboxConfigOptions {
+    run_command_under_sandbox(RunCommandUnderSandboxParams {
+        config_options: DebugSandboxConfigOptions {
             permissions_profile,
             cwd,
             managed_requirements_mode,
@@ -64,10 +67,13 @@ pub async fn run_command_under_seatbelt(
         command,
         config_overrides,
         codex_linux_sandbox_exe,
-        SandboxType::Seatbelt,
+        sandbox_type: SandboxType::Seatbelt,
         log_denials,
-        &allow_unix_sockets,
-    )
+        allow_mach_services: &allow_mach_services,
+        allow_appleevent_bundle_ids: &allow_appleevent_bundle_ids,
+        allow_lsopen,
+        allow_unix_sockets: &allow_unix_sockets,
+    })
     .await
 }
 
@@ -94,8 +100,8 @@ pub async fn run_command_under_landlock(
         &permissions_profile,
         include_managed_config,
     );
-    run_command_under_sandbox(
-        DebugSandboxConfigOptions {
+    run_command_under_sandbox(RunCommandUnderSandboxParams {
+        config_options: DebugSandboxConfigOptions {
             permissions_profile,
             cwd,
             managed_requirements_mode,
@@ -103,10 +109,13 @@ pub async fn run_command_under_landlock(
         command,
         config_overrides,
         codex_linux_sandbox_exe,
-        SandboxType::Landlock,
-        /*log_denials*/ false,
-        &[],
-    )
+        sandbox_type: SandboxType::Landlock,
+        log_denials: false,
+        allow_mach_services: &[],
+        allow_appleevent_bundle_ids: &[],
+        allow_lsopen: false,
+        allow_unix_sockets: &[],
+    })
     .await
 }
 
@@ -125,8 +134,8 @@ pub async fn run_command_under_windows(
         &permissions_profile,
         include_managed_config,
     );
-    run_command_under_sandbox(
-        DebugSandboxConfigOptions {
+    run_command_under_sandbox(RunCommandUnderSandboxParams {
+        config_options: DebugSandboxConfigOptions {
             permissions_profile,
             cwd,
             managed_requirements_mode,
@@ -134,10 +143,13 @@ pub async fn run_command_under_windows(
         command,
         config_overrides,
         codex_linux_sandbox_exe,
-        SandboxType::Windows,
-        /*log_denials*/ false,
-        &[],
-    )
+        sandbox_type: SandboxType::Windows,
+        log_denials: false,
+        allow_mach_services: &[],
+        allow_appleevent_bundle_ids: &[],
+        allow_lsopen: false,
+        allow_unix_sockets: &[],
+    })
     .await
 }
 
@@ -174,16 +186,43 @@ impl ManagedRequirementsMode {
     }
 }
 
-async fn run_command_under_sandbox(
+struct RunCommandUnderSandboxParams<'a> {
     config_options: DebugSandboxConfigOptions,
     command: Vec<String>,
     config_overrides: CliConfigOverrides,
     codex_linux_sandbox_exe: Option<PathBuf>,
     sandbox_type: SandboxType,
     log_denials: bool,
-    #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
-    allow_unix_sockets: &[AbsolutePathBuf],
-) -> anyhow::Result<()> {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    allow_mach_services: &'a [String],
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    allow_appleevent_bundle_ids: &'a [String],
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    allow_lsopen: bool,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    allow_unix_sockets: &'a [AbsolutePathBuf],
+}
+
+async fn run_command_under_sandbox(params: RunCommandUnderSandboxParams<'_>) -> anyhow::Result<()> {
+    let RunCommandUnderSandboxParams {
+        config_options,
+        command,
+        config_overrides,
+        codex_linux_sandbox_exe,
+        sandbox_type,
+        log_denials,
+        allow_mach_services,
+        allow_appleevent_bundle_ids,
+        allow_lsopen,
+        allow_unix_sockets,
+    } = params;
+    #[cfg(not(target_os = "macos"))]
+    let _ = (
+        allow_mach_services,
+        allow_appleevent_bundle_ids,
+        allow_lsopen,
+        allow_unix_sockets,
+    );
     let config = load_debug_sandbox_config(
         config_overrides
             .parse_overrides()
@@ -256,6 +295,9 @@ async fn run_command_under_sandbox(
                 sandbox_policy_cwd: sandbox_policy_cwd.as_path(),
                 enforce_managed_network: false,
                 network: network.as_ref(),
+                extra_mach_services: allow_mach_services,
+                extra_appleevent_bundle_ids: allow_appleevent_bundle_ids,
+                allow_lsopen,
                 extra_allow_unix_sockets: allow_unix_sockets,
             });
             spawn_debug_sandbox_child(

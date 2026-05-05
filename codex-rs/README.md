@@ -59,7 +59,7 @@ To test to see what happens when a command is run under the sandbox provided by 
 
 ```
 # macOS
-codex sandbox macos [--log-denials] [COMMAND]...
+codex sandbox macos [--log-denials] [--allow-mach-service SERVICE]... [--allow-appleevent-destination BUNDLE_ID]... [--allow-lsopen] [COMMAND]...
 
 # Linux
 codex sandbox linux [COMMAND]...
@@ -68,12 +68,18 @@ codex sandbox linux [COMMAND]...
 codex sandbox windows [COMMAND]...
 
 # Legacy aliases
-codex debug seatbelt [--log-denials] [COMMAND]...
+codex debug seatbelt [--log-denials] [--allow-mach-service SERVICE]... [--allow-appleevent-destination BUNDLE_ID]... [--allow-lsopen] [COMMAND]...
 codex debug landlock [COMMAND]...
 ```
 
 To try a writable legacy sandbox mode with these commands, pass an explicit config override such
 as `-c 'sandbox_mode="workspace-write"'`.
+
+On macOS, `codex sandbox macos` also supports targeted sandbox exceptions for local debugging:
+
+- `--allow-mach-service SERVICE` adds `mach-lookup` permission for a specific global service name.
+- `--allow-appleevent-destination BUNDLE_ID` allows AppleEvent delivery to that destination bundle ID and includes the standard AppleEvents daemon lookup used by system profiles.
+- `--allow-lsopen` allows LaunchServices open APIs.
 
 ### Selecting a sandbox policy via `--sandbox`
 
