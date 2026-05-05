@@ -3556,11 +3556,9 @@ fn paginate_thread_items(
         .as_ref()
         .and_then(|anchor| items.iter().position(|item| item.id() == anchor.item_id));
     if anchor.is_some() && anchor_index.is_none() {
-        return Err(JSONRPCErrorError {
-            code: INVALID_REQUEST_ERROR_CODE,
-            message: "invalid cursor: anchor item is no longer present".to_string(),
-            data: None,
-        });
+        return Err(invalid_request(
+            "invalid cursor: anchor item is no longer present",
+        ));
     }
 
     let mut keyed_items: Vec<_> = items.into_iter().enumerate().collect();
@@ -3623,19 +3621,50 @@ fn serialize_thread_items_cursor(
         item_id: item_id.to_string(),
         include_anchor,
     })
-    .map_err(|err| JSONRPCErrorError {
-        code: INTERNAL_ERROR_CODE,
-        message: format!("failed to serialize cursor: {err}"),
-        data: None,
-    })
+    .map_err(|err| internal_error(format!("failed to serialize cursor: {err}")))
 }
 
 fn parse_thread_items_cursor(cursor: &str) -> Result<ThreadItemsCursor, JSONRPCErrorError> {
-    serde_json::from_str(cursor).map_err(|_| JSONRPCErrorError {
-        code: INVALID_REQUEST_ERROR_CODE,
-        message: format!("invalid cursor: {cursor}"),
-        data: None,
-    })
+    serde_json::from_str(cursor).map_err(|_| invalid_request(format!("invalid cursor: {cursor}")))
+}
+
+pub(super) fn apply_large_content_mode_to_thread(thread: &mut Thread, mode: LargeContentMode) {
+    apply_large_content_mode_to_turns(&mut thread.turns, mode);
+}
+
+fn apply_large_content_mode_to_turns(turns: &mut [Turn], mode: LargeContentMode) {
+    for turn in turns {
+        apply_large_content_mode_to_items(&mut turn.items, mode);
+    }
+}
+
+fn apply_large_content_mode_to_items(items: &mut [ThreadItem], mode: LargeContentMode) {
+    if matches!(mode, LargeContentMode::Inline) {
+        return;
+    }
+
+    for item in items {
+        if let ThreadItem::ImageGeneration {
+            content, result, ..
+        } = item
+            && let ImageGenerationContent::Inline {
+                mime_type,
+                byte_length,
+                width,
+                height,
+                ..
+            } = content
+        {
+            *content = ImageGenerationContent::Deferred {
+                content_id: IMAGE_GENERATION_RESULT_CONTENT_ID.to_string(),
+                mime_type: mime_type.clone(),
+                byte_length: *byte_length,
+                width: *width,
+                height: *height,
+            };
+            result.clear();
+        }
+    }
 }
 
 pub(super) fn apply_large_content_mode_to_thread(thread: &mut Thread, mode: LargeContentMode) {
