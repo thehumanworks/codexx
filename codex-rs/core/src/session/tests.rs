@@ -66,9 +66,10 @@ use crate::tasks::execute_user_shell_command;
 use crate::tools::ToolRouter;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use crate::tools::handlers::GoalHandler;
+use crate::tools::handlers::CreateGoalHandler;
+use crate::tools::handlers::ExecCommandHandler;
 use crate::tools::handlers::ShellHandler;
-use crate::tools::handlers::UnifiedExecHandler;
+use crate::tools::handlers::UpdateGoalHandler;
 use crate::tools::registry::ToolHandler;
 use crate::tools::router::ToolCallSource;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -8269,7 +8270,7 @@ async fn sample_rollout(
 async fn create_goal_tool_rejects_existing_goal() {
     let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = GoalHandler;
+    let handler = CreateGoalHandler;
 
     handler
         .handle(ToolInvocation {
@@ -8331,9 +8332,10 @@ async fn create_goal_tool_rejects_existing_goal() {
 async fn update_goal_tool_rejects_pausing_goal() {
     let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = GoalHandler;
+    let create_handler = CreateGoalHandler;
+    let update_handler = UpdateGoalHandler;
 
-    handler
+    create_handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
@@ -8353,7 +8355,7 @@ async fn update_goal_tool_rejects_pausing_goal() {
         .await
         .expect("initial create_goal should succeed");
 
-    let response = handler
+    let response = update_handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
@@ -8391,9 +8393,10 @@ async fn update_goal_tool_rejects_pausing_goal() {
 async fn update_goal_tool_marks_goal_complete() {
     let (session, turn_context, _rx, _codex_home) = make_goal_session_and_context_with_rx().await;
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
-    let handler = GoalHandler;
+    let create_handler = CreateGoalHandler;
+    let update_handler = UpdateGoalHandler;
 
-    handler
+    create_handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
@@ -8413,7 +8416,7 @@ async fn update_goal_tool_marks_goal_complete() {
         .await
         .expect("initial create_goal should succeed");
 
-    handler
+    update_handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
             turn: Arc::clone(&turn_context),
@@ -8570,7 +8573,7 @@ async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request()
     let turn_context = Arc::new(turn_context_raw);
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
 
-    let handler = UnifiedExecHandler;
+    let handler = ExecCommandHandler;
     let resp = handler
         .handle(ToolInvocation {
             session: Arc::clone(&session),
