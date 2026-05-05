@@ -728,6 +728,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -756,6 +757,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -1107,6 +1109,7 @@ impl ThreadRequestProcessor {
         model_provider: Option<String>,
         service_tier: Option<Option<codex_protocol::config_types::ServiceTier>>,
         cwd: Option<String>,
+        project_roots: Option<Vec<AbsolutePathBuf>>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
         sandbox: Option<SandboxMode>,
@@ -1115,16 +1118,25 @@ impl ThreadRequestProcessor {
         developer_instructions: Option<String>,
         personality: Option<Personality>,
     ) -> ConfigOverrides {
+        let cwd = cwd.map(PathBuf::from);
+        let cwd_for_filter = cwd.as_deref();
+        let additional_writable_roots = project_roots
+            .unwrap_or_default()
+            .into_iter()
+            .map(AbsolutePathBuf::into_path_buf)
+            .filter(|root| Some(root.as_path()) != cwd_for_filter)
+            .collect();
         let mut overrides = ConfigOverrides {
             model,
             model_provider,
             service_tier,
-            cwd: cwd.map(PathBuf::from),
+            cwd,
             approval_policy: approval_policy
                 .map(codex_app_server_protocol::AskForApproval::to_core),
             approvals_reviewer: approvals_reviewer
                 .map(codex_app_server_protocol::ApprovalsReviewer::to_core),
             sandbox_mode: sandbox.map(SandboxMode::to_core),
+            additional_writable_roots,
             codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
             main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
             base_instructions,
@@ -2227,6 +2239,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -2262,6 +2275,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            project_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -2879,6 +2893,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            /*project_roots*/ None,
             approval_policy,
             approvals_reviewer,
             sandbox,

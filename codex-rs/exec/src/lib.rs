@@ -207,6 +207,7 @@ struct ExecRunArgs {
     oss: bool,
     output_schema_path: Option<PathBuf>,
     prompt: Option<String>,
+    project_roots: Option<Vec<AbsolutePathBuf>>,
     skip_git_repo_check: bool,
     stderr_with_ansi: bool,
 }
@@ -304,6 +305,14 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         }
         None => AbsolutePathBuf::current_dir()?,
     };
+    let project_roots =
+        (!add_dir.is_empty()).then(|| {
+            std::iter::once(config_cwd.clone())
+                .chain(add_dir.iter().cloned().map(|path| {
+                    AbsolutePathBuf::resolve_path_against_base(path, config_cwd.as_path())
+                }))
+                .collect()
+        });
 
     // we load config.toml here to determine project state.
     #[allow(clippy::print_stderr)]
@@ -541,6 +550,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         oss,
         output_schema_path,
         prompt,
+        project_roots,
         skip_git_repo_check,
         stderr_with_ansi,
     })
@@ -563,9 +573,11 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         oss,
         output_schema_path,
         prompt,
+        project_roots,
         skip_git_repo_check,
         stderr_with_ansi,
     } = args;
+    let project_roots = project_roots.as_deref();
 
     let mut event_processor: Box<dyn EventProcessor> = match json_mode {
         true => Box::new(EventProcessorWithJsonOutput::new(last_message_file.clone())),
@@ -685,7 +697,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 &client,
                 ClientRequest::ThreadResume {
                     request_id: request_ids.next(),
-                    params: thread_resume_params_from_config(&config, thread_id),
+                    params: thread_resume_params_from_config(&config, thread_id, project_roots),
                 },
                 "thread/resume",
             )
@@ -700,7 +712,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                 &client,
                 ClientRequest::ThreadStart {
                     request_id: request_ids.next(),
-                    params: thread_start_params_from_config(&config),
+                    params: thread_start_params_from_config(&config, project_roots),
                 },
                 "thread/start",
             )
@@ -716,7 +728,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             &client,
             ClientRequest::ThreadStart {
                 request_id: request_ids.next(),
-                params: thread_start_params_from_config(&config),
+                params: thread_start_params_from_config(&config, project_roots),
             },
             "thread/start",
         )
@@ -929,7 +941,10 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
+fn thread_start_params_from_config(
+    config: &Config,
+    project_roots: Option<&[AbsolutePathBuf]>,
+) -> ThreadStartParams {
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
@@ -945,13 +960,18 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
         permissions,
+        project_roots: project_roots.map(|roots| roots.to_vec()),
         config: config_request_overrides_from_config(config),
         ephemeral: Some(config.ephemeral),
         ..ThreadStartParams::default()
     }
 }
 
-fn thread_resume_params_from_config(config: &Config, thread_id: String) -> ThreadResumeParams {
+fn thread_resume_params_from_config(
+    config: &Config,
+    thread_id: String,
+    project_roots: Option<&[AbsolutePathBuf]>,
+) -> ThreadResumeParams {
     let permissions = permissions_selection_from_config(config);
     let sandbox = permissions.is_none().then(|| {
         sandbox_mode_from_permission_profile(
@@ -968,6 +988,7 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
         permissions,
+        project_roots: project_roots.map(|roots| roots.to_vec()),
         config: config_request_overrides_from_config(config),
         ..ThreadResumeParams::default()
     }

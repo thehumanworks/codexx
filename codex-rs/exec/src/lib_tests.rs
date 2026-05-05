@@ -355,7 +355,7 @@ async fn thread_start_params_include_review_policy_when_review_policy_is_manual_
         .await
         .expect("build config with manual-only review policy");
 
-    let params = thread_start_params_from_config(&config);
+    let params = thread_start_params_from_config(&config, None);
 
     assert_eq!(
         params.approvals_reviewer,
@@ -383,7 +383,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
         .await
         .expect("build config with guardian review policy");
 
-    let params = thread_start_params_from_config(&config);
+    let params = thread_start_params_from_config(&config, None);
 
     assert_eq!(
         params.approvals_reviewer,
@@ -395,31 +395,36 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
 async fn thread_lifecycle_params_include_legacy_sandbox_when_no_active_profile() {
     let codex_home = tempdir().expect("create temp codex home");
     let cwd = tempdir().expect("create temp cwd");
+    let extra = AbsolutePathBuf::try_from(cwd.path().join("extra")).expect("absolute path");
     let config = ConfigBuilder::default()
         .codex_home(codex_home.path().to_path_buf())
         .harness_overrides(ConfigOverrides {
-            sandbox_mode: Some(SandboxMode::DangerFullAccess),
+            sandbox_mode: Some(SandboxMode::WorkspaceWrite),
             ..Default::default()
         })
         .fallback_cwd(Some(cwd.path().to_path_buf()))
         .build()
         .await
         .expect("build config with legacy sandbox override");
+    let project_roots = vec![config.cwd.clone(), extra];
 
-    let start_params = thread_start_params_from_config(&config);
-    let resume_params = thread_resume_params_from_config(&config, "thread-id".to_string());
+    let start_params = thread_start_params_from_config(&config, Some(&project_roots));
+    let resume_params =
+        thread_resume_params_from_config(&config, "thread-id".to_string(), Some(&project_roots));
 
     assert_eq!(config.permissions.active_permission_profile(), None);
     assert_eq!(
         start_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
+        Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
     );
     assert_eq!(start_params.permissions, None);
+    assert_eq!(start_params.project_roots, Some(project_roots.clone()));
     assert_eq!(
         resume_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
+        Some(codex_app_server_protocol::SandboxMode::WorkspaceWrite)
     );
     assert_eq!(resume_params.permissions, None);
+    assert_eq!(resume_params.project_roots, Some(project_roots));
 }
 
 #[tokio::test]
