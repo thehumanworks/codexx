@@ -26,6 +26,7 @@ use crate::request_processors::InitializeRequestProcessor;
 use crate::request_processors::MarketplaceRequestProcessor;
 use crate::request_processors::McpRequestProcessor;
 use crate::request_processors::PluginRequestProcessor;
+use crate::request_processors::ProcessExecRequestProcessor;
 use crate::request_processors::SearchRequestProcessor;
 use crate::request_processors::ThreadGoalRequestProcessor;
 use crate::request_processors::ThreadRequestProcessor;
@@ -157,6 +158,7 @@ pub(crate) struct MessageProcessor {
     apps_processor: AppsRequestProcessor,
     catalog_processor: CatalogRequestProcessor,
     command_exec_processor: CommandExecRequestProcessor,
+    process_exec_processor: ProcessExecRequestProcessor,
     config_processor: ConfigRequestProcessor,
     device_key_processor: DeviceKeyRequestProcessor,
     external_agent_config_processor: ExternalAgentConfigRequestProcessor,
@@ -335,6 +337,7 @@ impl MessageProcessor {
             Arc::clone(&config),
             outgoing.clone(),
         );
+        let process_exec_processor = ProcessExecRequestProcessor::new(outgoing.clone());
         let feedback_processor = FeedbackRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_manager),
@@ -406,7 +409,6 @@ impl MessageProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
-            state_db.clone(),
         );
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.
@@ -457,6 +459,7 @@ impl MessageProcessor {
             apps_processor,
             catalog_processor,
             command_exec_processor,
+            process_exec_processor,
             config_processor,
             device_key_processor,
             external_agent_config_processor,
@@ -675,6 +678,9 @@ impl MessageProcessor {
         self.command_exec_processor
             .connection_closed(connection_id)
             .await;
+        self.process_exec_processor
+            .connection_closed(connection_id)
+            .await;
         self.thread_processor.connection_closed(connection_id).await;
     }
 
@@ -823,6 +829,11 @@ impl MessageProcessor {
             ClientRequest::ConfigRead { params, .. } => self
                 .config_processor
                 .read(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::WindowsSandboxReadiness { .. } => self
+                .windows_sandbox_processor
+                .windows_sandbox_readiness()
                 .await
                 .map(|response| Some(response.into())),
             ClientRequest::ExternalAgentConfigDetect { params, .. } => self
@@ -1238,6 +1249,26 @@ impl MessageProcessor {
             ClientRequest::CommandExecTerminate { params, .. } => {
                 self.command_exec_processor
                     .command_exec_terminate(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::ProcessSpawn { params, .. } => self
+                .process_exec_processor
+                .process_spawn(request_id.clone(), params)
+                .await
+                .map(|()| None),
+            ClientRequest::ProcessWriteStdin { params, .. } => {
+                self.process_exec_processor
+                    .process_write_stdin(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::ProcessKill { params, .. } => {
+                self.process_exec_processor
+                    .process_kill(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::ProcessResizePty { params, .. } => {
+                self.process_exec_processor
+                    .process_resize_pty(request_id.clone(), params)
                     .await
             }
             ClientRequest::FeedbackUpload { params, .. } => {
