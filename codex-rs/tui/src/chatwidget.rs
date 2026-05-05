@@ -5969,6 +5969,7 @@ impl ChatWidget {
         for turn in turns {
             let Turn {
                 id: turn_id,
+                items_view: _,
                 items,
                 status,
                 error,
@@ -5992,6 +5993,7 @@ impl ChatWidget {
                         thread_id: self.thread_id.map(|id| id.to_string()).unwrap_or_default(),
                         turn: Turn {
                             id: turn_id,
+                            items_view: codex_app_server_protocol::TurnItemsView::NotLoaded,
                             items: Vec::new(),
                             status,
                             error,
