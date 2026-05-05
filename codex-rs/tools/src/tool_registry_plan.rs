@@ -1,3 +1,4 @@
+use crate::ApplyPatchToolOptions;
 use crate::CommandToolOptions;
 use crate::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
 use crate::REQUEST_USER_INPUT_TOOL_NAME;
@@ -75,6 +76,7 @@ pub fn build_tool_registry_plan(
 ) -> ToolRegistryPlan {
     let mut plan = ToolRegistryPlan::new();
     let exec_permission_approvals_enabled = config.exec_permission_approvals_enabled;
+    let include_environment_id = matches!(config.environment_mode, ToolEnvironmentMode::Multiple);
 
     if config.code_mode_enabled {
         let namespace_descriptions = params
@@ -337,17 +339,20 @@ pub fn build_tool_registry_plan(
     if config.environment_mode.has_environment()
         && let Some(apply_patch_tool_type) = &config.apply_patch_tool_type
     {
+        let apply_patch_options = ApplyPatchToolOptions {
+            include_environment_id,
+        };
         match apply_patch_tool_type {
             ApplyPatchToolType::Freeform => {
                 plan.push_spec(
-                    create_apply_patch_freeform_tool(),
+                    create_apply_patch_freeform_tool(apply_patch_options),
                     /*supports_parallel_tool_calls*/ false,
                     config.code_mode_enabled,
                 );
             }
             ApplyPatchToolType::Function => {
                 plan.push_spec(
-                    create_apply_patch_json_tool(),
+                    create_apply_patch_json_tool(apply_patch_options),
                     /*supports_parallel_tool_calls*/ false,
                     config.code_mode_enabled,
                 );

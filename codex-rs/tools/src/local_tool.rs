@@ -1,6 +1,7 @@
 use crate::JsonSchema;
 use crate::ResponsesApiTool;
 use crate::ToolSpec;
+use crate::tool_spec::environment_id_schema;
 use serde_json::Value;
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -73,9 +74,9 @@ pub(crate) fn create_exec_command_tool_with_environment_id(
     if include_environment_id {
         properties.insert(
             "environment_id".to_string(),
-            JsonSchema::string(Some(
-                "Optional environment id from the <environment_context> block. If omitted, uses the primary environment.".to_string(),
-            )),
+            environment_id_schema(
+                "Optional environment id from the <environment_context> block. If omitted, uses the primary environment.",
+            ),
         );
     }
     properties.extend(create_approval_parameters(

@@ -80,6 +80,10 @@ impl From<LoadableToolSpec> for ToolSpec {
     }
 }
 
+pub(crate) fn environment_id_schema(description: &str) -> JsonSchema {
+    JsonSchema::string(Some(description.to_string()))
+}
+
 pub fn create_local_shell_tool() -> ToolSpec {
     ToolSpec::LocalShell {}
 }
