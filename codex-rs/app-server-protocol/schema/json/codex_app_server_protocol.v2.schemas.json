@@ -7029,6 +7029,13 @@
       "title": "ItemStartedNotification",
       "type": "object"
     },
+    "LargeContentMode": {
+      "enum": [
+        "inline",
+        "deferred"
+      ],
+      "type": "string"
+    },
     "ListMcpServerStatusParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
