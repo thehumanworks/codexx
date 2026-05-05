@@ -193,7 +193,7 @@ fn run_setup_refresh_inner(
     let json = serde_json::to_vec(&payload)?;
     let b64 = BASE64_STANDARD.encode(json);
     let exe = find_setup_exe();
-    let cwd = std::env::current_dir().unwrap_or_else(|_| request.codex_home.to_path_buf());
+    let cwd = setup_refresh_spawn_cwd(request.codex_home, &exe);
     log_note(
         &format!(
             "setup refresh: spawning {} (cwd={}, payload_len={})",
@@ -203,15 +203,21 @@ fn run_setup_refresh_inner(
         ),
         Some(&sandbox_dir(request.codex_home)),
     );
-    run_setup_refresh_helper(&exe, &b64, Some(&sandbox_dir(request.codex_home)))
+    run_setup_refresh_helper(&exe, &b64, &cwd, Some(&sandbox_dir(request.codex_home)))
 }
 
-fn run_setup_refresh_helper(exe: &Path, payload_b64: &str, log_dir: Option<&Path>) -> Result<()> {
+fn run_setup_refresh_helper(
+    exe: &Path,
+    payload_b64: &str,
+    spawn_cwd: &Path,
+    log_dir: Option<&Path>,
+) -> Result<()> {
     let mut last_spawn_error: Option<std::io::Error> = None;
 
     for attempt in 1..=SETUP_REFRESH_MAX_SPAWN_ATTEMPTS {
         let mut cmd = Command::new(exe);
         cmd.arg(payload_b64)
+            .current_dir(spawn_cwd)
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -246,6 +252,20 @@ fn run_setup_refresh_helper(exe: &Path, payload_b64: &str, log_dir: Option<&Path
 
     let err = last_spawn_error.expect("spawn error must be recorded before retries are exhausted");
     Err(anyhow!("spawn setup refresh: {err}"))
+}
+
+fn setup_refresh_spawn_cwd(preferred_dir: &Path, exe: &Path) -> PathBuf {
+    if preferred_dir.is_dir() {
+        return preferred_dir.to_path_buf();
+    }
+
+    if let Some(parent) = exe.parent()
+        && parent.is_dir()
+    {
+        return parent.to_path_buf();
+    }
+
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(r"C:\"))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1477,6 +1497,32 @@ mod tests {
             canonical_windows_platform_default_roots()
                 .into_iter()
                 .all(|path| roots.contains(&path))
+        );
+    }
+
+    #[test]
+    fn setup_refresh_spawn_cwd_prefers_existing_codex_home() {
+        let tmp = TempDir::new().expect("tempdir");
+        let codex_home = tmp.path().join("codex-home");
+        let exe_dir = tmp.path().join("exe-dir");
+        let exe = exe_dir.join("codex-windows-sandbox-setup.exe");
+        fs::create_dir_all(&codex_home).expect("create codex home");
+        fs::create_dir_all(&exe_dir).expect("create exe dir");
+
+        assert_eq!(super::setup_refresh_spawn_cwd(&codex_home, &exe), codex_home);
+    }
+
+    #[test]
+    fn setup_refresh_spawn_cwd_falls_back_to_exe_parent() {
+        let tmp = TempDir::new().expect("tempdir");
+        let missing_codex_home = tmp.path().join("missing-codex-home");
+        let exe_dir = tmp.path().join("exe-dir");
+        let exe = exe_dir.join("codex-windows-sandbox-setup.exe");
+        fs::create_dir_all(&exe_dir).expect("create exe dir");
+
+        assert_eq!(
+            super::setup_refresh_spawn_cwd(&missing_codex_home, &exe),
+            exe_dir
         );
     }
 }
