@@ -419,8 +419,12 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
     test.submit_turn("hello")
         .await
         .expect("submit first turn prompt");
-    let initial_header = first_request
-        .single_request()
+    let initial_request = first_request.single_request();
+    let initial_request_body = initial_request.body_json();
+    let initial_model = initial_request_body["model"]
+        .as_str()
+        .expect("initial request should include model");
+    let initial_header = initial_request
         .header("x-codex-turn-metadata")
         .expect("x-codex-turn-metadata header should be present");
     let initial_parsed: serde_json::Value =
@@ -441,6 +445,12 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
     assert!(
         initial_turn_started_at_unix_ms > 0,
         "turn_started_at_unix_ms should be positive"
+    );
+    assert_eq!(
+        initial_parsed
+            .get("model")
+            .and_then(serde_json::Value::as_str),
+        Some(initial_model)
     );
     assert_eq!(
         initial_parsed
@@ -560,6 +570,26 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
     assert_eq!(
         first_turn_started_at_unix_ms, second_turn_started_at_unix_ms,
         "requests in the same turn should share turn_started_at_unix_ms"
+    );
+    let first_request_model = requests[0].body_json()["model"]
+        .as_str()
+        .expect("first request should include model")
+        .to_string();
+    let second_request_model = requests[1].body_json()["model"]
+        .as_str()
+        .expect("second request should include model")
+        .to_string();
+    assert_eq!(
+        first_parsed
+            .get("model")
+            .and_then(serde_json::Value::as_str),
+        Some(first_request_model.as_str())
+    );
+    assert_eq!(
+        second_parsed
+            .get("model")
+            .and_then(serde_json::Value::as_str),
+        Some(second_request_model.as_str())
     );
     assert_eq!(
         first_parsed

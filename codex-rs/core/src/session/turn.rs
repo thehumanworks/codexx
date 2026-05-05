@@ -443,7 +443,9 @@ pub(crate) async fn run_turn(
             })
             .map(|user_message| user_message.message())
             .collect::<Vec<String>>();
-        let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
+        let turn_metadata_header = turn_context
+            .turn_metadata_state
+            .current_header_value_for_model(turn_context.model_info.slug.as_str());
         match run_sampling_request(
             Arc::clone(&sess),
             Arc::clone(&turn_context),

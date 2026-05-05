@@ -911,7 +911,7 @@ async fn mcp_tool_call_request_meta_includes_turn_metadata_for_custom_server() {
     let expected_turn_metadata = serde_json::from_str::<serde_json::Value>(
         &turn_context
             .turn_metadata_state
-            .current_header_value()
+            .current_header_value_for_model(turn_context.model_info.slug.as_str())
             .expect("turn metadata header"),
     )
     .expect("turn metadata json");
@@ -952,6 +952,12 @@ async fn mcp_tool_call_request_meta_includes_turn_started_at_unix_ms() {
 
     assert_eq!(
         turn_metadata
+            .get("model")
+            .and_then(serde_json::Value::as_str),
+        Some(turn_context.model_info.slug.as_str())
+    );
+    assert_eq!(
+        turn_metadata
             .get("turn_started_at_unix_ms")
             .and_then(serde_json::Value::as_i64),
         Some(1_700_000_000_123)
@@ -964,7 +970,7 @@ async fn codex_apps_tool_call_request_meta_includes_turn_metadata_and_codex_apps
     let expected_turn_metadata = serde_json::from_str::<serde_json::Value>(
         &turn_context
             .turn_metadata_state
-            .current_header_value()
+            .current_header_value_for_model(turn_context.model_info.slug.as_str())
             .expect("turn metadata header"),
     )
     .expect("turn metadata json");
@@ -1014,7 +1020,7 @@ async fn codex_apps_tool_call_request_meta_includes_call_id_without_existing_cod
     let expected_turn_metadata = serde_json::from_str::<serde_json::Value>(
         &turn_context
             .turn_metadata_state
-            .current_header_value()
+            .current_header_value_for_model(turn_context.model_info.slug.as_str())
             .expect("turn metadata header"),
     )
     .expect("turn metadata json");

@@ -895,7 +895,11 @@ fn build_mcp_tool_call_request_meta(
 ) -> Option<serde_json::Value> {
     let mut request_meta = serde_json::Map::new();
 
-    if let Some(turn_metadata) = turn_context.turn_metadata_state.current_meta_value() {
+    if let Some(turn_metadata) = turn_context
+        .turn_metadata_state
+        .current_header_value_for_model(turn_context.model_info.slug.as_str())
+        .and_then(|header| serde_json::from_str(&header).ok())
+    {
         request_meta.insert(
             crate::X_CODEX_TURN_METADATA_HEADER.to_string(),
             turn_metadata,

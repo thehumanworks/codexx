@@ -184,7 +184,9 @@ async fn run_compact_task_inner_impl(
             personality: turn_context.personality,
             ..Default::default()
         };
-        let turn_metadata_header = turn_context.turn_metadata_state.current_header_value();
+        let turn_metadata_header = turn_context
+            .turn_metadata_state
+            .current_header_value_for_model(turn_context.model_info.slug.as_str());
         let attempt_result = drain_to_completed(
             &sess,
             turn_context.as_ref(),

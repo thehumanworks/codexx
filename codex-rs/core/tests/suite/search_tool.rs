@@ -597,6 +597,10 @@ async fn tool_search_returns_deferred_tools_without_follow_up_tool_injection() -
         apps_tool_call.pointer("/params/_meta/x-codex-turn-metadata/session_id"),
         Some(&json!(test.session_configured.session_id.to_string()))
     );
+    assert_eq!(
+        apps_tool_call.pointer("/params/_meta/x-codex-turn-metadata/model"),
+        Some(&json!("gpt-5.4"))
+    );
     assert!(
         apps_tool_call
             .pointer("/params/_meta/x-codex-turn-metadata/turn_id")
@@ -619,6 +623,14 @@ async fn tool_search_returns_deferred_tools_without_follow_up_tool_injection() -
             .expect("first response request should include turn metadata"),
     )
     .expect("first response request turn metadata should be valid JSON");
+    assert_eq!(
+        first_request_turn_metadata
+            .get("model")
+            .and_then(Value::as_str),
+        apps_tool_call
+            .pointer("/params/_meta/x-codex-turn-metadata/model")
+            .and_then(Value::as_str)
+    );
     assert_eq!(
         first_request_turn_metadata
             .get("turn_started_at_unix_ms")

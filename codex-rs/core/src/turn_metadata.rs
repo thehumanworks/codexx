@@ -20,6 +20,14 @@ use codex_protocol::protocol::SessionSource;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
 const TURN_STARTED_AT_UNIX_MS_KEY: &str = "turn_started_at_unix_ms";
+const MODEL_KEY: &str = "model";
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TurnMetadataOverlay<'a> {
+    model: Option<&'a str>,
+    turn_started_at_unix_ms: Option<i64>,
+    responsesapi_client_metadata: Option<&'a HashMap<String, String>>,
+}
 
 #[derive(Clone, Debug, Default)]
 struct WorkspaceGitMetadata {
@@ -76,25 +84,27 @@ impl TurnMetadataBag {
     }
 }
 
-fn merge_turn_metadata(
-    header: &str,
-    turn_started_at_unix_ms: Option<i64>,
-    responsesapi_client_metadata: Option<&HashMap<String, String>>,
-) -> Option<String> {
-    if turn_started_at_unix_ms.is_none() && responsesapi_client_metadata.is_none() {
+fn merge_turn_metadata(header: &str, overlay: TurnMetadataOverlay<'_>) -> Option<String> {
+    if overlay.model.is_none()
+        && overlay.turn_started_at_unix_ms.is_none()
+        && overlay.responsesapi_client_metadata.is_none()
+    {
         return None;
     }
 
     let mut metadata = serde_json::from_str::<serde_json::Map<String, Value>>(header).ok()?;
-    if let Some(turn_started_at_unix_ms) = turn_started_at_unix_ms {
+    if let Some(model) = overlay.model {
+        metadata.insert(MODEL_KEY.to_string(), Value::String(model.to_string()));
+    }
+    if let Some(turn_started_at_unix_ms) = overlay.turn_started_at_unix_ms {
         metadata.insert(
             TURN_STARTED_AT_UNIX_MS_KEY.to_string(),
             Value::Number(turn_started_at_unix_ms.into()),
         );
     }
-    if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
+    if let Some(responsesapi_client_metadata) = overlay.responsesapi_client_metadata {
         for (key, value) in responsesapi_client_metadata {
-            if key == TURN_STARTED_AT_UNIX_MS_KEY {
+            if matches!(key.as_str(), MODEL_KEY | TURN_STARTED_AT_UNIX_MS_KEY) {
                 continue;
             }
             metadata
@@ -219,7 +229,11 @@ impl TurnMetadataState {
         }
     }
 
-    pub(crate) fn current_header_value(&self) -> Option<String> {
+    pub(crate) fn current_header_value_for_model(&self, model: &str) -> Option<String> {
+        self.build_current_header_value(Some(model))
+    }
+
+    fn build_current_header_value(&self, model: Option<&str>) -> Option<String> {
         let header = if let Some(header) = self
             .enriched_header
             .read()
@@ -242,15 +256,13 @@ impl TurnMetadataState {
             .clone();
         merge_turn_metadata(
             &header,
-            turn_started_at_unix_ms,
-            responsesapi_client_metadata.as_ref(),
+            TurnMetadataOverlay {
+                model,
+                turn_started_at_unix_ms,
+                responsesapi_client_metadata: responsesapi_client_metadata.as_ref(),
+            },
         )
         .or(Some(header))
-    }
-
-    pub(crate) fn current_meta_value(&self) -> Option<serde_json::Value> {
-        self.current_header_value()
-            .and_then(|header| serde_json::from_str(&header).ok())
     }
 
     pub(crate) fn set_responsesapi_client_metadata(
