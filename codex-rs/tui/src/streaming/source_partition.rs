@@ -13,17 +13,35 @@ pub(crate) struct SourcePartition {
     pub(crate) tail: Range<usize>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockKind {
+    Table,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SourceBlock {
+    range: Range<usize>,
+    kind: BlockKind,
+}
+
 pub(crate) fn partition_source(source: &str) -> SourcePartition {
     let blocks = top_level_blocks(source);
-    let stable_end = if blocks.len() >= 2 {
-        blocks[blocks.len() - 2].end
+    let stable_end = if blocks.last().is_some_and(|block| {
+        block.kind == BlockKind::Table || looks_like_table_prefix(&source[block.range.clone()])
+    }) {
+        if blocks.len() >= 2 {
+            blocks[blocks.len() - 2].range.end
+        } else {
+            0
+        }
     } else {
-        0
+        source.len()
     };
     let stable_blocks = blocks
         .iter()
-        .filter(|range| range.end <= stable_end)
-        .cloned()
+        .filter(|block| block.range.end <= stable_end)
+        .map(|block| block.range.clone())
         .collect();
 
     SourcePartition {
@@ -33,20 +51,38 @@ pub(crate) fn partition_source(source: &str) -> SourcePartition {
     }
 }
 
-fn top_level_blocks(source: &str) -> Vec<Range<usize>> {
+pub(crate) fn source_has_table_block(source: &str) -> bool {
+    top_level_blocks(source)
+        .iter()
+        .any(|block| block.kind == BlockKind::Table)
+}
+
+fn looks_like_table_prefix(source: &str) -> bool {
+    let mut lines = source.lines().filter(|line| !line.trim().is_empty());
+    let Some(first) = lines.next() else {
+        return false;
+    };
+    let trimmed = first.trim();
+    let pipe_count = trimmed.chars().filter(|ch| *ch == '|').count();
+    pipe_count >= 2 || (pipe_count >= 1 && trimmed.starts_with('|'))
+}
+
+fn top_level_blocks(source: &str) -> Vec<SourceBlock> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TABLES);
 
-    let mut blocks: Vec<Range<usize>> = Vec::new();
+    let mut blocks: Vec<SourceBlock> = Vec::new();
     let mut depth = 0usize;
     let mut block_start: Option<usize> = None;
+    let mut block_kind = BlockKind::Other;
 
     for (event, range) in Parser::new_ext(source, options).into_offset_iter() {
         match event {
             Event::Start(tag) if is_block_start(&tag) => {
                 if depth == 0 {
                     block_start = Some(range.start);
+                    block_kind = block_kind_for_start(&tag);
                 }
                 depth += 1;
             }
@@ -56,12 +92,19 @@ fn top_level_blocks(source: &str) -> Vec<Range<usize>> {
                     if depth == 0
                         && let Some(start) = block_start.take()
                     {
-                        blocks.push(start..range.end);
+                        blocks.push(SourceBlock {
+                            range: start..range.end,
+                            kind: block_kind,
+                        });
+                        block_kind = BlockKind::Other;
                     }
                 }
             }
             Event::Rule if depth == 0 => {
-                blocks.push(range.clone());
+                blocks.push(SourceBlock {
+                    range: range.clone(),
+                    kind: BlockKind::Other,
+                });
             }
             _ => {}
         }
@@ -83,6 +126,14 @@ fn is_block_start(tag: &Tag<'_>) -> bool {
             | Tag::Table(_)
             | Tag::MetadataBlock(_)
     )
+}
+
+fn block_kind_for_start(tag: &Tag<'_>) -> BlockKind {
+    if matches!(tag, Tag::Table(_)) {
+        BlockKind::Table
+    } else {
+        BlockKind::Other
+    }
 }
 
 fn is_block_end(tag: TagEnd) -> bool {
@@ -121,21 +172,48 @@ mod tests {
 
         let partition = partition_source(source);
 
-        assert_eq!(
-            &source[..partition.stable_end],
-            "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
-        );
-        assert_eq!(&source[partition.tail], "\nDone.\n");
-        assert_eq!(partition.stable_blocks.len(), 1);
+        assert_eq!(partition.stable_end, source.len());
+        assert_eq!(&source[partition.tail], "");
+        assert_eq!(partition.stable_blocks.len(), 2);
     }
 
     #[test]
-    fn fenced_code_with_pipes_is_one_tail_block() {
+    fn fenced_code_with_pipes_is_stable() {
         let source = "```\n| A | B |\n| --- | --- |\n```\n";
+
+        let partition = partition_source(source);
+
+        assert_eq!(partition.stable_end, source.len());
+        assert_eq!(&source[partition.tail], "");
+    }
+
+    #[test]
+    fn normal_paragraph_is_stable() {
+        let source = "hello\n";
+
+        let partition = partition_source(source);
+
+        assert_eq!(partition.stable_end, source.len());
+        assert_eq!(&source[partition.tail], "");
+    }
+
+    #[test]
+    fn table_header_candidate_remains_tail() {
+        let source = "| A | B |\n";
 
         let partition = partition_source(source);
 
         assert_eq!(partition.stable_end, 0);
         assert_eq!(&source[partition.tail], source);
+    }
+
+    #[test]
+    fn detects_table_blocks() {
+        assert!(source_has_table_block(
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n"
+        ));
+        assert!(!source_has_table_block(
+            "```\n| A | B |\n| --- | --- |\n```\n"
+        ));
     }
 }

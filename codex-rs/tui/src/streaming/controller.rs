@@ -24,6 +24,7 @@ use std::time::Instant;
 
 use super::StreamState;
 use super::source_partition::partition_source;
+use super::source_partition::source_has_table_block;
 
 /// Shared source-retaining stream state for assistant and plan output.
 ///
@@ -176,6 +177,9 @@ impl StreamCore {
         }
         if !source.ends_with('\n') {
             source.push('\n');
+        }
+        if !source_has_table_block(&source) {
+            return Vec::new();
         }
 
         let mut rendered = Vec::new();
@@ -642,7 +646,7 @@ mod tests {
     #[test]
     fn controller_set_width_rebuilds_queued_lines() {
         let mut ctrl = stream_controller(Some(120));
-        let delta = "This is a long line that should wrap into multiple rows when resized.\n\nNext block.\n";
+        let delta = "This is a long line that should wrap into multiple rows when resized.\n";
         assert!(ctrl.push(delta));
         assert_eq!(ctrl.queued_lines(), 1);
 
@@ -664,7 +668,8 @@ mod tests {
     #[test]
     fn controller_set_width_no_duplicate_after_emit() {
         let mut ctrl = stream_controller(Some(120));
-        let line = "This is a long line that definitely wraps when the terminal shrinks to 24 columns.\n\nNext block.\n";
+        let line =
+            "This is a long line that definitely wraps when the terminal shrinks to 24 columns.\n";
         ctrl.push(line);
         let (cell, _) = ctrl.on_commit_tick_batch(usize::MAX);
         assert!(cell.is_some(), "expected emitted cell");
@@ -682,7 +687,7 @@ mod tests {
     #[test]
     fn controller_tick_batch_zero_is_noop() {
         let mut ctrl = stream_controller(Some(80));
-        assert!(ctrl.push("line one\n\nline two\n"));
+        assert!(ctrl.push("line one\n"));
         assert_eq!(ctrl.queued_lines(), 1);
 
         let (cell, idle) = ctrl.on_commit_tick_batch(/*max_lines*/ 0);
@@ -698,7 +703,7 @@ mod tests {
     #[test]
     fn controller_finalize_returns_raw_source_for_consolidation() {
         let mut ctrl = stream_controller(Some(80));
-        assert!(!ctrl.push("hello\n"));
+        assert!(ctrl.push("hello\n"));
         let (_cell, source) = ctrl.finalize();
         assert_eq!(source, Some("hello\n".to_string()));
     }
@@ -706,7 +711,7 @@ mod tests {
     #[test]
     fn plan_controller_finalize_returns_raw_source_for_consolidation() {
         let mut ctrl = plan_stream_controller(Some(80));
-        assert!(!ctrl.push("- step\n"));
+        assert!(ctrl.push("- step\n"));
         let (_cell, source) = ctrl.finalize();
         assert_eq!(source, Some("- step\n".to_string()));
     }
