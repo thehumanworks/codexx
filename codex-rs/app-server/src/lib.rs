@@ -19,6 +19,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::AtomicBool;
 
+use crate::analytics_utils::analytics_events_client_from_config;
 use crate::config_manager::ConfigManager;
 use crate::message_processor::MessageProcessor;
 use crate::message_processor::MessageProcessorArgs;
@@ -53,6 +54,7 @@ use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_feedback::CodexFeedback;
 use codex_protocol::protocol::SessionSource;
+use codex_rollout::state_db as rollout_state_db;
 use codex_state::log_db;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -69,27 +71,24 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::registry::Registry;
 use tracing_subscriber::util::SubscriberInitExt;
 
+mod analytics_utils;
 mod app_server_tracing;
 mod bespoke_event_handling;
-mod codex_message_processor;
 mod command_exec;
 mod config;
-mod config_api;
 mod config_manager;
 mod config_manager_service;
 mod connection_rpc_gate;
-mod device_key_api;
 mod dynamic_tools;
 mod error_code;
-mod external_agent_config_api;
 mod filters;
-mod fs_api;
 mod fs_watch;
 mod fuzzy_file_search;
 pub mod in_process;
 mod message_processor;
 mod models;
 mod outgoing_message;
+mod request_processors;
 mod request_serialization;
 mod server_request_error;
 mod thread_state;
@@ -455,23 +454,6 @@ pub async fn run_main_with_transport_options(
         .await
     {
         Ok(config) => {
-            let effective_toml = config.config_layer_stack.effective_config();
-            match effective_toml.try_into() {
-                Ok(config_toml) => {
-                    if let Err(err) = codex_core::personality_migration::maybe_migrate_personality(
-                        &config.codex_home,
-                        &config_toml,
-                    )
-                    .await
-                    {
-                        warn!(error = %err, "Failed to run personality migration");
-                    }
-                }
-                Err(err) => {
-                    warn!(error = %err, "Failed to deserialize config for personality migration");
-                }
-            }
-
             let discovered_thread_config_loader = configured_thread_config_loader(&config);
             config_manager
                 .replace_thread_config_loader(Arc::clone(&discovered_thread_config_loader));
@@ -485,22 +467,69 @@ pub async fn run_main_with_transport_options(
         }
     };
     let mut config_warnings = Vec::new();
-    let config = match config_manager
+    let (mut config, should_run_personality_migration) = match config_manager
         .load_latest_config(/*fallback_cwd*/ None)
         .await
     {
-        Ok(config) => config,
+        Ok(config) => (config, true),
         Err(err) => {
             let message = config_warning_from_error("Invalid configuration; using defaults.", &err);
             config_warnings.push(message);
-            config_manager.load_default_config().await.map_err(|e| {
-                std::io::Error::new(
-                    ErrorKind::InvalidData,
-                    format!("error loading default config after config error: {e}"),
-                )
-            })?
+            (
+                config_manager.load_default_config().await.map_err(|e| {
+                    std::io::Error::new(
+                        ErrorKind::InvalidData,
+                        format!("error loading default config after config error: {e}"),
+                    )
+                })?,
+                false,
+            )
         }
     };
+
+    let state_db_result = rollout_state_db::try_init(&config).await;
+    let state_db_init_error = state_db_result.as_ref().err().map(ToString::to_string);
+    let state_db = state_db_result.ok();
+
+    if should_run_personality_migration {
+        let effective_toml = config.config_layer_stack.effective_config();
+        match effective_toml.try_into() {
+            Ok(config_toml) => {
+                match codex_core::personality_migration::maybe_migrate_personality(
+                    &config.codex_home,
+                    &config_toml,
+                    state_db.clone(),
+                )
+                .await
+                {
+                    Ok(codex_core::personality_migration::PersonalityMigrationStatus::Applied) => {
+                        config = config_manager
+                            .load_latest_config(/*fallback_cwd*/ None)
+                            .await
+                            .map_err(|err| {
+                                std::io::Error::new(
+                                    ErrorKind::InvalidData,
+                                    format!(
+                                        "error reloading config after personality migration: {err}"
+                                    ),
+                                )
+                            })?;
+                    }
+                    Ok(
+                        codex_core::personality_migration::PersonalityMigrationStatus::SkippedMarker
+                        | codex_core::personality_migration::PersonalityMigrationStatus::SkippedExplicitPersonality
+                        | codex_core::personality_migration::PersonalityMigrationStatus::SkippedNoSessions,
+                    ) => {}
+                    Err(err) => {
+                        warn!(error = %err, "Failed to run personality migration");
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(error = %err, "Failed to deserialize config for personality migration");
+            }
+        }
+    }
 
     if let Ok(Some(err)) = check_execpolicy_for_warnings(&config.config_layer_stack).await {
         let (path, range) = exec_policy_warning_location(&err);
@@ -569,13 +598,6 @@ pub async fn run_main_with_transport_options(
 
     let feedback_layer = feedback.logger_layer();
     let feedback_metadata_layer = feedback.metadata_layer();
-    let state_db_result = codex_state::StateRuntime::init(
-        config.sqlite_home.clone(),
-        config.model_provider_id.clone(),
-    )
-    .await;
-    let state_db_init_error = state_db_result.as_ref().err().map(ToString::to_string);
-    let state_db = state_db_result.ok();
     let log_db = state_db.clone().map(log_db::start);
     let log_db_layer = log_db
         .clone()
@@ -728,19 +750,26 @@ pub async fn run_main_with_transport_options(
     });
 
     let processor_handle = tokio::spawn({
-        let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(outgoing_tx));
-        let initialize_notification_sender = outgoing_message_sender.clone();
-        let outbound_control_tx = outbound_control_tx;
         let auth_manager =
             AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
+        let analytics_events_client =
+            analytics_events_client_from_config(Arc::clone(&auth_manager), &config);
+        let outgoing_message_sender = Arc::new(OutgoingMessageSender::new(
+            outgoing_tx,
+            analytics_events_client.clone(),
+        ));
+        let initialize_notification_sender = outgoing_message_sender.clone();
+        let outbound_control_tx = outbound_control_tx;
         let processor = Arc::new(MessageProcessor::new(MessageProcessorArgs {
             outgoing: outgoing_message_sender,
+            analytics_events_client,
             arg0_paths,
             config: Arc::new(config),
             config_manager,
             environment_manager,
             feedback: feedback.clone(),
             log_db,
+            state_db: state_db.clone(),
             config_warnings,
             session_source,
             auth_manager,

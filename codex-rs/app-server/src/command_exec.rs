@@ -477,7 +477,7 @@ async fn run_command(params: RunCommandParams) {
     });
     let stderr_handle = spawn_process_output(SpawnProcessOutputParams {
         connection_id: request_id.connection_id,
-        process_id,
+        process_id: process_id.clone(),
         output_rx: stderr_rx,
         stdio_timeout_rx,
         outgoing: Arc::clone(&outgoing),
@@ -716,7 +716,10 @@ mod tests {
         let manager = CommandExecManager::default();
         let err = manager
             .start(StartCommandExecParams {
-                outgoing: Arc::new(OutgoingMessageSender::new(tx)),
+                outgoing: Arc::new(OutgoingMessageSender::new(
+                    tx,
+                    codex_analytics::AnalyticsEventsClient::disabled(),
+                )),
                 request_id: ConnectionRequestId {
                     connection_id: ConnectionId(1),
                     request_id: codex_app_server_protocol::RequestId::Integer(42),
@@ -752,7 +755,10 @@ mod tests {
 
         manager
             .start(StartCommandExecParams {
-                outgoing: Arc::new(OutgoingMessageSender::new(tx)),
+                outgoing: Arc::new(OutgoingMessageSender::new(
+                    tx,
+                    codex_analytics::AnalyticsEventsClient::disabled(),
+                )),
                 request_id: request_id.clone(),
                 process_id: Some("proc-99".to_string()),
                 exec_request: windows_sandbox_exec_request(),
@@ -799,7 +805,10 @@ mod tests {
 
         manager
             .start(StartCommandExecParams {
-                outgoing: Arc::new(OutgoingMessageSender::new(tx)),
+                outgoing: Arc::new(OutgoingMessageSender::new(
+                    tx,
+                    codex_analytics::AnalyticsEventsClient::disabled(),
+                )),
                 request_id: request_id.clone(),
                 process_id: Some("proc-100".to_string()),
                 exec_request: ExecRequest::new(
@@ -881,7 +890,10 @@ mod tests {
 
         manager
             .start(StartCommandExecParams {
-                outgoing: Arc::new(OutgoingMessageSender::new(tx)),
+                outgoing: Arc::new(OutgoingMessageSender::new(
+                    tx,
+                    codex_analytics::AnalyticsEventsClient::disabled(),
+                )),
                 request_id: request_id.clone(),
                 process_id: Some("proc-101".to_string()),
                 exec_request: ExecRequest::new(

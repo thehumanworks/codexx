@@ -2,11 +2,13 @@
 members = [
     "aws-auth",
     "analytics",
+    "agent-graph-store",
     "agent-identity",
     "backend-client",
     "ansi-escape",
     "async-utils",
     "app-server",
+    "app-server-transport",
     "app-server-client",
     "app-server-protocol",
     "app-server-test-client",
@@ -31,6 +33,7 @@ members = [
     "shell-escalation",
     "skills",
     "core",
+    "core-api",
     "core-plugins",
     "core-skills",
     "hooks",
@@ -49,6 +52,7 @@ members = [
     "login",
     "codex-mcp",
     "mcp-server",
+    "memories/mcp",
     "memories/read",
     "memories/write",
     "model-provider-info",
@@ -119,11 +123,13 @@ license = "Apache-2.0"
 # Internal
 app_test_support = { path = "app-server/tests/common" }
 codex-analytics = { path = "analytics" }
+codex-agent-graph-store = { path = "agent-graph-store" }
 codex-agent-identity = { path = "agent-identity" }
 codex-ansi-escape = { path = "ansi-escape" }
 codex-api = { path = "codex-api" }
 codex-aws-auth = { path = "aws-auth" }
 codex-app-server = { path = "app-server" }
+codex-app-server-transport = { path = "app-server-transport" }
 codex-app-server-client = { path = "app-server-client" }
 codex-app-server-protocol = { path = "app-server-protocol" }
 codex-app-server-test-client = { path = "app-server-test-client" }
@@ -142,6 +148,7 @@ codex-code-mode = { path = "code-mode" }
 codex-config = { path = "config" }
 codex-connectors = { path = "connectors" }
 codex-core = { path = "core" }
+codex-core-api = { path = "core-api" }
 codex-core-plugins = { path = "core-plugins" }
 codex-core-skills = { path = "core-skills" }
 codex-device-key = { path = "device-key" }
@@ -162,6 +169,7 @@ codex-keyring-store = { path = "keyring-store" }
 codex-linux-sandbox = { path = "linux-sandbox" }
 codex-lmstudio = { path = "lmstudio" }
 codex-login = { path = "login" }
+codex-memories-mcp = { path = "memories/mcp" }
 codex-memories-read = { path = "memories/read" }
 codex-memories-write = { path = "memories/write" }
 codex-mcp = { path = "codex-mcp" }
@@ -316,6 +324,10 @@ quick-xml = "0.38.4"
 rand = "0.9"
 ratatui = "0.29.0"
 ratatui-macros = "0.6.0"
+rcgen = { version = "0.14.7", default-features = false, features = [
+    "aws_lc_rs",
+    "pem",
+] }
 regex = "1.12.3"
 regex-lite = "0.1.8"
 reqwest = { version = "0.12", features = ["cookies"] }
@@ -450,6 +462,8 @@ unwrap_used = "deny"
 # silence the false positive here instead of deleting a real dependency.
 [workspace.metadata.cargo-shear]
 ignored = [
+    "codex-agent-graph-store",
+    "codex-memories-mcp",
     "icu_provider",
     "openssl-sys",
     "codex-utils-readiness",

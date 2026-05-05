@@ -80,6 +80,7 @@ pub enum ClientRequestSerializationScope {
     Thread { thread_id: String },
     ThreadPath { path: PathBuf },
     CommandExecProcess { process_id: String },
+    Process { process_handle: String },
     FuzzyFileSearchSession { session_id: String },
     FsWatch { watch_id: String },
     McpOauth { server_name: String },
@@ -127,6 +128,11 @@ macro_rules! serialization_scope_expr {
             process_id: $actual_params.$field.clone(),
         })
     };
+    ($actual_params:ident, process_handle($params:ident . $field:ident)) => {
+        Some(ClientRequestSerializationScope::Process {
+            process_handle: $actual_params.$field.clone(),
+        })
+    };
     ($actual_params:ident, fuzzy_session_id($params:ident . $field:ident)) => {
         Some(ClientRequestSerializationScope::FuzzyFileSearchSession {
             session_id: $actual_params.$field.clone(),
@@ -157,6 +163,7 @@ macro_rules! client_request_definitions {
                 params: $(#[$params_meta:meta])* $params:ty,
                 $(inspect_params: $inspect_params:tt,)?
                 serialization: $serialization:ident $( ( $($serialization_args:tt)* ) )?,
+                $(manual_payload_conversion: $manual_payload_conversion:ident,)?
                 response: $response:ty,
             }
         ),* $(,)?
@@ -243,7 +250,99 @@ macro_rules! client_request_definitions {
                     })
                     .unwrap_or_else(|| "<unknown>".to_string())
             }
+
+            pub fn into_jsonrpc_parts(
+                self,
+            ) -> std::result::Result<(RequestId, crate::Result), serde_json::Error> {
+                match self {
+                    $(
+                        Self::$variant { request_id, response } => {
+                            serde_json::to_value(response).map(|result| (request_id, result))
+                        }
+                    )*
+                }
+            }
         }
+
+        #[derive(Debug, Clone)]
+        #[allow(clippy::large_enum_variant)]
+        pub enum ClientResponsePayload {
+            $( $variant($response), )*
+            InterruptConversation(v1::InterruptConversationResponse),
+        }
+
+        impl ClientResponsePayload {
+            pub fn into_jsonrpc_parts_and_payload(
+                self,
+                request_id: RequestId,
+            ) -> std::result::Result<
+                (RequestId, crate::Result, Option<ClientResponsePayload>),
+                serde_json::Error,
+            > {
+                match self {
+                    $(
+                        Self::$variant(response) => {
+                            let result = serde_json::to_value(&response)?;
+                            Ok((request_id, result, Some(Self::$variant(response))))
+                        }
+                    )*
+                    Self::InterruptConversation(response) => {
+                        serde_json::to_value(response).map(|result| (request_id, result, None))
+                    }
+                }
+            }
+
+            pub fn into_client_response(self, request_id: RequestId) -> Option<ClientResponse> {
+                match self {
+                    $(
+                        Self::$variant(response) => {
+                            Some(ClientResponse::$variant {
+                                request_id,
+                                response,
+                            })
+                        }
+                    )*
+                    Self::InterruptConversation(_) => None,
+                }
+            }
+
+            pub fn into_jsonrpc_parts(
+                self,
+                request_id: RequestId,
+            ) -> std::result::Result<(RequestId, crate::Result), serde_json::Error> {
+                self.to_jsonrpc_parts(request_id)
+            }
+
+            pub fn to_jsonrpc_parts(
+                &self,
+                request_id: RequestId,
+            ) -> std::result::Result<(RequestId, crate::Result), serde_json::Error> {
+                match self {
+                    $(
+                        Self::$variant(response) => {
+                            serde_json::to_value(response).map(|result| (request_id, result))
+                        }
+                    )*
+                    Self::InterruptConversation(response) => {
+                        serde_json::to_value(response).map(|result| (request_id, result))
+                    }
+                }
+            }
+        }
+
+        impl From<v1::InterruptConversationResponse> for ClientResponsePayload {
+            fn from(response: v1::InterruptConversationResponse) -> Self {
+                Self::InterruptConversation(response)
+            }
+        }
+
+        $(
+            client_response_payload_from_impl!(
+                $variant,
+                $response
+                $(, $manual_payload_conversion)?
+            );
+        )*
 
         impl crate::experimental_api::ExperimentalApi for ClientRequest {
             fn experimental_reason(&self) -> Option<&'static str> {
@@ -315,6 +414,17 @@ macro_rules! client_request_definitions {
             Ok(schemas)
         }
     };
+}
+
+macro_rules! client_response_payload_from_impl {
+    ($variant:ident, $response:ty) => {
+        impl From<$response> for ClientResponsePayload {
+            fn from(response: $response) -> Self {
+                Self::$variant(response)
+            }
+        }
+    };
+    ($variant:ident, $response:ty, manual) => {};
 }
 
 client_request_definitions! {
@@ -460,6 +570,7 @@ client_request_definitions! {
         serialization: thread_id(params.thread_id),
         response: v2::ThreadReadResponse,
     },
+    #[experimental("thread/turns/list")]
     ThreadTurnsList => "thread/turns/list" {
         params: v2::ThreadTurnsListParams,
         // Explicitly concurrent: this primarily reads append-only rollout storage.
@@ -476,6 +587,11 @@ client_request_definitions! {
         params: v2::SkillsListParams,
         serialization: global("config"),
         response: v2::SkillsListResponse,
+    },
+    HooksList => "hooks/list" {
+        params: v2::HooksListParams,
+        serialization: global("config"),
+        response: v2::HooksListResponse,
     },
     MarketplaceAdd => "marketplace/add" {
         params: v2::MarketplaceAddParams,
@@ -501,6 +617,26 @@ client_request_definitions! {
         params: v2::PluginReadParams,
         serialization: global("config"),
         response: v2::PluginReadResponse,
+    },
+    PluginSkillRead => "plugin/skill/read" {
+        params: v2::PluginSkillReadParams,
+        serialization: global("config"),
+        response: v2::PluginSkillReadResponse,
+    },
+    PluginShareSave => "plugin/share/save" {
+        params: v2::PluginShareSaveParams,
+        serialization: global("config"),
+        response: v2::PluginShareSaveResponse,
+    },
+    PluginShareList => "plugin/share/list" {
+        params: v2::PluginShareListParams,
+        serialization: global("config"),
+        response: v2::PluginShareListResponse,
+    },
+    PluginShareDelete => "plugin/share/delete" {
+        params: v2::PluginShareDeleteParams,
+        serialization: global("config"),
+        response: v2::PluginShareDeleteResponse,
     },
     AppsList => "app/list" {
         params: v2::AppsListParams,
@@ -707,6 +843,11 @@ client_request_definitions! {
         serialization: global("windows-sandbox-setup"),
         response: v2::WindowsSandboxSetupStartResponse,
     },
+    WindowsSandboxReadiness => "windowsSandbox/readiness" {
+        params: #[ts(type = "undefined")] #[serde(skip_serializing_if = "Option::is_none")] Option<()>,
+        serialization: global("config"),
+        response: v2::WindowsSandboxReadinessResponse,
+    },
 
     LoginAccount => "account/login/start" {
         params: v2::LoginAccountParams,
@@ -770,6 +911,34 @@ client_request_definitions! {
         serialization: command_process_id(params.process_id),
         response: v2::CommandExecResizeResponse,
     },
+    #[experimental("process/spawn")]
+    /// Spawn a standalone process (argv vector) without a Codex sandbox.
+    ProcessSpawn => "process/spawn" {
+        params: v2::ProcessSpawnParams,
+        serialization: process_handle(params.process_handle),
+        response: v2::ProcessSpawnResponse,
+    },
+    #[experimental("process/writeStdin")]
+    /// Write stdin bytes to a running `process/spawn` session or close stdin.
+    ProcessWriteStdin => "process/writeStdin" {
+        params: v2::ProcessWriteStdinParams,
+        serialization: process_handle(params.process_handle),
+        response: v2::ProcessWriteStdinResponse,
+    },
+    #[experimental("process/kill")]
+    /// Terminate a running `process/spawn` session by client-supplied `processHandle`.
+    ProcessKill => "process/kill" {
+        params: v2::ProcessKillParams,
+        serialization: process_handle(params.process_handle),
+        response: v2::ProcessKillResponse,
+    },
+    #[experimental("process/resizePty")]
+    /// Resize a running PTY-backed `process/spawn` session by client-supplied `processHandle`.
+    ProcessResizePty => "process/resizePty" {
+        params: v2::ProcessResizePtyParams,
+        serialization: process_handle(params.process_handle),
+        response: v2::ProcessResizePtyResponse,
+    },
 
     ConfigRead => "config/read" {
         params: v2::ConfigReadParams,
@@ -789,11 +958,13 @@ client_request_definitions! {
     ConfigValueWrite => "config/value/write" {
         params: v2::ConfigValueWriteParams,
         serialization: global("config"),
+        manual_payload_conversion: manual,
         response: v2::ConfigWriteResponse,
     },
     ConfigBatchWrite => "config/batchWrite" {
         params: v2::ConfigBatchWriteParams,
         serialization: global("config"),
+        manual_payload_conversion: manual,
         response: v2::ConfigWriteResponse,
     },
 
@@ -887,6 +1058,23 @@ macro_rules! server_request_definitions {
             pub fn id(&self) -> &RequestId {
                 match self {
                     $(Self::$variant { request_id, .. } => request_id,)*
+                }
+            }
+
+            pub fn response_from_result(
+                &self,
+                result: crate::Result,
+            ) -> serde_json::Result<ServerResponse> {
+                match self {
+                    $(
+                        Self::$variant { request_id, .. } => {
+                            let response = serde_json::from_value::<$response>(result)?;
+                            Ok(ServerResponse::$variant {
+                                request_id: request_id.clone(),
+                                response,
+                            })
+                        }
+                    )*
                 }
             }
         }
@@ -1252,8 +1440,15 @@ server_notification_definitions! {
     PlanDelta => "item/plan/delta" (v2::PlanDeltaNotification),
     /// Stream base64-encoded stdout/stderr chunks for a running `command/exec` session.
     CommandExecOutputDelta => "command/exec/outputDelta" (v2::CommandExecOutputDeltaNotification),
+    /// Stream base64-encoded stdout/stderr chunks for a running `process/spawn` session.
+    #[experimental("process/outputDelta")]
+    ProcessOutputDelta => "process/outputDelta" (v2::ProcessOutputDeltaNotification),
+    /// Final exit notification for a `process/spawn` session.
+    #[experimental("process/exited")]
+    ProcessExited => "process/exited" (v2::ProcessExitedNotification),
     CommandExecutionOutputDelta => "item/commandExecution/outputDelta" (v2::CommandExecutionOutputDeltaNotification),
     TerminalInteraction => "item/commandExecution/terminalInteraction" (v2::TerminalInteractionNotification),
+    /// Deprecated legacy apply_patch output stream notification.
     FileChangeOutputDelta => "item/fileChange/outputDelta" (v2::FileChangeOutputDeltaNotification),
     FileChangePatchUpdated => "item/fileChange/patchUpdated" (v2::FileChangePatchUpdatedNotification),
     ServerRequestResolved => "serverRequest/resolved" (v2::ServerRequestResolvedNotification),
@@ -2003,12 +2198,8 @@ mod tests {
                 approval_policy: v2::AskForApproval::OnFailure,
                 approvals_reviewer: v2::ApprovalsReviewer::User,
                 sandbox: v2::SandboxPolicy::DangerFullAccess,
-                permission_profile: Some(
-                    codex_protocol::models::PermissionProfile::from_legacy_sandbox_policy(
-                        &codex_protocol::protocol::SandboxPolicy::DangerFullAccess,
-                    )
-                    .into(),
-                ),
+                permission_profile: None,
+                active_permission_profile: None,
                 reasoning_effort: None,
             },
         };
@@ -2051,9 +2242,8 @@ mod tests {
                     "sandbox": {
                         "type": "dangerFullAccess"
                     },
-                    "permissionProfile": {
-                        "type": "disabled"
-                    },
+                    "permissionProfile": null,
+                    "activePermissionProfile": null,
                     "reasoningEffort": null
                 }
             }),
@@ -2104,7 +2294,9 @@ mod tests {
     fn serialize_account_login_chatgpt() -> Result<()> {
         let request = ClientRequest::LoginAccount {
             request_id: RequestId::Integer(3),
-            params: v2::LoginAccountParams::Chatgpt,
+            params: v2::LoginAccountParams::Chatgpt {
+                codex_streamlined_login: false,
+            },
         };
         assert_eq!(
             json!({
@@ -2112,6 +2304,28 @@ mod tests {
                 "id": 3,
                 "params": {
                     "type": "chatgpt"
+                }
+            }),
+            serde_json::to_value(&request)?,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn serialize_account_login_chatgpt_streamlined() -> Result<()> {
+        let request = ClientRequest::LoginAccount {
+            request_id: RequestId::Integer(3),
+            params: v2::LoginAccountParams::Chatgpt {
+                codex_streamlined_login: true,
+            },
+        };
+        assert_eq!(
+            json!({
+                "method": "account/login/start",
+                "id": 3,
+                "params": {
+                    "type": "chatgpt",
+                    "codexStreamlinedLogin": true
                 }
             }),
             serde_json::to_value(&request)?,
@@ -2396,7 +2610,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(Some("You are on a call".to_string())),
-                session_id: Some("sess_456".to_string()),
+                realtime_session_id: Some("sess_456".to_string()),
                 transport: None,
                 voice: Some(RealtimeVoice::Marin),
             },
@@ -2409,7 +2623,7 @@ mod tests {
                     "threadId": "thr_123",
                     "outputModality": "audio",
                     "prompt": "You are on a call",
-                    "sessionId": "sess_456",
+                    "realtimeSessionId": "sess_456",
                     "transport": null,
                     "voice": "marin"
                 }
@@ -2427,7 +2641,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 output_modality: RealtimeOutputModality::Audio,
                 prompt: None,
-                session_id: None,
+                realtime_session_id: None,
                 transport: None,
                 voice: None,
             },
@@ -2439,7 +2653,7 @@ mod tests {
                 "params": {
                     "threadId": "thr_123",
                     "outputModality": "audio",
-                    "sessionId": null,
+                    "realtimeSessionId": null,
                     "transport": null,
                     "voice": null
                 }
@@ -2453,7 +2667,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(None),
-                session_id: None,
+                realtime_session_id: None,
                 transport: None,
                 voice: None,
             },
@@ -2466,7 +2680,7 @@ mod tests {
                     "threadId": "thr_123",
                     "outputModality": "audio",
                     "prompt": null,
-                    "sessionId": null,
+                    "realtimeSessionId": null,
                     "transport": null,
                     "voice": null
                 }
@@ -2480,7 +2694,7 @@ mod tests {
             "params": {
                 "threadId": "thr_123",
                 "outputModality": "audio",
-                "sessionId": null,
+                "realtimeSessionId": null,
                 "transport": null,
                 "voice": null
             }
@@ -2497,7 +2711,7 @@ mod tests {
                 "threadId": "thr_123",
                 "outputModality": "audio",
                 "prompt": null,
-                "sessionId": null,
+                "realtimeSessionId": null,
                 "transport": null,
                 "voice": null
             }
@@ -2609,7 +2823,7 @@ mod tests {
                 thread_id: "thr_123".to_string(),
                 output_modality: RealtimeOutputModality::Audio,
                 prompt: Some(Some("You are on a call".to_string())),
-                session_id: None,
+                realtime_session_id: None,
                 transport: None,
                 voice: None,
             },
@@ -2692,7 +2906,7 @@ mod tests {
         let notification =
             ServerNotification::ThreadRealtimeStarted(v2::ThreadRealtimeStartedNotification {
                 thread_id: "thr_123".to_string(),
-                session_id: Some("sess_456".to_string()),
+                realtime_session_id: Some("sess_456".to_string()),
                 version: RealtimeConversationVersion::V1,
             });
         let reason = crate::experimental_api::ExperimentalApi::experimental_reason(&notification);
@@ -2749,3 +2963,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "common_tests.rs"]
+mod common_tests;
