@@ -17,7 +17,7 @@ use tokio::io::AsyncWriteExt;
 const TEST_TIMESTAMP: &str = "2025-01-01T00-00-00";
 
 fn valid_lenient<T>(value: Option<Lenient<T>>) -> Option<T> {
-    value.and_then(|value| value.into_valid())
+    value.and_then(Lenient::into_valid)
 }
 
 async fn read_config_toml(codex_home: &Path) -> io::Result<ConfigToml> {
