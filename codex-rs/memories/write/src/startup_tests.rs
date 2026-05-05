@@ -221,15 +221,9 @@ async fn memories_startup_phase2_prunes_old_extension_resources_without_stage1_i
     let test = build_test_codex(&server, home.clone()).await?;
     trigger_memories_startup(&test).await;
 
-    let request = wait_for_single_request(&phase2).await;
-    let prompt = phase2_prompt_text(&request);
-    assert!(
-        prompt.contains("phase2_workspace_diff.md"),
-        "expected workspace diff file in prompt: {prompt}"
-    );
-
     wait_for_file_removed(&old_file).await?;
     wait_for_phase2_workspace_reset(&home.path().join("memories")).await?;
+    assert_eq!(phase2.requests().len(), 0);
 
     shutdown_test_codex(&test).await?;
     Ok(())

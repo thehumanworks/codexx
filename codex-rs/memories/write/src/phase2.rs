@@ -16,6 +16,7 @@ use crate::workspace::write_workspace_diff;
 use codex_config::Constrained;
 use codex_core::config::Config;
 use codex_features::Feature;
+use codex_git_utils::GitBaselineChangeStatus;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::AgentStatus;
 use codex_protocol::protocol::AskForApproval;
@@ -150,6 +151,43 @@ pub async fn run(context: Arc<MemoryStartupContext>, config: Arc<Config>) {
             "succeeded_no_workspace_changes",
         )
         .await;
+        return;
+    }
+    let rollout_summaries_prefix = format!("{}/", crate::artifacts::ROLLOUT_SUMMARIES_SUBDIR);
+    let extensions_prefix = format!("{}/", crate::artifacts::EXTENSIONS_SUBDIR);
+    if raw_memories.is_empty()
+        && workspace_diff.changes.iter().all(|change| {
+            change.path == crate::artifacts::RAW_MEMORIES_FILENAME
+                || change.path.starts_with(&rollout_summaries_prefix)
+                || (change.status == GitBaselineChangeStatus::Deleted
+                    && change.path.starts_with(&extensions_prefix))
+        })
+    {
+        match reset_memory_workspace_baseline(&root).await {
+            Ok(()) => {
+                job::succeed(
+                    context.as_ref(),
+                    db.as_ref(),
+                    &claim,
+                    new_watermark,
+                    &raw_memories,
+                    "succeeded_empty_input_housekeeping",
+                )
+                .await;
+            }
+            Err(err) => {
+                tracing::error!(
+                    "failed resetting memory workspace baseline after empty phase-2 housekeeping: {err}"
+                );
+                job::failed(
+                    context.as_ref(),
+                    db.as_ref(),
+                    &claim,
+                    "failed_workspace_commit",
+                )
+                .await;
+            }
+        }
         return;
     }
 
