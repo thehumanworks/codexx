@@ -95,6 +95,7 @@ mod server_request_error;
 mod thread_state;
 mod thread_status;
 mod transport;
+mod workspace_messages;
 
 pub use crate::error_code::INPUT_TOO_LARGE_ERROR_CODE;
 pub use crate::error_code::INVALID_PARAMS_ERROR_CODE;
@@ -684,6 +685,17 @@ pub async fn run_main_with_transport_options(
     )
     .await?;
     transport_accept_handles.push(remote_control_accept_handle);
+    let workspace_messages_poll_handle =
+        config
+            .features
+            .enabled(Feature::WorkspaceMessages)
+            .then(|| {
+                workspace_messages::spawn_announcement_poller(
+                    auth_manager.clone(),
+                    config.chatgpt_base_url.clone(),
+                    transport_shutdown_token.clone(),
+                )
+            });
 
     let outbound_handle = tokio::spawn(async move {
         let mut outbound_connections = HashMap::<ConnectionId, OutboundConnectionState>::new();
@@ -1020,6 +1032,9 @@ pub async fn run_main_with_transport_options(
     let _ = outbound_handle.await;
 
     transport_shutdown_token.cancel();
+    if let Some(handle) = workspace_messages_poll_handle {
+        let _ = handle.await;
+    }
     for handle in transport_accept_handles {
         let _ = handle.await;
     }
