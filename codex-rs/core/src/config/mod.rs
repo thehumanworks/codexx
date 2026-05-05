@@ -1673,24 +1673,6 @@ fn thread_store_config(
     }
 }
 
-fn valid_lenient<T>(
-    value: Option<Lenient<T>>,
-    field_path: &str,
-    warnings: &mut Vec<String>,
-) -> Option<T> {
-    value.and_then(|value| value.into_valid_with_warning(field_path, warnings))
-}
-
-fn valid_lenient_ref<T: Clone>(
-    value: &Option<Lenient<T>>,
-    field_path: &str,
-    warnings: &mut Vec<String>,
-) -> Option<T> {
-    value
-        .clone()
-        .and_then(|value| value.into_valid_with_warning(field_path, warnings))
-}
-
 fn valid_lenient_ref_silent<T: Clone>(value: &Option<Lenient<T>>) -> Option<T> {
     value.as_ref().and_then(Lenient::as_valid).cloned()
 }
@@ -2469,16 +2451,19 @@ impl Config {
             // Derive the old `sandbox_mode` defaults as a profile first, then
             // keep a legacy-compatible projection only for the remaining code
             // paths that still speak `SandboxPolicy`.
-            let config_sandbox_mode =
-                valid_lenient_ref(&cfg.sandbox_mode, "sandbox_mode", &mut startup_warnings);
+            let config_sandbox_mode = cfg
+                .sandbox_mode
+                .clone()
+                .and_then(|value| value.into_valid_with_warning("sandbox_mode", &mut startup_warnings));
             let mut permission_profile = cfg
                 .derive_permission_profile(
                     sandbox_mode,
-                    valid_lenient_ref(
-                        &config_profile.sandbox_mode,
-                        &profile_sandbox_mode_path,
-                        &mut startup_warnings,
-                    ),
+                    config_profile.sandbox_mode.clone().and_then(|value| {
+                        value.into_valid_with_warning(
+                            &profile_sandbox_mode_path,
+                            &mut startup_warnings,
+                        )
+                    }),
                     config_sandbox_mode,
                     windows_sandbox_level,
                     Some(&active_project),
@@ -2537,17 +2522,15 @@ impl Config {
             || valid_lenient_ref_silent(&cfg.approval_policy).is_some();
         let mut approval_policy = if let Some(approval_policy) = approval_policy_override {
             approval_policy
-        } else if let Some(approval_policy) = valid_lenient_ref(
-            &config_profile.approval_policy,
-            &profile_approval_policy_path,
-            &mut startup_warnings,
-        ) {
+        } else if let Some(approval_policy) =
+            config_profile.approval_policy.clone().and_then(|value| {
+                value.into_valid_with_warning(&profile_approval_policy_path, &mut startup_warnings)
+            })
+        {
             approval_policy
-        } else if let Some(approval_policy) = valid_lenient_ref(
-            &cfg.approval_policy,
-            "approval_policy",
-            &mut startup_warnings,
-        ) {
+        } else if let Some(approval_policy) = cfg.approval_policy.clone().and_then(|value| {
+            value.into_valid_with_warning("approval_policy", &mut startup_warnings)
+        }) {
             approval_policy
         } else {
                 if active_project.is_trusted() {
@@ -2573,15 +2556,22 @@ impl Config {
             || valid_lenient_ref_silent(&cfg.approvals_reviewer).is_some();
         let mut approvals_reviewer = if let Some(approvals_reviewer) = approvals_reviewer_override {
             approvals_reviewer
-        } else if let Some(approvals_reviewer) = valid_lenient_ref(
-            &config_profile.approvals_reviewer,
-            &profile_approvals_reviewer_path,
-            &mut startup_warnings,
-        ) {
+        } else if let Some(approvals_reviewer) =
+            config_profile.approvals_reviewer.clone().and_then(|value| {
+                value.into_valid_with_warning(
+                    &profile_approvals_reviewer_path,
+                    &mut startup_warnings,
+                )
+            })
+        {
             approvals_reviewer
         } else {
-            valid_lenient_ref(&cfg.approvals_reviewer, "approvals_reviewer", &mut startup_warnings)
-            .unwrap_or(ApprovalsReviewer::User)
+            cfg.approvals_reviewer
+                .clone()
+                .and_then(|value| {
+                    value.into_valid_with_warning("approvals_reviewer", &mut startup_warnings)
+                })
+                .unwrap_or(ApprovalsReviewer::User)
         };
         if !approvals_reviewer_was_explicit
             && let Err(err) = constrained_approvals_reviewer.can_set(&approvals_reviewer)
@@ -2594,13 +2584,13 @@ impl Config {
         }
         let profile_web_search_path =
             active_profile_field_path(active_profile_name.as_deref(), "web_search");
-        let configured_web_search_mode = match valid_lenient_ref(
-            &config_profile.web_search,
-            &profile_web_search_path,
-            &mut startup_warnings,
-        ) {
+        let configured_web_search_mode = match config_profile.web_search.clone().and_then(|value| {
+            value.into_valid_with_warning(&profile_web_search_path, &mut startup_warnings)
+        }) {
             Some(mode) => Some(mode),
-            None => valid_lenient_ref(&cfg.web_search, "web_search", &mut startup_warnings),
+            None => cfg.web_search.clone().and_then(|value| {
+                value.into_valid_with_warning("web_search", &mut startup_warnings)
+            }),
         };
         let web_search_mode = resolve_web_search_mode(configured_web_search_mode, &features)
             .unwrap_or(WebSearchMode::Cached);
@@ -2773,11 +2763,9 @@ impl Config {
                 }
             });
 
-        let forced_login_method = valid_lenient(
-            cfg.forced_login_method.clone(),
-            "forced_login_method",
-            &mut startup_warnings,
-        );
+        let forced_login_method = cfg.forced_login_method.clone().and_then(|value| {
+            value.into_valid_with_warning("forced_login_method", &mut startup_warnings)
+        });
 
         let model = model.or(config_profile.model).or(cfg.model);
         let mut notices = cfg.notice.unwrap_or_default();
@@ -2792,15 +2780,16 @@ impl Config {
             None => {
                 let profile_service_tier_path =
                     active_profile_field_path(active_profile_name.as_deref(), "service_tier");
-                match valid_lenient_ref(
-                    &config_profile.service_tier,
-                    &profile_service_tier_path,
-                    &mut startup_warnings,
-                ) {
+                match config_profile.service_tier.clone().and_then(|value| {
+                    value.into_valid_with_warning(
+                        &profile_service_tier_path,
+                        &mut startup_warnings,
+                    )
+                }) {
                     Some(service_tier) => Some(service_tier),
-                    None => {
-                        valid_lenient_ref(&cfg.service_tier, "service_tier", &mut startup_warnings)
-                    }
+                    None => cfg.service_tier.clone().and_then(|value| {
+                        value.into_valid_with_warning("service_tier", &mut startup_warnings)
+                    }),
                 }
             }
         };
@@ -2872,13 +2861,16 @@ impl Config {
         } else {
             let profile_personality_path =
                 active_profile_field_path(active_profile_name.as_deref(), "personality");
-            match valid_lenient_ref(
-                &config_profile.personality,
-                &profile_personality_path,
-                &mut startup_warnings,
-            ) {
+            match config_profile.personality.clone().and_then(|value| {
+                value.into_valid_with_warning(&profile_personality_path, &mut startup_warnings)
+            }) {
                 Some(personality) => Some(personality),
-                None => valid_lenient_ref(&cfg.personality, "personality", &mut startup_warnings)
+                None => cfg
+                    .personality
+                    .clone()
+                    .and_then(|value| {
+                        value.into_valid_with_warning("personality", &mut startup_warnings)
+                    })
                     .or_else(|| {
                         features
                             .enabled(Feature::Personality)
@@ -3050,93 +3042,89 @@ impl Config {
             .set(effective_permission_profile)
             .map_err(std::io::Error::from)?;
         let cli_auth_credentials_store_mode = resolve_cli_auth_credentials_store_mode(
-            valid_lenient(
-                cfg.cli_auth_credentials_store.clone(),
-                "cli_auth_credentials_store",
-                &mut startup_warnings,
-            )
+            cfg.cli_auth_credentials_store
+                .clone()
+                .and_then(|value| {
+                    value.into_valid_with_warning(
+                        "cli_auth_credentials_store",
+                        &mut startup_warnings,
+                    )
+                })
             .unwrap_or_default(),
             env!("CARGO_PKG_VERSION"),
         );
         let mcp_oauth_credentials_store_mode = resolve_mcp_oauth_credentials_store_mode(
-            valid_lenient(
-                cfg.mcp_oauth_credentials_store.clone(),
-                "mcp_oauth_credentials_store",
-                &mut startup_warnings,
-            )
+            cfg.mcp_oauth_credentials_store
+                .clone()
+                .and_then(|value| {
+                    value.into_valid_with_warning(
+                        "mcp_oauth_credentials_store",
+                        &mut startup_warnings,
+                    )
+                })
             .unwrap_or_default(),
             env!("CARGO_PKG_VERSION"),
         );
-        let file_opener = valid_lenient(
-            cfg.file_opener,
-            "file_opener",
-            &mut startup_warnings,
-        )
-        .unwrap_or(UriBasedFileOpener::VsCode);
+        let file_opener = cfg
+            .file_opener
+            .and_then(|value| {
+                value.into_valid_with_warning("file_opener", &mut startup_warnings)
+            })
+            .unwrap_or(UriBasedFileOpener::VsCode);
         let model_reasoning_effort_path =
             active_profile_field_path(active_profile_name.as_deref(), "model_reasoning_effort");
-        let model_reasoning_effort = valid_lenient(
-            config_profile.model_reasoning_effort,
-            &model_reasoning_effort_path,
-            &mut startup_warnings,
-        )
-        .or_else(|| {
-            valid_lenient(
-                cfg.model_reasoning_effort,
-                "model_reasoning_effort",
-                &mut startup_warnings,
-            )
-        });
+        let model_reasoning_effort = match config_profile.model_reasoning_effort.and_then(|value| {
+            value.into_valid_with_warning(&model_reasoning_effort_path, &mut startup_warnings)
+        }) {
+            Some(effort) => Some(effort),
+            None => cfg.model_reasoning_effort.and_then(|value| {
+                value.into_valid_with_warning("model_reasoning_effort", &mut startup_warnings)
+            }),
+        };
         let plan_mode_reasoning_effort_path = active_profile_field_path(
             active_profile_name.as_deref(),
             "plan_mode_reasoning_effort",
         );
-        let plan_mode_reasoning_effort = valid_lenient(
-            config_profile.plan_mode_reasoning_effort,
-            &plan_mode_reasoning_effort_path,
-            &mut startup_warnings,
-        )
-        .or_else(|| {
-            valid_lenient(
-                cfg.plan_mode_reasoning_effort,
-                "plan_mode_reasoning_effort",
-                &mut startup_warnings,
-            )
-        });
+        let plan_mode_reasoning_effort =
+            match config_profile.plan_mode_reasoning_effort.and_then(|value| {
+                value.into_valid_with_warning(
+                    &plan_mode_reasoning_effort_path,
+                    &mut startup_warnings,
+                )
+            }) {
+                Some(effort) => Some(effort),
+                None => cfg.plan_mode_reasoning_effort.and_then(|value| {
+                    value.into_valid_with_warning(
+                        "plan_mode_reasoning_effort",
+                        &mut startup_warnings,
+                    )
+                }),
+            };
         let model_reasoning_summary_path =
             active_profile_field_path(active_profile_name.as_deref(), "model_reasoning_summary");
-        let model_reasoning_summary = valid_lenient(
-            config_profile.model_reasoning_summary,
-            &model_reasoning_summary_path,
-            &mut startup_warnings,
-        )
-        .or_else(|| {
-            valid_lenient(
-                cfg.model_reasoning_summary,
-                "model_reasoning_summary",
-                &mut startup_warnings,
-            )
-        });
+        let model_reasoning_summary =
+            match config_profile.model_reasoning_summary.and_then(|value| {
+                value.into_valid_with_warning(&model_reasoning_summary_path, &mut startup_warnings)
+            }) {
+                Some(summary) => Some(summary),
+                None => cfg.model_reasoning_summary.and_then(|value| {
+                    value.into_valid_with_warning("model_reasoning_summary", &mut startup_warnings)
+                }),
+            };
         let model_verbosity_path =
             active_profile_field_path(active_profile_name.as_deref(), "model_verbosity");
-        let model_verbosity = valid_lenient(
-            config_profile.model_verbosity,
-            &model_verbosity_path,
-            &mut startup_warnings,
-        )
-        .or_else(|| {
-            valid_lenient(
-                cfg.model_verbosity,
-                "model_verbosity",
-                &mut startup_warnings,
-            )
-        });
+        let model_verbosity = match config_profile.model_verbosity.and_then(|value| {
+            value.into_valid_with_warning(&model_verbosity_path, &mut startup_warnings)
+        }) {
+            Some(verbosity) => Some(verbosity),
+            None => cfg.model_verbosity.and_then(|value| {
+                value.into_valid_with_warning("model_verbosity", &mut startup_warnings)
+            }),
+        };
         let experimental_thread_store = thread_store_config(
-            valid_lenient(
-                cfg.experimental_thread_store,
-                "experimental_thread_store",
-                &mut startup_warnings,
-            ),
+            cfg.experimental_thread_store.and_then(|value| {
+                value.into_valid_with_warning("experimental_thread_store", &mut startup_warnings)
+            }),
             cfg.experimental_thread_store_endpoint,
         );
         let config = Self {
