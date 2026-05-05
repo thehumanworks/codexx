@@ -156,6 +156,19 @@ pub fn run_setup_refresh_with_extra_read_roots(
     )
 }
 
+fn setup_refresh_spawn_cwd(codex_home: &Path) -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| codex_home.to_path_buf())
+}
+
+fn build_setup_refresh_command(exe: &Path, payload_b64: &str, cwd: &Path) -> Command {
+    let mut cmd = Command::new(exe);
+    cmd.arg(payload_b64)
+        .current_dir(cwd)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd
+}
+
 fn run_setup_refresh_inner(
     request: SandboxSetupRequest<'_>,
     overrides: SetupRootOverrides,
@@ -191,9 +204,8 @@ fn run_setup_refresh_inner(
     let b64 = BASE64_STANDARD.encode(json);
     let exe = find_setup_exe();
     // Refresh should never request elevation; ensure verb isn't set and we don't trigger UAC.
-    let mut cmd = Command::new(&exe);
-    cmd.arg(&b64).stdout(Stdio::null()).stderr(Stdio::null());
-    let cwd = std::env::current_dir().unwrap_or_else(|_| request.codex_home.to_path_buf());
+    let cwd = setup_refresh_spawn_cwd(request.codex_home);
+    let mut cmd = build_setup_refresh_command(&exe, &b64, &cwd);
     log_note(
         &format!(
             "setup refresh: spawning {} (cwd={}, payload_len={})",
@@ -1453,5 +1465,16 @@ mod tests {
                 .into_iter()
                 .all(|path| roots.contains(&path))
         );
+    }
+
+    #[test]
+    fn setup_refresh_command_runs_from_stable_cwd() {
+        let exe = Path::new(r"C:\codex\codex-windows-sandbox-setup.exe");
+        let cwd = Path::new(r"C:\Users\tester\.codex");
+        let cmd = super::build_setup_refresh_command(exe, "payload", cwd);
+
+        assert_eq!(cmd.get_program(), exe);
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), vec!["payload"]);
+        assert_eq!(cmd.get_current_dir(), Some(cwd));
     }
 }
