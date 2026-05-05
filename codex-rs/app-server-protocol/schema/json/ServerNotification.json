@@ -3855,21 +3855,6 @@
         },
         {
           "properties": {
-            "content": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ImageGenerationContent"
-                }
-              ],
-              "default": {
-                "byteLength": 0,
-                "dataBase64": "",
-                "height": null,
-                "mimeType": "image/png",
-                "type": "inline",
-                "width": null
-              }
-            },
             "id": {
               "type": "string"
             },
@@ -3894,6 +3879,21 @@
         },
         {
           "properties": {
+            "content": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageGenerationContent"
+                }
+              ],
+              "default": {
+                "byteLength": 0,
+                "dataBase64": "",
+                "height": null,
+                "mimeType": "image/png",
+                "type": "inline",
+                "width": null
+              }
+            },
             "id": {
               "type": "string"
             },

@@ -6989,6 +6989,13 @@
       "title": "ItemStartedNotification",
       "type": "object"
     },
+    "LargeContentMode": {
+      "enum": [
+        "inline",
+        "deferred"
+      ],
+      "type": "string"
+    },
     "ListMcpServerStatusParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -14079,21 +14086,6 @@
         },
         {
           "properties": {
-            "content": {
-              "allOf": [
-                {
-                  "$ref": "#/definitions/ImageGenerationContent"
-                }
-              ],
-              "default": {
-                "byteLength": 0,
-                "dataBase64": "",
-                "height": null,
-                "mimeType": "image/png",
-                "type": "inline",
-                "width": null
-              }
-            },
             "id": {
               "type": "string"
             },
@@ -14118,6 +14110,21 @@
         },
         {
           "properties": {
+            "content": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/ImageGenerationContent"
+                }
+              ],
+              "default": {
+                "byteLength": 0,
+                "dataBase64": "",
+                "height": null,
+                "mimeType": "image/png",
+                "type": "inline",
+                "width": null
+              }
+            },
             "id": {
               "type": "string"
             },
