@@ -104,29 +104,32 @@ pub(crate) async fn run_pending_session_start_hooks(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
 ) -> bool {
-    let Some(session_start_source) = sess.take_pending_session_start_source().await else {
-        return false;
-    };
+    while let Some(session_start_source) = sess.take_pending_session_start_source().await {
+        let request = codex_hooks::SessionStartRequest {
+            session_id: sess.conversation_id,
+            cwd: turn_context.cwd.clone(),
+            transcript_path: sess.hook_transcript_path().await,
+            model: turn_context.model_info.slug.clone(),
+            permission_mode: hook_permission_mode(turn_context),
+            source: session_start_source,
+        };
+        let hooks = sess.hooks();
+        let preview_runs = hooks.preview_session_start(&request);
+        if run_context_injecting_hook(
+            sess,
+            turn_context,
+            preview_runs,
+            hooks.run_session_start(request, Some(turn_context.sub_id.clone())),
+        )
+        .await
+        .record_additional_contexts(sess, turn_context)
+        .await
+        {
+            return true;
+        }
+    }
 
-    let request = codex_hooks::SessionStartRequest {
-        session_id: sess.conversation_id,
-        cwd: turn_context.cwd.clone(),
-        transcript_path: sess.hook_transcript_path().await,
-        model: turn_context.model_info.slug.clone(),
-        permission_mode: hook_permission_mode(turn_context),
-        source: session_start_source,
-    };
-    let hooks = sess.hooks();
-    let preview_runs = hooks.preview_session_start(&request);
-    run_context_injecting_hook(
-        sess,
-        turn_context,
-        preview_runs,
-        hooks.run_session_start(request, Some(turn_context.sub_id.clone())),
-    )
-    .await
-    .record_additional_contexts(sess, turn_context)
-    .await
+    false
 }
 
 /// Runs matching `PreToolUse` hooks before a tool executes.
