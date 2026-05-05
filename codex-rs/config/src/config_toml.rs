@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::HooksToml;
+use crate::Lenient;
+use crate::invalid_config_warnings;
 use crate::permissions_toml::PermissionsToml;
 use crate::profile_toml::ConfigProfile;
 use crate::types::AnalyticsConfigToml;
@@ -106,12 +108,12 @@ pub struct ConfigToml {
     pub model_auto_compact_token_limit: Option<i64>,
 
     /// Default approval policy for executing commands.
-    pub approval_policy: Option<AskForApproval>,
+    pub approval_policy: Option<Lenient<AskForApproval>>,
 
     /// Configures who approval requests are routed to for review once they have
     /// been escalated. This does not disable separate safety checks such as
     /// ARC.
-    pub approvals_reviewer: Option<ApprovalsReviewer>,
+    pub approvals_reviewer: Option<Lenient<ApprovalsReviewer>>,
 
     /// Optional policy instructions for the guardian auto-reviewer.
     #[serde(default)]
@@ -132,7 +134,7 @@ pub struct ConfigToml {
     pub allow_login_shell: Option<bool>,
 
     /// Sandbox mode to use.
-    pub sandbox_mode: Option<SandboxMode>,
+    pub sandbox_mode: Option<Lenient<SandboxMode>>,
 
     /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
     pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
@@ -186,14 +188,14 @@ pub struct ConfigToml {
 
     /// When set, restricts the login mechanism users may use.
     #[serde(default)]
-    pub forced_login_method: Option<ForcedLoginMethod>,
+    pub forced_login_method: Option<Lenient<ForcedLoginMethod>>,
 
     /// Preferred backend for storing CLI auth credentials.
     /// file (default): Use a file in the Codex home directory.
     /// keyring: Use an OS-specific keyring service.
     /// auto: Use the keyring if available, otherwise use a file.
     #[serde(default)]
-    pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
+    pub cli_auth_credentials_store: Option<Lenient<AuthCredentialsStoreMode>>,
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
     #[serde(default)]
@@ -207,7 +209,7 @@ pub struct ConfigToml {
     /// file: Use a file in the Codex home directory.
     /// auto (default): Use the OS-specific keyring service if available, otherwise use a file.
     #[serde(default)]
-    pub mcp_oauth_credentials_store: Option<OAuthCredentialsStoreMode>,
+    pub mcp_oauth_credentials_store: Option<Lenient<OAuthCredentialsStoreMode>>,
 
     /// Optional fixed port for the local HTTP callback server used during MCP OAuth login.
     /// When unset, Codex will bind to an ephemeral port chosen by the OS.
@@ -274,7 +276,7 @@ pub struct ConfigToml {
 
     /// Optional URI-based file opener. If set, citations to files in the model
     /// output will be hyperlinked using the specified URI scheme.
-    pub file_opener: Option<UriBasedFileOpener>,
+    pub file_opener: Option<Lenient<UriBasedFileOpener>>,
 
     /// Collection of settings that are specific to the TUI.
     pub tui: Option<Tui>,
@@ -288,11 +290,11 @@ pub struct ConfigToml {
     /// Defaults to `false`.
     pub show_raw_agent_reasoning: Option<bool>,
 
-    pub model_reasoning_effort: Option<ReasoningEffort>,
-    pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
-    pub model_reasoning_summary: Option<ReasoningSummary>,
+    pub model_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    pub plan_mode_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    pub model_reasoning_summary: Option<Lenient<ReasoningSummary>>,
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
-    pub model_verbosity: Option<Verbosity>,
+    pub model_verbosity: Option<Lenient<Verbosity>>,
 
     /// Override to force-enable reasoning summaries for the configured model.
     pub model_supports_reasoning_summaries: Option<bool>,
@@ -302,10 +304,10 @@ pub struct ConfigToml {
     pub model_catalog_json: Option<AbsolutePathBuf>,
 
     /// Optionally specify a personality for the model
-    pub personality: Option<Personality>,
+    pub personality: Option<Lenient<Personality>>,
 
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<Lenient<ServiceTier>>,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
     pub chatgpt_base_url: Option<String>,
@@ -351,11 +353,11 @@ pub struct ConfigToml {
     pub experimental_thread_config_endpoint: Option<String>,
 
     /// Experimental / do not use. Selects the thread store implementation.
-    pub experimental_thread_store: Option<ThreadStoreToml>,
+    pub experimental_thread_store: Option<Lenient<ThreadStoreToml>>,
     pub projects: Option<HashMap<String, ProjectConfig>>,
 
     /// Controls the web search tool mode: disabled, cached, or live.
-    pub web_search: Option<WebSearchMode>,
+    pub web_search: Option<Lenient<WebSearchMode>>,
 
     /// Nested tools section for feature toggles
     pub tools: Option<ToolsToml>,
@@ -509,15 +511,21 @@ impl From<ConfigToml> for UserSavedConfig {
             .collect();
 
         Self {
-            approval_policy: config_toml.approval_policy,
-            sandbox_mode: config_toml.sandbox_mode,
+            approval_policy: config_toml.approval_policy.and_then(Lenient::into_valid),
+            sandbox_mode: config_toml.sandbox_mode.and_then(Lenient::into_valid),
             sandbox_settings: config_toml.sandbox_workspace_write.map(From::from),
             forced_chatgpt_workspace_id: config_toml.forced_chatgpt_workspace_id,
-            forced_login_method: config_toml.forced_login_method,
+            forced_login_method: config_toml
+                .forced_login_method
+                .and_then(Lenient::into_valid),
             model: config_toml.model,
-            model_reasoning_effort: config_toml.model_reasoning_effort,
-            model_reasoning_summary: config_toml.model_reasoning_summary,
-            model_verbosity: config_toml.model_verbosity,
+            model_reasoning_effort: config_toml
+                .model_reasoning_effort
+                .and_then(Lenient::into_valid),
+            model_reasoning_summary: config_toml
+                .model_reasoning_summary
+                .and_then(Lenient::into_valid),
+            model_verbosity: config_toml.model_verbosity.and_then(Lenient::into_valid),
             tools: config_toml.tools.map(From::from),
             profile: config_toml.profile,
             profiles,
@@ -715,12 +723,17 @@ impl ConfigToml {
         active_project: Option<&ProjectConfig>,
         permission_profile_constraint: Option<&crate::Constrained<PermissionProfile>>,
     ) -> PermissionProfile {
+        let config_sandbox_mode = self
+            .sandbox_mode
+            .as_ref()
+            .and_then(Lenient::as_valid)
+            .copied();
         let sandbox_mode_was_explicit = sandbox_mode_override.is_some()
             || profile_sandbox_mode.is_some()
-            || self.sandbox_mode.is_some();
+            || config_sandbox_mode.is_some();
         let resolved_sandbox_mode = sandbox_mode_override
             .or(profile_sandbox_mode)
-            .or(self.sandbox_mode)
+            .or(config_sandbox_mode)
             .or(if sandbox_mode_was_explicit {
                 None
             } else {
@@ -839,6 +852,69 @@ impl ConfigToml {
             }
             None => Ok(ConfigProfile::default()),
         }
+    }
+
+    pub fn invalid_enum_warnings(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        push_invalid(&mut warnings, "approval_policy", &self.approval_policy);
+        push_invalid(
+            &mut warnings,
+            "approvals_reviewer",
+            &self.approvals_reviewer,
+        );
+        push_invalid(&mut warnings, "sandbox_mode", &self.sandbox_mode);
+        push_invalid(
+            &mut warnings,
+            "forced_login_method",
+            &self.forced_login_method,
+        );
+        push_invalid(
+            &mut warnings,
+            "cli_auth_credentials_store",
+            &self.cli_auth_credentials_store,
+        );
+        push_invalid(
+            &mut warnings,
+            "mcp_oauth_credentials_store",
+            &self.mcp_oauth_credentials_store,
+        );
+        push_invalid(&mut warnings, "file_opener", &self.file_opener);
+        push_invalid(
+            &mut warnings,
+            "model_reasoning_effort",
+            &self.model_reasoning_effort,
+        );
+        push_invalid(
+            &mut warnings,
+            "plan_mode_reasoning_effort",
+            &self.plan_mode_reasoning_effort,
+        );
+        push_invalid(
+            &mut warnings,
+            "model_reasoning_summary",
+            &self.model_reasoning_summary,
+        );
+        push_invalid(&mut warnings, "model_verbosity", &self.model_verbosity);
+        push_invalid(&mut warnings, "personality", &self.personality);
+        push_invalid(&mut warnings, "service_tier", &self.service_tier);
+        push_invalid(
+            &mut warnings,
+            "experimental_thread_store",
+            &self.experimental_thread_store,
+        );
+        push_invalid(&mut warnings, "web_search", &self.web_search);
+        let mut profiles: Vec<_> = self.profiles.iter().collect();
+        profiles.sort_by_key(|(name, _)| *name);
+        for (name, profile) in profiles {
+            profile.push_invalid_enum_warnings(&mut warnings, &format!("profiles.{name}"));
+        }
+        warnings
+    }
+}
+
+fn push_invalid<T>(warnings: &mut Vec<String>, path: &str, value: &Option<Lenient<T>>) {
+    if let Some(warning) = invalid_config_warnings(path, value) {
+        warnings.push(warning);
     }
 }
 

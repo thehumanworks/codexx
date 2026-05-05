@@ -6,6 +6,7 @@ use crate::config::edit::ConfigEditsBuilder;
 use crate::config::edit::apply_blocking;
 use assert_matches::assert_matches;
 use codex_config::CONFIG_TOML_FILE;
+use codex_config::Lenient;
 use codex_config::RequirementSource;
 use codex_config::config_toml::AgentRoleToml;
 use codex_config::config_toml::AgentsToml;
@@ -2986,7 +2987,7 @@ async fn config_defaults_to_file_cli_auth_store_mode() -> std::io::Result<()> {
 async fn config_resolves_explicit_keyring_auth_store_mode() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
-        cli_auth_credentials_store: Some(AuthCredentialsStoreMode::Keyring),
+        cli_auth_credentials_store: Some(Lenient::from(AuthCredentialsStoreMode::Keyring)),
         ..Default::default()
     };
 
@@ -3115,7 +3116,7 @@ fn web_search_mode_defaults_to_none_if_unset() {
 fn web_search_mode_prefers_profile_over_legacy_flags() {
     let cfg = ConfigToml::default();
     let profile = ConfigProfile {
-        web_search: Some(WebSearchMode::Live),
+        web_search: Some(Lenient::from(WebSearchMode::Live)),
         ..Default::default()
     };
     let mut features = Features::with_defaults();
@@ -3130,7 +3131,7 @@ fn web_search_mode_prefers_profile_over_legacy_flags() {
 #[test]
 fn web_search_mode_disabled_overrides_legacy_request() {
     let cfg = ConfigToml {
-        web_search: Some(WebSearchMode::Disabled),
+        web_search: Some(Lenient::from(WebSearchMode::Disabled)),
         ..Default::default()
     };
     let profile = ConfigProfile::default();
@@ -3257,14 +3258,14 @@ async fn profile_sandbox_mode_overrides_base() -> std::io::Result<()> {
     profiles.insert(
         "work".to_string(),
         ConfigProfile {
-            sandbox_mode: Some(SandboxMode::DangerFullAccess),
+            sandbox_mode: Some(Lenient::from(SandboxMode::DangerFullAccess)),
             ..Default::default()
         },
     );
     let cfg = ConfigToml {
         profiles,
         profile: Some("work".to_string()),
-        sandbox_mode: Some(SandboxMode::ReadOnly),
+        sandbox_mode: Some(Lenient::from(SandboxMode::ReadOnly)),
         ..Default::default()
     };
 
@@ -3290,7 +3291,7 @@ async fn cli_override_takes_precedence_over_profile_sandbox_mode() -> std::io::R
     profiles.insert(
         "work".to_string(),
         ConfigProfile {
-            sandbox_mode: Some(SandboxMode::DangerFullAccess),
+            sandbox_mode: Some(Lenient::from(SandboxMode::DangerFullAccess)),
             ..Default::default()
         },
     );
@@ -3400,7 +3401,7 @@ async fn responses_websocket_features_do_not_change_wire_api() -> std::io::Resul
 async fn config_honors_explicit_file_oauth_store_mode() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cfg = ConfigToml {
-        mcp_oauth_credentials_store: Some(OAuthCredentialsStoreMode::File),
+        mcp_oauth_credentials_store: Some(Lenient::from(OAuthCredentialsStoreMode::File)),
         ..Default::default()
     };
 
@@ -3448,7 +3449,9 @@ async fn managed_config_overrides_oauth_store_mode() -> anyhow::Result<()> {
                 e
             })?;
     assert_eq!(
-        cfg.mcp_oauth_credentials_store,
+        cfg.mcp_oauth_credentials_store
+            .clone()
+            .and_then(Lenient::into_valid),
         Some(OAuthCredentialsStoreMode::Keyring),
     );
 
@@ -4572,7 +4575,10 @@ async fn set_model_updates_defaults() -> anyhow::Result<()> {
     let parsed: ConfigToml = toml::from_str(&serialized)?;
 
     assert_eq!(parsed.model.as_deref(), Some("gpt-5.4"));
-    assert_eq!(parsed.model_reasoning_effort, Some(ReasoningEffort::High));
+    assert_eq!(
+        parsed.model_reasoning_effort.and_then(Lenient::into_valid),
+        Some(ReasoningEffort::High)
+    );
 
     Ok(())
 }
@@ -4603,7 +4609,10 @@ model = "gpt-4.1"
     let parsed: ConfigToml = toml::from_str(&serialized)?;
 
     assert_eq!(parsed.model.as_deref(), Some("o4-mini"));
-    assert_eq!(parsed.model_reasoning_effort, Some(ReasoningEffort::High));
+    assert_eq!(
+        parsed.model_reasoning_effort.and_then(Lenient::into_valid),
+        Some(ReasoningEffort::High)
+    );
     assert_eq!(
         parsed
             .profiles
@@ -4634,7 +4643,10 @@ async fn set_model_updates_profile() -> anyhow::Result<()> {
 
     assert_eq!(profile.model.as_deref(), Some("gpt-5.4"));
     assert_eq!(
-        profile.model_reasoning_effort,
+        profile
+            .model_reasoning_effort
+            .clone()
+            .and_then(Lenient::into_valid),
         Some(ReasoningEffort::Medium)
     );
 
@@ -4674,7 +4686,10 @@ model = "gpt-5.4"
         .expect("dev profile should survive updates");
     assert_eq!(dev_profile.model.as_deref(), Some("o4-high"));
     assert_eq!(
-        dev_profile.model_reasoning_effort,
+        dev_profile
+            .model_reasoning_effort
+            .clone()
+            .and_then(Lenient::into_valid),
         Some(ReasoningEffort::Medium)
     );
 

@@ -124,9 +124,6 @@ async fn invalid_enum_values_emit_warnings_without_poisoning_config() -> std::io
     let contents = r#"
 model = "gpt-5-codex"
 sandbox_mode = "make-it-so"
-
-[tui]
-notification_method = "loudly"
 "#;
     let config_path = tmp.path().join(CONFIG_TOML_FILE);
     std::fs::write(&config_path, contents).expect("write config");
@@ -143,20 +140,21 @@ notification_method = "loudly"
     )
     .await?;
 
-    let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
-        layers.deserialize_effective_config_with_warnings()?;
+    let effective_config = layers.effective_config();
+    let config_toml: ConfigToml = effective_config
+        .clone()
+        .try_into()
+        .map_err(std::io::Error::other)?;
+    let enum_warnings = config_toml.invalid_enum_warnings();
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"
-
-[tui]
+sandbox_mode = "make-it-so"
 "#,
     )
     .expect("expected config should parse");
-    let expected_startup_warnings = vec![
-        "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
-        "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
-    ];
+    let expected_startup_warnings =
+        vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()];
 
     assert_eq!(
         (effective_config, enum_warnings),

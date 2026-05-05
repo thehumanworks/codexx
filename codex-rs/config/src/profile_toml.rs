@@ -3,7 +3,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::Lenient;
 use crate::config_toml::ToolsToml;
+use crate::invalid_config_warnings;
 use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
 use crate::types::Personality;
@@ -24,20 +26,20 @@ use codex_protocol::protocol::AskForApproval;
 pub struct ConfigProfile {
     pub model: Option<String>,
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
-    pub service_tier: Option<ServiceTier>,
+    pub service_tier: Option<Lenient<ServiceTier>>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.
     pub model_provider: Option<String>,
-    pub approval_policy: Option<AskForApproval>,
-    pub approvals_reviewer: Option<ApprovalsReviewer>,
-    pub sandbox_mode: Option<SandboxMode>,
-    pub model_reasoning_effort: Option<ReasoningEffort>,
-    pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
-    pub model_reasoning_summary: Option<ReasoningSummary>,
-    pub model_verbosity: Option<Verbosity>,
+    pub approval_policy: Option<Lenient<AskForApproval>>,
+    pub approvals_reviewer: Option<Lenient<ApprovalsReviewer>>,
+    pub sandbox_mode: Option<Lenient<SandboxMode>>,
+    pub model_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    pub plan_mode_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    pub model_reasoning_summary: Option<Lenient<ReasoningSummary>>,
+    pub model_verbosity: Option<Lenient<Verbosity>>,
     /// Optional path to a JSON model catalog (applied on startup only).
     pub model_catalog_json: Option<AbsolutePathBuf>,
-    pub personality: Option<Personality>,
+    pub personality: Option<Lenient<Personality>>,
     pub chatgpt_base_url: Option<String>,
     /// Optional path to a file containing model instructions.
     pub model_instructions_file: Option<AbsolutePathBuf>,
@@ -61,7 +63,7 @@ pub struct ConfigProfile {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     pub tools_view_image: Option<bool>,
     pub tools: Option<ToolsToml>,
-    pub web_search: Option<WebSearchMode>,
+    pub web_search: Option<Lenient<WebSearchMode>>,
     pub analytics: Option<AnalyticsConfigToml>,
     #[serde(default)]
     pub windows: Option<WindowsToml>,
@@ -78,11 +80,72 @@ impl From<ConfigProfile> for codex_app_server_protocol::Profile {
         Self {
             model: config_profile.model,
             model_provider: config_profile.model_provider,
-            approval_policy: config_profile.approval_policy,
-            model_reasoning_effort: config_profile.model_reasoning_effort,
-            model_reasoning_summary: config_profile.model_reasoning_summary,
-            model_verbosity: config_profile.model_verbosity,
+            approval_policy: config_profile.approval_policy.and_then(Lenient::into_valid),
+            model_reasoning_effort: config_profile
+                .model_reasoning_effort
+                .and_then(Lenient::into_valid),
+            model_reasoning_summary: config_profile
+                .model_reasoning_summary
+                .and_then(Lenient::into_valid),
+            model_verbosity: config_profile.model_verbosity.and_then(Lenient::into_valid),
             chatgpt_base_url: config_profile.chatgpt_base_url,
         }
+    }
+}
+
+impl ConfigProfile {
+    pub fn push_invalid_enum_warnings(&self, warnings: &mut Vec<String>, prefix: &str) {
+        push_invalid(
+            warnings,
+            &format!("{prefix}.service_tier"),
+            &self.service_tier,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.approval_policy"),
+            &self.approval_policy,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.approvals_reviewer"),
+            &self.approvals_reviewer,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.sandbox_mode"),
+            &self.sandbox_mode,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.model_reasoning_effort"),
+            &self.model_reasoning_effort,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.plan_mode_reasoning_effort"),
+            &self.plan_mode_reasoning_effort,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.model_reasoning_summary"),
+            &self.model_reasoning_summary,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.model_verbosity"),
+            &self.model_verbosity,
+        );
+        push_invalid(
+            warnings,
+            &format!("{prefix}.personality"),
+            &self.personality,
+        );
+        push_invalid(warnings, &format!("{prefix}.web_search"), &self.web_search);
+    }
+}
+
+fn push_invalid<T>(warnings: &mut Vec<String>, path: &str, value: &Option<Lenient<T>>) {
+    if let Some(warning) = invalid_config_warnings(path, value) {
+        warnings.push(warning);
     }
 }

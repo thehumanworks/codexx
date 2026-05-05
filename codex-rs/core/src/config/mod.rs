@@ -15,6 +15,7 @@ use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::ConstrainedWithSource;
 use codex_config::FeatureRequirementsToml;
+use codex_config::Lenient;
 use codex_config::LoaderOverrides;
 use codex_config::McpServerIdentity;
 use codex_config::McpServerRequirement;
@@ -967,10 +968,9 @@ impl ConfigBuilder {
         // relative paths to absolute paths based on the parent folder of the
         // respective config file, so we should be safe to deserialize without
         // AbsolutePathBufGuard here.
-        let (_merged_toml, config_toml, enum_warnings) = match config_layer_stack
-            .deserialize_effective_config_with_warnings::<ConfigToml>()
-        {
-            Ok(result) => result,
+        let merged_toml = config_layer_stack.effective_config();
+        let config_toml: ConfigToml = match merged_toml.try_into() {
+            Ok(config_toml) => config_toml,
             Err(err) => {
                 if let Some(config_error) = codex_config::first_layer_config_error::<ConfigToml>(
                     &config_layer_stack,
@@ -987,6 +987,7 @@ impl ConfigBuilder {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
             }
         };
+        let enum_warnings = config_toml.invalid_enum_warnings();
         let config_layer_stack = config_layer_stack.with_additional_startup_warnings(enum_warnings);
         let config_lock_settings = config_toml
             .debug
@@ -1226,14 +1227,11 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     )
     .await?;
 
-    let _guard = AbsolutePathBufGuard::new(codex_home);
-    let (_merged_toml, cfg, _enum_warnings) = config_layer_stack
-        .deserialize_effective_config_with_warnings::<ConfigToml>()
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-        .map_err(|e| {
-            tracing::error!("Failed to deserialize overridden config: {e}");
-            e
-        })?;
+    let merged_toml = config_layer_stack.effective_config();
+    let cfg = deserialize_config_toml_with_base(merged_toml, codex_home).map_err(|e| {
+        tracing::error!("Failed to deserialize overridden config: {e}");
+        e
+    })?;
 
     Ok(cfg)
 }
@@ -1677,6 +1675,14 @@ fn thread_store_config(
     }
 }
 
+fn valid_lenient<T>(value: Option<Lenient<T>>) -> Option<T> {
+    value.and_then(Lenient::into_valid)
+}
+
+fn valid_lenient_ref<T: Clone>(value: &Option<Lenient<T>>) -> Option<T> {
+    value.as_ref().and_then(Lenient::as_valid).cloned()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PermissionConfigSyntax {
     Legacy,
@@ -1845,7 +1851,9 @@ fn resolve_web_search_mode(
     config_profile: &ConfigProfile,
     features: &Features,
 ) -> Option<WebSearchMode> {
-    if let Some(mode) = config_profile.web_search.or(config_toml.web_search) {
+    if let Some(mode) = valid_lenient_ref(&config_profile.web_search)
+        .or_else(|| valid_lenient_ref(&config_toml.web_search))
+    {
         return Some(mode);
     }
     if features.enabled(Feature::WebSearchCached) {
@@ -2236,7 +2244,7 @@ impl Config {
             &config_layer_stack,
             &cfg,
             sandbox_mode,
-            config_profile.sandbox_mode,
+            valid_lenient_ref(&config_profile.sandbox_mode),
         );
         let has_permission_profiles = cfg
             .permissions
@@ -2442,7 +2450,7 @@ impl Config {
             let mut permission_profile = cfg
                 .derive_permission_profile(
                     sandbox_mode,
-                    config_profile.sandbox_mode,
+                    valid_lenient_ref(&config_profile.sandbox_mode),
                     windows_sandbox_level,
                     Some(&active_project),
                     Some(&constrained_permission_profile),
@@ -2496,11 +2504,11 @@ impl Config {
             )
         };
         let approval_policy_was_explicit = approval_policy_override.is_some()
-            || config_profile.approval_policy.is_some()
-            || cfg.approval_policy.is_some();
+            || valid_lenient_ref(&config_profile.approval_policy).is_some()
+            || valid_lenient_ref(&cfg.approval_policy).is_some();
         let mut approval_policy = approval_policy_override
-            .or(config_profile.approval_policy)
-            .or(cfg.approval_policy)
+            .or_else(|| valid_lenient_ref(&config_profile.approval_policy))
+            .or_else(|| valid_lenient_ref(&cfg.approval_policy))
             .unwrap_or_else(|| {
                 if active_project.is_trusted() {
                     AskForApproval::OnRequest
@@ -2520,11 +2528,11 @@ impl Config {
             approval_policy = constrained_approval_policy.value();
         }
         let approvals_reviewer_was_explicit = approvals_reviewer_override.is_some()
-            || config_profile.approvals_reviewer.is_some()
-            || cfg.approvals_reviewer.is_some();
+            || valid_lenient_ref(&config_profile.approvals_reviewer).is_some()
+            || valid_lenient_ref(&cfg.approvals_reviewer).is_some();
         let mut approvals_reviewer = approvals_reviewer_override
-            .or(config_profile.approvals_reviewer)
-            .or(cfg.approvals_reviewer)
+            .or_else(|| valid_lenient_ref(&config_profile.approvals_reviewer))
+            .or_else(|| valid_lenient_ref(&cfg.approvals_reviewer))
             .unwrap_or(ApprovalsReviewer::User);
         if !approvals_reviewer_was_explicit
             && let Err(err) = constrained_approvals_reviewer.can_set(&approvals_reviewer)
@@ -2706,7 +2714,7 @@ impl Config {
                 }
             });
 
-        let forced_login_method = cfg.forced_login_method;
+        let forced_login_method = valid_lenient(cfg.forced_login_method.clone());
 
         let model = model.or(config_profile.model).or(cfg.model);
         let mut notices = cfg.notice.unwrap_or_default();
@@ -2718,7 +2726,8 @@ impl Config {
                 notices.fast_default_opt_out = Some(true);
                 None
             }
-            None => config_profile.service_tier.or(cfg.service_tier),
+            None => valid_lenient_ref(&config_profile.service_tier)
+                .or_else(|| valid_lenient_ref(&cfg.service_tier)),
         };
         let service_tier = match service_tier {
             Some(ServiceTier::Fast) if features.enabled(Feature::FastMode) => {
@@ -2784,8 +2793,8 @@ impl Config {
                         ))
                 });
         let personality = personality
-            .or(config_profile.personality)
-            .or(cfg.personality)
+            .or_else(|| valid_lenient_ref(&config_profile.personality))
+            .or_else(|| valid_lenient_ref(&cfg.personality))
             .or_else(|| {
                 features
                     .enabled(Feature::Personality)
@@ -2990,14 +2999,14 @@ impl Config {
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
             cli_auth_credentials_store_mode: resolve_cli_auth_credentials_store_mode(
-                cfg.cli_auth_credentials_store.unwrap_or_default(),
+                valid_lenient(cfg.cli_auth_credentials_store.clone()).unwrap_or_default(),
                 env!("CARGO_PKG_VERSION"),
             ),
             mcp_servers,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
             mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
-                cfg.mcp_oauth_credentials_store.unwrap_or_default(),
+                valid_lenient(cfg.mcp_oauth_credentials_store.clone()).unwrap_or_default(),
                 env!("CARGO_PKG_VERSION"),
             ),
             mcp_oauth_callback_port: cfg.mcp_oauth_callback_port,
@@ -3048,7 +3057,7 @@ impl Config {
             config_layer_stack,
             history,
             ephemeral: ephemeral.unwrap_or_default(),
-            file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
+            file_opener: valid_lenient(cfg.file_opener).unwrap_or(UriBasedFileOpener::VsCode),
             codex_self_exe,
             codex_linux_sandbox_exe,
             main_execve_wrapper_exe,
@@ -3060,18 +3069,16 @@ impl Config {
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(false),
             guardian_policy_config,
-            model_reasoning_effort: config_profile
-                .model_reasoning_effort
-                .or(cfg.model_reasoning_effort),
-            plan_mode_reasoning_effort: config_profile
-                .plan_mode_reasoning_effort
-                .or(cfg.plan_mode_reasoning_effort),
-            model_reasoning_summary: config_profile
-                .model_reasoning_summary
-                .or(cfg.model_reasoning_summary),
+            model_reasoning_effort: valid_lenient(config_profile.model_reasoning_effort)
+                .or_else(|| valid_lenient(cfg.model_reasoning_effort)),
+            plan_mode_reasoning_effort: valid_lenient(config_profile.plan_mode_reasoning_effort)
+                .or_else(|| valid_lenient(cfg.plan_mode_reasoning_effort)),
+            model_reasoning_summary: valid_lenient(config_profile.model_reasoning_summary)
+                .or_else(|| valid_lenient(cfg.model_reasoning_summary)),
             model_supports_reasoning_summaries: cfg.model_supports_reasoning_summaries,
             model_catalog,
-            model_verbosity: config_profile.model_verbosity.or(cfg.model_verbosity),
+            model_verbosity: valid_lenient(config_profile.model_verbosity)
+                .or_else(|| valid_lenient(cfg.model_verbosity)),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
@@ -3101,7 +3108,7 @@ impl Config {
             experimental_realtime_start_instructions: cfg.experimental_realtime_start_instructions,
             experimental_thread_config_endpoint: cfg.experimental_thread_config_endpoint,
             experimental_thread_store: thread_store_config(
-                cfg.experimental_thread_store,
+                valid_lenient(cfg.experimental_thread_store),
                 cfg.experimental_thread_store_endpoint,
             ),
             forced_chatgpt_workspace_id,
