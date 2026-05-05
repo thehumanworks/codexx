@@ -25,7 +25,6 @@ use codex_app_server_protocol::ConfigWarningNotification;
 use codex_app_server_protocol::JSONRPCErrorError;
 use codex_app_server_protocol::McpServerElicitationAction;
 use codex_app_server_protocol::McpServerElicitationRequestResponse;
-use codex_app_server_protocol::PermissionProfileModificationParams;
 use codex_app_server_protocol::PermissionProfileSelectionParams;
 use codex_app_server_protocol::RequestId;
 use codex_app_server_protocol::ReviewStartParams;
@@ -80,7 +79,6 @@ use codex_otel::set_parent_from_context;
 use codex_otel::traceparent_context_from_env;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewRequest;
@@ -420,6 +418,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         show_raw_agent_reasoning: oss.then_some(true),
         tools_web_search_request: None,
         ephemeral: ephemeral.then_some(true),
+        workspace_roots: None,
         additional_writable_roots: add_dir,
     };
 
@@ -770,6 +769,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
                         responsesapi_client_metadata: None,
                         environments: None,
                         cwd: Some(default_cwd),
+                        workspace_roots: None,
                         approval_policy: Some(default_approval_policy.into()),
                         approvals_reviewer: None,
                         sandbox_policy: None,
@@ -941,6 +941,7 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
+        workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
@@ -964,6 +965,7 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         model: config.model.clone(),
         model_provider: Some(config.model_provider_id.clone()),
         cwd: Some(config.cwd.to_string_lossy().to_string()),
+        workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
         sandbox: sandbox.flatten(),
@@ -983,19 +985,7 @@ fn permissions_selection_from_config(config: &Config) -> Option<PermissionProfil
 fn permissions_selection_from_active_profile(
     active: ActivePermissionProfile,
 ) -> PermissionProfileSelectionParams {
-    let modifications = active
-        .modifications
-        .into_iter()
-        .map(|modification| match modification {
-            ActivePermissionProfileModification::AdditionalWritableRoot { path } => {
-                PermissionProfileModificationParams::AdditionalWritableRoot { path }
-            }
-        })
-        .collect::<Vec<_>>();
-    PermissionProfileSelectionParams::Profile {
-        id: active.id,
-        modifications: (!modifications.is_empty()).then_some(modifications),
-    }
+    PermissionProfileSelectionParams::Profile { id: active.id }
 }
 
 fn sandbox_mode_from_permission_profile(
@@ -1142,7 +1132,8 @@ fn session_configured_from_thread_response(
         approvals_reviewer,
         permission_profile,
         active_permission_profile,
-        cwd,
+        cwd: cwd.clone(),
+        workspace_roots: vec![cwd],
         reasoning_effort,
         history_log_id: 0,
         history_entry_count: 0,
