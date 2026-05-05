@@ -43,6 +43,7 @@ pub(super) async fn list_threads(
         codex_home: store.config.codex_home.clone(),
         sqlite_home: store.sqlite_home(),
         cwd: store.config.codex_home.clone(),
+        workspace_roots: Vec::new(),
         model_provider_id: store.config.default_model_provider_id.clone(),
         generate_memories: false,
     };
