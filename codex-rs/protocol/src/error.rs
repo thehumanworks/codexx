@@ -596,24 +596,7 @@ impl std::fmt::Display for EnvVarError {
 
 pub fn get_error_message_ui(e: &CodexErr) -> String {
     let message = match e {
-        CodexErr::Sandbox(SandboxErr::Denied { output, .. }) => {
-            let aggregated = output.aggregated_output.text.trim();
-            if !aggregated.is_empty() {
-                output.aggregated_output.text.clone()
-            } else {
-                let stderr = output.stderr.text.trim();
-                let stdout = output.stdout.text.trim();
-                match (stderr.is_empty(), stdout.is_empty()) {
-                    (false, false) => format!("{stderr}\n{stdout}"),
-                    (false, true) => output.stderr.text.clone(),
-                    (true, false) => output.stdout.text.clone(),
-                    (true, true) => format!(
-                        "command failed inside sandbox with exit code {}",
-                        output.exit_code
-                    ),
-                }
-            }
-        }
+        CodexErr::Sandbox(SandboxErr::Denied { output, .. }) => sandbox_denied_ui_message(output),
         // Timeouts are not sandbox errors from a UX perspective; present them plainly.
         CodexErr::Sandbox(SandboxErr::Timeout { output }) => {
             format!(
@@ -628,6 +611,57 @@ pub fn get_error_message_ui(e: &CodexErr) -> String {
         &message,
         TruncationPolicy::Bytes(ERROR_MESSAGE_UI_MAX_BYTES),
     )
+}
+
+fn sandbox_denied_ui_message(output: &ExecToolCallOutput) -> String {
+    let aggregated = output.aggregated_output.text.trim();
+    let mut message = if !aggregated.is_empty() {
+        output.aggregated_output.text.clone()
+    } else {
+        let stderr = output.stderr.text.trim();
+        let stdout = output.stdout.text.trim();
+        match (stderr.is_empty(), stdout.is_empty()) {
+            (false, false) => format!("{stderr}\n{stdout}"),
+            (false, true) => output.stderr.text.clone(),
+            (true, false) => output.stdout.text.clone(),
+            (true, true) => format!(
+                "command failed inside sandbox with exit code {}",
+                output.exit_code
+            ),
+        }
+    };
+
+    if is_protected_git_metadata_denial(output)
+        && !message.contains("Codex sandbox protects `.git` in `workspace-write` mode")
+    {
+        message.push_str(
+            "\n\nCodex sandbox protects `.git` in `workspace-write` mode, so Git metadata \
+writes like `FETCH_HEAD` or `index.lock` can fail. Run Git outside Codex or use a less \
+restrictive sandbox if you want Codex to manage Git state.",
+        );
+    }
+
+    message
+}
+
+fn is_protected_git_metadata_denial(output: &ExecToolCallOutput) -> bool {
+    let output_text = [
+        output.stderr.text.as_str(),
+        output.stdout.text.as_str(),
+        output.aggregated_output.text.as_str(),
+    ]
+    .join("\n")
+    .to_lowercase();
+
+    let mentions_git_metadata = output_text.contains(".git/")
+        || output_text.contains(".git\\")
+        || output_text.contains("fetch_head")
+        || output_text.contains("index.lock");
+    let looks_like_denial = output_text.contains("permission denied")
+        || output_text.contains("read-only file system")
+        || output_text.contains("cannot open");
+
+    mentions_git_metadata && looks_like_denial
 }
 
 #[cfg(test)]

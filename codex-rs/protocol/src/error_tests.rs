@@ -171,6 +171,29 @@ fn sandbox_denied_reports_exit_code_when_no_output_available() {
 }
 
 #[test]
+fn sandbox_denied_appends_git_protection_hint_for_fetch_head_failures() {
+    let output = ExecToolCallOutput {
+        exit_code: 128,
+        stdout: StreamOutput::new(String::new()),
+        stderr: StreamOutput::new(
+            "error: cannot open '.git/FETCH_HEAD': Permission denied".to_string(),
+        ),
+        aggregated_output: StreamOutput::new(String::new()),
+        duration: Duration::from_millis(5),
+        timed_out: false,
+    };
+    let err = CodexErr::Sandbox(SandboxErr::Denied {
+        output: Box::new(output),
+        network_policy_decision: None,
+    });
+
+    assert_eq!(
+        get_error_message_ui(&err),
+        "error: cannot open '.git/FETCH_HEAD': Permission denied\n\nCodex sandbox protects `.git` in `workspace-write` mode, so Git metadata writes like `FETCH_HEAD` or `index.lock` can fail. Run Git outside Codex or use a less restrictive sandbox if you want Codex to manage Git state."
+    );
+}
+
+#[test]
 fn usage_limit_reached_error_formats_free_plan() {
     let err = UsageLimitReachedError {
         plan_type: Some(PlanType::Known(KnownPlan::Free)),
