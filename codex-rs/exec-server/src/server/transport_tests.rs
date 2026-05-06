@@ -13,8 +13,11 @@ use tokio::io::BufReader;
 use tokio::io::duplex;
 use tokio::time::timeout;
 
+use super::ConnectionPreflightRoute;
 use super::DEFAULT_LISTEN_URL;
 use super::ExecServerListenTransport;
+use super::HEALTH_RESPONSE;
+use super::connection_preflight_route;
 use super::parse_listen_url;
 use super::run_stdio_connection_with_io;
 use crate::ExecServerRuntimePaths;
@@ -122,6 +125,39 @@ fn parse_listen_url_accepts_websocket_url() {
                 .parse::<SocketAddr>()
                 .expect("valid socket address")
         )
+    );
+}
+
+#[test]
+fn connection_preflight_route_detects_health_path() {
+    assert_eq!(
+        connection_preflight_route(b"GET /health HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        ConnectionPreflightRoute::Health
+    );
+}
+
+#[test]
+fn connection_preflight_route_falls_back_to_websocket() {
+    assert_eq!(
+        connection_preflight_route(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        ConnectionPreflightRoute::WebSocket
+    );
+    assert_eq!(
+        connection_preflight_route(b"POST /health HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+        ConnectionPreflightRoute::WebSocket
+    );
+}
+
+#[test]
+fn health_check_response_is_plain_ok() {
+    assert_eq!(
+        HEALTH_RESPONSE,
+        b"HTTP/1.1 200 OK\r\n\
+content-type: text/plain; charset=utf-8\r\n\
+content-length: 3\r\n\
+connection: close\r\n\
+\r\n\
+ok\n"
     );
 }
 

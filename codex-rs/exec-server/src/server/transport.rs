@@ -2,8 +2,11 @@ use std::io::Write as _;
 use std::net::SocketAddr;
 use tokio::io;
 use tokio::io::AsyncRead;
+use tokio::io::AsyncReadExt as _;
 use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt as _;
 use tokio::net::TcpListener;
+use tokio::net::TcpStream;
 use tokio_tungstenite::accept_async;
 use tracing::warn;
 
@@ -12,11 +15,26 @@ use crate::connection::JsonRpcConnection;
 use crate::server::processor::ConnectionProcessor;
 
 pub const DEFAULT_LISTEN_URL: &str = "ws://127.0.0.1:0";
+const HTTP_REQUEST_PEEK_BYTES: usize = 64;
+const HEALTH_REQUEST_LINE_PREFIX: &[u8] = b"GET /health HTTP/";
+const HEALTH_REQUEST_MAX_BYTES: usize = 8 * 1024;
+const HEALTH_RESPONSE: &[u8] = b"HTTP/1.1 200 OK\r\n\
+content-type: text/plain; charset=utf-8\r\n\
+content-length: 3\r\n\
+connection: close\r\n\
+\r\n\
+ok\n";
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) enum ExecServerListenTransport {
     WebSocket(SocketAddr),
     Stdio,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum ConnectionPreflightRoute {
+    Health,
+    WebSocket,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -117,22 +135,66 @@ async fn run_websocket_listener(
         let (stream, peer_addr) = listener.accept().await?;
         let processor = processor.clone();
         tokio::spawn(async move {
-            match accept_async(stream).await {
-                Ok(websocket) => {
-                    processor
-                        .run_connection(JsonRpcConnection::from_websocket(
-                            websocket,
-                            format!("exec-server websocket {peer_addr}"),
-                        ))
-                        .await;
-                }
-                Err(err) => {
-                    warn!(
-                        "failed to accept exec-server websocket connection from {peer_addr}: {err}"
-                    );
-                }
+            if let Err(err) = serve_connection(stream, peer_addr, processor).await {
+                warn!("failed to serve exec-server connection from {peer_addr}: {err}");
             }
         });
+    }
+}
+
+async fn serve_connection(
+    mut stream: TcpStream,
+    peer_addr: SocketAddr,
+    processor: ConnectionProcessor,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let mut request_prefix = [0; HTTP_REQUEST_PEEK_BYTES];
+    let bytes_read = stream.peek(&mut request_prefix).await?;
+    match connection_preflight_route(&request_prefix[..bytes_read]) {
+        ConnectionPreflightRoute::Health => {
+            read_health_check_request(&mut stream).await?;
+            stream.write_all(HEALTH_RESPONSE).await?;
+        }
+        ConnectionPreflightRoute::WebSocket => match accept_async(stream).await {
+            Ok(websocket) => {
+                processor
+                    .run_connection(JsonRpcConnection::from_websocket(
+                        websocket,
+                        format!("exec-server websocket {peer_addr}"),
+                    ))
+                    .await;
+            }
+            Err(err) => {
+                warn!("failed to accept exec-server websocket connection from {peer_addr}: {err}");
+            }
+        },
+    };
+
+    Ok(())
+}
+
+fn connection_preflight_route(request_prefix: &[u8]) -> ConnectionPreflightRoute {
+    if request_prefix.starts_with(HEALTH_REQUEST_LINE_PREFIX) {
+        return ConnectionPreflightRoute::Health;
+    }
+
+    ConnectionPreflightRoute::WebSocket
+}
+
+async fn read_health_check_request(stream: &mut TcpStream) -> io::Result<()> {
+    let mut request = Vec::new();
+    let mut buffer = [0; 512];
+    loop {
+        let bytes_read = stream.read(&mut buffer).await?;
+        if bytes_read == 0 {
+            return Ok(());
+        }
+
+        request.extend_from_slice(&buffer[..bytes_read]);
+        if request.windows(4).any(|window| window == b"\r\n\r\n")
+            || request.len() >= HEALTH_REQUEST_MAX_BYTES
+        {
+            return Ok(());
+        }
     }
 }
 
