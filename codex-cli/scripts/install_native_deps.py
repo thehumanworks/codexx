@@ -142,7 +142,7 @@ def parse_args() -> argparse.Namespace:
         choices=tuple(list(BINARY_COMPONENTS) + ["rg"]),
         help=(
             "Limit installation to the specified components."
-            " May be repeated. Defaults to codex, codex-windows-sandbox-setup,"
+            " May be repeated. Defaults to bwrap, codex, codex-windows-sandbox-setup,"
             " codex-command-runner, and rg."
         ),
     )
@@ -166,6 +166,7 @@ def main() -> int:
     vendor_dir.mkdir(parents=True, exist_ok=True)
 
     components = args.components or [
+        "bwrap",
         "codex",
         "codex-windows-sandbox-setup",
         "codex-command-runner",
