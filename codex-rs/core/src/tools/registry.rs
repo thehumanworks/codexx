@@ -228,9 +228,9 @@ where
         invocation: ToolInvocation,
     ) -> BoxFuture<'a, Result<AnyToolResult, FunctionCallError>> {
         Box::pin(async move {
-            let output = self.handle(invocation.clone()).await?;
             let call_id = invocation.call_id.clone();
             let payload = invocation.payload.clone();
+            let output = self.handle(invocation.clone()).await?;
             let post_tool_use_payload =
                 ToolHandler::post_tool_use_payload(self, &invocation, &output);
             Ok(AnyToolResult {
