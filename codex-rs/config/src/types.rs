@@ -25,7 +25,9 @@ use std::collections::HashMap;
 use std::fmt;
 
 use schemars::JsonSchema;
+use serde::de;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 
 pub use crate::tui_keymap::KeybindingSpec;
@@ -87,11 +89,30 @@ pub enum OAuthCredentialsStoreMode {
     Keyring,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WindowsSandboxModeToml {
     Elevated,
     Unelevated,
+}
+
+impl<'de> Deserialize<'de> for WindowsSandboxModeToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        let normalized = raw.trim().to_ascii_lowercase();
+
+        match normalized.as_str() {
+            "elevated" => Ok(Self::Elevated),
+            "unelevated" | "wsl" | "wsl2" | "wsl-2" => Ok(Self::Unelevated),
+            _ => Err(de::Error::unknown_variant(
+                raw.as_str(),
+                &["elevated", "unelevated", "wsl", "wsl2", "wsl-2"],
+            )),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]

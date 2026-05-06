@@ -2,6 +2,16 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn deserialize_windows_sandbox_mode_accepts_wsl_aliases_case_insensitively() {
+    for alias in ["wsl", "WSL2", "wsL2", "wsl-2"] {
+        let windows: WindowsToml = toml::from_str(&format!(r#"sandbox = "{alias}""#))
+            .expect("should deserialize WSL alias");
+
+        assert_eq!(windows.sandbox, Some(WindowsSandboxModeToml::Unelevated));
+    }
+}
+
+#[test]
 fn deserialize_skill_config_with_name_selector() {
     let cfg: SkillConfig = toml::from_str(
         r#"
