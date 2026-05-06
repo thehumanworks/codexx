@@ -16,6 +16,10 @@ fn complete_turn_with_message(chat: &mut ChatWidget, turn_id: &str, message: Opt
 fn submit_composer_text(chat: &mut ChatWidget, text: &str) {
     chat.bottom_pane
         .set_composer_text(text.to_string(), Vec::new(), Vec::new());
+    submit_current_composer(chat);
+}
+
+fn submit_current_composer(chat: &mut ChatWidget) {
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
     chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
@@ -34,14 +38,16 @@ fn recall_latest_after_clearing(chat: &mut ChatWidget) -> String {
     chat.bottom_pane.composer_text()
 }
 
-fn next_add_to_history_op(op_rx: &mut tokio::sync::mpsc::UnboundedReceiver<Op>) -> String {
+fn next_add_to_history_event(rx: &mut tokio::sync::mpsc::UnboundedReceiver<AppEvent>) -> String {
     loop {
-        match op_rx.try_recv() {
-            Ok(Op::AddToHistory { text }) => return text,
+        match rx.try_recv() {
+            Ok(AppEvent::AppendMessageHistoryEntry { text, .. }) => return text,
             Ok(_) => continue,
-            Err(TryRecvError::Empty) => panic!("expected AddToHistory op but queue was empty"),
+            Err(TryRecvError::Empty) => {
+                panic!("expected AppendMessageHistoryEntry event but queue was empty")
+            }
             Err(TryRecvError::Disconnected) => {
-                panic!("expected AddToHistory op but channel closed")
+                panic!("expected AppendMessageHistoryEntry event but channel closed")
             }
         }
     }
@@ -112,15 +118,6 @@ async fn queued_slash_review_with_args_dispatches_after_active_turn() {
     complete_turn_with_message(&mut chat, "turn-1", Some("done"));
 
     match op_rx.try_recv() {
-        Ok(Op::AddToHistory { .. }) => match op_rx.try_recv() {
-            Ok(Op::Review { target }) => assert_eq!(
-                target,
-                ReviewTarget::Custom {
-                    instructions: "check regressions".to_string(),
-                }
-            ),
-            other => panic!("expected queued /review to submit review op, got {other:?}"),
-        },
         Ok(Op::Review { target }) => assert_eq!(
             target,
             ReviewTarget::Custom {
@@ -148,7 +145,7 @@ async fn queued_slash_review_with_args_restores_for_edit() {
 
 #[tokio::test]
 async fn queued_bang_shell_dispatches_after_active_turn() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
     handle_turn_started(&mut chat, "turn-1");
 
@@ -167,10 +164,7 @@ async fn queued_bang_shell_dispatches_after_active_turn() {
         Ok(Op::RunUserShellCommand { command }) => assert_eq!(command, "echo hi"),
         other => panic!("expected queued shell command op, got {other:?}"),
     }
-    assert_matches!(
-        op_rx.try_recv(),
-        Ok(Op::AddToHistory { text }) if text == "!echo hi"
-    );
+    assert_eq!(next_add_to_history_event(&mut rx), "!echo hi");
     assert!(chat.queued_user_messages.is_empty());
 }
 
@@ -213,7 +207,7 @@ async fn queued_empty_bang_shell_reports_help_when_dequeued_and_drains_next_inpu
 
 #[tokio::test]
 async fn queued_bang_shell_waits_for_user_shell_completion_before_next_input() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
     handle_turn_started(&mut chat, "turn-1");
 
@@ -226,10 +220,7 @@ async fn queued_bang_shell_waits_for_user_shell_completion_before_next_input() {
         Ok(Op::RunUserShellCommand { command }) => assert_eq!(command, "echo hi"),
         other => panic!("expected queued shell command op, got {other:?}"),
     }
-    assert_matches!(
-        op_rx.try_recv(),
-        Ok(Op::AddToHistory { text }) if text == "!echo hi"
-    );
+    assert_eq!(next_add_to_history_event(&mut rx), "!echo hi");
     assert_eq!(chat.queued_user_messages.len(), 1);
 
     let begin = begin_exec_with_source(
@@ -408,10 +399,10 @@ async fn queued_inline_rename_does_not_drain_again_before_turn_started() {
         ),
         other => panic!("expected first queued message after /rename, got {other:?}"),
     }
-    assert_matches!(
-        op_rx.try_recv(),
-        Ok(Op::AddToHistory { text }) if text == "first after rename"
-    );
+    assert!(events.iter().any(|event| matches!(
+        event,
+        AppEvent::AppendMessageHistoryEntry { text, .. } if text == "first after rename"
+    )));
     assert_eq!(
         chat.queued_user_message_texts(),
         vec!["second after rename"]
@@ -941,7 +932,7 @@ fn merged_history_record_remaps_override_image_placeholders() {
 
 #[tokio::test]
 async fn interrupted_merged_message_history_encodes_mentions_once() {
-    let (mut chat, _rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.thread_id = Some(ThreadId::new());
     chat.on_task_started();
     chat.on_agent_message_delta("Final answer line\n".to_string());
@@ -973,7 +964,7 @@ async fn interrupted_merged_message_history_encodes_mentions_once() {
         other => panic!("expected user turn, got {other:?}"),
     }
     let encoded = "use [$figma](app://figma) now";
-    assert_eq!(next_add_to_history_op(&mut op_rx), encoded);
+    assert_eq!(next_add_to_history_event(&mut rx), encoded);
 
     chat.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
     next_interrupt_op(&mut op_rx);
@@ -993,7 +984,7 @@ async fn interrupted_merged_message_history_encodes_mentions_once() {
         }
         other => panic!("expected resubmitted user turn, got {other:?}"),
     }
-    assert_eq!(next_add_to_history_op(&mut op_rx), encoded);
+    assert_eq!(next_add_to_history_event(&mut rx), encoded);
 }
 
 #[tokio::test]
@@ -1149,6 +1140,7 @@ async fn slash_copy_state_tracks_plan_item_completion() {
         ServerNotification::ItemCompleted(ItemCompletedNotification {
             thread_id: String::new(),
             turn_id: "turn-1".to_string(),
+            completed_at_ms: 0,
             item: AppServerThreadItem::Plan {
                 id: "plan-1".to_string(),
                 text: plan_text.clone(),
@@ -1798,9 +1790,9 @@ async fn fast_slash_command_updates_and_persists_local_service_tier() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
+                service_tier: Some(Some(service_tier)),
                 ..
-            })
+            }) if service_tier == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -1829,9 +1821,9 @@ async fn fast_keybinding_toggle_uses_same_events_as_fast_slash_command() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
+                service_tier: Some(Some(service_tier)),
                 ..
-            })
+            }) if service_tier == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -1879,9 +1871,9 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
 
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
-            service_tier: Some(Some(ServiceTier::Fast)),
+            service_tier: Some(Some(service_tier)),
             ..
-        } => {}
+        } if service_tier == ServiceTier::Fast.request_value() => {}
         other => panic!("expected Op::UserTurn with fast service tier, got {other:?}"),
     }
 }
@@ -1904,9 +1896,9 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
         events.iter().any(|event| matches!(
             event,
             AppEvent::CodexOp(Op::OverrideTurnContext {
-                service_tier: Some(Some(ServiceTier::Fast)),
+                service_tier: Some(Some(service_tier)),
                 ..
-            })
+            }) if service_tier == ServiceTier::Fast.request_value()
         )),
         "expected queued /fast to update service tier before next turn; events: {events:?}"
     );
@@ -1914,9 +1906,9 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
     match next_submit_op(&mut op_rx) {
         Op::UserTurn {
             items,
-            service_tier: Some(Some(ServiceTier::Fast)),
+            service_tier: Some(Some(service_tier)),
             ..
-        } => assert_eq!(
+        } if service_tier == ServiceTier::Fast.request_value() => assert_eq!(
             items,
             vec![UserInput::Text {
                 text: "hello after fast".to_string(),
@@ -1968,6 +1960,57 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
         } => {}
         other => panic!("expected Op::UserTurn with standard service tier override, got {other:?}"),
     }
+}
+
+#[tokio::test]
+async fn raw_slash_command_toggles_and_accepts_on_off_args() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command(SlashCommand::Raw);
+    assert!(chat.raw_output_mode());
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: true }))
+    );
+
+    chat.dispatch_command_with_args(SlashCommand::Raw, "off".to_string(), Vec::new());
+    assert!(!chat.raw_output_mode());
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: false }))
+    );
+
+    chat.dispatch_command_with_args(SlashCommand::Raw, "on".to_string(), Vec::new());
+    assert!(chat.raw_output_mode());
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AppEvent::RawOutputModeChanged { enabled: true }))
+    );
+}
+
+#[tokio::test]
+async fn raw_slash_command_reports_usage_for_invalid_arg() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    chat.dispatch_command_with_args(SlashCommand::Raw, "status".to_string(), Vec::new());
+
+    assert!(!chat.raw_output_mode());
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Usage: /raw [on|off]"),
+        "expected raw usage error, got {rendered:?}"
+    );
 }
 
 #[tokio::test]

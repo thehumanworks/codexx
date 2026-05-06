@@ -39,6 +39,7 @@ use codex_app_server_protocol::ThreadTurnsItemsListParams;
 use codex_app_server_protocol::ThreadTurnsItemsListResponse;
 use codex_app_server_protocol::ThreadTurnsListParams;
 use codex_app_server_protocol::ThreadTurnsListResponse;
+use codex_app_server_protocol::TurnItemsView;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::TurnStartResponse;
 use codex_app_server_protocol::TurnStatus;
@@ -180,6 +181,7 @@ async fn thread_read_can_include_turns() -> Result<()> {
     assert_eq!(thread.turns.len(), 1);
     let turn = &thread.turns[0];
     assert_eq!(turn.status, TurnStatus::Completed);
+    assert_eq!(turn.items_view, TurnItemsView::Full);
     assert_eq!(turn.items.len(), 1, "expected user message item");
     match &turn.items[0] {
         ThreadItem::UserMessage { content, .. } => {
@@ -241,6 +243,10 @@ async fn thread_turns_list_can_page_backward_and_forward() -> Result<()> {
         backwards_cursor,
     } = to_response::<ThreadTurnsListResponse>(read_resp)?;
     assert_eq!(turn_user_texts(&data), vec!["third", "second"]);
+    assert!(
+        data.iter()
+            .all(|turn| turn.items_view == TurnItemsView::Full)
+    );
     let next_cursor = next_cursor.expect("expected nextCursor for older turns");
     let backwards_cursor = backwards_cursor.expect("expected backwardsCursor for newest turn");
 
@@ -391,6 +397,157 @@ async fn thread_turn_items_list_defers_image_generation_content_and_reads_it_bac
             data_base64: "Zm9v".to_string(),
             byte_length: 3,
         }
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn thread_turn_items_list_can_page_backward_and_forward() -> Result<()> {
+    let server = create_mock_responses_server_repeating_assistant("Done").await;
+    let codex_home = TempDir::new()?;
+    create_config_toml(codex_home.path(), &server.uri())?;
+
+    let filename_ts = "2025-01-05T12-00-00";
+    let conversation_id = create_fake_rollout_with_text_elements(
+        codex_home.path(),
+        filename_ts,
+        "2025-01-05T12:00:00Z",
+        "first",
+        vec![],
+        Some("mock_provider"),
+        /*git_info*/ None,
+    )?;
+    let rollout_path = rollout_path(codex_home.path(), filename_ts, &conversation_id);
+    append_image_generation_end(
+        rollout_path.as_path(),
+        "2025-01-05T12:00:01Z",
+        "ig_1",
+        "Zm9v",
+    )?;
+    append_image_generation_end(
+        rollout_path.as_path(),
+        "2025-01-05T12:00:02Z",
+        "ig_2",
+        "YmFy",
+    )?;
+    append_user_message(rollout_path.as_path(), "2025-01-05T12:01:00Z", "second")?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    let turns_list_id = mcp
+        .send_thread_turns_list_request(ThreadTurnsListParams {
+            thread_id: conversation_id.clone(),
+            cursor: None,
+            limit: Some(10),
+            sort_direction: Some(SortDirection::Asc),
+            large_content: None,
+        })
+        .await?;
+    let turns_list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(turns_list_id)),
+    )
+    .await??;
+    let ThreadTurnsListResponse { data, .. } =
+        to_response::<ThreadTurnsListResponse>(turns_list_resp)?;
+    let [first_turn, second_turn] = data.as_slice() else {
+        panic!("expected exactly two turns");
+    };
+    let first_turn_item_ids = thread_item_ids(&first_turn.items);
+
+    let items_list_id = mcp
+        .send_thread_turns_items_list_request(ThreadTurnsItemsListParams {
+            thread_id: conversation_id.clone(),
+            turn_id: first_turn.id.clone(),
+            cursor: None,
+            limit: Some(2),
+            sort_direction: Some(SortDirection::Asc),
+            large_content: None,
+        })
+        .await?;
+    let items_list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(items_list_id)),
+    )
+    .await??;
+    let ThreadTurnsItemsListResponse {
+        data,
+        next_cursor,
+        backwards_cursor,
+    } = to_response::<ThreadTurnsItemsListResponse>(items_list_resp)?;
+    assert_eq!(thread_item_ids(&data), first_turn_item_ids[..2]);
+    let next_cursor = next_cursor.expect("expected nextCursor for later items");
+    assert!(backwards_cursor.is_some());
+
+    let items_list_id = mcp
+        .send_thread_turns_items_list_request(ThreadTurnsItemsListParams {
+            thread_id: conversation_id.clone(),
+            turn_id: first_turn.id.clone(),
+            cursor: Some(next_cursor.clone()),
+            limit: Some(10),
+            sort_direction: Some(SortDirection::Asc),
+            large_content: None,
+        })
+        .await?;
+    let items_list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(items_list_id)),
+    )
+    .await??;
+    let ThreadTurnsItemsListResponse {
+        data,
+        backwards_cursor,
+        ..
+    } = to_response::<ThreadTurnsItemsListResponse>(items_list_resp)?;
+    assert_eq!(thread_item_ids(&data), first_turn_item_ids[2..]);
+    let backwards_cursor = backwards_cursor.expect("expected backwardsCursor for later items");
+
+    let items_list_id = mcp
+        .send_thread_turns_items_list_request(ThreadTurnsItemsListParams {
+            thread_id: conversation_id.clone(),
+            turn_id: first_turn.id.clone(),
+            cursor: Some(backwards_cursor),
+            limit: Some(10),
+            sort_direction: Some(SortDirection::Desc),
+            large_content: None,
+        })
+        .await?;
+    let items_list_resp: JSONRPCResponse = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(items_list_id)),
+    )
+    .await??;
+    let ThreadTurnsItemsListResponse { data, .. } =
+        to_response::<ThreadTurnsItemsListResponse>(items_list_resp)?;
+    assert_eq!(
+        thread_item_ids(&data),
+        first_turn_item_ids
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<_>>()
+    );
+
+    let items_list_id = mcp
+        .send_thread_turns_items_list_request(ThreadTurnsItemsListParams {
+            thread_id: conversation_id,
+            turn_id: second_turn.id.clone(),
+            cursor: Some(next_cursor),
+            limit: Some(10),
+            sort_direction: Some(SortDirection::Asc),
+            large_content: None,
+        })
+        .await?;
+    let items_list_err: JSONRPCError = timeout(
+        DEFAULT_READ_TIMEOUT,
+        mcp.read_stream_until_error_message(RequestId::Integer(items_list_id)),
+    )
+    .await??;
+    assert_eq!(
+        items_list_err.error.message,
+        "invalid cursor: anchor item is no longer present"
     );
 
     Ok(())
@@ -1243,6 +1400,10 @@ fn turn_user_texts(turns: &[codex_app_server_protocol::Turn]) -> Vec<&str> {
         .collect()
 }
 
+fn thread_item_ids(items: &[ThreadItem]) -> Vec<&str> {
+    items.iter().map(ThreadItem::id).collect()
+}
+
 struct InMemoryThreadStoreId {
     store_id: String,
 }
@@ -1262,6 +1423,7 @@ async fn seed_pathless_store_thread(
             thread_id,
             forked_from_id: None,
             source: ProtocolSessionSource::Cli,
+            thread_source: None,
             base_instructions: BaseInstructions::default(),
             dynamic_tools: Vec::new(),
             metadata: ThreadPersistenceMetadata {
