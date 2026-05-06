@@ -1645,10 +1645,7 @@ async fn permission_request_hook_rewrites_shell_command_before_execution() -> Re
             }
         })
         .with_config(|config| {
-            config
-                .features
-                .enable(Feature::CodexHooks)
-                .expect("test config should allow feature update");
+            trust_discovered_hooks(config);
         });
     let test = builder.build(&server).await?;
 
@@ -1816,10 +1813,7 @@ async fn permission_request_hook_rewrites_apply_patch_before_execution() -> Resu
         })
         .with_config(|config| {
             config.include_apply_patch_tool = true;
-            config
-                .features
-                .enable(Feature::CodexHooks)
-                .expect("test config should allow feature update");
+            trust_discovered_hooks(config);
         });
     let test = builder.build(&server).await?;
 
@@ -2406,10 +2400,7 @@ async fn pre_tool_use_rewrites_shell_command_before_execution() -> Result<()> {
             }
         })
         .with_config(|config| {
-            config
-                .features
-                .enable(Feature::CodexHooks)
-                .expect("test config should allow feature update");
+            trust_discovered_hooks(config);
         });
     let test = builder.build(&server).await?;
 
@@ -3083,10 +3074,7 @@ async fn pre_tool_use_rewrites_apply_patch_before_execution() -> Result<()> {
         })
         .with_config(|config| {
             config.include_apply_patch_tool = true;
-            config
-                .features
-                .enable(Feature::CodexHooks)
-                .expect("test config should allow feature update");
+            trust_discovered_hooks(config);
         });
     let test = builder.build(&server).await?;
 
