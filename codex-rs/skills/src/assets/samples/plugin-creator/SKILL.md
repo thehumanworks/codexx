@@ -17,7 +17,9 @@ description: Create and scaffold plugin directories for Codex with a required `.
 python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py <plugin-name>
 ```
 
-2. Open `<plugin-path>/.codex-plugin/plugin.json` and replace `[TODO: ...]` placeholders.
+2. Open `<plugin-path>/.codex-plugin/plugin.json` and replace `[TODO: ...]` placeholders with
+   real values. Infer values from strong local context when you can; otherwise ask the user rather
+   than guessing.
 
 3. Generate or update the repo marketplace entry when the plugin should appear in Codex UI ordering:
 
@@ -50,6 +52,10 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
 - Creates plugin root at `/<parent-plugin-directory>/<plugin-name>/`.
 - Always creates `/<parent-plugin-directory>/<plugin-name>/.codex-plugin/plugin.json`.
 - Fills the manifest with the full schema shape, placeholder values, and the complete `interface` section.
+- Treat manifest metadata as useful product information, not filler: try to fill description,
+  author, homepage, repository, license, keywords, and interface fields from explicit user input
+  or strong repo context; when that evidence is missing, ask the user for the value instead of
+  inventing one.
 - For local testing after scaffold creation, use `plugin-sideload`; it installs the plugin into the temporary `$CODEX_HOME/plugins/cache` development cache.
 - Creates or updates `<repo-root>/.agents/plugins/marketplace.json` when `--with-marketplace` is set.
   - If the marketplace file does not exist yet, seed top-level `name` plus `interface.displayName` placeholders before adding the first plugin entry.
@@ -139,7 +145,10 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
 
 - Outer folder name and `plugin.json` `"name"` are always the same normalized plugin name.
 - Do not remove required structure; keep `.codex-plugin/plugin.json` present.
-- Keep manifest values as placeholders until a human or follow-up step explicitly fills them.
+- Prefer completing manifest metadata during scaffold creation when the value is supported by
+  explicit user input or strong local context.
+- If a metadata value is still unknown, ask the user before replacing its placeholder; do not
+  guess.
 - If creating files inside an existing plugin path, use `--force` only when overwrite is intentional.
 - Preserve any existing marketplace `interface.displayName`.
 - When generating marketplace entries, always write `policy.installation`, `policy.authentication`, and `category` even if their values are defaults.
