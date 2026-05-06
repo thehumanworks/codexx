@@ -25,6 +25,7 @@ use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_requirements_toml;
 use codex_config::version_for_toml;
 use codex_exec_server::LOCAL_FS;
+use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::PermissionProfile;
@@ -171,6 +172,51 @@ theme = "loudly"
     assert_eq!(
         (effective_config, enum_warnings),
         (expected_config, expected_startup_warnings)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_higher_precedence_enum_falls_back_to_lower_layer() -> anyhow::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let system_config_path = tmp.path().join("system_config.toml");
+    std::fs::write(&system_config_path, r#"sandbox_mode = "workspace-write""#)
+        .expect("write system config");
+    std::fs::write(
+        tmp.path().join(CONFIG_TOML_FILE),
+        r#"sandbox_mode = "make-it-so""#,
+    )
+    .expect("write user config");
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        tmp.path(),
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides {
+            system_config_path: Some(system_config_path),
+            ..LoaderOverrides::without_managed_config_for_tests()
+        },
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+    )
+    .await?;
+
+    let (effective_config, config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+        layers.deserialize_effective_config_with_warnings()?;
+
+    assert_eq!(
+        (
+            effective_config.get("sandbox_mode"),
+            config_toml.sandbox_mode,
+            enum_warnings,
+        ),
+        (
+            Some(&TomlValue::String("workspace-write".to_string())),
+            Some(SandboxMode::WorkspaceWrite),
+            vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()],
+        )
     );
     Ok(())
 }

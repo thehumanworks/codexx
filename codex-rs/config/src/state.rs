@@ -215,10 +215,10 @@ impl ConfigLayerStack {
 
     /// Appends warnings discovered after the raw layers have been assembled.
     ///
-    /// Invalid enum warnings are produced while deserializing the effective
-    /// config, so they are not tied to any single raw layer load. Keeping this
-    /// merge point on the stack lets callers surface them through the same
-    /// startup-warning channel used by file-level config diagnostics.
+    /// Invalid enum warnings are produced while preparing the typed effective
+    /// config, after the stack has already been constructed. Keeping this merge
+    /// point on the stack lets callers surface them through the same startup
+    /// warning channel used by file-level config diagnostics.
     pub fn with_additional_startup_warnings(mut self, warnings: Vec<String>) -> Self {
         if warnings.is_empty() {
             return self;
@@ -321,16 +321,33 @@ impl ConfigLayerStack {
     ///
     /// This is the boundary where user-editable config stays lenient for
     /// invalid enum values while consumers still receive a fully typed config.
-    /// The returned TOML value is the sanitized effective config, with invalid
-    /// enum keys removed, so callers that inspect raw values see the same shape
-    /// that was actually deserialized.
+    /// Each layer is sanitized before it is merged so a higher-precedence
+    /// invalid enum value falls back to a valid lower-precedence value.
     pub fn deserialize_effective_config_with_warnings<T>(
         &self,
     ) -> Result<(TomlValue, T, Vec<String>), toml::de::Error>
     where
         T: serde::de::DeserializeOwned,
     {
-        deserialize_with_enum_warnings(self.effective_config())
+        let mut merged = TomlValue::Table(toml::map::Map::new());
+        let mut warnings = Vec::new();
+
+        for layer in self.get_layers(
+            ConfigLayerStackOrdering::LowestPrecedenceFirst,
+            /*include_disabled*/ false,
+        ) {
+            let mut normalized_layer = TomlValue::Table(toml::map::Map::new());
+            merge_toml_values(&mut normalized_layer, &layer.config);
+            let (sanitized_layer, _typed_layer, layer_warnings) =
+                deserialize_with_enum_warnings::<T>(normalized_layer)?;
+            warnings.extend(layer_warnings);
+            merge_toml_values(&mut merged, &sanitized_layer);
+        }
+
+        let (sanitized_effective, typed_effective, effective_warnings) =
+            deserialize_with_enum_warnings::<T>(merged)?;
+        warnings.extend(effective_warnings);
+        Ok((sanitized_effective, typed_effective, warnings))
     }
 
     /// Returns field origins for the merged config-layer view.
