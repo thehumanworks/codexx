@@ -775,8 +775,13 @@ impl PluginsManager {
 
         let cache_key = featured_plugin_ids_cache_key(config, auth);
         if let Some(featured_plugin_ids) = self.cached_featured_plugin_ids(&cache_key) {
+            info!(
+                featured_plugin_id_count = featured_plugin_ids.len(),
+                "reused featured plugin ids cache"
+            );
             return Ok(featured_plugin_ids);
         }
+        let started_at = Instant::now();
         let featured_plugin_ids = crate::remote_legacy::fetch_remote_featured_plugin_ids(
             &remote_plugin_service_config(config),
             auth,
@@ -784,6 +789,11 @@ impl PluginsManager {
         )
         .await?;
         self.write_featured_plugin_ids_cache(cache_key, &featured_plugin_ids);
+        info!(
+            elapsed_ms = started_at.elapsed().as_millis(),
+            featured_plugin_id_count = featured_plugin_ids.len(),
+            "refreshed featured plugin ids cache"
+        );
         Ok(featured_plugin_ids)
     }
 
@@ -1504,15 +1514,27 @@ impl PluginsManager {
             let config = config.clone();
             let manager = Arc::clone(self);
             tokio::spawn(async move {
+                let started_at = Instant::now();
+                info!("warming featured plugin ids cache at app-server startup");
                 let auth = auth_manager.auth().await;
-                if let Err(err) = manager
+                match manager
                     .featured_plugin_ids_for_config(&config, auth.as_ref())
                     .await
                 {
-                    warn!(
-                        error = %err,
-                        "failed to warm featured plugin ids cache"
-                    );
+                    Ok(featured_plugin_ids) => {
+                        info!(
+                            elapsed_ms = started_at.elapsed().as_millis(),
+                            featured_plugin_id_count = featured_plugin_ids.len(),
+                            "warmed featured plugin ids cache at app-server startup"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            error = %err,
+                            elapsed_ms = started_at.elapsed().as_millis(),
+                            "failed to warm featured plugin ids cache at app-server startup"
+                        );
+                    }
                 }
             });
         }
