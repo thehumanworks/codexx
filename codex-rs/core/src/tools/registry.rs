@@ -16,6 +16,7 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
+use crate::tools::hook_compat;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::tool_dispatch_trace::ToolDispatchTrace;
 use codex_hooks::HookEvent;
@@ -69,30 +70,12 @@ pub trait ToolHandler: Send + Sync {
         async { false }
     }
 
-    fn pre_tool_use_payload(&self, _invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        None
-    }
-
     fn post_tool_use_payload(
         &self,
         _invocation: &ToolInvocation,
         _result: &Self::Output,
     ) -> Option<PostToolUsePayload> {
         None
-    }
-
-    /// Rebuilds a tool invocation from hook-facing `tool_input`.
-    ///
-    /// Tools that opt into input-rewriting hooks should invert the same stable
-    /// hook contract they expose from `pre_tool_use_payload`.
-    fn with_updated_hook_input(
-        &self,
-        _invocation: ToolInvocation,
-        _updated_input: Value,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        Err(FunctionCallError::RespondToModel(
-            "tool does not support hook input rewriting".to_string(),
-        ))
     }
 
     /// Creates an optional consumer for streamed tool argument diffs.
@@ -181,14 +164,6 @@ trait AnyToolHandler: Send + Sync {
 
     fn is_mutating<'a>(&'a self, invocation: &'a ToolInvocation) -> BoxFuture<'a, bool>;
 
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload>;
-
-    fn with_updated_hook_input(
-        &self,
-        invocation: ToolInvocation,
-        updated_input: Value,
-    ) -> Result<ToolInvocation, FunctionCallError>;
-
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>>;
     fn handle_any<'a>(
         &'a self,
@@ -206,18 +181,6 @@ where
 
     fn is_mutating<'a>(&'a self, invocation: &'a ToolInvocation) -> BoxFuture<'a, bool> {
         Box::pin(ToolHandler::is_mutating(self, invocation))
-    }
-
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        ToolHandler::pre_tool_use_payload(self, invocation)
-    }
-
-    fn with_updated_hook_input(
-        &self,
-        invocation: ToolInvocation,
-        updated_input: Value,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        ToolHandler::with_updated_hook_input(self, invocation, updated_input)
     }
 
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
@@ -378,7 +341,7 @@ impl ToolRegistry {
             return Err(err);
         }
 
-        if let Some(pre_tool_use_payload) = handler.pre_tool_use_payload(&invocation) {
+        if let Some(pre_tool_use_payload) = hook_compat::pre_tool_use_payload(&invocation) {
             match run_pre_tool_use_hooks(
                 &invocation.session,
                 &invocation.turn,
@@ -396,7 +359,7 @@ impl ToolRegistry {
                 crate::hook_runtime::PreToolUseHookResult::Continue {
                     updated_input: Some(updated_input),
                 } => {
-                    invocation = handler.with_updated_hook_input(invocation, updated_input)?;
+                    invocation = hook_compat::apply_updated_input(invocation, updated_input)?;
                 }
                 crate::hook_runtime::PreToolUseHookResult::Continue {
                     updated_input: None,

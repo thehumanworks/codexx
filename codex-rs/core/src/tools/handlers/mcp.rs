@@ -10,11 +10,9 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
-use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use codex_tools::ToolName;
-use serde_json::Value;
 
 pub struct McpHandler {
     tool_name: ToolName,
@@ -35,40 +33,6 @@ impl ToolHandler for McpHandler {
 
     fn kind(&self) -> ToolKind {
         ToolKind::Mcp
-    }
-
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        let ToolPayload::Mcp { raw_arguments, .. } = &invocation.payload else {
-            return None;
-        };
-
-        Some(PreToolUsePayload {
-            tool_name: HookToolName::new(self.tool_name.display()),
-            tool_input: mcp_hook_tool_input(raw_arguments),
-        })
-    }
-
-    // MCP hooks expose the full arguments object, so rewrites replace the
-    // serialized raw argument payload wholesale rather than patching one
-    // handler-owned field.
-    fn with_updated_hook_input(
-        &self,
-        mut invocation: ToolInvocation,
-        updated_input: Value,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        invocation.payload = match invocation.payload {
-            ToolPayload::Mcp { server, tool, .. } => ToolPayload::Mcp {
-                server,
-                tool,
-                raw_arguments: serde_json::to_string(&updated_input).map_err(|err| {
-                    FunctionCallError::RespondToModel(format!(
-                        "failed to serialize rewritten MCP arguments: {err}"
-                    ))
-                })?,
-            },
-            payload => payload,
-        };
-        Ok(invocation)
     }
 
     fn post_tool_use_payload(
@@ -137,14 +101,6 @@ impl ToolHandler for McpHandler {
     }
 }
 
-fn mcp_hook_tool_input(raw_arguments: &str) -> Value {
-    if raw_arguments.trim().is_empty() {
-        return Value::Object(serde_json::Map::new());
-    }
-
-    serde_json::from_str(raw_arguments).unwrap_or_else(|_| Value::String(raw_arguments.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,13 +126,8 @@ mod tests {
             .to_string(),
         };
         let (session, turn) = make_session_and_context().await;
-        let handler = McpHandler::new(codex_tools::ToolName::namespaced(
-            "mcp__memory__",
-            "create_entities",
-        ));
-
         assert_eq!(
-            handler.pre_tool_use_payload(&ToolInvocation {
+            crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
                 session: session.into(),
                 turn: turn.into(),
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
@@ -186,7 +137,7 @@ mod tests {
                 source: ToolCallSource::Direct,
                 payload,
             }),
-            Some(PreToolUsePayload {
+            Some(crate::tools::registry::PreToolUsePayload {
                 tool_name: HookToolName::new("mcp__memory__create_entities"),
                 tool_input: json!({
                     "entities": [{
@@ -262,6 +213,9 @@ mod tests {
 
     #[test]
     fn mcp_hook_tool_input_defaults_empty_args_to_object() {
-        assert_eq!(mcp_hook_tool_input("  "), json!({}));
+        assert_eq!(
+            crate::tools::hook_compat::mcp_hook_tool_input("  "),
+            json!({})
+        );
     }
 }

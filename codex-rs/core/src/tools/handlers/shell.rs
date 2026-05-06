@@ -25,13 +25,9 @@ use crate::tools::handlers::normalize_and_validate_additional_permissions;
 use crate::tools::handlers::parse_arguments;
 use crate::tools::handlers::parse_arguments_with_base_path;
 use crate::tools::handlers::resolve_workdir_base_path;
-use crate::tools::handlers::rewrite_function_arguments;
-use crate::tools::handlers::rewrite_function_string_argument;
-use crate::tools::handlers::updated_hook_command;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::PostToolUsePayload;
-use crate::tools::registry::PreToolUsePayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::shell::ShellRequest;
@@ -59,7 +55,7 @@ pub struct ShellCommandHandler {
     backend: ShellCommandBackend,
 }
 
-fn shell_function_payload_command(payload: &ToolPayload) -> Option<String> {
+pub(crate) fn shell_function_payload_command(payload: &ToolPayload) -> Option<String> {
     let ToolPayload::Function { arguments } = payload else {
         return None;
     };
@@ -69,7 +65,7 @@ fn shell_function_payload_command(payload: &ToolPayload) -> Option<String> {
         .map(|params| codex_shell_command::parse_command::shlex_join(&params.command))
 }
 
-fn local_shell_payload_command(payload: &ToolPayload) -> Option<String> {
+pub(crate) fn local_shell_payload_command(payload: &ToolPayload) -> Option<String> {
     let ToolPayload::LocalShell { params } = payload else {
         return None;
     };
@@ -79,7 +75,7 @@ fn local_shell_payload_command(payload: &ToolPayload) -> Option<String> {
     ))
 }
 
-fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
+pub(crate) fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
     let ToolPayload::Function { arguments } = payload else {
         return None;
     };
@@ -87,35 +83,6 @@ fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
     parse_arguments::<ShellCommandToolCallParams>(arguments)
         .ok()
         .map(|params| params.command)
-}
-
-// Hooks expose legacy function shell tools as joined command strings, while
-// their function payload stores argv. Split on the way back in to invert the
-// hook-facing representation.
-fn rewrite_shell_function_updated_hook_input(
-    mut invocation: ToolInvocation,
-    updated_input: JsonValue,
-    tool_name: &str,
-) -> Result<ToolInvocation, FunctionCallError> {
-    let ToolPayload::Function { arguments } = invocation.payload else {
-        return Err(FunctionCallError::RespondToModel(format!(
-            "hook input rewrite received unsupported {tool_name} payload"
-        )));
-    };
-    let command = shlex::split(updated_hook_command(&updated_input)?).ok_or_else(|| {
-        FunctionCallError::RespondToModel(
-            "hook returned shell input with an invalid command string".to_string(),
-        )
-    })?;
-    invocation.payload = ToolPayload::Function {
-        arguments: rewrite_function_arguments(&arguments, tool_name, |arguments| {
-            arguments.insert(
-                "command".to_string(),
-                JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
-            );
-        })?,
-    };
-    Ok(invocation)
 }
 
 struct RunExecLikeArgs {
@@ -247,18 +214,6 @@ impl ToolHandler for ShellHandler {
             .unwrap_or(true)
     }
 
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        shell_function_pre_tool_use_payload(invocation)
-    }
-
-    fn with_updated_hook_input(
-        &self,
-        invocation: ToolInvocation,
-        updated_input: JsonValue,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        rewrite_shell_function_updated_hook_input(invocation, updated_input, "shell")
-    }
-
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,
@@ -333,18 +288,6 @@ impl ToolHandler for ContainerExecHandler {
             .unwrap_or(true)
     }
 
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        shell_function_pre_tool_use_payload(invocation)
-    }
-
-    fn with_updated_hook_input(
-        &self,
-        invocation: ToolInvocation,
-        updated_input: JsonValue,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        rewrite_shell_function_updated_hook_input(invocation, updated_input, "container.exec")
-    }
-
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,
@@ -417,50 +360,6 @@ impl ToolHandler for LocalShellHandler {
         !is_known_safe_command(&params.command)
     }
 
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        local_shell_payload_command(&invocation.payload).map(|command| PreToolUsePayload {
-            tool_name: HookToolName::bash(),
-            tool_input: serde_json::json!({ "command": command }),
-        })
-    }
-
-    // Hooks see a joined shell command string, but local_shell stores argv.
-    // Split on the way back in to invert the hook-facing representation.
-    fn with_updated_hook_input(
-        &self,
-        mut invocation: ToolInvocation,
-        updated_input: JsonValue,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        let command = updated_hook_command(&updated_input)?;
-        invocation.payload = match invocation.payload {
-            ToolPayload::Function { arguments } => {
-                let command = shlex::split(command).ok_or_else(|| {
-                    FunctionCallError::RespondToModel(
-                        "hook returned shell input with an invalid command string".to_string(),
-                    )
-                })?;
-                ToolPayload::Function {
-                    arguments: rewrite_function_arguments(&arguments, "shell", |arguments| {
-                        arguments.insert(
-                            "command".to_string(),
-                            JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
-                        );
-                    })?,
-                }
-            }
-            ToolPayload::LocalShell { mut params } => {
-                params.command = shlex::split(command).ok_or_else(|| {
-                    FunctionCallError::RespondToModel(
-                        "hook returned shell input with an invalid command string".to_string(),
-                    )
-                })?;
-                ToolPayload::LocalShell { params }
-            }
-            payload => payload,
-        };
-        Ok(invocation)
-    }
-
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,
@@ -512,13 +411,6 @@ impl ToolHandler for LocalShellHandler {
     }
 }
 
-fn shell_function_pre_tool_use_payload(invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-    shell_function_payload_command(&invocation.payload).map(|command| PreToolUsePayload {
-        tool_name: HookToolName::bash(),
-        tool_input: serde_json::json!({ "command": command }),
-    })
-}
-
 fn shell_function_post_tool_use_payload(
     invocation: &ToolInvocation,
     result: &FunctionToolOutput,
@@ -567,34 +459,6 @@ impl ToolHandler for ShellCommandHandler {
                 !is_known_safe_command(&command)
             })
             .unwrap_or(true)
-    }
-
-    fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        shell_command_payload_command(&invocation.payload).map(|command| PreToolUsePayload {
-            tool_name: HookToolName::bash(),
-            tool_input: serde_json::json!({ "command": command }),
-        })
-    }
-
-    fn with_updated_hook_input(
-        &self,
-        mut invocation: ToolInvocation,
-        updated_input: JsonValue,
-    ) -> Result<ToolInvocation, FunctionCallError> {
-        let ToolPayload::Function { arguments } = invocation.payload else {
-            return Err(FunctionCallError::RespondToModel(
-                "hook input rewrite received unsupported shell_command payload".to_string(),
-            ));
-        };
-        invocation.payload = ToolPayload::Function {
-            arguments: rewrite_function_string_argument(
-                &arguments,
-                "shell_command",
-                "command",
-                updated_hook_command(&updated_input)?,
-            )?,
-        };
-        Ok(invocation)
     }
 
     fn post_tool_use_payload(

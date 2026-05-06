@@ -184,10 +184,8 @@ async fn exec_command_pre_tool_use_payload_uses_raw_command() {
         arguments: serde_json::json!({ "cmd": "printf exec command" }).to_string(),
     };
     let (session, turn) = make_session_and_context().await;
-    let handler = ExecCommandHandler;
-
     assert_eq!(
-        handler.pre_tool_use_payload(&ToolInvocation {
+        crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
             turn: turn.into(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
@@ -210,10 +208,8 @@ async fn exec_command_pre_tool_use_payload_skips_write_stdin() {
         arguments: serde_json::json!({ "chars": "echo hi" }).to_string(),
     };
     let (session, turn) = make_session_and_context().await;
-    let handler = WriteStdinHandler;
-
     assert_eq!(
-        handler.pre_tool_use_payload(&ToolInvocation {
+        crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
             turn: turn.into(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),

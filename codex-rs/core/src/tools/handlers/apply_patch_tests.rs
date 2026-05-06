@@ -49,10 +49,8 @@ async fn pre_tool_use_payload_uses_json_patch_input() {
         arguments: json!({ "input": patch }).to_string(),
     };
     let invocation = invocation_for_payload(payload).await;
-    let handler = ApplyPatchHandler;
-
     assert_eq!(
-        handler.pre_tool_use_payload(&invocation),
+        crate::tools::hook_compat::pre_tool_use_payload(&invocation),
         Some(PreToolUsePayload {
             tool_name: HookToolName::apply_patch(),
             tool_input: json!({ "command": patch }),
@@ -67,10 +65,8 @@ async fn pre_tool_use_payload_uses_freeform_patch_input() {
         input: patch.to_string(),
     };
     let invocation = invocation_for_payload(payload).await;
-    let handler = ApplyPatchHandler;
-
     assert_eq!(
-        handler.pre_tool_use_payload(&invocation),
+        crate::tools::hook_compat::pre_tool_use_payload(&invocation),
         Some(PreToolUsePayload {
             tool_name: HookToolName::apply_patch(),
             tool_input: json!({ "command": patch }),
