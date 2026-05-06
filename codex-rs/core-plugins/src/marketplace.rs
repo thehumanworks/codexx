@@ -15,6 +15,8 @@ use std::io;
 use std::path::Component;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Instant;
+use tracing::info;
 use tracing::warn;
 
 const MARKETPLACE_MANIFEST_RELATIVE_PATHS: &[&str] = &[
@@ -269,13 +271,31 @@ fn marketplace_root_from_layout(marketplace_path: &Path, relative_path: &str) ->
 }
 
 pub fn load_marketplace(path: &AbsolutePathBuf) -> Result<Marketplace, MarketplaceError> {
+    let started_at = Instant::now();
+    let phase_started_at = Instant::now();
     let marketplace = load_raw_marketplace_manifest(path)?;
+    info!(
+        elapsed_ms = phase_started_at.elapsed().as_millis(),
+        marketplace = %marketplace.name,
+        plugin_entry_count = marketplace.plugins.len(),
+        "plugin/list loaded marketplace manifest"
+    );
     let mut plugins = Vec::new();
 
     for plugin in marketplace.plugins {
+        let plugin_started_at = Instant::now();
+        let plugin_name = plugin.name.clone();
         let plugin = match resolve_marketplace_plugin_entry(path, &marketplace.name, plugin) {
             Ok(Some(plugin)) => plugin,
-            Ok(None) => continue,
+            Ok(None) => {
+                info!(
+                    elapsed_ms = plugin_started_at.elapsed().as_millis(),
+                    marketplace = %marketplace.name,
+                    plugin = %plugin_name,
+                    "plugin/list skipped marketplace plugin entry"
+                );
+                continue;
+            }
             Err(MarketplaceError::InvalidPlugin(message)) => {
                 warn!(
                     path = %path.display(),
@@ -287,6 +307,12 @@ pub fn load_marketplace(path: &AbsolutePathBuf) -> Result<Marketplace, Marketpla
             }
             Err(err) => return Err(err),
         };
+        info!(
+            elapsed_ms = plugin_started_at.elapsed().as_millis(),
+            marketplace = %marketplace.name,
+            plugin = %plugin_name,
+            "plugin/list resolved marketplace plugin entry"
+        );
 
         plugins.push(MarketplacePlugin {
             name: plugin.plugin_id.plugin_name,
@@ -295,6 +321,13 @@ pub fn load_marketplace(path: &AbsolutePathBuf) -> Result<Marketplace, Marketpla
             interface: plugin.interface,
         });
     }
+
+    info!(
+        elapsed_ms = started_at.elapsed().as_millis(),
+        marketplace = %marketplace.name,
+        plugin_count = plugins.len(),
+        "plugin/list completed marketplace load"
+    );
 
     Ok(Marketplace {
         name: marketplace.name,
@@ -309,11 +342,27 @@ pub fn list_marketplaces_with_home(
     additional_roots: &[AbsolutePathBuf],
     home_dir: Option<&Path>,
 ) -> Result<MarketplaceListOutcome, MarketplaceError> {
+    let started_at = Instant::now();
     let mut outcome = MarketplaceListOutcome::default();
+    let marketplace_paths = discover_marketplace_paths_from_roots(additional_roots, home_dir);
+    info!(
+        marketplace_path_count = marketplace_paths.len(),
+        additional_root_count = additional_roots.len(),
+        "plugin/list discovered marketplace paths"
+    );
 
-    for marketplace_path in discover_marketplace_paths_from_roots(additional_roots, home_dir) {
+    for marketplace_path in marketplace_paths {
+        let marketplace_started_at = Instant::now();
         match load_marketplace(&marketplace_path) {
-            Ok(marketplace) => outcome.marketplaces.push(marketplace),
+            Ok(marketplace) => {
+                info!(
+                    elapsed_ms = marketplace_started_at.elapsed().as_millis(),
+                    marketplace = %marketplace.name,
+                    plugin_count = marketplace.plugins.len(),
+                    "plugin/list loaded marketplace"
+                );
+                outcome.marketplaces.push(marketplace);
+            }
             Err(err) => {
                 warn!(
                     path = %marketplace_path.display(),
@@ -328,6 +377,12 @@ pub fn list_marketplaces_with_home(
         }
     }
 
+    info!(
+        elapsed_ms = started_at.elapsed().as_millis(),
+        marketplace_count = outcome.marketplaces.len(),
+        marketplace_error_count = outcome.errors.len(),
+        "plugin/list completed raw marketplace listing"
+    );
     Ok(outcome)
 }
 
@@ -335,11 +390,16 @@ fn discover_marketplace_paths_from_roots(
     additional_roots: &[AbsolutePathBuf],
     home_dir: Option<&Path>,
 ) -> Vec<AbsolutePathBuf> {
+    let started_at = Instant::now();
     let mut paths = Vec::new();
+    let mut home_manifest_found = false;
+    let mut direct_root_manifest_count = 0;
+    let mut repo_root_manifest_count = 0;
 
     if let Some(home) = home_dir
         && let Some(path) = find_marketplace_manifest_path(home)
     {
+        home_manifest_found = true;
         paths.push(path);
     }
 
@@ -349,6 +409,7 @@ fn discover_marketplace_paths_from_roots(
         if let Some(path) = find_marketplace_manifest_path(root.as_path())
             && !paths.contains(&path)
         {
+            direct_root_manifest_count += 1;
             paths.push(path);
             continue;
         }
@@ -357,10 +418,20 @@ fn discover_marketplace_paths_from_roots(
             && let Some(path) = find_marketplace_manifest_path(repo_root.as_path())
             && !paths.contains(&path)
         {
+            repo_root_manifest_count += 1;
             paths.push(path);
         }
     }
 
+    info!(
+        elapsed_ms = started_at.elapsed().as_millis(),
+        additional_root_count = additional_roots.len(),
+        home_manifest_found,
+        direct_root_manifest_count,
+        repo_root_manifest_count,
+        marketplace_path_count = paths.len(),
+        "plugin/list discovered marketplace paths from roots"
+    );
     paths
 }
 
@@ -398,7 +469,18 @@ fn resolve_marketplace_plugin_entry(
     };
 
     let manifest = match &source {
-        MarketplacePluginSource::Local { path } => load_plugin_manifest(path.as_path()),
+        MarketplacePluginSource::Local { path } => {
+            let started_at = Instant::now();
+            let manifest = load_plugin_manifest(path.as_path());
+            info!(
+                elapsed_ms = started_at.elapsed().as_millis(),
+                marketplace = %marketplace_name,
+                plugin = %name,
+                manifest_loaded = manifest.is_some(),
+                "plugin/list loaded local plugin manifest"
+            );
+            manifest
+        }
         MarketplacePluginSource::Git { .. } => None,
     };
     let interface = plugin_interface_with_marketplace_category(

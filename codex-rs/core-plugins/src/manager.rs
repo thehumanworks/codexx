@@ -1160,13 +1160,39 @@ impl PluginsManager {
         config: &PluginsConfigInput,
         additional_roots: &[AbsolutePathBuf],
     ) -> Result<ConfiguredMarketplaceListOutcome, MarketplaceError> {
+        let started_at = Instant::now();
         if !config.plugins_enabled {
             return Ok(ConfiguredMarketplaceListOutcome::default());
         }
 
+        let phase_started_at = Instant::now();
         let (installed_plugins, enabled_plugins) = self.configured_plugin_states(config);
-        let marketplace_outcome =
-            list_marketplaces(&self.marketplace_roots(config, additional_roots))?;
+        info!(
+            elapsed_ms = phase_started_at.elapsed().as_millis(),
+            installed_plugin_count = installed_plugins.len(),
+            enabled_plugin_count = enabled_plugins.len(),
+            "plugin/list loaded configured plugin states"
+        );
+
+        let phase_started_at = Instant::now();
+        let marketplace_roots = self.marketplace_roots(config, additional_roots);
+        info!(
+            elapsed_ms = phase_started_at.elapsed().as_millis(),
+            additional_root_count = additional_roots.len(),
+            marketplace_root_count = marketplace_roots.len(),
+            "plugin/list built marketplace roots"
+        );
+
+        let phase_started_at = Instant::now();
+        let marketplace_outcome = list_marketplaces(&marketplace_roots)?;
+        info!(
+            elapsed_ms = phase_started_at.elapsed().as_millis(),
+            marketplace_count = marketplace_outcome.marketplaces.len(),
+            marketplace_error_count = marketplace_outcome.errors.len(),
+            "plugin/list loaded raw marketplaces"
+        );
+
+        let phase_started_at = Instant::now();
         let mut seen_plugin_keys = HashSet::new();
         let marketplaces = marketplace_outcome
             .marketplaces
@@ -1207,8 +1233,24 @@ impl PluginsManager {
                     plugins,
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let plugin_count = marketplaces
+            .iter()
+            .map(|marketplace: &ConfiguredMarketplace| marketplace.plugins.len())
+            .sum::<usize>();
+        info!(
+            elapsed_ms = phase_started_at.elapsed().as_millis(),
+            marketplace_count = marketplaces.len(),
+            plugin_count,
+            "plugin/list filtered configured marketplaces"
+        );
 
+        info!(
+            elapsed_ms = started_at.elapsed().as_millis(),
+            marketplace_count = marketplaces.len(),
+            plugin_count,
+            "plugin/list completed configured marketplace listing"
+        );
         Ok(ConfiguredMarketplaceListOutcome {
             marketplaces,
             errors: marketplace_outcome.errors,
