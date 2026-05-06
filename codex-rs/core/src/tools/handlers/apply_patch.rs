@@ -325,6 +325,9 @@ impl ToolHandler for ApplyPatchHandler {
         })
     }
 
+    // Hooks expose apply_patch through the stable `{ "command": ... }` shape,
+    // while the underlying tool stores the patch as either the function
+    // argument `input` or freeform custom-tool input.
     fn with_updated_hook_input(
         &self,
         mut invocation: ToolInvocation,

@@ -379,6 +379,8 @@ impl ToolHandler for LocalShellHandler {
         })
     }
 
+    // Hooks see a joined shell command string, but local_shell stores argv.
+    // Split on the way back in to invert the hook-facing representation.
     fn with_updated_hook_input(
         &self,
         mut invocation: ToolInvocation,

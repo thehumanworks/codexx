@@ -164,6 +164,8 @@ impl ToolHandler for ExecCommandHandler {
             })
     }
 
+    // Hooks normalize Bash-like tools to `{ "command": ... }`, while the
+    // exec_command wire schema still names the field `cmd`.
     fn with_updated_hook_input(
         &self,
         mut invocation: ToolInvocation,
