@@ -1056,6 +1056,8 @@ enum UnauthorizedRecoveryMode {
 // 2. Attempt to refresh the token using OAuth token refresh flow.
 // If after both steps the server still responds with 401 we let the error bubble to the user.
 //
+// For agent identity based authentication, we retry once after the guarded reload step.
+//
 // For external auth sources, UnauthorizedRecovery retries once.
 //
 // - External ChatGPT auth tokens (`chatgptAuthTokens`) are refreshed by asking
@@ -1116,7 +1118,7 @@ impl UnauthorizedRecovery {
             .manager
             .auth_cached()
             .as_ref()
-            .is_some_and(CodexAuth::is_chatgpt_auth)
+            .is_some_and(CodexAuth::uses_codex_backend)
         {
             return false;
         }
@@ -1141,7 +1143,7 @@ impl UnauthorizedRecovery {
             .manager
             .auth_cached()
             .as_ref()
-            .is_some_and(CodexAuth::is_chatgpt_auth)
+            .is_some_and(CodexAuth::uses_codex_backend)
         {
             return "not_chatgpt_auth";
         }
@@ -1189,13 +1191,13 @@ impl UnauthorizedRecovery {
                     .await
                 {
                     ReloadOutcome::ReloadedChanged => {
-                        self.step = UnauthorizedRecoveryStep::RefreshToken;
+                        self.step = self.next_step_after_reload();
                         return Ok(UnauthorizedRecoveryStepResult {
                             auth_state_changed: Some(true),
                         });
                     }
                     ReloadOutcome::ReloadedNoChange => {
-                        self.step = UnauthorizedRecoveryStep::RefreshToken;
+                        self.step = self.next_step_after_reload();
                         return Ok(UnauthorizedRecoveryStepResult {
                             auth_state_changed: Some(false),
                         });
@@ -1230,6 +1232,19 @@ impl UnauthorizedRecovery {
         Ok(UnauthorizedRecoveryStepResult {
             auth_state_changed: None,
         })
+    }
+
+    fn next_step_after_reload(&self) -> UnauthorizedRecoveryStep {
+        if self
+            .manager
+            .auth_cached()
+            .as_ref()
+            .is_some_and(|auth| matches!(auth, CodexAuth::AgentIdentity(_)))
+        {
+            UnauthorizedRecoveryStep::Done
+        } else {
+            UnauthorizedRecoveryStep::RefreshToken
+        }
     }
 }
 

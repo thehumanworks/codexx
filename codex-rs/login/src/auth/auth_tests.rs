@@ -464,6 +464,54 @@ async fn unauthorized_recovery_uses_external_refresh_for_bearer_manager() {
     assert_eq!(refreshed_token.as_deref(), Some("refreshed-provider-token"));
 }
 
+#[tokio::test]
+#[serial(codex_auth_env)]
+async fn unauthorized_recovery_reloads_agent_identity_once() {
+    let codex_home = tempdir().unwrap();
+    let record = agent_identity_record("account-123");
+    let agent_identity =
+        signed_agent_identity_jwt(&record, json!(record.plan_type)).expect("signed agent identity");
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/wham/agent-identities/jwks"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(test_jwks_body()))
+        .expect(2)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/backend-api/v1/agent/agent-runtime-id/task/register"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "task_id": "task-123",
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let _agent_guard = EnvVarGuard::set(CODEX_AGENT_IDENTITY_ENV_VAR, &agent_identity);
+    let chatgpt_base_url = format!("{}/backend-api", server.uri());
+    let _authapi_guard =
+        EnvVarGuard::set("CODEX_AGENT_IDENTITY_AUTHAPI_BASE_URL", &chatgpt_base_url);
+    let manager = AuthManager::shared(
+        codex_home.path().to_path_buf(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        Some(chatgpt_base_url),
+    )
+    .await;
+
+    let mut recovery = manager.unauthorized_recovery();
+
+    assert!(recovery.has_next());
+    assert_eq!(recovery.mode_name(), "managed");
+    assert_eq!(recovery.step_name(), "reload");
+
+    let result = recovery.next().await.expect("reload should succeed");
+
+    assert_eq!(result.auth_state_changed(), Some(false));
+    assert!(!recovery.has_next());
+    assert_eq!(recovery.step_name(), "done");
+    server.verify().await;
+}
+
 struct ProviderAuthScript {
     tempdir: TempDir,
     command: String,
