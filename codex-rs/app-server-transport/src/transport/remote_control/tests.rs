@@ -178,6 +178,7 @@ async fn remote_control_transport_manages_virtual_clients_and_routes_messages() 
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -454,6 +455,7 @@ async fn remote_control_transport_reconnects_after_disconnect() {
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -533,6 +535,7 @@ async fn remote_control_start_allows_remote_control_invalid_url_when_disabled() 
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ false,
     )
@@ -569,6 +572,7 @@ async fn remote_control_start_allows_missing_auth_when_enabled() {
         auth_manager,
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -601,6 +605,7 @@ async fn remote_control_start_reports_missing_state_db_as_disabled_when_enabled(
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -650,6 +655,7 @@ async fn remote_control_handle_set_enabled_stops_and_restarts_connections() {
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -734,6 +740,7 @@ async fn remote_control_transport_clears_outgoing_buffer_when_backend_acks() {
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -909,6 +916,7 @@ async fn remote_control_http_mode_enrolls_before_connecting() {
         remote_control_auth_manager(),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -1099,6 +1107,109 @@ async fn remote_control_http_mode_enrolls_before_connecting() {
 }
 
 #[tokio::test]
+async fn remote_control_http_mode_uses_instance_name_for_enrollment() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener should bind");
+    let remote_control_url = remote_control_url_for_listener(&listener);
+    let codex_home = TempDir::new().expect("temp dir should create");
+    let state_db = remote_control_state_runtime(&codex_home).await;
+    let remote_control_target =
+        normalize_remote_control_url(&remote_control_url).expect("target should parse");
+    let default_enrollment = RemoteControlEnrollment {
+        account_id: "account_id".to_string(),
+        environment_id: "env_default".to_string(),
+        server_id: "srv_e_default".to_string(),
+        server_name: "default-server".to_string(),
+    };
+    update_persisted_remote_control_enrollment(
+        Some(state_db.as_ref()),
+        &remote_control_target,
+        "account_id",
+        /*app_server_client_name*/ None,
+        Some(&default_enrollment),
+    )
+    .await
+    .expect("default persisted enrollment should save");
+
+    let instance_name = "next-build";
+    let hostname = gethostname().to_string_lossy().trim().to_string();
+    let expected_server_name = format!("{hostname} - {instance_name}");
+    let (transport_event_tx, _transport_event_rx) =
+        mpsc::channel::<TransportEvent>(CHANNEL_CAPACITY);
+    let shutdown_token = CancellationToken::new();
+    let (remote_task, _remote_handle) = start_remote_control(
+        remote_control_url,
+        Some(state_db.clone()),
+        remote_control_auth_manager_with_home(&codex_home),
+        transport_event_tx,
+        shutdown_token.clone(),
+        Some(instance_name.to_string()),
+        /*app_server_client_name_rx*/ None,
+        /*initial_enabled*/ true,
+    )
+    .await
+    .expect("remote control should start");
+
+    let enroll_request = accept_http_request(&listener).await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&enroll_request.body)
+            .expect("enroll body should deserialize"),
+        json!({
+            "name": expected_server_name,
+            "os": std::env::consts::OS,
+            "arch": std::env::consts::ARCH,
+            "app_server_version": env!("CARGO_PKG_VERSION"),
+        })
+    );
+    respond_with_json(
+        enroll_request.stream,
+        json!({ "server_id": "srv_e_instance", "environment_id": "env_instance" }),
+    )
+    .await;
+
+    let (handshake_request, _websocket) = accept_remote_control_backend_connection(&listener).await;
+    assert_eq!(
+        handshake_request.headers.get("x-codex-server-id"),
+        Some(&"srv_e_instance".to_string())
+    );
+    assert_eq!(
+        handshake_request.headers.get("x-codex-name"),
+        Some(&base64::engine::general_purpose::STANDARD.encode(&expected_server_name))
+    );
+    assert_eq!(
+        load_persisted_remote_control_enrollment(
+            Some(state_db.as_ref()),
+            &remote_control_target,
+            "account_id",
+            Some(instance_name),
+        )
+        .await
+        .expect("instance persisted enrollment should load"),
+        Some(RemoteControlEnrollment {
+            account_id: "account_id".to_string(),
+            environment_id: "env_instance".to_string(),
+            server_id: "srv_e_instance".to_string(),
+            server_name: expected_server_name,
+        })
+    );
+    assert_eq!(
+        load_persisted_remote_control_enrollment(
+            Some(state_db.as_ref()),
+            &remote_control_target,
+            "account_id",
+            /*app_server_client_name*/ None,
+        )
+        .await
+        .expect("default persisted enrollment should load"),
+        Some(default_enrollment)
+    );
+
+    shutdown_token.cancel();
+    let _ = remote_task.await;
+}
+
+#[tokio::test]
 async fn remote_control_http_mode_reuses_persisted_enrollment_before_reenrolling() {
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
@@ -1133,6 +1244,7 @@ async fn remote_control_http_mode_reuses_persisted_enrollment_before_reenrolling
         remote_control_auth_manager_with_home(&codex_home),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -1201,6 +1313,7 @@ async fn remote_control_stdio_mode_waits_for_client_name_before_connecting() {
         remote_control_auth_manager_with_home(&codex_home),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         Some(app_server_client_name_rx),
         /*initial_enabled*/ true,
     )
@@ -1260,6 +1373,7 @@ async fn remote_control_waits_for_account_id_before_enrolling() {
         auth_manager,
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )
@@ -1343,6 +1457,7 @@ async fn remote_control_http_mode_clears_stale_persisted_enrollment_after_404() 
         remote_control_auth_manager_with_home(&codex_home),
         transport_event_tx,
         shutdown_token.clone(),
+        /*remote_control_instance_name*/ None,
         /*app_server_client_name_rx*/ None,
         /*initial_enabled*/ true,
     )

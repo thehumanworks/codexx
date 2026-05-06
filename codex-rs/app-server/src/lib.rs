@@ -373,15 +373,17 @@ pub enum PluginStartupTasks {
     Skip,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppServerRuntimeOptions {
     pub plugin_startup_tasks: PluginStartupTasks,
+    pub remote_control_instance_name: Option<String>,
 }
 
 impl Default for AppServerRuntimeOptions {
     fn default() -> Self {
         Self {
             plugin_startup_tasks: PluginStartupTasks::Start,
+            remote_control_instance_name: None,
         }
     }
 }
@@ -681,6 +683,7 @@ pub async fn run_main_with_transport_options(
         auth_manager.clone(),
         transport_event_tx.clone(),
         transport_shutdown_token.clone(),
+        runtime_options.remote_control_instance_name,
         app_server_client_name_rx,
         remote_control_enabled,
     )

@@ -39,6 +39,10 @@ struct AppServerArgs {
     #[command(flatten)]
     auth: AppServerWebsocketAuthArgs,
 
+    /// Distinguish this remote-control app-server instance from others on the same machine.
+    #[arg(long = "remote-control-instance-name", value_name = "NAME")]
+    remote_control_instance_name: Option<String>,
+
     /// Hidden debug-only test hook used by integration tests that spawn the
     /// production app-server binary.
     #[cfg(debug_assertions)]
@@ -60,6 +64,7 @@ fn main() -> anyhow::Result<()> {
         let session_source = args.session_source;
         let auth = args.auth.try_into_settings()?;
         let mut runtime_options = AppServerRuntimeOptions::default();
+        runtime_options.remote_control_instance_name = args.remote_control_instance_name;
         #[cfg(debug_assertions)]
         if args.disable_plugin_startup_tasks_for_tests {
             runtime_options.plugin_startup_tasks = PluginStartupTasks::Skip;

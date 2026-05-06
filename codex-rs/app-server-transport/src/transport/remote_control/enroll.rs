@@ -193,9 +193,16 @@ pub(crate) fn format_headers(headers: &HeaderMap) -> String {
 pub(super) async fn enroll_remote_control_server(
     remote_control_target: &RemoteControlTarget,
     auth: &RemoteControlConnectionAuth,
+    remote_control_instance_name: Option<&str>,
 ) -> io::Result<RemoteControlEnrollment> {
     let enroll_url = &remote_control_target.enroll_url;
     let server_name = gethostname().to_string_lossy().trim().to_string();
+    let server_name = match remote_control_instance_name {
+        Some(remote_control_instance_name) => {
+            format!("{server_name} - {remote_control_instance_name}")
+        }
+        None => server_name,
+    };
     let request = EnrollRemoteServerRequest {
         name: server_name.clone(),
         os: std::env::consts::OS,
@@ -459,6 +466,7 @@ mod tests {
                 auth_provider: codex_model_provider::unauthenticated_auth_provider(),
                 account_id: "account_id".to_string(),
             },
+            /*remote_control_instance_name*/ None,
         )
         .await
         .expect_err("invalid response should fail to parse");

@@ -451,6 +451,10 @@ struct AppServerCommand {
     #[arg(long = "analytics-default-enabled")]
     analytics_default_enabled: bool,
 
+    /// Distinguish this remote-control app-server instance from others on the same machine.
+    #[arg(long = "remote-control-instance-name", value_name = "NAME")]
+    remote_control_instance_name: Option<String>,
+
     #[command(flatten)]
     auth: codex_app_server::AppServerWebsocketAuthArgs,
 }
@@ -862,6 +866,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 subcommand,
                 listen,
                 analytics_default_enabled,
+                remote_control_instance_name,
                 auth,
             } = app_server_cli;
             reject_remote_mode_for_app_server_subcommand(
@@ -873,7 +878,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 None => {
                     let transport = listen;
                     let auth = auth.try_into_settings()?;
-                    codex_app_server::run_main_with_transport(
+                    let runtime_options = codex_app_server::AppServerRuntimeOptions {
+                        remote_control_instance_name,
+                        ..Default::default()
+                    };
+                    codex_app_server::run_main_with_transport_options(
                         arg0_paths.clone(),
                         root_config_overrides,
                         codex_config::LoaderOverrides::default(),
@@ -881,6 +890,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                         transport,
                         codex_protocol::protocol::SessionSource::VSCode,
                         auth,
+                        runtime_options,
                     )
                     .await?;
                 }
@@ -2294,6 +2304,23 @@ mod tests {
         let app_server =
             app_server_from_args(["codex", "app-server", "--analytics-default-enabled"].as_ref());
         assert!(app_server.analytics_default_enabled);
+    }
+
+    #[test]
+    fn app_server_remote_control_instance_name_parses() {
+        let app_server = app_server_from_args(
+            [
+                "codex",
+                "app-server",
+                "--remote-control-instance-name",
+                "next-build",
+            ]
+            .as_ref(),
+        );
+        assert_eq!(
+            app_server.remote_control_instance_name.as_deref(),
+            Some("next-build")
+        );
     }
 
     #[test]

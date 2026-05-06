@@ -67,6 +67,7 @@ pub async fn start_remote_control(
     auth_manager: Arc<AuthManager>,
     transport_event_tx: mpsc::Sender<TransportEvent>,
     shutdown_token: CancellationToken,
+    remote_control_instance_name: Option<String>,
     app_server_client_name_rx: Option<oneshot::Receiver<String>>,
     initial_enabled: bool,
 ) -> io::Result<(JoinHandle<()>, RemoteControlHandle)> {
@@ -105,6 +106,7 @@ pub async fn start_remote_control(
             },
             shutdown_token,
             enabled_rx,
+            remote_control_instance_name,
         )
         .run(app_server_client_name_rx)
         .await;

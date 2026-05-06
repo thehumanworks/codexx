@@ -217,6 +217,7 @@ pub(crate) struct RemoteControlWebsocket {
     remote_control_target: Option<RemoteControlTarget>,
     state_db: Option<Arc<StateRuntime>>,
     auth_manager: Arc<AuthManager>,
+    remote_control_instance_name: Option<String>,
     status_publisher: RemoteControlStatusPublisher,
     shutdown_token: CancellationToken,
     reconnect_attempt: u64,
@@ -292,6 +293,7 @@ impl RemoteControlStatusPublisher {
 pub(super) struct RemoteControlConnectOptions<'a> {
     subscribe_cursor: Option<&'a str>,
     app_server_client_name: Option<&'a str>,
+    remote_control_instance_name: Option<&'a str>,
 }
 
 impl RemoteControlWebsocket {
@@ -303,6 +305,7 @@ impl RemoteControlWebsocket {
         channels: RemoteControlChannels,
         shutdown_token: CancellationToken,
         enabled_rx: watch::Receiver<bool>,
+        remote_control_instance_name: Option<String>,
     ) -> Self {
         let shutdown_token = shutdown_token.child_token();
         let (server_event_tx, server_event_rx) = mpsc::channel(super::CHANNEL_CAPACITY);
@@ -319,6 +322,7 @@ impl RemoteControlWebsocket {
             remote_control_target,
             state_db,
             auth_manager,
+            remote_control_instance_name,
             status_publisher: channels.status_publisher,
             shutdown_token,
             reconnect_attempt: 0,
@@ -444,6 +448,7 @@ impl RemoteControlWebsocket {
             let connect_options = RemoteControlConnectOptions {
                 subscribe_cursor: subscribe_cursor.as_deref(),
                 app_server_client_name,
+                remote_control_instance_name: self.remote_control_instance_name.as_deref(),
             };
             let connect_result = tokio::select! {
                 _ = shutdown_token.cancelled() => return ConnectOutcome::Shutdown,
@@ -1029,6 +1034,9 @@ pub(super) async fn connect_remote_control_websocket(
             return Err(err);
         }
     };
+    let enrollment_app_server_client_name = connect_options
+        .remote_control_instance_name
+        .or(connect_options.app_server_client_name);
     let enrollment_account_id = enrollment.as_ref().map(|enrollment| &enrollment.account_id);
     if enrollment_account_id.is_some_and(|account_id| account_id != &auth.account_id) {
         info!(
@@ -1052,7 +1060,7 @@ pub(super) async fn connect_remote_control_websocket(
             Some(state_db),
             remote_control_target,
             &auth.account_id,
-            connect_options.app_server_client_name,
+            enrollment_app_server_client_name,
         )
         .await?;
         if let Some(loaded_enrollment) = loaded_enrollment.as_ref() {
@@ -1066,7 +1074,12 @@ pub(super) async fn connect_remote_control_websocket(
             "creating new remote control enrollment: websocket_url={}, enroll_url={}, account_id={}",
             remote_control_target.websocket_url, remote_control_target.enroll_url, auth.account_id
         );
-        let new_enrollment = match enroll_remote_control_server(remote_control_target, &auth).await
+        let new_enrollment = match enroll_remote_control_server(
+            remote_control_target,
+            &auth,
+            connect_options.remote_control_instance_name,
+        )
+        .await
         {
             Ok(new_enrollment) => new_enrollment,
             Err(err)
@@ -1083,7 +1096,7 @@ pub(super) async fn connect_remote_control_websocket(
             Some(state_db),
             remote_control_target,
             &auth.account_id,
-            connect_options.app_server_client_name,
+            enrollment_app_server_client_name,
             Some(&new_enrollment),
         )
         .await
@@ -1129,7 +1142,7 @@ pub(super) async fn connect_remote_control_websocket(
                         Some(state_db),
                         remote_control_target,
                         &auth.account_id,
-                        connect_options.app_server_client_name,
+                        enrollment_app_server_client_name,
                         /*enrollment*/ None,
                     )
                     .await
@@ -1361,6 +1374,7 @@ mod tests {
             RemoteControlConnectOptions {
                 subscribe_cursor: None,
                 app_server_client_name: None,
+                remote_control_instance_name: None,
             },
             &status_publisher,
         )
@@ -1437,6 +1451,7 @@ mod tests {
             RemoteControlConnectOptions {
                 subscribe_cursor: None,
                 app_server_client_name: None,
+                remote_control_instance_name: None,
             },
             &status_publisher,
         )
@@ -1517,6 +1532,7 @@ mod tests {
             RemoteControlConnectOptions {
                 subscribe_cursor: None,
                 app_server_client_name: None,
+                remote_control_instance_name: None,
             },
             &status_publisher,
         )
@@ -1569,6 +1585,7 @@ mod tests {
             RemoteControlConnectOptions {
                 subscribe_cursor: None,
                 app_server_client_name: None,
+                remote_control_instance_name: None,
             },
             &status_publisher,
         )
@@ -1616,6 +1633,7 @@ mod tests {
             RemoteControlConnectOptions {
                 subscribe_cursor: None,
                 app_server_client_name: None,
+                remote_control_instance_name: None,
             },
             &status_publisher,
         )
@@ -1666,6 +1684,7 @@ mod tests {
                     },
                     shutdown_token,
                     enabled_rx,
+                    /*remote_control_instance_name*/ None,
                 )
                 .run(/*app_server_client_name_rx*/ None)
                 .await
