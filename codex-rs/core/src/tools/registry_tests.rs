@@ -1,6 +1,6 @@
 use super::*;
+use crate::tools::context::CallerVisibleRewriteOutput;
 use crate::tools::context::McpToolOutput;
-use crate::tools::context::ModelVisibleRewriteOutput;
 use codex_protocol::mcp::CallToolResult;
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -60,30 +60,29 @@ fn handler_looks_up_namespaced_aliases_explicitly() {
 }
 
 #[test]
-fn model_visible_rewrite_does_not_replace_typed_tool_output() {
-    let result = mcp_result_with_model_visible_rewrite();
+fn caller_visible_rewrite_reaches_direct_and_code_mode_callers() {
+    let result = mcp_result_with_caller_visible_rewrite();
 
     match result.into_response() {
         ResponseInputItem::FunctionCallOutput { call_id, output } => {
             assert_eq!(call_id, "mcp-call-1");
-            assert_eq!(output.body.to_text().as_deref(), Some("[redacted]"));
+            assert_eq!(
+                output.body.to_text().as_deref(),
+                Some(r#"{"echo":"rewritten"}"#)
+            );
         }
         other => panic!("expected FunctionCallOutput, got {other:?}"),
     }
 
     assert_eq!(
-        mcp_result_with_model_visible_rewrite().code_mode_result(),
+        mcp_result_with_caller_visible_rewrite().code_mode_result(),
         json!({
-            "content": [],
-            "structuredContent": {
-                "echo": "original",
-            },
-            "isError": false,
+            "echo": "rewritten",
         })
     );
 }
 
-fn mcp_result_with_model_visible_rewrite() -> AnyToolResult {
+fn mcp_result_with_caller_visible_rewrite() -> AnyToolResult {
     AnyToolResult {
         call_id: "mcp-call-1".to_string(),
         payload: ToolPayload::Mcp {
@@ -91,7 +90,7 @@ fn mcp_result_with_model_visible_rewrite() -> AnyToolResult {
             tool: "lookup".to_string(),
             raw_arguments: "{}".to_string(),
         },
-        result: Box::new(ModelVisibleRewriteOutput::new(
+        result: Box::new(CallerVisibleRewriteOutput::new(
             Box::new(McpToolOutput {
                 result: CallToolResult {
                     content: Vec::new(),
@@ -104,7 +103,7 @@ fn mcp_result_with_model_visible_rewrite() -> AnyToolResult {
                 original_image_detail_supported: false,
                 truncation_policy: codex_utils_output_truncation::TruncationPolicy::Bytes(1024),
             }),
-            FunctionToolOutput::from_text("[redacted]".to_string(), Some(true)),
+            json!({ "echo": "rewritten" }),
         )),
         post_tool_use_payload: None,
     }

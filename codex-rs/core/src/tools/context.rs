@@ -110,6 +110,14 @@ pub trait ToolOutput: Send {
     fn code_mode_result(&self, payload: &ToolPayload) -> JsonValue {
         response_input_to_code_mode_result(self.to_response_item("", payload))
     }
+
+    fn rewritten_code_mode_result(
+        &self,
+        _payload: &ToolPayload,
+        updated_tool_output: &JsonValue,
+    ) -> JsonValue {
+        updated_tool_output.clone()
+    }
 }
 
 impl ToolOutput for CallToolResult {
@@ -303,37 +311,48 @@ impl ToolOutput for FunctionToolOutput {
     }
 }
 
-/// Preserves the original typed tool output while rewriting what direct model
+/// Preserves the original typed tool output while rewriting what model-authored
 /// callers see.
-pub(crate) struct ModelVisibleRewriteOutput {
-    original: Box<dyn ToolOutput>,
-    rewritten: FunctionToolOutput,
+pub(crate) struct CallerVisibleRewriteOutput {
+    original_tool_output: Box<dyn ToolOutput>,
+    updated_tool_output: JsonValue,
 }
 
-impl ModelVisibleRewriteOutput {
-    pub(crate) fn new(original: Box<dyn ToolOutput>, rewritten: FunctionToolOutput) -> Self {
+impl CallerVisibleRewriteOutput {
+    pub(crate) fn new(
+        original_tool_output: Box<dyn ToolOutput>,
+        updated_tool_output: JsonValue,
+    ) -> Self {
         Self {
-            original,
-            rewritten,
+            original_tool_output,
+            updated_tool_output,
         }
     }
 }
 
-impl ToolOutput for ModelVisibleRewriteOutput {
+impl ToolOutput for CallerVisibleRewriteOutput {
     fn log_preview(&self) -> String {
-        self.original.log_preview()
+        self.original_tool_output.log_preview()
     }
 
     fn success_for_logging(&self) -> bool {
-        self.original.success_for_logging()
+        self.original_tool_output.success_for_logging()
     }
 
     fn to_response_item(&self, call_id: &str, payload: &ToolPayload) -> ResponseInputItem {
-        self.rewritten.to_response_item(call_id, payload)
+        FunctionToolOutput::from_text(
+            match &self.updated_tool_output {
+                JsonValue::String(text) => text.clone(),
+                _ => self.updated_tool_output.to_string(),
+            },
+            Some(true),
+        )
+        .to_response_item(call_id, payload)
     }
 
     fn code_mode_result(&self, payload: &ToolPayload) -> JsonValue {
-        self.original.code_mode_result(payload)
+        self.original_tool_output
+            .rewritten_code_mode_result(payload, &self.updated_tool_output)
     }
 }
 
@@ -372,6 +391,9 @@ impl ToolOutput for ApplyPatchToolOutput {
     }
 
     fn code_mode_result(&self, _payload: &ToolPayload) -> JsonValue {
+        // Native code-mode callers only need the side effect here. If a
+        // `PostToolUse` hook installs a caller-visible rewrite, the wrapper
+        // returns that replacement instead of this empty native result.
         JsonValue::Object(serde_json::Map::new())
     }
 }
@@ -482,6 +504,18 @@ impl ToolOutput for ExecCommandToolOutput {
         serde_json::to_value(result).unwrap_or_else(|err| {
             JsonValue::String(format!("failed to serialize exec result: {err}"))
         })
+    }
+
+    fn rewritten_code_mode_result(
+        &self,
+        payload: &ToolPayload,
+        updated_tool_output: &JsonValue,
+    ) -> JsonValue {
+        let mut result = self.code_mode_result(payload);
+        if let JsonValue::Object(fields) = &mut result {
+            fields.insert("output".to_string(), updated_tool_output.clone());
+        }
+        result
     }
 }
 

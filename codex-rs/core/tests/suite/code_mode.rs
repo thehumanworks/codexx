@@ -103,6 +103,34 @@ fn wait_for_file_source(path: &Path) -> Result<String> {
     ))
 }
 
+fn write_post_tool_use_exec_rewrite_hook(home: &Path, rewritten_output: &str) -> Result<()> {
+    let script_path = home.join("post_tool_use_exec_rewrite_hook.py");
+    let rewritten_output = serde_json::to_string(rewritten_output)?;
+    let script = format!(
+        r#"import json
+import sys
+
+json.load(sys.stdin)
+print(json.dumps({{"hookSpecificOutput": {{"hookEventName": "PostToolUse", "updatedToolOutput": {rewritten_output}}}}}))
+"#
+    );
+    let hooks = serde_json::json!({
+        "hooks": {
+            "PostToolUse": [{
+                "matcher": "^Bash$",
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("python3 {}", script_path.display()),
+                }]
+            }]
+        }
+    });
+
+    fs::write(&script_path, script)?;
+    fs::write(home.join("hooks.json"), hooks.to_string())?;
+    Ok(())
+}
+
 fn custom_tool_output_body_and_success(
     req: &ResponsesRequest,
     call_id: &str,
@@ -318,6 +346,70 @@ text(JSON.stringify(await tools.exec_command({ cmd: "printf code_mode_exec_marke
     assert_eq!(parsed.get("exit_code").and_then(Value::as_i64), Some(0));
     assert!(parsed.get("wall_time_seconds").is_some());
     assert!(parsed.get("session_id").is_none());
+
+    Ok(())
+}
+
+#[cfg_attr(windows, ignore = "no exec_command on Windows")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn code_mode_post_tool_use_updated_tool_output_rewrites_exec_command_output() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = responses::start_mock_server().await;
+    let rewritten_output = "[redacted]";
+    let mut builder = test_codex()
+        .with_model("test-gpt-5.1-codex")
+        .with_pre_build_hook(move |home| {
+            write_post_tool_use_exec_rewrite_hook(home, rewritten_output)
+                .expect("write post tool use hook");
+        })
+        .with_config(|config| {
+            let _ = config.features.enable(Feature::CodeMode);
+            let _ = config.features.enable(Feature::CodexHooks);
+        });
+    let test = builder.build(&server).await?;
+
+    responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_custom_tool_call(
+                "call-1",
+                "exec",
+                r#"
+text(JSON.stringify(await tools.exec_command({ cmd: "printf original-output" })));
+"#,
+            ),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+
+    let second_mock = responses::mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-2"),
+        ]),
+    )
+    .await;
+
+    test.submit_turn_with_permission_profile(
+        "use exec to run exec_command with a post hook rewrite",
+        PermissionProfile::workspace_write(),
+    )
+    .await?;
+
+    let req = second_mock.single_request();
+    let items = custom_tool_output_items(&req, "call-1");
+    assert_eq!(items.len(), 2);
+    let parsed: Value = serde_json::from_str(text_item(&items, /*index*/ 1))?;
+    assert_eq!(
+        parsed.get("output").and_then(Value::as_str),
+        Some(rewritten_output),
+    );
+    assert_eq!(parsed.get("exit_code").and_then(Value::as_i64), Some(0));
+    assert!(parsed.get("wall_time_seconds").is_some());
 
     Ok(())
 }
