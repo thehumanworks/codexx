@@ -455,7 +455,7 @@ async fn write_value_defaults_to_user_config_path() {
 }
 
 #[tokio::test]
-async fn invalid_user_value_written_if_overridden_by_managed() {
+async fn invalid_user_value_rejected_even_if_overridden_by_managed() {
     let tmp = tempdir().expect("tempdir");
     std::fs::write(tmp.path().join(CONFIG_TOML_FILE), "model = \"user\"").unwrap();
 
@@ -469,10 +469,7 @@ async fn invalid_user_value_written_if_overridden_by_managed() {
         CloudRequirementsLoader::default(),
     );
 
-    // Write validation checks the effective merged config. The invalid user
-    // value is allowed here because the managed layer still supplies the
-    // effective approval policy.
-    let result = service
+    let error = service
         .write_value(ConfigValueWriteParams {
             file_path: Some(tmp.path().join(CONFIG_TOML_FILE).display().to_string()),
             key_path: "approval_policy".to_string(),
@@ -481,15 +478,15 @@ async fn invalid_user_value_written_if_overridden_by_managed() {
             expected_version: None,
         })
         .await
-        .expect("write succeeds because managed config still supplies a valid effective value");
+        .expect_err("should fail validation");
 
-    assert_eq!(result.status, WriteStatus::OkOverridden);
+    assert_eq!(
+        error.write_error_code(),
+        Some(ConfigWriteErrorCode::ConfigValidationError)
+    );
 
     let contents = std::fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE)).expect("read config");
-    assert_eq!(
-        contents.trim(),
-        "model = \"user\"\napproval_policy = \"bogus\""
-    );
+    assert_eq!(contents.trim(), "model = \"user\"");
 }
 
 #[tokio::test]
