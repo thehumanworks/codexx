@@ -37,7 +37,6 @@ use codex_app_server_protocol::ThreadSourceKind;
 use codex_cloud_requirements::cloud_requirements_loader_for_storage;
 use codex_config::CloudRequirementsLoader;
 use codex_config::ConfigLoadError;
-use codex_config::Lenient;
 use codex_config::LoaderOverrides;
 use codex_config::format_config_error_with_source;
 use codex_exec_server::EnvironmentManager;
@@ -811,7 +810,6 @@ pub async fn run_main(
         config_toml
             .cli_auth_credentials_store
             .clone()
-            .and_then(Lenient::into_valid)
             .unwrap_or_default(),
         chatgpt_base_url,
     )
