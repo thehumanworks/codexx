@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ToolInvocation;
+use crate::tools::hook_compat;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
@@ -50,7 +51,7 @@ async fn pre_tool_use_payload_uses_json_patch_input() {
     };
     let invocation = invocation_for_payload(payload).await;
     assert_eq!(
-        crate::tools::hook_compat::pre_tool_use_payload(&invocation),
+        hook_compat::pre_tool_use_payload(&invocation),
         Some(PreToolUsePayload {
             tool_name: HookToolName::apply_patch(),
             tool_input: json!({ "command": patch }),
@@ -66,7 +67,7 @@ async fn pre_tool_use_payload_uses_freeform_patch_input() {
     };
     let invocation = invocation_for_payload(payload).await;
     assert_eq!(
-        crate::tools::hook_compat::pre_tool_use_payload(&invocation),
+        hook_compat::pre_tool_use_payload(&invocation),
         Some(PreToolUsePayload {
             tool_name: HookToolName::apply_patch(),
             tool_input: json!({ "command": patch }),

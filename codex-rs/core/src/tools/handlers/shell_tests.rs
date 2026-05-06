@@ -17,6 +17,7 @@ use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
 use crate::tools::handlers::ShellCommandHandler;
+use crate::tools::hook_compat;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::ToolHandler;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -222,7 +223,7 @@ async fn local_shell_pre_tool_use_payload_uses_joined_command() {
     let (session, turn) = make_session_and_context().await;
 
     assert_eq!(
-        crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
+        hook_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
             turn: turn.into(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
@@ -247,7 +248,7 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
     let (session, turn) = make_session_and_context().await;
 
     assert_eq!(
-        crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
+        hook_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
             turn: turn.into(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),

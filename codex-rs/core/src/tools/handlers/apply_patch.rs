@@ -240,7 +240,11 @@ fn write_permissions_for_paths(
     normalize_additional_permissions(permissions).ok()
 }
 
-/// Extracts the raw patch text from either supported apply_patch payload form.
+/// Extracts the raw patch text used as the command-shaped hook input for apply_patch.
+///
+/// The apply_patch tool can arrive as the older JSON/function shape or as a
+/// freeform custom tool call. Both represent the same file edit operation, so
+/// hooks see the raw patch body in `tool_input.command` either way.
 pub(crate) fn apply_patch_payload_command(payload: &ToolPayload) -> Option<String> {
     match payload {
         ToolPayload::Function { arguments } => parse_arguments::<ApplyPatchToolArgs>(arguments)

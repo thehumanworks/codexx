@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::function_tool::FunctionCallError;
 use crate::goals::GoalRuntimeEvent;
+use crate::hook_runtime::PreToolUseHookResult;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
@@ -351,12 +352,12 @@ impl ToolRegistry {
             )
             .await
             {
-                crate::hook_runtime::PreToolUseHookResult::Blocked(message) => {
+                PreToolUseHookResult::Blocked(message) => {
                     let err = FunctionCallError::RespondToModel(message);
                     dispatch_trace.record_failed(&err);
                     return Err(err);
                 }
-                crate::hook_runtime::PreToolUseHookResult::Continue {
+                PreToolUseHookResult::Continue {
                     updated_input: Some(updated_input),
                 } => {
                     invocation = hook_compat::apply_updated_input(invocation, updated_input)?;
