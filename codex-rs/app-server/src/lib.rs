@@ -828,6 +828,7 @@ pub async fn run_main_with_transport_options(
                                 connection_id,
                                 origin,
                                 writer,
+                                binary_writer,
                                 disconnect_sender,
                             } => {
                                 let outbound_initialized = Arc::new(AtomicBool::new(false));
@@ -860,6 +861,7 @@ pub async fn run_main_with_transport_options(
                                         outbound_initialized,
                                         outbound_experimental_api_enabled,
                                         outbound_opted_out_notification_methods,
+                                        binary_writer,
                                     ),
                                 );
                             }
@@ -959,6 +961,28 @@ pub async fn run_main_with_transport_options(
                                             continue;
                                         }
                                         processor.process_error(err).await;
+                                    }
+                                }
+                            }
+                            TransportEvent::IncomingBinary { connection_id, bytes } => {
+                                let Some(connection_state) = connections.get(&connection_id) else {
+                                    warn!("dropping binary payload from unknown connection: {connection_id:?}");
+                                    continue;
+                                };
+                                let Some(binary_writer) = connection_state.binary_writer.clone() else {
+                                    warn!("dropping binary payload from connection without a binary lane: {connection_id:?}");
+                                    continue;
+                                };
+                                match processor.process_upload_binary(connection_id, bytes).await {
+                                    Ok(responses) => {
+                                        for response in responses {
+                                            if binary_writer.send(response).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        warn!("failed to process upload binary payload: {}", err.message);
                                     }
                                 }
                             }

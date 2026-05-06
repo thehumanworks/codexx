@@ -53,7 +53,7 @@ fn listen_unix_socket_accepts_relative_custom_path() {
 }
 
 #[tokio::test]
-async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_messages_and_pings() {
+async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_binary_messages_and_pings() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let socket_path = test_socket_path(temp_dir.path());
     let (transport_event_tx, mut transport_event_rx) =
@@ -110,6 +110,25 @@ async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_messages_a
             _ => panic!("expected incoming message event"),
         },
         (connection_id, notification)
+    );
+
+    websocket
+        .send(WebSocketMessage::Binary(Bytes::from_static(b"sftp")))
+        .await
+        .expect("binary payload should send");
+    let incoming_binary = timeout(Duration::from_secs(1), transport_event_rx.recv())
+        .await
+        .expect("incoming binary event should arrive")
+        .expect("incoming binary event");
+    assert_eq!(
+        match incoming_binary {
+            TransportEvent::IncomingBinary {
+                connection_id: incoming_connection_id,
+                bytes,
+            } => (incoming_connection_id, bytes),
+            _ => panic!("expected incoming binary event"),
+        },
+        (connection_id, b"sftp".to_vec())
     );
 
     websocket

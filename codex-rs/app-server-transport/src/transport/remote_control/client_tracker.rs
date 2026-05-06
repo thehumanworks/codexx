@@ -163,6 +163,7 @@ impl ClientTracker {
                     connection_id,
                     origin: ConnectionOrigin::RemoteControl,
                     writer: writer_tx,
+                    binary_writer: None,
                     disconnect_sender: Some(disconnect_token.clone()),
                 })
                 .await?;

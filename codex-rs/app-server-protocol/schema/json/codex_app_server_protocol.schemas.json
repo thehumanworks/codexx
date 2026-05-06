@@ -961,6 +961,30 @@
             },
             "method": {
               "enum": [
+                "fs/createUpload"
+              ],
+              "title": "Fs/createUploadRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/v2/FsCreateUploadParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Fs/createUploadRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/v2/RequestId"
+            },
+            "method": {
+              "enum": [
                 "fs/createDirectory"
               ],
               "title": "Fs/createDirectoryRequestMethod",
@@ -8685,6 +8709,40 @@
         "$schema": "http://json-schema.org/draft-07/schema#",
         "description": "Successful response for `fs/createDirectory`.",
         "title": "FsCreateDirectoryResponse",
+        "type": "object"
+      },
+      "FsCreateUploadParams": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "Allocate a Codex-managed host path for a staged upload.",
+        "properties": {
+          "fileName": {
+            "description": "User-visible file name. App-server stores only the final path component.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fileName"
+        ],
+        "title": "FsCreateUploadParams",
+        "type": "object"
+      },
+      "FsCreateUploadResponse": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "description": "Codex-managed host path created by `fs/createUpload`.",
+        "properties": {
+          "path": {
+            "allOf": [
+              {
+                "$ref": "#/definitions/v2/AbsolutePathBuf"
+              }
+            ],
+            "description": "Absolute path where the client should stream staged upload bytes."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "FsCreateUploadResponse",
         "type": "object"
       },
       "FsGetMetadataParams": {

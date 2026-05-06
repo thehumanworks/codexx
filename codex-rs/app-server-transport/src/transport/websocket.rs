@@ -182,12 +182,14 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
     let (writer_tx, writer_rx) =
         mpsc::channel::<QueuedOutgoingMessage>(WEBSOCKET_OUTBOUND_CHANNEL_CAPACITY);
     let writer_tx_for_reader = writer_tx.clone();
+    let (binary_writer_tx, binary_writer_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
     let disconnect_token = CancellationToken::new();
     if transport_event_tx
         .send(TransportEvent::ConnectionOpened {
             connection_id,
             origin: ConnectionOrigin::WebSocket,
             writer: writer_tx,
+            binary_writer: Some(binary_writer_tx.clone()),
             disconnect_sender: Some(disconnect_token.clone()),
         })
         .await
@@ -201,6 +203,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
         websocket_writer,
         writer_rx,
         writer_control_rx,
+        binary_writer_rx,
         disconnect_token.clone(),
     ));
     let mut inbound_task = tokio::spawn(run_websocket_inbound_loop(
@@ -230,7 +233,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
 
 pub(crate) enum IncomingWebSocketMessage {
     Text(String),
-    Binary,
+    Binary(Vec<u8>),
     Ping(Bytes),
     Pong,
     Close,
@@ -241,6 +244,7 @@ pub(crate) enum IncomingWebSocketMessage {
 /// sends directly.
 pub(crate) trait AppServerWebSocketMessage: Sized {
     fn text(text: String) -> Self;
+    fn binary(payload: Vec<u8>) -> Self;
     fn pong(payload: Bytes) -> Self;
     fn into_incoming(self) -> Option<IncomingWebSocketMessage>;
 }
@@ -250,6 +254,10 @@ impl AppServerWebSocketMessage for AxumWebSocketMessage {
         Self::Text(text.into())
     }
 
+    fn binary(payload: Vec<u8>) -> Self {
+        Self::Binary(payload.into())
+    }
+
     fn pong(payload: Bytes) -> Self {
         Self::Pong(payload)
     }
@@ -257,7 +265,7 @@ impl AppServerWebSocketMessage for AxumWebSocketMessage {
     fn into_incoming(self) -> Option<IncomingWebSocketMessage> {
         Some(match self {
             Self::Text(text) => IncomingWebSocketMessage::Text(text.to_string()),
-            Self::Binary(_) => IncomingWebSocketMessage::Binary,
+            Self::Binary(payload) => IncomingWebSocketMessage::Binary(payload.to_vec()),
             Self::Ping(payload) => IncomingWebSocketMessage::Ping(payload),
             Self::Pong(_) => IncomingWebSocketMessage::Pong,
             Self::Close(_) => IncomingWebSocketMessage::Close,
@@ -270,6 +278,10 @@ impl AppServerWebSocketMessage for TungsteniteWebSocketMessage {
         Self::Text(text.into())
     }
 
+    fn binary(payload: Vec<u8>) -> Self {
+        Self::Binary(payload.into())
+    }
+
     fn pong(payload: Bytes) -> Self {
         Self::Pong(payload)
     }
@@ -277,7 +289,7 @@ impl AppServerWebSocketMessage for TungsteniteWebSocketMessage {
     fn into_incoming(self) -> Option<IncomingWebSocketMessage> {
         Some(match self {
             Self::Text(text) => IncomingWebSocketMessage::Text(text.to_string()),
-            Self::Binary(_) => IncomingWebSocketMessage::Binary,
+            Self::Binary(payload) => IncomingWebSocketMessage::Binary(payload.to_vec()),
             Self::Ping(payload) => IncomingWebSocketMessage::Ping(payload),
             Self::Pong(_) => IncomingWebSocketMessage::Pong,
             Self::Close(_) => IncomingWebSocketMessage::Close,
@@ -290,6 +302,7 @@ async fn run_websocket_outbound_loop<M, SinkError>(
     websocket_writer: impl futures::sink::Sink<M, Error = SinkError> + Send + 'static,
     mut writer_rx: mpsc::Receiver<QueuedOutgoingMessage>,
     mut writer_control_rx: mpsc::Receiver<M>,
+    mut binary_writer_rx: mpsc::Receiver<Vec<u8>>,
     disconnect_token: CancellationToken,
 ) where
     M: AppServerWebSocketMessage + Send + 'static,
@@ -306,6 +319,14 @@ async fn run_websocket_outbound_loop<M, SinkError>(
                     break;
                 };
                 if websocket_writer.send(message).await.is_err() {
+                    break;
+                }
+            }
+            payload = binary_writer_rx.recv() => {
+                let Some(payload) = payload else {
+                    break;
+                };
+                if websocket_writer.send(M::binary(payload)).await.is_err() {
                     break;
                 }
             }
@@ -371,8 +392,17 @@ async fn run_websocket_inbound_loop<M, StreamError>(
                         }
                         Some(IncomingWebSocketMessage::Pong) => {}
                         Some(IncomingWebSocketMessage::Close) => break,
-                        Some(IncomingWebSocketMessage::Binary) => {
-                            warn!("dropping unsupported binary websocket message");
+                        Some(IncomingWebSocketMessage::Binary(bytes)) => {
+                            if transport_event_tx
+                                .send(TransportEvent::IncomingBinary {
+                                    connection_id,
+                                    bytes,
+                                })
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
                         None => {}
                     },

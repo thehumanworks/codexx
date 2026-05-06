@@ -438,6 +438,7 @@ impl MessageProcessor {
                 .local_environment()
                 .get_filesystem(),
             fs_watch_manager,
+            config.codex_home.to_path_buf(),
         );
         let windows_sandbox_processor = WindowsSandboxRequestProcessor::new(
             outgoing.clone(),
@@ -592,6 +593,16 @@ impl MessageProcessor {
         // Currently, we do not expect to receive any typed notifications from
         // in-process clients, so we just log them.
         tracing::info!("<- typed notification: {:?}", notification);
+    }
+
+    pub(crate) async fn process_upload_binary(
+        &self,
+        connection_id: ConnectionId,
+        bytes: Vec<u8>,
+    ) -> Result<Vec<Vec<u8>>, JSONRPCErrorError> {
+        self.fs_processor
+            .process_upload_sftp_bytes(connection_id, bytes)
+            .await
     }
 
     async fn run_request_with_context<F>(
@@ -858,6 +869,11 @@ impl MessageProcessor {
             ClientRequest::FsWriteFile { params, .. } => self
                 .fs_processor
                 .write_file(params)
+                .await
+                .map(|response| Some(response.into())),
+            ClientRequest::FsCreateUpload { params, .. } => self
+                .fs_processor
+                .create_upload(params)
                 .await
                 .map(|response| Some(response.into())),
             ClientRequest::FsCreateDirectory { params, .. } => self

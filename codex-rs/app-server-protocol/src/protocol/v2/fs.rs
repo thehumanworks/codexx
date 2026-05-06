@@ -39,6 +39,24 @@ pub struct FsWriteFileParams {
 #[ts(export_to = "v2/")]
 pub struct FsWriteFileResponse {}
 
+/// Allocate a Codex-managed host path for a staged upload.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct FsCreateUploadParams {
+    /// User-visible file name. App-server stores only the final path component.
+    pub file_name: String,
+}
+
+/// Codex-managed host path created by `fs/createUpload`.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export_to = "v2/")]
+pub struct FsCreateUploadResponse {
+    /// Absolute path where the client should stream staged upload bytes.
+    pub path: AbsolutePathBuf,
+}
+
 /// Create a directory on the host filesystem.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]

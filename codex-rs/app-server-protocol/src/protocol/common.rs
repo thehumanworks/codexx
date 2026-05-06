@@ -664,6 +664,11 @@ client_request_definitions! {
         serialization: None,
         response: v2::FsWriteFileResponse,
     },
+    FsCreateUpload => "fs/createUpload" {
+        params: v2::FsCreateUploadParams,
+        serialization: None,
+        response: v2::FsCreateUploadResponse,
+    },
     FsCreateDirectory => "fs/createDirectory" {
         params: v2::FsCreateDirectoryParams,
         serialization: None,

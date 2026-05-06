@@ -152,6 +152,7 @@ pub enum TransportEvent {
         connection_id: ConnectionId,
         origin: ConnectionOrigin,
         writer: mpsc::Sender<QueuedOutgoingMessage>,
+        binary_writer: Option<mpsc::Sender<Vec<u8>>>,
         disconnect_sender: Option<CancellationToken>,
     },
     ConnectionClosed {
@@ -160,6 +161,10 @@ pub enum TransportEvent {
     IncomingMessage {
         connection_id: ConnectionId,
         message: JSONRPCMessage,
+    },
+    IncomingBinary {
+        connection_id: ConnectionId,
+        bytes: Vec<u8>,
     },
 }
 

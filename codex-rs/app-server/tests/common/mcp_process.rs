@@ -27,6 +27,7 @@ use codex_app_server_protocol::ExperimentalFeatureListParams;
 use codex_app_server_protocol::FeedbackUploadParams;
 use codex_app_server_protocol::FsCopyParams;
 use codex_app_server_protocol::FsCreateDirectoryParams;
+use codex_app_server_protocol::FsCreateUploadParams;
 use codex_app_server_protocol::FsGetMetadataParams;
 use codex_app_server_protocol::FsReadDirectoryParams;
 use codex_app_server_protocol::FsReadFileParams;
@@ -986,6 +987,14 @@ impl McpProcess {
     ) -> anyhow::Result<i64> {
         let params = Some(serde_json::to_value(params)?);
         self.send_request("fs/writeFile", params).await
+    }
+
+    pub async fn send_fs_create_upload_request(
+        &mut self,
+        params: FsCreateUploadParams,
+    ) -> anyhow::Result<i64> {
+        let params = Some(serde_json::to_value(params)?);
+        self.send_request("fs/createUpload", params).await
     }
 
     pub async fn send_fs_create_directory_request(

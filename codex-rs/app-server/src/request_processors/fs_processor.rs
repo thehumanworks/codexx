@@ -2,12 +2,15 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::fs_watch::FsWatchManager;
 use crate::outgoing_message::ConnectionId;
+use crate::request_processors::upload_sftp::UploadSftpSession;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::FsCopyParams;
 use codex_app_server_protocol::FsCopyResponse;
 use codex_app_server_protocol::FsCreateDirectoryParams;
 use codex_app_server_protocol::FsCreateDirectoryResponse;
+use codex_app_server_protocol::FsCreateUploadParams;
+use codex_app_server_protocol::FsCreateUploadResponse;
 use codex_app_server_protocol::FsGetMetadataParams;
 use codex_app_server_protocol::FsGetMetadataResponse;
 use codex_app_server_protocol::FsReadDirectoryEntry;
@@ -28,28 +31,46 @@ use codex_exec_server::CopyOptions;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_exec_server::ExecutorFileSystem;
 use codex_exec_server::RemoveOptions;
+use codex_utils_absolute_path::AbsolutePathBuf;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::io;
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub(crate) struct FsRequestProcessor {
     file_system: Arc<dyn ExecutorFileSystem>,
     fs_watch_manager: FsWatchManager,
+    codex_home: PathBuf,
+    upload_paths: Arc<Mutex<HashSet<PathBuf>>>,
+    upload_sftp_sessions: Arc<Mutex<HashMap<ConnectionId, UploadSftpSession>>>,
 }
 
 impl FsRequestProcessor {
     pub(crate) fn new(
         file_system: Arc<dyn ExecutorFileSystem>,
         fs_watch_manager: FsWatchManager,
+        codex_home: PathBuf,
     ) -> Self {
         Self {
             file_system,
             fs_watch_manager,
+            codex_home,
+            upload_paths: Arc::new(Mutex::new(HashSet::new())),
+            upload_sftp_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
         self.fs_watch_manager.connection_closed(connection_id).await;
+        self.upload_sftp_sessions
+            .lock()
+            .await
+            .remove(&connection_id);
     }
 
     pub(crate) async fn read_file(
@@ -80,6 +101,52 @@ impl FsRequestProcessor {
             .await
             .map_err(map_fs_error)?;
         Ok(FsWriteFileResponse {})
+    }
+
+    pub(crate) async fn create_upload(
+        &self,
+        params: FsCreateUploadParams,
+    ) -> Result<FsCreateUploadResponse, JSONRPCErrorError> {
+        let file_name = sanitize_upload_file_name(&params.file_name)?;
+        let upload_dir = absolute_path(
+            self.codex_home
+                .join("uploads")
+                .join(Uuid::now_v7().to_string()),
+        )?;
+        let upload_path = absolute_path(upload_dir.as_path().join(file_name))?;
+        self.file_system
+            .create_directory(
+                &upload_dir,
+                CreateDirectoryOptions { recursive: true },
+                /*sandbox*/ None,
+            )
+            .await
+            .map_err(map_fs_error)?;
+        self.upload_paths
+            .lock()
+            .await
+            .insert(upload_path.as_path().to_path_buf());
+        Ok(FsCreateUploadResponse { path: upload_path })
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "SFTP packets for one connection must be processed in arrival order"
+    )]
+    pub(crate) async fn process_upload_sftp_bytes(
+        &self,
+        connection_id: ConnectionId,
+        bytes: Vec<u8>,
+    ) -> Result<Vec<Vec<u8>>, JSONRPCErrorError> {
+        let mut sessions = self.upload_sftp_sessions.lock().await;
+        let session = sessions
+            .entry(connection_id)
+            .or_insert_with(|| UploadSftpSession::new(Arc::clone(&self.upload_paths)));
+        let result = session.process_bytes(bytes).await;
+        if result.is_err() {
+            sessions.remove(&connection_id);
+        }
+        result
     }
 
     pub(crate) async fn create_directory(
@@ -189,6 +256,18 @@ impl FsRequestProcessor {
     ) -> Result<FsUnwatchResponse, JSONRPCErrorError> {
         self.fs_watch_manager.unwatch(connection_id, params).await
     }
+}
+
+fn sanitize_upload_file_name(file_name: &str) -> Result<&str, JSONRPCErrorError> {
+    Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| invalid_request("fs/createUpload requires a fileName".to_string()))
+}
+
+fn absolute_path(path: PathBuf) -> Result<AbsolutePathBuf, JSONRPCErrorError> {
+    AbsolutePathBuf::try_from(path).map_err(|err| internal_error(err.to_string()))
 }
 
 fn map_fs_error(err: io::Error) -> JSONRPCErrorError {

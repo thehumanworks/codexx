@@ -969,6 +969,19 @@
       ],
       "type": "object"
     },
+    "FsCreateUploadParams": {
+      "description": "Allocate a Codex-managed host path for a staged upload.",
+      "properties": {
+        "fileName": {
+          "description": "User-visible file name. App-server stores only the final path component.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fileName"
+      ],
+      "type": "object"
+    },
     "FsGetMetadataParams": {
       "description": "Request metadata for an absolute path.",
       "properties": {
@@ -5146,6 +5159,30 @@
         "params"
       ],
       "title": "Fs/writeFileRequest",
+      "type": "object"
+    },
+    {
+      "properties": {
+        "id": {
+          "$ref": "#/definitions/RequestId"
+        },
+        "method": {
+          "enum": [
+            "fs/createUpload"
+          ],
+          "title": "Fs/createUploadRequestMethod",
+          "type": "string"
+        },
+        "params": {
+          "$ref": "#/definitions/FsCreateUploadParams"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ],
+      "title": "Fs/createUploadRequest",
       "type": "object"
     },
     {

@@ -116,6 +116,8 @@ export type { FsCopyParams } from "./FsCopyParams";
 export type { FsCopyResponse } from "./FsCopyResponse";
 export type { FsCreateDirectoryParams } from "./FsCreateDirectoryParams";
 export type { FsCreateDirectoryResponse } from "./FsCreateDirectoryResponse";
+export type { FsCreateUploadParams } from "./FsCreateUploadParams";
+export type { FsCreateUploadResponse } from "./FsCreateUploadResponse";
 export type { FsGetMetadataParams } from "./FsGetMetadataParams";
 export type { FsGetMetadataResponse } from "./FsGetMetadataResponse";
 export type { FsReadDirectoryEntry } from "./FsReadDirectoryEntry";

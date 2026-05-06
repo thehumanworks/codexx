@@ -6,6 +6,8 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::FsChangedNotification;
 use codex_app_server_protocol::FsCopyParams;
+use codex_app_server_protocol::FsCreateUploadParams;
+use codex_app_server_protocol::FsCreateUploadResponse;
 use codex_app_server_protocol::FsGetMetadataResponse;
 use codex_app_server_protocol::FsReadDirectoryEntry;
 use codex_app_server_protocol::FsReadFileResponse;
@@ -294,6 +296,37 @@ async fn fs_methods_cover_current_fs_utils_surface() -> Result<()> {
     assert!(
         !copied_dir.exists(),
         "fs/remove should default to recursive+force for directory trees"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fs_create_upload_allocates_codex_managed_storage() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    let mut mcp = initialized_mcp(&codex_home).await?;
+
+    let request_id = mcp
+        .send_fs_create_upload_request(FsCreateUploadParams {
+            file_name: "../note.txt".to_string(),
+        })
+        .await?;
+    let response: FsCreateUploadResponse = to_response(
+        timeout(
+            DEFAULT_READ_TIMEOUT,
+            mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+        )
+        .await??,
+    )?;
+
+    let path = response.path.as_path();
+    let parent = path.parent().expect("upload path should have a parent");
+    let canonical_parent = std::fs::canonicalize(parent)?;
+    let canonical_codex_home = std::fs::canonicalize(codex_home.path())?;
+    assert!(canonical_parent.starts_with(canonical_codex_home.join("uploads")));
+    assert_eq!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("note.txt")
     );
 
     Ok(())

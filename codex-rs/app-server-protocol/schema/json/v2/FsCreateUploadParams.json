@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "Allocate a Codex-managed host path for a staged upload.",
+  "properties": {
+    "fileName": {
+      "description": "User-visible file name. App-server stores only the final path component.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "fileName"
+  ],
+  "title": "FsCreateUploadParams",
+  "type": "object"
+}
