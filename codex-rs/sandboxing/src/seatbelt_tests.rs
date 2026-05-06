@@ -355,7 +355,8 @@ fn reopened_readable_children_under_unreadable_roots_get_metadata_traversal() {
 #[test]
 fn reopened_children_under_unreadable_roots_work_under_seatbelt() {
     let tmp = TempDir::new().expect("tempdir");
-    let parent = tmp.path().join("home");
+    let tmp_path = tmp.path().canonicalize().expect("canonical tempdir");
+    let parent = tmp_path.join("home");
     let gitconfig = parent.join(".gitconfig");
     let blocked = parent.join(".config").join("my-app").join(".env");
     let writable_dir = parent.join(".cache").join("uv");
@@ -404,14 +405,14 @@ fn reopened_children_under_unreadable_roots_work_under_seatbelt() {
             ],
             file_system_sandbox_policy: &file_system_policy,
             network_sandbox_policy: NetworkSandboxPolicy::Restricted,
-            sandbox_policy_cwd: tmp.path(),
+            sandbox_policy_cwd: &tmp_path,
             enforce_managed_network: false,
             network: None,
             extra_allow_unix_sockets: &[],
         });
         Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
             .args(&args)
-            .current_dir(tmp.path())
+            .current_dir(&tmp_path)
             .output()
             .expect("execute seatbelt command")
     };

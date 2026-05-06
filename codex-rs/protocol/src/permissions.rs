@@ -221,6 +221,7 @@ struct FileSystemSemanticSignature {
 /// Runtime matcher for read-deny entries in a filesystem sandbox policy.
 pub struct ReadDenyMatcher {
     exact_candidates: Vec<ResolvedFileSystemEntry>,
+    canonical_deny_candidates: Vec<ResolvedFileSystemEntry>,
     deny_read_matchers: Vec<GlobMatcher>,
     invalid_pattern: bool,
 }
@@ -236,13 +237,15 @@ impl ReadDenyMatcher {
             return None;
         }
 
-        // Exact entries are stored with all meaningful path spellings we can
-        // derive cheaply. That lets direct tool checks preserve the same
-        // most-specific precedence as the main resolver while still catching
-        // both a symlink path and its canonical target.
-        let exact_candidates = file_system_sandbox_policy
-            .resolved_entries_with_cwd(cwd)
-            .into_iter()
+        // Exact entries keep their lexical spelling so the precedence check
+        // mirrors the main resolver. Deny entries also keep canonical spellings
+        // so direct tool checks still catch a denied target reached through a
+        // symlink alias without letting an alias-specific allow reopen the
+        // canonical target.
+        let exact_candidates = file_system_sandbox_policy.resolved_entries_with_cwd(cwd);
+        let canonical_deny_candidates = exact_candidates
+            .iter()
+            .filter(|entry| !entry.access.can_read())
             .flat_map(|entry| {
                 normalized_and_canonical_candidates(entry.path.as_path())
                     .into_iter()
@@ -272,6 +275,7 @@ impl ReadDenyMatcher {
             .collect();
         Some(Self {
             exact_candidates,
+            canonical_deny_candidates,
             deny_read_matchers,
             invalid_pattern,
         })
@@ -286,18 +290,24 @@ impl ReadDenyMatcher {
         }
 
         // Exact entries preserve the same most-specific precedence as the
-        // policy resolver, across every candidate spelling we know about.
+        // policy resolver for the lexical spelling the caller asked about.
+        // Canonical spellings are only considered for deny entries so an alias-
+        // specific allow does not reopen the canonical target.
         let path_candidates = normalized_and_canonical_candidates(path);
-        if self
+        let lexical_entry = self
             .exact_candidates
             .iter()
-            .filter(|entry| {
+            .filter(|entry| path.starts_with(entry.path.as_path()))
+            .max_by_key(|entry| resolved_entry_precedence(entry));
+        if lexical_entry.is_some_and(|entry| !entry.access.can_read()) {
+            return true;
+        }
+        if lexical_entry.is_none()
+            && self.canonical_deny_candidates.iter().any(|entry| {
                 path_candidates
                     .iter()
                     .any(|candidate| candidate.starts_with(entry.path.as_path()))
             })
-            .max_by_key(|entry| resolved_entry_precedence(entry))
-            .is_some_and(|entry| !entry.access.can_read())
         {
             return true;
         }
@@ -2901,6 +2911,40 @@ mod tests {
             &policy,
             temp.path()
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_allow_alias_does_not_reopen_canonical_denied_path() {
+        let temp = TempDir::new().expect("tempdir");
+        let real_dir = temp.path().join("real");
+        let alias_dir = temp.path().join("alias");
+        let real_child = real_dir.join("child");
+        let alias_child = alias_dir.join("child");
+        let real_file = real_child.join("visible.txt");
+        let alias_file = alias_child.join("visible.txt");
+        std::fs::create_dir_all(&real_child).expect("create real child");
+        std::fs::write(&real_file, "visible").expect("write visible");
+        symlink_dir(&real_dir, &alias_dir).expect("symlink alias");
+
+        let policy = FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Path {
+                    path: AbsolutePathBuf::from_absolute_path(&real_dir).expect("absolute real"),
+                },
+                access: FileSystemAccessMode::None,
+            },
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Path {
+                    path: AbsolutePathBuf::from_absolute_path(&alias_child)
+                        .expect("absolute alias child"),
+                },
+                access: FileSystemAccessMode::Read,
+            },
+        ]);
+
+        assert!(is_read_denied(real_file.as_path(), &policy, temp.path()));
+        assert!(!is_read_denied(alias_file.as_path(), &policy, temp.path()));
     }
 
     #[cfg(unix)]
