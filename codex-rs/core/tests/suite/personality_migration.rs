@@ -1,4 +1,3 @@
-use codex_config::Lenient;
 use codex_config::config_toml::ConfigToml;
 use codex_core::ARCHIVED_SESSIONS_SUBDIR;
 use codex_core::SESSIONS_SUBDIR;
@@ -21,10 +20,6 @@ use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 
 const TEST_TIMESTAMP: &str = "2025-01-01T00-00-00";
-
-fn valid_lenient<T>(value: Option<Lenient<T>>) -> Option<T> {
-    value.and_then(Lenient::into_valid)
-}
 
 async fn read_config_toml(codex_home: &Path) -> io::Result<ConfigToml> {
     let contents = tokio::fs::read_to_string(codex_home.join("config.toml")).await?;
@@ -191,10 +186,7 @@ async fn no_marker_sessions_sets_personality() -> io::Result<()> {
     );
 
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Pragmatic)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }
 
@@ -210,10 +202,7 @@ async fn no_marker_sessions_preserves_existing_config_fields() -> io::Result<()>
     assert_eq!(status, PersonalityMigrationStatus::Applied);
     let persisted = read_config_toml(temp.path()).await?;
     assert_eq!(persisted.model, Some("gpt-5.4".to_string()));
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Pragmatic)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }
 
@@ -332,10 +321,7 @@ async fn applied_migration_is_idempotent_on_second_run() -> io::Result<()> {
     assert_eq!(first_status, PersonalityMigrationStatus::Applied);
     assert_eq!(second_status, PersonalityMigrationStatus::SkippedMarker);
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Pragmatic)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }
 
@@ -354,9 +340,6 @@ async fn no_marker_archived_sessions_sets_personality() -> io::Result<()> {
     );
 
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Pragmatic)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }

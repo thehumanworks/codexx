@@ -1,6 +1,5 @@
 use anyhow::Context;
 use anyhow::bail;
-use codex_config::Lenient;
 use codex_config::config_toml::ConfigToml;
 use codex_config::types::MemoriesToml;
 use codex_features::AppsMcpPathOverrideConfigToml;
@@ -66,10 +65,10 @@ pub(crate) fn apply_resolved_config_fields(
     config: &Config,
     config_toml: &mut ConfigToml,
 ) -> anyhow::Result<()> {
-    config_toml.web_search = Some(Lenient::from(config.web_search_mode.value()));
+    config_toml.web_search = Some(config.web_search_mode.value());
     config_toml.model_provider = Some(config.model_provider_id.clone());
-    config_toml.plan_mode_reasoning_effort = config.plan_mode_reasoning_effort.map(Lenient::from);
-    config_toml.model_verbosity = config.model_verbosity.map(Lenient::from);
+    config_toml.plan_mode_reasoning_effort = config.plan_mode_reasoning_effort;
+    config_toml.model_verbosity = config.model_verbosity;
     config_toml.include_permissions_instructions = Some(config.include_permissions_instructions);
     config_toml.include_apps_instructions = Some(config.include_apps_instructions);
     config_toml.include_environment_context = Some(config.include_environment_context);

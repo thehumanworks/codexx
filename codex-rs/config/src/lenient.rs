@@ -1,109 +1,49 @@
-use schemars::JsonSchema;
-use schemars::r#gen::SchemaGenerator;
-use schemars::schema::Schema;
-use serde::Deserialize;
-use serde::Deserializer;
-use serde::Serialize;
-use serde::Serializer;
+use serde::de::DeserializeOwned;
 use toml::Value as TomlValue;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Lenient<T> {
-    Valid(T),
-    Invalid(TomlValue),
-}
+pub(crate) fn deserialize_with_enum_warnings<T>(
+    mut value: TomlValue,
+) -> Result<(TomlValue, T, Vec<String>), toml::de::Error>
+where
+    T: DeserializeOwned,
+{
+    let mut warnings = Vec::new();
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LenientInput<T> {
-    Valid(T),
-    Invalid(TomlValue),
-}
+    loop {
+        match serde_path_to_error::deserialize(value.clone()) {
+            Ok(parsed) => return Ok((value, parsed, warnings)),
+            Err(err) => {
+                let path = err.path().to_string();
+                let toml_error = err.into_inner();
+                if !is_unknown_variant_error(&toml_error) {
+                    return Err(toml_error);
+                }
 
-impl<T> Lenient<T> {
-    pub fn as_valid(&self) -> Option<&T> {
-        match self {
-            Self::Valid(value) => Some(value),
-            Self::Invalid(_) => None,
-        }
-    }
-
-    pub fn into_valid(self) -> Option<T> {
-        match self {
-            Self::Valid(value) => Some(value),
-            Self::Invalid(_) => None,
-        }
-    }
-
-    pub fn into_valid_with_warning(
-        self,
-        field_path: &str,
-        warnings: &mut Vec<String>,
-    ) -> Option<T> {
-        match self {
-            Self::Valid(value) => Some(value),
-            Self::Invalid(value) => {
+                let Some(invalid_value) = remove_value_at_path(&mut value, &path) else {
+                    return Err(toml_error);
+                };
                 warnings.push(format!(
-                    "Ignoring invalid config value at {field_path}: {value}"
+                    "Ignoring invalid config value at {path}: {invalid_value}"
                 ));
-                None
             }
         }
     }
+}
 
-    pub fn invalid_value(&self) -> Option<&TomlValue> {
-        match self {
-            Self::Valid(_) => None,
-            Self::Invalid(value) => Some(value),
+fn is_unknown_variant_error(err: &toml::de::Error) -> bool {
+    err.message().contains("unknown variant")
+}
+
+fn remove_value_at_path(value: &mut TomlValue, path: &str) -> Option<TomlValue> {
+    let mut parts = path.split('.').peekable();
+    let mut current = value;
+
+    while let Some(part) = parts.next() {
+        if parts.peek().is_none() {
+            return current.as_table_mut()?.remove(part);
         }
-    }
-}
-
-impl<T> From<T> for Lenient<T> {
-    fn from(value: T) -> Self {
-        Self::Valid(value)
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Lenient<T>
-where
-    T: Deserialize<'de>,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(match LenientInput::<T>::deserialize(deserializer)? {
-            LenientInput::Valid(value) => Self::Valid(value),
-            LenientInput::Invalid(value) => Self::Invalid(value),
-        })
-    }
-}
-
-impl<T> Serialize for Lenient<T>
-where
-    T: Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Valid(value) => value.serialize(serializer),
-            Self::Invalid(value) => value.serialize(serializer),
-        }
-    }
-}
-
-impl<T> JsonSchema for Lenient<T>
-where
-    T: JsonSchema,
-{
-    fn schema_name() -> String {
-        T::schema_name()
+        current = current.as_table_mut()?.get_mut(part)?;
     }
 
-    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        T::json_schema(generator)
-    }
+    None
 }

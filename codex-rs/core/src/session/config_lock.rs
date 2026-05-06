@@ -1,5 +1,4 @@
 use anyhow::Context;
-use codex_config::Lenient;
 use codex_config::config_toml::ConfigLockfileToml;
 use codex_config::config_toml::ConfigToml;
 use codex_protocol::ThreadId;
@@ -93,16 +92,15 @@ fn session_configuration_to_lock_config_toml(
 /// from the live session when the lockfile should be fully self-contained.
 fn save_session_resolved_fields(sc: &SessionConfiguration, lock_config: &mut ConfigToml) {
     lock_config.model = Some(sc.collaboration_mode.model().to_string());
-    lock_config.model_reasoning_effort =
-        sc.collaboration_mode.reasoning_effort().map(Lenient::from);
-    lock_config.model_reasoning_summary = sc.model_reasoning_summary.map(Lenient::from);
-    lock_config.service_tier = sc.service_tier.map(Lenient::from);
+    lock_config.model_reasoning_effort = sc.collaboration_mode.reasoning_effort();
+    lock_config.model_reasoning_summary = sc.model_reasoning_summary;
+    lock_config.service_tier = sc.service_tier;
     lock_config.instructions = Some(sc.base_instructions.clone());
     lock_config.developer_instructions = sc.developer_instructions.clone();
     lock_config.compact_prompt = sc.compact_prompt.clone();
-    lock_config.personality = sc.personality.map(Lenient::from);
-    lock_config.approval_policy = Some(Lenient::from(sc.approval_policy.value()));
-    lock_config.approvals_reviewer = Some(Lenient::from(sc.approvals_reviewer));
+    lock_config.personality = sc.personality;
+    lock_config.approval_policy = Some(sc.approval_policy.value());
+    lock_config.approvals_reviewer = Some(sc.approvals_reviewer);
 }
 
 fn drop_lockfile_inputs(lock_config: &mut ConfigToml) {
@@ -147,9 +145,7 @@ mod tests {
         assert_eq!(lock.compact_prompt, sc.compact_prompt);
         assert_eq!(lock.model, Some(sc.collaboration_mode.model().to_string()));
         assert_eq!(
-            lock.model_reasoning_effort
-                .clone()
-                .and_then(codex_config::Lenient::into_valid),
+            lock.model_reasoning_effort,
             sc.collaboration_mode.reasoning_effort()
         );
         assert_eq!(lock.profile, None);

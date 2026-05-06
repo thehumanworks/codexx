@@ -15,7 +15,6 @@ use codex_config::ConfigRequirements;
 use codex_config::ConfigRequirementsToml;
 use codex_config::ConstrainedWithSource;
 use codex_config::FeatureRequirementsToml;
-use codex_config::Lenient;
 use codex_config::LoaderOverrides;
 use codex_config::McpServerIdentity;
 use codex_config::McpServerRequirement;
@@ -968,9 +967,10 @@ impl ConfigBuilder {
         // relative paths to absolute paths based on the parent folder of the
         // respective config file, so we should be safe to deserialize without
         // AbsolutePathBufGuard here.
-        let merged_toml = config_layer_stack.effective_config();
-        let config_toml: ConfigToml = match merged_toml.try_into() {
-            Ok(config_toml) => config_toml,
+        let (_merged_toml, config_toml, enum_warnings) = match config_layer_stack
+            .deserialize_effective_config_with_warnings::<ConfigToml>()
+        {
+            Ok(result) => result,
             Err(err) => {
                 if let Some(config_error) = codex_config::first_layer_config_error::<ConfigToml>(
                     &config_layer_stack,
@@ -987,6 +987,7 @@ impl ConfigBuilder {
                 return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, err));
             }
         };
+        let config_layer_stack = config_layer_stack.with_additional_startup_warnings(enum_warnings);
         let config_lock_settings = config_toml
             .debug
             .as_ref()
@@ -1225,11 +1226,14 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     )
     .await?;
 
-    let merged_toml = config_layer_stack.effective_config();
-    let cfg = deserialize_config_toml_with_base(merged_toml, codex_home).map_err(|e| {
-        tracing::error!("Failed to deserialize overridden config: {e}");
-        e
-    })?;
+    let _guard = AbsolutePathBufGuard::new(codex_home);
+    let (_merged_toml, cfg, _enum_warnings) = config_layer_stack
+        .deserialize_effective_config_with_warnings::<ConfigToml>()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        .map_err(|e| {
+            tracing::error!("Failed to deserialize overridden config: {e}");
+            e
+        })?;
 
     Ok(cfg)
 }
@@ -1673,17 +1677,6 @@ fn thread_store_config(
     }
 }
 
-fn valid_lenient_ref_silent<T: Clone>(value: &Option<Lenient<T>>) -> Option<T> {
-    value.as_ref().and_then(Lenient::as_valid).cloned()
-}
-
-fn active_profile_field_path(active_profile_name: Option<&str>, field: &str) -> String {
-    active_profile_name.map_or_else(
-        || field.to_string(),
-        |name| format!("profiles.{name}.{field}"),
-    )
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PermissionConfigSyntax {
     Legacy,
@@ -1848,10 +1841,11 @@ pub fn resolve_oss_provider(
 
 /// Resolve the web search mode from explicit config and feature flags.
 fn resolve_web_search_mode(
-    configured_mode: Option<WebSearchMode>,
+    config_toml: &ConfigToml,
+    config_profile: &ConfigProfile,
     features: &Features,
 ) -> Option<WebSearchMode> {
-    if let Some(mode) = configured_mode {
+    if let Some(mode) = config_profile.web_search.or(config_toml.web_search) {
         return Some(mode);
     }
     if features.enabled(Feature::WebSearchCached) {
@@ -2177,12 +2171,6 @@ impl Config {
                 .clone(),
             None => ConfigProfile::default(),
         };
-        let profile_sandbox_mode_path =
-            active_profile_field_path(active_profile_name.as_deref(), "sandbox_mode");
-        let profile_approval_policy_path =
-            active_profile_field_path(active_profile_name.as_deref(), "approval_policy");
-        let profile_approvals_reviewer_path =
-            active_profile_field_path(active_profile_name.as_deref(), "approvals_reviewer");
         let tool_suggest = resolve_tool_suggest_config(&cfg, &config_layer_stack);
         let feature_overrides = FeatureOverrides {
             include_apply_patch_tool: include_apply_patch_tool_override,
@@ -2248,7 +2236,7 @@ impl Config {
             &config_layer_stack,
             &cfg,
             sandbox_mode,
-            valid_lenient_ref_silent(&config_profile.sandbox_mode),
+            config_profile.sandbox_mode,
         );
         let has_permission_profiles = cfg
             .permissions
@@ -2451,20 +2439,10 @@ impl Config {
             // Derive the old `sandbox_mode` defaults as a profile first, then
             // keep a legacy-compatible projection only for the remaining code
             // paths that still speak `SandboxPolicy`.
-            let config_sandbox_mode = cfg
-                .sandbox_mode
-                .clone()
-                .and_then(|value| value.into_valid_with_warning("sandbox_mode", &mut startup_warnings));
             let mut permission_profile = cfg
                 .derive_permission_profile(
                     sandbox_mode,
-                    config_profile.sandbox_mode.clone().and_then(|value| {
-                        value.into_valid_with_warning(
-                            &profile_sandbox_mode_path,
-                            &mut startup_warnings,
-                        )
-                    }),
-                    config_sandbox_mode,
+                    config_profile.sandbox_mode,
                     windows_sandbox_level,
                     Some(&active_project),
                     Some(&constrained_permission_profile),
@@ -2518,27 +2496,20 @@ impl Config {
             )
         };
         let approval_policy_was_explicit = approval_policy_override.is_some()
-            || valid_lenient_ref_silent(&config_profile.approval_policy).is_some()
-            || valid_lenient_ref_silent(&cfg.approval_policy).is_some();
-        let mut approval_policy = if let Some(approval_policy) = approval_policy_override {
-            approval_policy
-        } else if let Some(approval_policy) =
-            config_profile.approval_policy.clone().and_then(|value| {
-                value.into_valid_with_warning(&profile_approval_policy_path, &mut startup_warnings)
-            })
-        {
-            approval_policy
-        } else if let Some(approval_policy) = cfg.approval_policy.clone().and_then(|value| {
-            value.into_valid_with_warning("approval_policy", &mut startup_warnings)
-        }) {
-            approval_policy
-        } else if active_project.is_trusted() {
-            AskForApproval::OnRequest
-        } else if active_project.is_untrusted() {
-            AskForApproval::UnlessTrusted
-        } else {
-            AskForApproval::default()
-        };
+            || config_profile.approval_policy.is_some()
+            || cfg.approval_policy.is_some();
+        let mut approval_policy = approval_policy_override
+            .or(config_profile.approval_policy)
+            .or(cfg.approval_policy)
+            .unwrap_or_else(|| {
+                if active_project.is_trusted() {
+                    AskForApproval::OnRequest
+                } else if active_project.is_untrusted() {
+                    AskForApproval::UnlessTrusted
+                } else {
+                    AskForApproval::default()
+                }
+            });
         if !approval_policy_was_explicit
             && let Err(err) = constrained_approval_policy.can_set(&approval_policy)
         {
@@ -2549,28 +2520,12 @@ impl Config {
             approval_policy = constrained_approval_policy.value();
         }
         let approvals_reviewer_was_explicit = approvals_reviewer_override.is_some()
-            || valid_lenient_ref_silent(&config_profile.approvals_reviewer)
-                .is_some()
-            || valid_lenient_ref_silent(&cfg.approvals_reviewer).is_some();
-        let mut approvals_reviewer = if let Some(approvals_reviewer) = approvals_reviewer_override {
-            approvals_reviewer
-        } else if let Some(approvals_reviewer) =
-            config_profile.approvals_reviewer.clone().and_then(|value| {
-                value.into_valid_with_warning(
-                    &profile_approvals_reviewer_path,
-                    &mut startup_warnings,
-                )
-            })
-        {
-            approvals_reviewer
-        } else {
-            cfg.approvals_reviewer
-                .clone()
-                .and_then(|value| {
-                    value.into_valid_with_warning("approvals_reviewer", &mut startup_warnings)
-                })
-                .unwrap_or(ApprovalsReviewer::User)
-        };
+            || config_profile.approvals_reviewer.is_some()
+            || cfg.approvals_reviewer.is_some();
+        let mut approvals_reviewer = approvals_reviewer_override
+            .or(config_profile.approvals_reviewer)
+            .or(cfg.approvals_reviewer)
+            .unwrap_or(ApprovalsReviewer::User);
         if !approvals_reviewer_was_explicit
             && let Err(err) = constrained_approvals_reviewer.can_set(&approvals_reviewer)
         {
@@ -2580,17 +2535,7 @@ impl Config {
             );
             approvals_reviewer = constrained_approvals_reviewer.value();
         }
-        let profile_web_search_path =
-            active_profile_field_path(active_profile_name.as_deref(), "web_search");
-        let configured_web_search_mode = match config_profile.web_search.clone().and_then(|value| {
-            value.into_valid_with_warning(&profile_web_search_path, &mut startup_warnings)
-        }) {
-            Some(mode) => Some(mode),
-            None => cfg.web_search.clone().and_then(|value| {
-                value.into_valid_with_warning("web_search", &mut startup_warnings)
-            }),
-        };
-        let web_search_mode = resolve_web_search_mode(configured_web_search_mode, &features)
+        let web_search_mode = resolve_web_search_mode(&cfg, &config_profile, &features)
             .unwrap_or(WebSearchMode::Cached);
         let web_search_config = resolve_web_search_config(&cfg, &config_profile);
         let multi_agent_v2 = resolve_multi_agent_v2_config(&cfg, &config_profile);
@@ -2761,9 +2706,7 @@ impl Config {
                 }
             });
 
-        let forced_login_method = cfg.forced_login_method.clone().and_then(|value| {
-            value.into_valid_with_warning("forced_login_method", &mut startup_warnings)
-        });
+        let forced_login_method = cfg.forced_login_method;
 
         let model = model.or(config_profile.model).or(cfg.model);
         let mut notices = cfg.notice.unwrap_or_default();
@@ -2775,21 +2718,7 @@ impl Config {
                 notices.fast_default_opt_out = Some(true);
                 None
             }
-            None => {
-                let profile_service_tier_path =
-                    active_profile_field_path(active_profile_name.as_deref(), "service_tier");
-                match config_profile.service_tier.clone().and_then(|value| {
-                    value.into_valid_with_warning(
-                        &profile_service_tier_path,
-                        &mut startup_warnings,
-                    )
-                }) {
-                    Some(service_tier) => Some(service_tier),
-                    None => cfg.service_tier.clone().and_then(|value| {
-                        value.into_valid_with_warning("service_tier", &mut startup_warnings)
-                    }),
-                }
-            }
+            None => config_profile.service_tier.or(cfg.service_tier),
         };
         let service_tier = match service_tier {
             Some(ServiceTier::Fast) if features.enabled(Feature::FastMode) => {
@@ -2854,28 +2783,14 @@ impl Config {
                             auto_review.policy.as_deref(),
                         ))
                 });
-        let personality = if personality.is_some() {
-            personality
-        } else {
-            let profile_personality_path =
-                active_profile_field_path(active_profile_name.as_deref(), "personality");
-            match config_profile.personality.clone().and_then(|value| {
-                value.into_valid_with_warning(&profile_personality_path, &mut startup_warnings)
-            }) {
-                Some(personality) => Some(personality),
-                None => cfg
-                    .personality
-                    .clone()
-                    .and_then(|value| {
-                        value.into_valid_with_warning("personality", &mut startup_warnings)
-                    })
-                    .or_else(|| {
-                        features
-                            .enabled(Feature::Personality)
-                            .then_some(Personality::Pragmatic)
-                    }),
-            }
-        };
+        let personality = personality
+            .or(config_profile.personality)
+            .or(cfg.personality)
+            .or_else(|| {
+                features
+                    .enabled(Feature::Personality)
+                    .then_some(Personality::Pragmatic)
+            });
 
         let experimental_compact_prompt_path = config_profile
             .experimental_compact_prompt_file
@@ -3039,92 +2954,6 @@ impl Config {
             .value
             .set(effective_permission_profile)
             .map_err(std::io::Error::from)?;
-        let cli_auth_credentials_store_mode = resolve_cli_auth_credentials_store_mode(
-            cfg.cli_auth_credentials_store
-                .clone()
-                .and_then(|value| {
-                    value.into_valid_with_warning(
-                        "cli_auth_credentials_store",
-                        &mut startup_warnings,
-                    )
-                })
-            .unwrap_or_default(),
-            env!("CARGO_PKG_VERSION"),
-        );
-        let mcp_oauth_credentials_store_mode = resolve_mcp_oauth_credentials_store_mode(
-            cfg.mcp_oauth_credentials_store
-                .clone()
-                .and_then(|value| {
-                    value.into_valid_with_warning(
-                        "mcp_oauth_credentials_store",
-                        &mut startup_warnings,
-                    )
-                })
-            .unwrap_or_default(),
-            env!("CARGO_PKG_VERSION"),
-        );
-        let file_opener = cfg
-            .file_opener
-            .and_then(|value| {
-                value.into_valid_with_warning("file_opener", &mut startup_warnings)
-            })
-            .unwrap_or(UriBasedFileOpener::VsCode);
-        let model_reasoning_effort_path =
-            active_profile_field_path(active_profile_name.as_deref(), "model_reasoning_effort");
-        let model_reasoning_effort = match config_profile.model_reasoning_effort.and_then(|value| {
-            value.into_valid_with_warning(&model_reasoning_effort_path, &mut startup_warnings)
-        }) {
-            Some(effort) => Some(effort),
-            None => cfg.model_reasoning_effort.and_then(|value| {
-                value.into_valid_with_warning("model_reasoning_effort", &mut startup_warnings)
-            }),
-        };
-        let plan_mode_reasoning_effort_path = active_profile_field_path(
-            active_profile_name.as_deref(),
-            "plan_mode_reasoning_effort",
-        );
-        let plan_mode_reasoning_effort =
-            match config_profile.plan_mode_reasoning_effort.and_then(|value| {
-                value.into_valid_with_warning(
-                    &plan_mode_reasoning_effort_path,
-                    &mut startup_warnings,
-                )
-            }) {
-                Some(effort) => Some(effort),
-                None => cfg.plan_mode_reasoning_effort.and_then(|value| {
-                    value.into_valid_with_warning(
-                        "plan_mode_reasoning_effort",
-                        &mut startup_warnings,
-                    )
-                }),
-            };
-        let model_reasoning_summary_path =
-            active_profile_field_path(active_profile_name.as_deref(), "model_reasoning_summary");
-        let model_reasoning_summary =
-            match config_profile.model_reasoning_summary.and_then(|value| {
-                value.into_valid_with_warning(&model_reasoning_summary_path, &mut startup_warnings)
-            }) {
-                Some(summary) => Some(summary),
-                None => cfg.model_reasoning_summary.and_then(|value| {
-                    value.into_valid_with_warning("model_reasoning_summary", &mut startup_warnings)
-                }),
-            };
-        let model_verbosity_path =
-            active_profile_field_path(active_profile_name.as_deref(), "model_verbosity");
-        let model_verbosity = match config_profile.model_verbosity.and_then(|value| {
-            value.into_valid_with_warning(&model_verbosity_path, &mut startup_warnings)
-        }) {
-            Some(verbosity) => Some(verbosity),
-            None => cfg.model_verbosity.and_then(|value| {
-                value.into_valid_with_warning("model_verbosity", &mut startup_warnings)
-            }),
-        };
-        let experimental_thread_store = thread_store_config(
-            cfg.experimental_thread_store.and_then(|value| {
-                value.into_valid_with_warning("experimental_thread_store", &mut startup_warnings)
-            }),
-            cfg.experimental_thread_store_endpoint,
-        );
         let config = Self {
             model,
             service_tier,
@@ -3160,11 +2989,17 @@ impl Config {
             include_environment_context,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
-            cli_auth_credentials_store_mode,
+            cli_auth_credentials_store_mode: resolve_cli_auth_credentials_store_mode(
+                cfg.cli_auth_credentials_store.unwrap_or_default(),
+                env!("CARGO_PKG_VERSION"),
+            ),
             mcp_servers,
             // The config.toml omits "_mode" because it's a config file. However, "_mode"
             // is important in code to differentiate the mode from the store implementation.
-            mcp_oauth_credentials_store_mode,
+            mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
+                cfg.mcp_oauth_credentials_store.unwrap_or_default(),
+                env!("CARGO_PKG_VERSION"),
+            ),
             mcp_oauth_callback_port: cfg.mcp_oauth_callback_port,
             mcp_oauth_callback_url: cfg.mcp_oauth_callback_url.clone(),
             model_providers,
@@ -3213,7 +3048,7 @@ impl Config {
             config_layer_stack,
             history,
             ephemeral: ephemeral.unwrap_or_default(),
-            file_opener,
+            file_opener: cfg.file_opener.unwrap_or(UriBasedFileOpener::VsCode),
             codex_self_exe,
             codex_linux_sandbox_exe,
             main_execve_wrapper_exe,
@@ -3225,12 +3060,18 @@ impl Config {
                 .or(show_raw_agent_reasoning)
                 .unwrap_or(false),
             guardian_policy_config,
-            model_reasoning_effort,
-            plan_mode_reasoning_effort,
-            model_reasoning_summary,
+            model_reasoning_effort: config_profile
+                .model_reasoning_effort
+                .or(cfg.model_reasoning_effort),
+            plan_mode_reasoning_effort: config_profile
+                .plan_mode_reasoning_effort
+                .or(cfg.plan_mode_reasoning_effort),
+            model_reasoning_summary: config_profile
+                .model_reasoning_summary
+                .or(cfg.model_reasoning_summary),
             model_supports_reasoning_summaries: cfg.model_supports_reasoning_summaries,
             model_catalog,
-            model_verbosity,
+            model_verbosity: config_profile.model_verbosity.or(cfg.model_verbosity),
             chatgpt_base_url: config_profile
                 .chatgpt_base_url
                 .or(cfg.chatgpt_base_url)
@@ -3259,7 +3100,10 @@ impl Config {
             experimental_realtime_ws_startup_context: cfg.experimental_realtime_ws_startup_context,
             experimental_realtime_start_instructions: cfg.experimental_realtime_start_instructions,
             experimental_thread_config_endpoint: cfg.experimental_thread_config_endpoint,
-            experimental_thread_store,
+            experimental_thread_store: thread_store_config(
+                cfg.experimental_thread_store,
+                cfg.experimental_thread_store_endpoint,
+            ),
             forced_chatgpt_workspace_id,
             forced_login_method,
             include_apply_patch_tool: include_apply_patch_tool_flag,

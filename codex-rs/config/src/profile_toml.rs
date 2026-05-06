@@ -3,7 +3,6 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::Lenient;
 use crate::config_toml::ToolsToml;
 use crate::types::AnalyticsConfigToml;
 use crate::types::ApprovalsReviewer;
@@ -25,20 +24,20 @@ use codex_protocol::protocol::AskForApproval;
 pub struct ConfigProfile {
     pub model: Option<String>,
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
-    pub service_tier: Option<Lenient<ServiceTier>>,
+    pub service_tier: Option<ServiceTier>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.
     pub model_provider: Option<String>,
-    pub approval_policy: Option<Lenient<AskForApproval>>,
-    pub approvals_reviewer: Option<Lenient<ApprovalsReviewer>>,
-    pub sandbox_mode: Option<Lenient<SandboxMode>>,
-    pub model_reasoning_effort: Option<Lenient<ReasoningEffort>>,
-    pub plan_mode_reasoning_effort: Option<Lenient<ReasoningEffort>>,
-    pub model_reasoning_summary: Option<Lenient<ReasoningSummary>>,
-    pub model_verbosity: Option<Lenient<Verbosity>>,
+    pub approval_policy: Option<AskForApproval>,
+    pub approvals_reviewer: Option<ApprovalsReviewer>,
+    pub sandbox_mode: Option<SandboxMode>,
+    pub model_reasoning_effort: Option<ReasoningEffort>,
+    pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
+    pub model_reasoning_summary: Option<ReasoningSummary>,
+    pub model_verbosity: Option<Verbosity>,
     /// Optional path to a JSON model catalog (applied on startup only).
     pub model_catalog_json: Option<AbsolutePathBuf>,
-    pub personality: Option<Lenient<Personality>>,
+    pub personality: Option<Personality>,
     pub chatgpt_base_url: Option<String>,
     /// Optional path to a file containing model instructions.
     pub model_instructions_file: Option<AbsolutePathBuf>,
@@ -62,7 +61,7 @@ pub struct ConfigProfile {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     pub tools_view_image: Option<bool>,
     pub tools: Option<ToolsToml>,
-    pub web_search: Option<Lenient<WebSearchMode>>,
+    pub web_search: Option<WebSearchMode>,
     pub analytics: Option<AnalyticsConfigToml>,
     #[serde(default)]
     pub windows: Option<WindowsToml>,
@@ -79,14 +78,10 @@ impl From<ConfigProfile> for codex_app_server_protocol::Profile {
         Self {
             model: config_profile.model,
             model_provider: config_profile.model_provider,
-            approval_policy: config_profile.approval_policy.and_then(Lenient::into_valid),
-            model_reasoning_effort: config_profile
-                .model_reasoning_effort
-                .and_then(Lenient::into_valid),
-            model_reasoning_summary: config_profile
-                .model_reasoning_summary
-                .and_then(Lenient::into_valid),
-            model_verbosity: config_profile.model_verbosity.and_then(Lenient::into_valid),
+            approval_policy: config_profile.approval_policy,
+            model_reasoning_effort: config_profile.model_reasoning_effort,
+            model_reasoning_summary: config_profile.model_reasoning_summary,
+            model_verbosity: config_profile.model_verbosity,
             chatgpt_base_url: config_profile.chatgpt_base_url,
         }
     }

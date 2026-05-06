@@ -1,5 +1,4 @@
 use super::*;
-use codex_config::Lenient;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::RolloutItem;
@@ -15,10 +14,6 @@ use tempfile::TempDir;
 use tokio::io::AsyncWriteExt;
 
 const TEST_TIMESTAMP: &str = "2025-01-01T00-00-00";
-
-fn valid_lenient<T>(value: Option<Lenient<T>>) -> Option<T> {
-    value.and_then(Lenient::into_valid)
-}
 
 async fn read_config_toml(codex_home: &Path) -> io::Result<ConfigToml> {
     let contents = tokio::fs::read_to_string(codex_home.join("config.toml")).await?;
@@ -98,10 +93,7 @@ async fn applies_when_sessions_exist_and_no_personality() -> io::Result<()> {
     assert!(temp.path().join(PERSONALITY_MIGRATION_FILENAME).exists());
 
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Pragmatic)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }
 
@@ -117,10 +109,7 @@ async fn applies_when_only_archived_sessions_exist_and_no_personality() -> io::R
     assert!(temp.path().join(PERSONALITY_MIGRATION_FILENAME).exists());
 
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Pragmatic)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Pragmatic));
     Ok(())
 }
 
@@ -156,10 +145,7 @@ async fn skips_when_personality_explicit() -> io::Result<()> {
     assert!(temp.path().join(PERSONALITY_MIGRATION_FILENAME).exists());
 
     let persisted = read_config_toml(temp.path()).await?;
-    assert_eq!(
-        valid_lenient(persisted.personality),
-        Some(Personality::Friendly)
-    );
+    assert_eq!(persisted.personality, Some(Personality::Friendly));
     Ok(())
 }
 

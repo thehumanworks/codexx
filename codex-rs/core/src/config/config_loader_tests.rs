@@ -124,6 +124,9 @@ async fn invalid_enum_values_emit_warnings_without_poisoning_config() -> std::io
     let contents = r#"
 model = "gpt-5-codex"
 sandbox_mode = "make-it-so"
+
+[tui]
+notification_method = "loudly"
 "#;
     let config_path = tmp.path().join(CONFIG_TOML_FILE);
     std::fs::write(&config_path, contents).expect("write config");
@@ -140,67 +143,25 @@ sandbox_mode = "make-it-so"
     )
     .await?;
 
-    let effective_config = layers.effective_config();
-    let config_toml: ConfigToml = effective_config
-        .clone()
-        .try_into()
-        .map_err(std::io::Error::other)?;
-    let mut enum_warnings = Vec::new();
-    let sandbox_mode = config_toml
-        .sandbox_mode
-        .and_then(|value| value.into_valid_with_warning("sandbox_mode", &mut enum_warnings));
+    let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+        layers.deserialize_effective_config_with_warnings()?;
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"
-sandbox_mode = "make-it-so"
+
+[tui]
 "#,
     )
     .expect("expected config should parse");
-    let expected_startup_warnings =
-        vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()];
+    let expected_startup_warnings = vec![
+        "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
+        "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
+    ];
 
     assert_eq!(
-        (effective_config, sandbox_mode, enum_warnings),
-        (expected_config, None, expected_startup_warnings)
+        (effective_config, enum_warnings),
+        (expected_config, expected_startup_warnings)
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn invalid_enum_values_emit_startup_warnings_when_loading_config() -> std::io::Result<()> {
-    let tmp = tempdir().expect("tempdir");
-    let codex_home = tmp.path().join("home");
-    tokio::fs::create_dir_all(&codex_home).await?;
-    std::fs::write(
-        codex_home.join(CONFIG_TOML_FILE),
-        r#"
-model = "gpt-5-codex"
-sandbox_mode = "make-it-so"
-profile = "dev"
-
-[profiles.dev]
-model_reasoning_effort = "much"
-"#,
-    )
-    .expect("write config");
-
-    let config = ConfigBuilder::without_managed_config_for_tests()
-        .codex_home(codex_home)
-        .build()
-        .await?;
-
-    assert_eq!(
-        (config.model.as_deref(), config.startup_warnings),
-        (
-            Some("gpt-5-codex"),
-            vec![
-                "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
-                "Ignoring invalid config value at profiles.dev.model_reasoning_effort: \"much\""
-                    .to_string(),
-            ],
-        )
-    );
-
     Ok(())
 }
 
