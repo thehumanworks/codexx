@@ -297,15 +297,10 @@ pub(crate) trait Approvable<Req> {
     // requests touching a subset can be auto-approved.
     fn approval_keys(&self, req: &Req) -> Vec<Self::ApprovalKey>;
 
-    /// Some tools may request to skip the sandbox on the first attempt
-    /// (e.g., when the request explicitly asks for escalated permissions).
-    /// Defaults to `NoOverride`.
-    fn sandbox_mode_for_first_attempt(
-        &self,
-        _req: &Req,
-        _file_system_sandbox_policy: &FileSystemSandboxPolicy,
-    ) -> SandboxOverride {
-        SandboxOverride::NoOverride
+    /// Return per-request sandbox permissions for first-attempt sandbox
+    /// selection. Most tools use the ambient sandbox policy unchanged.
+    fn sandbox_permissions(&self, _req: &Req) -> SandboxPermissions {
+        SandboxPermissions::UseDefault
     }
 
     fn should_bypass_approval(&self, policy: AskForApproval, already_approved: bool) -> bool {

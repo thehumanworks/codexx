@@ -25,13 +25,11 @@ use crate::tools::sandboxing::ApprovalCtx;
 use crate::tools::sandboxing::ExecApprovalRequirement;
 use crate::tools::sandboxing::PermissionRequestPayload;
 use crate::tools::sandboxing::SandboxAttempt;
-use crate::tools::sandboxing::SandboxOverride;
 use crate::tools::sandboxing::Sandboxable;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::managed_network_for_sandbox_permissions;
-use crate::tools::sandboxing::sandbox_override_for_first_attempt;
 use crate::tools::sandboxing::with_cached_approval;
 use crate::unified_exec::NoopSpawnLifecycle;
 use crate::unified_exec::UnifiedExecError;
@@ -42,7 +40,6 @@ use codex_network_proxy::NetworkProxy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::models::AdditionalPermissionProfile;
-use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
@@ -212,16 +209,8 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
         ))
     }
 
-    fn sandbox_mode_for_first_attempt(
-        &self,
-        req: &UnifiedExecRequest,
-        file_system_sandbox_policy: &FileSystemSandboxPolicy,
-    ) -> SandboxOverride {
-        sandbox_override_for_first_attempt(
-            req.sandbox_permissions,
-            &req.exec_approval_requirement,
-            file_system_sandbox_policy,
-        )
+    fn sandbox_permissions(&self, req: &UnifiedExecRequest) -> SandboxPermissions {
+        req.sandbox_permissions
     }
 }
 

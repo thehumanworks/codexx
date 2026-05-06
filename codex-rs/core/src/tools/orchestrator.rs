@@ -26,6 +26,7 @@ use crate::tools::sandboxing::ToolCtx;
 use crate::tools::sandboxing::ToolError;
 use crate::tools::sandboxing::ToolRuntime;
 use crate::tools::sandboxing::default_exec_approval_requirement;
+use crate::tools::sandboxing::sandbox_override_for_first_attempt;
 use codex_hooks::PermissionRequestDecision;
 use codex_otel::ToolDecisionSource;
 use codex_protocol::error::CodexErr;
@@ -148,6 +149,11 @@ impl ToolOrchestrator {
         let requirement = tool.exec_approval_requirement(req).unwrap_or_else(|| {
             default_exec_approval_requirement(approval_policy, &file_system_sandbox_policy)
         });
+        let sandbox_override = sandbox_override_for_first_attempt(
+            tool.sandbox_permissions(req),
+            &requirement,
+            &file_system_sandbox_policy,
+        );
         match requirement {
             ExecApprovalRequirement::Skip { .. } => {
                 if strict_auto_review {
@@ -214,17 +220,16 @@ impl ToolOrchestrator {
 
         // 2) First attempt under the selected sandbox.
         let managed_network_active = turn_ctx.network.is_some();
-        let initial_sandbox =
-            match tool.sandbox_mode_for_first_attempt(req, &file_system_sandbox_policy) {
-                SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
-                SandboxOverride::NoOverride => self.sandbox.select_initial(
-                    &file_system_sandbox_policy,
-                    network_sandbox_policy,
-                    tool.sandbox_preference(),
-                    turn_ctx.windows_sandbox_level,
-                    managed_network_active,
-                ),
-            };
+        let initial_sandbox = match sandbox_override {
+            SandboxOverride::BypassSandboxFirstAttempt => SandboxType::None,
+            SandboxOverride::NoOverride => self.sandbox.select_initial(
+                &file_system_sandbox_policy,
+                network_sandbox_policy,
+                tool.sandbox_preference(),
+                turn_ctx.windows_sandbox_level,
+                managed_network_active,
+            ),
+        };
 
         // Platform-specific flag gating is handled by SandboxManager::select_initial.
         let use_legacy_landlock = turn_ctx.features.use_legacy_landlock();
