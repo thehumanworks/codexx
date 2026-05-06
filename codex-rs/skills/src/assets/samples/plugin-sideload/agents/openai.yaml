@@ -1,0 +1,4 @@
+interface:
+  display_name: "Plugin Sideload"
+  short_description: "Install local plugins into the temporary Codex cache"
+  default_prompt: "Use $plugin-sideload to install a local plugin into the temporary Codex plugin cache for development testing."
