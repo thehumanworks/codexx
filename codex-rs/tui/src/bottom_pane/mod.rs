@@ -1315,6 +1315,12 @@ impl BottomPane {
                         AppLinkSuggestionType::Enable => {
                             "Enable this app to use it for the current request.".to_string()
                         }
+                        AppLinkSuggestionType::Auth => unreachable!(
+                            "auth uses URL mode elicitation, not tool suggestion forms"
+                        ),
+                        AppLinkSuggestionType::ExternalAction => unreachable!(
+                            "external actions use URL mode elicitation, not tool suggestion forms"
+                        ),
                     },
                     url: install_url,
                     is_installed,
@@ -2408,6 +2414,7 @@ mod tests {
                 policy: None,
                 path_to_skills_md: test_path_buf("/tmp/test-skill/SKILL.md").abs(),
                 scope: crate::test_support::skill_scope_user(),
+                plugin_id: None,
             }]),
         });
 

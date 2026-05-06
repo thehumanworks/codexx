@@ -322,6 +322,7 @@ mod tests {
         };
         let read_thread = Thread {
             id: read_thread_id.to_string(),
+            session_id: read_thread_id.to_string(),
             forked_from_id: None,
             preview: "read thread".to_string(),
             ephemeral: false,
@@ -333,6 +334,7 @@ mod tests {
             cwd: test_path_buf("/tmp/read").abs(),
             cli_version: "0.0.0".to_string(),
             source: codex_app_server_protocol::SessionSource::Unknown,
+            thread_source: None,
             agent_nickname: None,
             agent_role: None,
             git_info: None,
