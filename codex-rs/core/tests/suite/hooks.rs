@@ -26,6 +26,7 @@ use core_test_support::managed_network_requirements_loader;
 use core_test_support::responses::ev_apply_patch_function_call;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
+use core_test_support::responses::ev_custom_tool_call;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_message_item_added;
 use core_test_support::responses::ev_output_text_delta;
@@ -2198,6 +2199,88 @@ async fn pre_tool_use_rewrites_shell_command_before_execution() -> Result<()> {
     );
     assert_eq!(
         fs::read_to_string(&rewritten_marker).context("read rewritten pre tool marker")?,
+        "rewritten"
+    );
+
+    let hook_inputs = read_pre_tool_use_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_eq!(hook_inputs[0]["tool_input"]["command"], original_command);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn pre_tool_use_rewrites_code_mode_nested_exec_command_before_execution() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "pretooluse-code-mode-rewrite";
+    let original_marker = std::env::temp_dir().join("pretooluse-code-mode-original-marker");
+    let rewritten_marker = std::env::temp_dir().join("pretooluse-code-mode-rewritten-marker");
+    let original_command = format!("printf original > {}", original_marker.display());
+    let rewritten_command = format!("printf rewritten > {}", rewritten_marker.display());
+    let original_command_json =
+        serde_json::to_string(&original_command).context("serialize original command")?;
+    let code = format!(
+        r#"
+const output = await tools.exec_command({{ cmd: {original_command_json} }});
+text(output.output);
+"#
+    );
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_custom_tool_call(call_id, "exec", &code),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "hook rewrote the nested command"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let updated_input = serde_json::json!({ "command": rewritten_command });
+    let mut builder = test_codex()
+        .with_model("test-gpt-5.1-codex")
+        .with_pre_build_hook(move |home| {
+            if let Err(error) = write_updating_pre_tool_use_hook(home, "^Bash$", &updated_input) {
+                panic!("failed to write updating pre tool use hook fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            let _ = config.features.enable(Feature::CodeMode);
+            trust_discovered_hooks(config);
+        });
+    let test = builder.build(&server).await?;
+
+    if original_marker.exists() {
+        fs::remove_file(&original_marker).context("remove stale original pre tool marker")?;
+    }
+    if rewritten_marker.exists() {
+        fs::remove_file(&rewritten_marker).context("remove stale rewritten pre tool marker")?;
+    }
+
+    test.submit_turn_with_permission_profile(
+        "run the rewritten shell command from code mode",
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    requests[1].custom_tool_call_output(call_id);
+    assert!(
+        !original_marker.exists(),
+        "original nested shell command should not execute after rewrite"
+    );
+    assert_eq!(
+        fs::read_to_string(&rewritten_marker)
+            .context("read rewritten code mode pre tool marker")?,
         "rewritten"
     );
 
