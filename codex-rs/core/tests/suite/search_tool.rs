@@ -47,11 +47,11 @@ const SEARCH_TOOL_DESCRIPTION_SNIPPETS: [&str; 2] = [
     "- Calendar: Plan events and manage your calendar.",
 ];
 const TOOL_SEARCH_TOOL_NAME: &str = "tool_search";
-const CALENDAR_CREATE_TOOL: &str = "mcp__codex_apps__calendar_create_event";
-const CALENDAR_LIST_TOOL: &str = "mcp__codex_apps__calendar_list_events";
-const SEARCH_CALENDAR_NAMESPACE: &str = "mcp__codex_apps__calendar";
-const SEARCH_CALENDAR_CREATE_TOOL: &str = "_create_event";
-const SEARCH_CALENDAR_LIST_TOOL: &str = "_list_events";
+const CALENDAR_CREATE_TOOL: &str = "codex_apps__calendar__create_event";
+const CALENDAR_LIST_TOOL: &str = "codex_apps__calendar__list_events";
+const SEARCH_CALENDAR_NAMESPACE: &str = "codex_apps__calendar";
+const SEARCH_CALENDAR_CREATE_TOOL: &str = "create_event";
+const SEARCH_CALENDAR_LIST_TOOL: &str = "list_events";
 
 fn tool_names(body: &Value) -> Vec<String> {
     body.get("tools")
@@ -235,7 +235,7 @@ async fn always_defer_feature_hides_small_app_tool_sets() -> Result<()> {
         "small app tool sets should be deferred behind tool_search: {tools:?}"
     );
     assert!(
-        tools.iter().all(|name| !name.starts_with("mcp__")),
+        tools.iter().all(|name| !name.starts_with("codex_apps__")),
         "MCP tools should not be directly exposed: {tools:?}"
     );
 
@@ -996,19 +996,17 @@ async fn tool_search_indexes_only_enabled_non_app_mcp_tools() -> Result<()> {
         "first request should advertise tool_search: {first_request_tools:?}"
     );
     assert!(
-        !first_request_tools
-            .iter()
-            .any(|name| name == "mcp__rmcp__echo"),
+        !first_request_tools.iter().any(|name| name == "rmcp__echo"),
         "non-app MCP tools should be hidden before search in large-search mode: {first_request_tools:?}"
     );
     assert!(
-        !first_request_tools.iter().any(|name| name == "mcp__rmcp__"),
+        !first_request_tools.iter().any(|name| name == "rmcp"),
         "non-app MCP namespace should be hidden before search in large-search mode: {first_request_tools:?}"
     );
 
     let echo_tools = tool_search_output_tools(&requests[1], echo_call_id);
     let echo_output = json!({ "tools": echo_tools });
-    let rmcp_echo_tool = namespace_child_tool(&echo_output, "mcp__rmcp__", "echo")
+    let rmcp_echo_tool = namespace_child_tool(&echo_output, "rmcp", "echo")
         .expect("tool_search should return rmcp echo as a namespace child tool");
     assert_eq!(
         rmcp_echo_tool.get("type").and_then(Value::as_str),
@@ -1018,7 +1016,7 @@ async fn tool_search_indexes_only_enabled_non_app_mcp_tools() -> Result<()> {
     let image_tools = tool_search_output_tools(&requests[1], image_call_id);
     let found_rmcp_image_tool = image_tools
         .iter()
-        .filter(|tool| tool.get("name").and_then(Value::as_str) == Some("mcp__rmcp__"))
+        .filter(|tool| tool.get("name").and_then(Value::as_str) == Some("rmcp"))
         .flat_map(|namespace| namespace.get("tools").and_then(Value::as_array))
         .flatten()
         .any(|tool| tool.get("name").and_then(Value::as_str).is_some());

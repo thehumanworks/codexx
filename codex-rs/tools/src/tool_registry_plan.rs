@@ -68,6 +68,7 @@ use crate::tool_registry_plan_types::agent_type_description;
 use codex_protocol::openai_models::ApplyPatchToolType;
 use codex_protocol::openai_models::ConfigShellToolType;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 
 pub fn build_tool_registry_plan(
     config: &ToolsConfig,
@@ -258,53 +259,6 @@ pub fn build_tool_registry_plan(
             config.code_mode_enabled,
         );
         plan.register_handler("request_permissions", ToolHandlerKind::RequestPermissions);
-    }
-
-    let deferred_dynamic_tools = params
-        .dynamic_tools
-        .iter()
-        .filter(|tool| tool.defer_loading && (config.namespace_tools || tool.namespace.is_none()))
-        .collect::<Vec<_>>();
-    let deferred_mcp_tools_for_search = if config.namespace_tools {
-        params.deferred_mcp_tools
-    } else {
-        None
-    };
-
-    if config.search_tool
-        && (deferred_mcp_tools_for_search.is_some() || !deferred_dynamic_tools.is_empty())
-    {
-        let mut search_source_infos = deferred_mcp_tools_for_search
-            .map(|deferred_mcp_tools| {
-                collect_tool_search_source_infos(deferred_mcp_tools.iter().map(|tool| {
-                    ToolSearchSource {
-                        server_name: tool.server_name,
-                        connector_name: tool.connector_name,
-                        connector_description: tool.connector_description,
-                    }
-                }))
-            })
-            .unwrap_or_default();
-
-        if !deferred_dynamic_tools.is_empty() {
-            search_source_infos.push(ToolSearchSourceInfo {
-                name: "Dynamic tools".to_string(),
-                description: Some("Tools provided by the current Codex thread.".to_string()),
-            });
-        }
-
-        plan.push_spec(
-            create_tool_search_tool(&search_source_infos, TOOL_SEARCH_DEFAULT_LIMIT),
-            /*supports_parallel_tool_calls*/ true,
-            config.code_mode_enabled,
-        );
-        plan.register_handler(TOOL_SEARCH_TOOL_NAME, ToolHandlerKind::ToolSearch);
-
-        if let Some(deferred_mcp_tools) = deferred_mcp_tools_for_search {
-            for tool in deferred_mcp_tools {
-                plan.register_handler(tool.name.clone(), ToolHandlerKind::Mcp);
-            }
-        }
     }
 
     if config.tool_suggest
@@ -506,8 +460,96 @@ pub fn build_tool_registry_plan(
         }
     }
 
+    let deferred_dynamic_tools = params
+        .dynamic_tools
+        .iter()
+        .filter(|tool| tool.defer_loading && (config.namespace_tools || tool.namespace.is_none()))
+        .collect::<Vec<_>>();
+    let mut claimed_non_mcp_top_level_names =
+        claimed_non_mcp_top_level_names(&plan, params.dynamic_tools);
+    if config.search_tool
+        && (params.deferred_mcp_tools.is_some() || !deferred_dynamic_tools.is_empty())
+    {
+        claimed_non_mcp_top_level_names.insert(TOOL_SEARCH_TOOL_NAME.to_string());
+    }
+    let mut skipped_mcp_namespaces = HashSet::new();
+    let mut should_expose_mcp_namespace = |namespace: &str| {
+        if reserved_mcp_namespace(namespace) || claimed_non_mcp_top_level_names.contains(namespace)
+        {
+            if skipped_mcp_namespaces.insert(namespace.to_string()) {
+                tracing::warn!(
+                    "skipping MCP namespace `{namespace}` because that top-level tool name is reserved or already claimed"
+                );
+            }
+            return false;
+        }
+        true
+    };
+
+    let deferred_mcp_tools_for_search = if config.namespace_tools {
+        params.deferred_mcp_tools.map(|tools| {
+            tools
+                .iter()
+                .filter(|tool| {
+                    tool.name
+                        .namespace
+                        .as_deref()
+                        .is_some_and(&mut should_expose_mcp_namespace)
+                })
+                .collect::<Vec<_>>()
+        })
+    } else {
+        None
+    };
+
+    if config.search_tool
+        && (deferred_mcp_tools_for_search.is_some() || !deferred_dynamic_tools.is_empty())
+    {
+        let mut search_source_infos = deferred_mcp_tools_for_search
+            .as_ref()
+            .map(|deferred_mcp_tools| {
+                collect_tool_search_source_infos(deferred_mcp_tools.iter().map(|tool| {
+                    ToolSearchSource {
+                        server_name: tool.server_name,
+                        connector_name: tool.connector_name,
+                        connector_description: tool.connector_description,
+                    }
+                }))
+            })
+            .unwrap_or_default();
+
+        if !deferred_dynamic_tools.is_empty() {
+            search_source_infos.push(ToolSearchSourceInfo {
+                name: "Dynamic tools".to_string(),
+                description: Some("Tools provided by the current Codex thread.".to_string()),
+            });
+        }
+
+        plan.push_spec(
+            create_tool_search_tool(&search_source_infos, TOOL_SEARCH_DEFAULT_LIMIT),
+            /*supports_parallel_tool_calls*/ true,
+            config.code_mode_enabled,
+        );
+        plan.register_handler(TOOL_SEARCH_TOOL_NAME, ToolHandlerKind::ToolSearch);
+
+        if let Some(deferred_mcp_tools) = deferred_mcp_tools_for_search.as_ref() {
+            for tool in deferred_mcp_tools {
+                plan.register_handler(tool.name.clone(), ToolHandlerKind::Mcp);
+            }
+        }
+    }
+
     if let Some(mcp_tools) = params.mcp_tools {
-        let mut entries = mcp_tools.to_vec();
+        let mut entries = mcp_tools
+            .iter()
+            .filter(|tool| {
+                tool.name
+                    .namespace
+                    .as_deref()
+                    .is_some_and(&mut should_expose_mcp_namespace)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
         entries.sort_by_key(|tool| tool.name.display());
         let mut namespace_entries = BTreeMap::new();
 
@@ -613,6 +655,25 @@ fn compare_code_mode_tools(
         .cmp(&right_namespace)
         .then_with(|| left.tool_name.name.cmp(&right.tool_name.name))
         .then_with(|| left.name.cmp(&right.name))
+}
+
+fn claimed_non_mcp_top_level_names(
+    plan: &ToolRegistryPlan,
+    dynamic_tools: &[codex_protocol::dynamic_tools::DynamicToolSpec],
+) -> HashSet<String> {
+    plan.specs
+        .iter()
+        .map(|tool| tool.name().to_string())
+        .chain(
+            dynamic_tools
+                .iter()
+                .map(|tool| tool.namespace.clone().unwrap_or_else(|| tool.name.clone())),
+        )
+        .collect()
+}
+
+fn reserved_mcp_namespace(namespace: &str) -> bool {
+    matches!(namespace, "functions" | "tools" | "web")
 }
 
 fn code_mode_namespace_name<'a>(

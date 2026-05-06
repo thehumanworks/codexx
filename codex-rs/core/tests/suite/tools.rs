@@ -350,6 +350,184 @@ async fn historical_unavailable_mcp_call_is_exposed_as_placeholder_tool() -> Res
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn historical_unavailable_namespaced_call_is_exposed_as_placeholder_tool() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let historical_call_id = "historical-namespaced-call";
+    let retry_call_id = "retry-namespaced-call";
+    let unavailable_tool_namespace = "legacy_tools";
+    let unavailable_tool_name = "missing_tool";
+    let unavailable_tool_display_name = "legacy_tools__missing_tool";
+    let server = start_mock_server().await;
+    let codex_home = Arc::new(TempDir::new()?);
+    let mut builder = test_codex()
+        .with_model("gpt-5.4")
+        .with_home(Arc::clone(&codex_home))
+        .with_config(|config| {
+            config
+                .features
+                .enable(Feature::UnavailableDummyTools)
+                .expect("unavailable dummy tools should be enabled for this test");
+        });
+    let test = builder.build(&server).await?;
+
+    let first_turn_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_namespaced_function_call(
+                    historical_call_id,
+                    unavailable_tool_namespace,
+                    unavailable_tool_name,
+                    r#"{}"#,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "done"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    test.submit_turn("call a namespaced tool").await?;
+    let rollout_path = test.codex.rollout_path().context("rollout path")?;
+    assert_eq!(first_turn_mock.requests().len(), 2);
+    drop(test);
+
+    let retry_mock = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-3"),
+                ev_namespaced_function_call(
+                    retry_call_id,
+                    unavailable_tool_namespace,
+                    unavailable_tool_name,
+                    r#"{}"#,
+                ),
+                ev_completed("resp-3"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-4"),
+                ev_assistant_message("msg-2", "done"),
+                ev_completed("resp-4"),
+            ]),
+        ],
+    )
+    .await;
+
+    let mut resume_builder = test_codex().with_model("gpt-5.4").with_config(|config| {
+        config
+            .features
+            .enable(Feature::UnavailableDummyTools)
+            .expect("unavailable dummy tools should be enabled for this test");
+    });
+    let test = resume_builder
+        .resume(&server, codex_home, rollout_path)
+        .await?;
+
+    test.submit_turn("retry the namespaced tool").await?;
+
+    let requests = retry_mock.requests();
+    assert_eq!(requests.len(), 2);
+    let first_request_tools = tool_names(&requests[0].body_json());
+    assert!(
+        first_request_tools
+            .iter()
+            .any(|name| name == unavailable_tool_display_name),
+        "historical unavailable namespaced call should add a placeholder tool; got {first_request_tools:?}"
+    );
+    let output_text = requests[1]
+        .function_call_output_text(retry_call_id)
+        .context("placeholder tool output present")?;
+    assert!(output_text.contains("not currently available"));
+    assert!(
+        !output_text.contains("unsupported call"),
+        "placeholder handler should answer instead of falling back to unsupported call: {output_text}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[serial(mcp_test_value)]
+async fn reserved_mcp_namespace_is_not_exposed() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let response_mock = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-1"),
+            ev_assistant_message("msg-1", "done"),
+            ev_completed("resp-1"),
+        ]),
+    )
+    .await;
+    let rmcp_test_server_bin = match stdio_server_bin() {
+        Ok(bin) => bin,
+        Err(err) => {
+            eprintln!("test_stdio_server binary not available, skipping test: {err}");
+            return Ok(());
+        }
+    };
+
+    let mut builder = test_codex().with_config(move |config| {
+        let mut servers = config.mcp_servers.get().clone();
+        for server_name in ["rmcp", "tools"] {
+            servers.insert(
+                server_name.to_string(),
+                McpServerConfig {
+                    transport: McpServerTransportConfig::Stdio {
+                        command: rmcp_test_server_bin.clone(),
+                        args: Vec::new(),
+                        env: Some(HashMap::new()),
+                        env_vars: Vec::new(),
+                        cwd: None,
+                    },
+                    experimental_environment: None,
+                    enabled: true,
+                    required: false,
+                    supports_parallel_tool_calls: false,
+                    disabled_reason: None,
+                    startup_timeout_sec: Some(Duration::from_secs(10)),
+                    tool_timeout_sec: None,
+                    default_tools_approval_mode: None,
+                    enabled_tools: Some(vec!["echo".to_string()]),
+                    disabled_tools: None,
+                    scopes: None,
+                    oauth_resource: None,
+                    tools: HashMap::new(),
+                },
+            );
+        }
+        config
+            .mcp_servers
+            .set(servers)
+            .expect("test mcp servers should accept any configuration");
+    });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn("which tools are available?").await?;
+
+    let tools = tool_names(&response_mock.single_request().body_json());
+    assert!(
+        tools.iter().any(|name| name == "rmcp"),
+        "non-reserved MCP namespace should remain visible; got {tools:?}"
+    );
+    assert!(
+        !tools.iter().any(|name| name == "tools"),
+        "reserved MCP namespace should be skipped; got {tools:?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_escalated_permissions_rejected_then_ok() -> Result<()> {
     skip_if_no_network!(Ok(()));
 

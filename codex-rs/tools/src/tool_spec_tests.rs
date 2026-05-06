@@ -38,12 +38,12 @@ fn tool_spec_name_covers_all_variants() {
     );
     assert_eq!(
         ToolSpec::Namespace(ResponsesApiNamespace {
-            name: "mcp__demo__".to_string(),
+            name: "demo".to_string(),
             description: "Demo tools".to_string(),
             tools: Vec::new(),
         })
         .name(),
-        "mcp__demo__"
+        "demo"
     );
     assert_eq!(
         ToolSpec::ToolSearch {
@@ -178,7 +178,7 @@ fn create_tools_json_for_responses_api_includes_top_level_name() {
 fn namespace_tool_spec_serializes_expected_wire_shape() {
     assert_eq!(
         serde_json::to_value(ToolSpec::Namespace(ResponsesApiNamespace {
-            name: "mcp__demo__".to_string(),
+            name: "demo".to_string(),
             description: "Demo tools".to_string(),
             tools: vec![ResponsesApiNamespaceTool::Function(ResponsesApiTool {
                 name: "lookup_order".to_string(),
@@ -199,7 +199,7 @@ fn namespace_tool_spec_serializes_expected_wire_shape() {
         .expect("serialize namespace tool"),
         json!({
             "type": "namespace",
-            "name": "mcp__demo__",
+            "name": "demo",
             "description": "Demo tools",
             "tools": [
                 {

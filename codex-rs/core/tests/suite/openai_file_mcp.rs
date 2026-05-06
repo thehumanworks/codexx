@@ -30,9 +30,9 @@ use wiremock::matchers::header;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-const DOCUMENT_EXTRACT_NAMESPACE: &str = "mcp__codex_apps__calendar";
-const DOCUMENT_EXTRACT_TOOL: &str = "_extract_text";
-const DOCUMENT_EXTRACT_HOOK_MATCHER: &str = "mcp__codex_apps__calendar_extract_text";
+const DOCUMENT_EXTRACT_NAMESPACE: &str = "codex_apps__calendar";
+const DOCUMENT_EXTRACT_TOOL: &str = "extract_text";
+const DOCUMENT_EXTRACT_HOOK_MATCHER: &str = "codex_apps__calendar__extract_text";
 
 fn configure_apps(config: &mut Config, chatgpt_base_url: &str) {
     if let Err(err) = config.features.enable(Feature::Apps) {

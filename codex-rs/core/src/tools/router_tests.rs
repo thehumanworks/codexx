@@ -55,7 +55,7 @@ async fn parallel_support_does_not_match_namespaced_local_tool_names() -> anyhow
         .expect("test session should expose a parallel shell-like tool");
 
     assert!(!router.tool_supports_parallel(&ToolCall {
-        tool_name: ToolName::namespaced("mcp__server__", parallel_tool_name),
+        tool_name: ToolName::namespaced("server", parallel_tool_name),
         call_id: "call-namespaced-tool".to_string(),
         payload: ToolPayload::Function {
             arguments: "{}".to_string(),
@@ -76,7 +76,7 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
         ResponseItem::FunctionCall {
             id: None,
             name: tool_name.clone(),
-            namespace: Some("mcp__codex_apps__calendar".to_string()),
+            namespace: Some("codex_apps__calendar".to_string()),
             arguments: "{}".to_string(),
             call_id: "call-namespace".to_string(),
         },
@@ -86,7 +86,7 @@ async fn build_tool_call_uses_namespace_for_registry_name() -> anyhow::Result<()
 
     assert_eq!(
         call.tool_name,
-        ToolName::namespaced("mcp__codex_apps__calendar", tool_name)
+        ToolName::namespaced("codex_apps__calendar", tool_name)
     );
     assert_eq!(call.call_id, "call-namespace");
     match call.payload {
@@ -115,7 +115,7 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
     );
 
     let deferred_call = ToolCall {
-        tool_name: ToolName::namespaced("mcp__echo__", "query_with_delay"),
+        tool_name: ToolName::namespaced("echo", "query_with_delay"),
         call_id: "call-deferred".to_string(),
         payload: ToolPayload::Mcp {
             server: "echo".to_string(),
@@ -126,7 +126,7 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
     assert!(router.tool_supports_parallel(&deferred_call));
 
     let different_server_call = ToolCall {
-        tool_name: ToolName::namespaced("mcp__hello_echo__", "query_with_delay"),
+        tool_name: ToolName::namespaced("hello_echo", "query_with_delay"),
         call_id: "call-other-server".to_string(),
         payload: ToolPayload::Mcp {
             server: "hello_echo".to_string(),

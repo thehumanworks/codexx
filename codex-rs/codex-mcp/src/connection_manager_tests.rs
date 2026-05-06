@@ -35,7 +35,7 @@ use std::sync::Arc;
 use tempfile::tempdir;
 
 fn create_test_tool(server_name: &str, tool_name: &str) -> ToolInfo {
-    let tool_namespace = format!("mcp__{server_name}__");
+    let tool_namespace = server_name.to_string();
     ToolInfo {
         server_name: server_name.to_string(),
         callable_name: tool_name.to_string(),
@@ -68,6 +68,18 @@ fn create_test_tool_with_connector(
     let mut tool = create_test_tool(server_name, tool_name);
     tool.connector_id = Some(connector_id.to_string());
     tool.connector_name = connector_name.map(ToOwned::to_owned);
+    tool
+}
+
+fn create_codex_apps_test_tool(tool_name: &str, callable_name: &str) -> ToolInfo {
+    let mut tool = create_test_tool_with_connector(
+        CODEX_APPS_MCP_SERVER_NAME,
+        tool_name,
+        "calendar",
+        Some("Calendar"),
+    );
+    tool.callable_name = callable_name.to_string();
+    tool.callable_namespace = "codex_apps__calendar".to_string();
     tool
 }
 
@@ -276,8 +288,8 @@ fn test_qualify_tools_short_non_duplicated_names() {
     let qualified_tools = qualify_tools(tools);
 
     assert_eq!(qualified_tools.len(), 2);
-    assert!(qualified_tools.contains_key("mcp__server1__tool1"));
-    assert!(qualified_tools.contains_key("mcp__server1__tool2"));
+    assert!(qualified_tools.contains_key("server1__tool1"));
+    assert!(qualified_tools.contains_key("server1__tool2"));
 }
 
 #[test]
@@ -291,7 +303,7 @@ fn test_qualify_tools_duplicated_names_skipped() {
 
     // Only the first tool should remain, the second is skipped
     assert_eq!(qualified_tools.len(), 1);
-    assert!(qualified_tools.contains_key("mcp__server1__duplicate_tool"));
+    assert!(qualified_tools.contains_key("server1__duplicate_tool"));
 }
 
 #[test]
@@ -317,7 +329,7 @@ fn test_qualify_tools_long_names_same_server() {
     keys.sort();
 
     assert!(keys.iter().all(|key| key.len() == 64));
-    assert!(keys.iter().all(|key| key.starts_with("mcp__my_server__")));
+    assert!(keys.iter().all(|key| key.starts_with("my_server__")));
     assert!(
         keys.iter()
             .all(|key| key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')),
@@ -333,16 +345,16 @@ fn test_qualify_tools_sanitizes_invalid_characters() {
 
     assert_eq!(qualified_tools.len(), 1);
     let (qualified_name, tool) = qualified_tools.into_iter().next().expect("one tool");
-    assert_eq!(qualified_name, "mcp__server_one__tool_two_three");
+    assert_eq!(qualified_name, "server_one__tool_two_three");
     assert_eq!(
-        format!("{}{}", tool.callable_namespace, tool.callable_name),
+        ToolName::namespaced(&tool.callable_namespace, &tool.callable_name).display(),
         qualified_name
     );
 
     // The key and callable parts are sanitized for model-visible tool calls, but
     // the raw MCP name is preserved for the actual MCP call.
     assert_eq!(tool.server_name, "server.one");
-    assert_eq!(tool.callable_namespace, "mcp__server_one__");
+    assert_eq!(tool.callable_namespace, "server_one");
     assert_eq!(tool.callable_name, "tool_two_three");
     assert_eq!(tool.tool.name, "tool.two-three");
 
@@ -362,8 +374,8 @@ fn test_qualify_tools_keeps_hyphenated_mcp_tools_callable() {
 
     assert_eq!(qualified_tools.len(), 1);
     let (qualified_name, tool) = qualified_tools.into_iter().next().expect("one tool");
-    assert_eq!(qualified_name, "mcp__music_studio__get_strudel_guide");
-    assert_eq!(tool.callable_namespace, "mcp__music_studio__");
+    assert_eq!(qualified_name, "music_studio__get_strudel_guide");
+    assert_eq!(tool.callable_namespace, "music_studio");
     assert_eq!(tool.callable_name, "get_strudel_guide");
     assert_eq!(tool.tool.name, "get-strudel-guide");
 }
@@ -624,10 +636,7 @@ fn startup_cached_codex_apps_tools_loads_from_disk_cache() {
         Some("account-one"),
         Some("user-one"),
     );
-    let cached_tools = vec![create_test_tool(
-        CODEX_APPS_MCP_SERVER_NAME,
-        "calendar_search",
-    )];
+    let cached_tools = vec![create_codex_apps_test_tool("calendar_search", "search")];
     write_cached_codex_apps_tools(&cache_context, &cached_tools);
 
     let startup_snapshot = load_startup_cached_codex_apps_tools_snapshot(
@@ -638,14 +647,14 @@ fn startup_cached_codex_apps_tools_loads_from_disk_cache() {
 
     assert_eq!(startup_tools.len(), 1);
     assert_eq!(startup_tools[0].server_name, CODEX_APPS_MCP_SERVER_NAME);
-    assert_eq!(startup_tools[0].callable_name, "calendar_search");
+    assert_eq!(startup_tools[0].callable_name, "search");
 }
 
 #[tokio::test]
 async fn list_all_tools_uses_startup_snapshot_while_client_is_pending() {
-    let startup_tools = vec![create_test_tool(
-        CODEX_APPS_MCP_SERVER_NAME,
+    let startup_tools = vec![create_codex_apps_test_tool(
         "calendar_create_event",
+        "create_event",
     )];
     let pending_client = futures::future::pending::<Result<ManagedClient, StartupOutcomeError>>()
         .boxed()
@@ -667,10 +676,10 @@ async fn list_all_tools_uses_startup_snapshot_while_client_is_pending() {
 
     let tools = manager.list_all_tools().await;
     let tool = tools
-        .get("mcp__codex_apps__calendar_create_event")
+        .get("codex_apps__calendar__create_event")
         .expect("tool from startup cache");
     assert_eq!(tool.server_name, CODEX_APPS_MCP_SERVER_NAME);
-    assert_eq!(tool.callable_name, "calendar_create_event");
+    assert_eq!(tool.callable_name, "create_event");
 }
 
 #[tokio::test]
@@ -695,11 +704,11 @@ async fn resolve_tool_info_accepts_canonical_namespaced_tool_names() {
     );
 
     let tool = manager
-        .resolve_tool_info(&ToolName::namespaced("mcp__rmcp__", "echo"))
+        .resolve_tool_info(&ToolName::namespaced("rmcp", "echo"))
         .await
         .expect("split MCP tool namespace and name should resolve");
 
-    let expected = ("rmcp", "mcp__rmcp__", "echo", "echo");
+    let expected = ("rmcp", "rmcp", "echo", "echo");
     assert_eq!(
         (
             tool.server_name.as_str(),
@@ -764,9 +773,9 @@ async fn list_all_tools_does_not_block_when_startup_snapshot_cache_hit_is_empty(
 
 #[tokio::test]
 async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
-    let startup_tools = vec![create_test_tool(
-        CODEX_APPS_MCP_SERVER_NAME,
+    let startup_tools = vec![create_codex_apps_test_tool(
         "calendar_create_event",
+        "create_event",
     )];
     let failed_client = futures::future::ready::<Result<ManagedClient, StartupOutcomeError>>(Err(
         StartupOutcomeError::Failed {
@@ -793,10 +802,10 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
 
     let tools = manager.list_all_tools().await;
     let tool = tools
-        .get("mcp__codex_apps__calendar_create_event")
+        .get("codex_apps__calendar__create_event")
         .expect("tool from startup cache");
     assert_eq!(tool.server_name, CODEX_APPS_MCP_SERVER_NAME);
-    assert_eq!(tool.callable_name, "calendar_create_event");
+    assert_eq!(tool.callable_name, "create_event");
 }
 
 #[test]

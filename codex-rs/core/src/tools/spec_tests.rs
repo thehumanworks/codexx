@@ -61,7 +61,7 @@ fn mcp_tool_info(tool: rmcp::model::Tool) -> ToolInfo {
     ToolInfo {
         server_name: "test_server".to_string(),
         callable_name: tool.name.to_string(),
-        callable_namespace: "mcp__test_server__".to_string(),
+        callable_namespace: "test_server".to_string(),
         server_instructions: None,
         tool,
         connector_id: None,
@@ -133,7 +133,7 @@ fn deferred_responses_api_tool_serializes_with_defer_loading() {
 
     let serialized = serde_json::to_value(ToolSpec::Function(
         mcp_tool_to_deferred_responses_api_tool(
-            &ToolName::namespaced("mcp__codex_apps__", "lookup_order"),
+            &ToolName::namespaced("codex_apps", "lookup_order"),
             &tool,
         )
         .expect("convert deferred tool"),
@@ -893,11 +893,11 @@ async fn search_tool_description_falls_back_to_connector_name_without_descriptio
         &tools_config,
         /*mcp_tools*/ None,
         Some(HashMap::from([(
-            "mcp__codex_apps__calendar_create_event".to_string(),
+            "codex_apps__calendar__create_event".to_string(),
             ToolInfo {
                 server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-                callable_name: "_create_event".to_string(),
-                callable_namespace: "mcp__codex_apps__calendar".to_string(),
+                callable_name: "create_event".to_string(),
+                callable_namespace: "codex_apps__calendar".to_string(),
                 server_instructions: None,
                 tool: mcp_tool(
                     "calendar_create_event",
@@ -945,11 +945,11 @@ async fn search_tool_registers_namespaced_mcp_tool_aliases() {
         /*mcp_tools*/ None,
         Some(HashMap::from([
             (
-                "mcp__codex_apps__calendar_create_event".to_string(),
+                "codex_apps__calendar__create_event".to_string(),
                 ToolInfo {
                     server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-                    callable_name: "_create_event".to_string(),
-                    callable_namespace: "mcp__codex_apps__calendar".to_string(),
+                    callable_name: "create_event".to_string(),
+                    callable_namespace: "codex_apps__calendar".to_string(),
                     server_instructions: None,
                     tool: mcp_tool(
                         "calendar-create-event",
@@ -963,11 +963,11 @@ async fn search_tool_registers_namespaced_mcp_tool_aliases() {
                 },
             ),
             (
-                "mcp__codex_apps__calendar_list_events".to_string(),
+                "codex_apps__calendar__list_events".to_string(),
                 ToolInfo {
                     server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
-                    callable_name: "_list_events".to_string(),
-                    callable_namespace: "mcp__codex_apps__calendar".to_string(),
+                    callable_name: "list_events".to_string(),
+                    callable_namespace: "codex_apps__calendar".to_string(),
                     server_instructions: None,
                     tool: mcp_tool(
                         "calendar-list-events",
@@ -981,11 +981,11 @@ async fn search_tool_registers_namespaced_mcp_tool_aliases() {
                 },
             ),
             (
-                "mcp__rmcp__echo".to_string(),
+                "rmcp__echo".to_string(),
                 ToolInfo {
                     server_name: "rmcp".to_string(),
                     callable_name: "echo".to_string(),
-                    callable_namespace: "mcp__rmcp__".to_string(),
+                    callable_namespace: "rmcp".to_string(),
                     server_instructions: None,
                     tool: mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
                     connector_id: None,
@@ -999,8 +999,8 @@ async fn search_tool_registers_namespaced_mcp_tool_aliases() {
     )
     .build();
 
-    let app_alias = ToolName::namespaced("mcp__codex_apps__calendar", "_create_event");
-    let mcp_alias = ToolName::namespaced("mcp__rmcp__", "echo");
+    let app_alias = ToolName::namespaced("codex_apps__calendar", "create_event");
+    let mcp_alias = ToolName::namespaced("rmcp", "echo");
 
     assert!(registry.has_handler(&ToolName::plain(TOOL_SEARCH_TOOL_NAME)));
     assert!(registry.has_handler(&app_alias));
@@ -1025,7 +1025,7 @@ async fn tool_search_entries_skip_namespace_outputs_when_namespace_tools_are_dis
     });
     tools_config.namespace_tools = false;
     let mcp_tools = HashMap::from([(
-        "mcp__test_server__echo".to_string(),
+        "test_server__echo".to_string(),
         mcp_tool_info(mcp_tool(
             "echo",
             "Echo",
@@ -1084,7 +1084,7 @@ async fn direct_mcp_tools_register_namespaced_handlers() {
     let (_, registry) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            "mcp__test_server__echo".to_string(),
+            "test_server__echo".to_string(),
             mcp_tool_info(mcp_tool(
                 "echo",
                 "Echo",
@@ -1096,8 +1096,8 @@ async fn direct_mcp_tools_register_namespaced_handlers() {
     )
     .build();
 
-    assert!(registry.has_handler(&ToolName::namespaced("mcp__test_server__", "echo")));
-    assert!(!registry.has_handler(&ToolName::plain("mcp__test_server__echo")));
+    assert!(registry.has_handler(&ToolName::namespaced("test_server", "echo")));
+    assert!(!registry.has_handler(&ToolName::plain("test_server__echo")));
 }
 
 #[tokio::test]
@@ -1118,7 +1118,7 @@ async fn unavailable_mcp_tools_are_exposed_as_dummy_function_tools() {
         windows_sandbox_level: WindowsSandboxLevel::Disabled,
     });
 
-    let unavailable_tool = ToolName::namespaced("mcp__codex_apps__calendar", "_create_event");
+    let unavailable_tool = ToolName::namespaced("codex_apps__calendar", "create_event");
     let (tools, registry) = build_specs_with_unavailable_tools(
         &tools_config,
         /*mcp_tools*/ None,
@@ -1128,7 +1128,7 @@ async fn unavailable_mcp_tools_are_exposed_as_dummy_function_tools() {
     )
     .build();
 
-    let tool = find_tool(&tools, "mcp__codex_apps__calendar_create_event");
+    let tool = find_tool(&tools, "codex_apps__calendar__create_event");
     let ToolSpec::Function(ResponsesApiTool {
         description,
         parameters,
@@ -1143,10 +1143,10 @@ async fn unavailable_mcp_tools_are_exposed_as_dummy_function_tools() {
         Some(AdditionalProperties::Boolean(false))
     );
     assert!(registry.has_handler(&ToolName::namespaced(
-        "mcp__codex_apps__calendar",
-        "_create_event"
+        "codex_apps__calendar",
+        "create_event"
     )));
-    assert!(!registry.has_handler(&ToolName::plain("mcp__codex_apps__calendar_create_event")));
+    assert!(!registry.has_handler(&ToolName::plain("codex_apps__calendar__create_event")));
 }
 
 #[tokio::test]

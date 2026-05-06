@@ -112,7 +112,7 @@ fn codex_app_tool(
 ) -> ToolInfo {
     let tool_namespace = connector_name
         .map(sanitize_name)
-        .map(|connector_name| format!("mcp__{CODEX_APPS_MCP_SERVER_NAME}__{connector_name}"))
+        .map(|connector_name| format!("{CODEX_APPS_MCP_SERVER_NAME}__{connector_name}"))
         .unwrap_or_else(|| CODEX_APPS_MCP_SERVER_NAME.to_string());
 
     ToolInfo {
@@ -175,7 +175,7 @@ fn merge_connectors_replaces_plugin_placeholder_name_with_accessible_name() {
 fn accessible_connectors_from_mcp_tools_carries_plugin_display_names() {
     let tools = HashMap::from([
         (
-            "mcp__codex_apps__calendar_list_events".to_string(),
+            "codex_apps__calendar__list_events".to_string(),
             codex_app_tool(
                 "calendar_list_events",
                 "calendar",
@@ -184,7 +184,7 @@ fn accessible_connectors_from_mcp_tools_carries_plugin_display_names() {
             ),
         ),
         (
-            "mcp__codex_apps__calendar_create_event".to_string(),
+            "codex_apps__calendar__create_event".to_string(),
             codex_app_tool(
                 "calendar_create_event",
                 "calendar",
@@ -193,7 +193,7 @@ fn accessible_connectors_from_mcp_tools_carries_plugin_display_names() {
             ),
         ),
         (
-            "mcp__sample__echo".to_string(),
+            "sample__echo".to_string(),
             ToolInfo {
                 server_name: "sample".to_string(),
                 callable_name: "echo".to_string(),
@@ -242,7 +242,7 @@ async fn refresh_accessible_connectors_cache_from_mcp_tools_writes_latest_instal
     let cache_key = accessible_connectors_cache_key(&config, /*auth*/ None);
     let tools = HashMap::from([
         (
-            "mcp__codex_apps__calendar_list_events".to_string(),
+            "codex_apps__calendar__list_events".to_string(),
             codex_app_tool(
                 "calendar_list_events",
                 "calendar",
@@ -251,7 +251,7 @@ async fn refresh_accessible_connectors_cache_from_mcp_tools_writes_latest_instal
             ),
         ),
         (
-            "mcp__codex_apps__openai_hidden".to_string(),
+            "codex_apps__openai_hidden".to_string(),
             codex_app_tool(
                 "openai_hidden",
                 "connector_openai_hidden",
@@ -318,11 +318,11 @@ fn merge_connectors_unions_and_dedupes_plugin_display_names() {
 #[test]
 fn accessible_connectors_from_mcp_tools_preserves_description() {
     let mcp_tools = HashMap::from([(
-        "mcp__codex_apps__calendar_create_event".to_string(),
+        "codex_apps__calendar__create_event".to_string(),
         ToolInfo {
             server_name: CODEX_APPS_MCP_SERVER_NAME.to_string(),
             callable_name: "calendar_create_event".to_string(),
-            callable_namespace: "mcp__codex_apps__calendar".to_string(),
+            callable_namespace: "codex_apps__calendar".to_string(),
             server_instructions: None,
             tool: Tool {
                 name: "calendar_create_event".to_string().into(),

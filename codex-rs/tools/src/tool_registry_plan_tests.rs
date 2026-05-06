@@ -1205,16 +1205,16 @@ fn namespace_specs_are_hidden_when_namespace_tools_are_disabled() {
     let (tools, handlers) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "echo"),
+            ToolName::namespaced("sample", "echo"),
             mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
         )])),
         /*deferred_mcp_tools*/ None,
         &[],
     );
 
-    assert_lacks_tool_name(&tools, "mcp__sample__");
+    assert_lacks_tool_name(&tools, "sample");
     assert!(handlers.contains(&ToolHandlerSpec {
-        name: ToolName::namespaced("mcp__sample__", "echo"),
+        name: ToolName::namespaced("sample", "echo"),
         kind: ToolHandlerKind::Mcp,
     }));
 }
@@ -1374,7 +1374,7 @@ fn search_tool_description_lists_each_mcp_source_once() {
         &tools_config,
         Some(HashMap::from([
             (
-                ToolName::namespaced("mcp__codex_apps__calendar", "_create_event"),
+                ToolName::namespaced("codex_apps__calendar", "create_event"),
                 mcp_tool(
                     "calendar_create_event",
                     "Create calendar event",
@@ -1382,37 +1382,34 @@ fn search_tool_description_lists_each_mcp_source_once() {
                 ),
             ),
             (
-                ToolName::namespaced("mcp__rmcp__", "echo"),
+                ToolName::namespaced("rmcp", "echo"),
                 mcp_tool("echo", "Echo", serde_json::json!({"type": "object"})),
             ),
         ])),
         Some(vec![
             deferred_mcp_tool(
-                "_create_event",
-                "mcp__codex_apps__calendar",
+                "create_event",
+                "codex_apps__calendar",
                 CODEX_APPS_MCP_SERVER_NAME,
                 Some("Calendar"),
                 Some("Plan events and manage your calendar."),
             ),
             deferred_mcp_tool(
-                "_list_events",
-                "mcp__codex_apps__calendar",
+                "list_events",
+                "codex_apps__calendar",
                 CODEX_APPS_MCP_SERVER_NAME,
                 Some("Calendar"),
                 Some("Plan events and manage your calendar."),
             ),
             deferred_mcp_tool(
-                "_search_threads",
-                "mcp__codex_apps__gmail",
+                "search_threads",
+                "codex_apps__gmail",
                 CODEX_APPS_MCP_SERVER_NAME,
                 Some("Gmail"),
                 Some("Find and summarize email threads."),
             ),
             deferred_mcp_tool(
-                "echo",
-                "mcp__rmcp__",
-                "rmcp",
-                /*connector_name*/ None,
+                "echo", "rmcp", "rmcp", /*connector_name*/ None,
                 /*connector_description*/ None,
             ),
         ]),
@@ -1433,14 +1430,14 @@ fn search_tool_description_lists_each_mcp_source_once() {
         1
     );
     assert!(description.contains("- rmcp"));
-    assert!(!description.contains("mcp__rmcp__echo"));
+    assert!(!description.contains("rmcp__echo"));
 
     assert!(handlers.contains(&ToolHandlerSpec {
-        name: ToolName::namespaced("mcp__codex_apps__calendar", "_create_event"),
+        name: ToolName::namespaced("codex_apps__calendar", "create_event"),
         kind: ToolHandlerKind::Mcp,
     }));
     assert!(handlers.contains(&ToolHandlerSpec {
-        name: ToolName::namespaced("mcp__rmcp__", "echo"),
+        name: ToolName::namespaced("rmcp", "echo"),
         kind: ToolHandlerKind::Mcp,
     }));
 }
@@ -1449,8 +1446,8 @@ fn search_tool_description_lists_each_mcp_source_once() {
 fn search_tool_requires_model_capability_and_enabled_feature() {
     let model_info = search_capable_model_info();
     let deferred_mcp_tools = Some(vec![deferred_mcp_tool(
-        "_create_event",
-        "mcp__codex_apps__calendar",
+        "create_event",
+        "codex_apps__calendar",
         CODEX_APPS_MCP_SERVER_NAME,
         Some("Calendar"),
         /*connector_description*/ None,
@@ -1540,8 +1537,8 @@ fn search_tool_is_hidden_when_only_deferred_namespace_tools_are_available() {
         &tools_config,
         /*mcp_tools*/ None,
         Some(vec![deferred_mcp_tool(
-            "_create_event",
-            "mcp__codex_apps__calendar",
+            "create_event",
+            "codex_apps__calendar",
             CODEX_APPS_MCP_SERVER_NAME,
             Some("Calendar"),
             Some("Plan events and manage your calendar."),
@@ -1688,6 +1685,53 @@ fn search_tool_keeps_plain_deferred_dynamic_tools_when_namespace_tools_are_disab
     assert!(handlers.contains(&ToolHandlerSpec {
         name: ToolName::plain(TOOL_SEARCH_TOOL_NAME),
         kind: ToolHandlerKind::ToolSearch,
+    }));
+}
+
+#[test]
+fn mcp_namespace_colliding_with_dynamic_namespace_is_skipped() {
+    let model_info = model_info();
+    let features = Features::with_defaults();
+    let available_models = Vec::new();
+    let tools_config = ToolsConfig::new(&ToolsConfigParams {
+        model_info: &model_info,
+        available_models: &available_models,
+        features: &features,
+        image_generation_tool_auth_allowed: true,
+        web_search_mode: Some(WebSearchMode::Cached),
+        session_source: SessionSource::Cli,
+        permission_profile: &PermissionProfile::Disabled,
+        windows_sandbox_level: WindowsSandboxLevel::Disabled,
+    });
+    let dynamic_tools = vec![DynamicToolSpec {
+        namespace: Some("shared".to_string()),
+        name: "automation_update".to_string(),
+        description: "Create or update automations.".to_string(),
+        input_schema: json!({"type": "object", "properties": {}}),
+        defer_loading: false,
+    }];
+
+    let (tools, handlers) = build_specs(
+        &tools_config,
+        Some(HashMap::from([(
+            ToolName::namespaced("shared", "echo"),
+            mcp_tool("echo", "Echo", json!({"type": "object"})),
+        )])),
+        /*deferred_mcp_tools*/ None,
+        &dynamic_tools,
+    );
+
+    assert_eq!(
+        namespace_function_names(&tools, "shared"),
+        vec!["automation_update".to_string()]
+    );
+    assert!(!handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("shared", "echo"),
+        kind: ToolHandlerKind::Mcp,
+    }));
+    assert!(handlers.contains(&ToolHandlerSpec {
+        name: ToolName::namespaced("shared", "automation_update"),
+        kind: ToolHandlerKind::DynamicTool,
     }));
 }
 
@@ -1916,7 +1960,7 @@ fn code_mode_augments_mcp_tool_descriptions_with_namespaced_sample() {
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "echo"),
+            ToolName::namespaced("sample", "echo"),
             mcp_tool(
                 "echo",
                 "Echo text",
@@ -1935,7 +1979,7 @@ fn code_mode_augments_mcp_tool_descriptions_with_namespaced_sample() {
     );
 
     let ResponsesApiTool { description, .. } =
-        find_namespace_function_tool(&tools, "mcp__sample__", "echo");
+        find_namespace_function_tool(&tools, "sample", "echo");
 
     assert_eq!(
         description,
@@ -1943,7 +1987,7 @@ fn code_mode_augments_mcp_tool_descriptions_with_namespaced_sample() {
 
 exec tool declaration:
 ```ts
-declare const tools: { mcp__sample__echo(args: { message: string; }): Promise<CallToolResult>; };
+declare const tools: { sample_echo(args: { message: string; }): Promise<CallToolResult>; };
 ```"#
     );
 }
@@ -1969,7 +2013,7 @@ fn code_mode_preserves_nullable_and_literal_mcp_input_shapes() {
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "fn"),
+            ToolName::namespaced("sample", "fn"),
             mcp_tool(
                 "fn",
                 "Sample fn",
@@ -2020,13 +2064,12 @@ fn code_mode_preserves_nullable_and_literal_mcp_input_shapes() {
         &[],
     );
 
-    let ResponsesApiTool { description, .. } =
-        find_namespace_function_tool(&tools, "mcp__sample__", "fn");
+    let ResponsesApiTool { description, .. } = find_namespace_function_tool(&tools, "sample", "fn");
 
     assert!(description.contains(
         r#"exec tool declaration:
 ```ts
-declare const tools: { mcp__sample__fn(args: { open?: Array<{ lineno?: number | null; ref_id: string; }> | null; response_length?: "short" | "medium" | "long"; tagged_list?: Array<{ kind: "tagged"; scope: "one" | "two"; variant: "alpha" | "beta"; }> | null; }): Promise<CallToolResult>; };
+declare const tools: { sample_fn(args: { open?: Array<{ lineno?: number | null; ref_id: string; }> | null; response_length?: "short" | "medium" | "long"; tagged_list?: Array<{ kind: "tagged"; scope: "one" | "two"; variant: "alpha" | "beta"; }> | null; }): Promise<CallToolResult>; };
 ```"#
     ));
 }
@@ -2311,7 +2354,7 @@ fn code_mode_augments_mcp_tool_descriptions_with_structured_output_sample() {
     let (tools, _) = build_specs(
         &tools_config,
         Some(HashMap::from([(
-            ToolName::namespaced("mcp__sample__", "echo"),
+            ToolName::namespaced("sample", "echo"),
             tool,
         )])),
         /*deferred_mcp_tools*/ None,
@@ -2319,7 +2362,7 @@ fn code_mode_augments_mcp_tool_descriptions_with_structured_output_sample() {
     );
 
     let ResponsesApiTool { description, .. } =
-        find_namespace_function_tool(&tools, "mcp__sample__", "echo");
+        find_namespace_function_tool(&tools, "sample", "echo");
 
     assert_eq!(
         description,
@@ -2327,7 +2370,7 @@ fn code_mode_augments_mcp_tool_descriptions_with_structured_output_sample() {
 
 exec tool declaration:
 ```ts
-declare const tools: { mcp__sample__echo(args: { message: string; }): Promise<CallToolResult<{ echo: string; env: string | null; }>>; };
+declare const tools: { sample_echo(args: { message: string; }): Promise<CallToolResult<{ echo: string; env: string | null; }>>; };
 ```"#
     );
 }

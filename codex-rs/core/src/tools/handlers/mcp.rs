@@ -142,12 +142,12 @@ mod tests {
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
                 tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
                 call_id: "call-mcp-pre".to_string(),
-                tool_name: codex_tools::ToolName::namespaced("mcp__memory__", "create_entities"),
+                tool_name: codex_tools::ToolName::namespaced("memory", "create_entities"),
                 source: ToolCallSource::Direct,
                 payload,
             }),
             Some(PreToolUsePayload {
-                tool_name: HookToolName::new("mcp__memory__create_entities"),
+                tool_name: HookToolName::new("memory__create_entities"),
                 tool_input: json!({
                     "entities": [{
                         "name": "Ada",
@@ -191,14 +191,14 @@ mod tests {
             cancellation_token: tokio_util::sync::CancellationToken::new(),
             tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
             call_id: "call-mcp-post".to_string(),
-            tool_name: codex_tools::ToolName::namespaced("mcp__filesystem__", "read_file"),
+            tool_name: codex_tools::ToolName::namespaced("filesystem", "read_file"),
             source: ToolCallSource::Direct,
             payload,
         };
         assert_eq!(
             McpHandler.post_tool_use_payload(&invocation, &output),
             Some(PostToolUsePayload {
-                tool_name: HookToolName::new("mcp__filesystem__read_file"),
+                tool_name: HookToolName::new("filesystem__read_file"),
                 tool_use_id: "call-mcp-post".to_string(),
                 tool_input: json!({
                     "path": {

@@ -36,7 +36,7 @@ fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
 fn qualified_mcp_tool_name_prefix_sanitizes_server_names_without_lowercasing() {
     assert_eq!(
         qualified_mcp_tool_name_prefix("Some-Server"),
-        "mcp__Some_Server__".to_string()
+        "Some_Server__".to_string()
     );
 }
 

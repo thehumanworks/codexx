@@ -347,11 +347,11 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
     assert!(
         request_tools
             .iter()
-            .any(|name| name == "mcp__codex_apps__google_calendar"),
+            .any(|name| name == "codex_apps__google_calendar"),
         "expected plugin app tools to become visible for this turn: {request_tools:?}"
     );
     let echo_tool = request
-        .tool_by_name("mcp__sample__", "echo")
+        .tool_by_name("sample", "echo")
         .expect("plugin MCP tool should be present");
     let echo_description = echo_tool
         .get("description")
@@ -362,7 +362,7 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
         "expected plugin MCP provenance in tool description: {echo_description:?}"
     );
     let calendar_tool = request
-        .tool_by_name("mcp__codex_apps__google_calendar", "_create_event")
+        .tool_by_name("codex_apps__google_calendar", "create_event")
         .expect("plugin app tool should be present");
     let calendar_description = calendar_tool
         .get("description")
@@ -471,8 +471,8 @@ async fn plugin_mcp_tools_are_listed() -> Result<()> {
     let mut available_tools: Vec<&str> = tool_list.tools.keys().map(String::as_str).collect();
     available_tools.sort_unstable();
     assert!(
-        tool_list.tools.contains_key("mcp__sample__echo")
-            && tool_list.tools.contains_key("mcp__sample__image"),
+        tool_list.tools.contains_key("sample__echo")
+            && tool_list.tools.contains_key("sample__image"),
         "expected plugin MCP tools to be listed; discovered tools: {available_tools:?}"
     );
 

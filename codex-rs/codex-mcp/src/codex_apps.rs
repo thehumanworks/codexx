@@ -21,7 +21,7 @@ use serde::Serialize;
 use sha1::Digest;
 use sha1::Sha1;
 
-pub(crate) const CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION: u8 = 2;
+pub(crate) const CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexAppsToolsCacheKey {
@@ -115,7 +115,7 @@ pub(crate) fn normalize_codex_apps_callable_name(
         && let Some(stripped) = tool_name.strip_prefix(&connector_name)
         && !stripped.is_empty()
     {
-        return stripped.to_string();
+        return stripped.strip_prefix('_').unwrap_or(stripped).to_string();
     }
 
     if let Some(connector_id) = connector_id
@@ -125,7 +125,7 @@ pub(crate) fn normalize_codex_apps_callable_name(
         && let Some(stripped) = tool_name.strip_prefix(&connector_id)
         && !stripped.is_empty()
     {
-        return stripped.to_string();
+        return stripped.strip_prefix('_').unwrap_or(stripped).to_string();
     }
 
     tool_name
@@ -138,9 +138,9 @@ pub(crate) fn normalize_codex_apps_callable_namespace(
     if server_name == CODEX_APPS_MCP_SERVER_NAME
         && let Some(connector_name) = connector_name
     {
-        format!("mcp__{}__{}", server_name, sanitize_name(connector_name))
+        format!("{}__{}", server_name, sanitize_name(connector_name))
     } else {
-        format!("mcp__{server_name}__")
+        server_name.to_string()
     }
 }
 

@@ -367,7 +367,7 @@ async fn code_mode_only_guides_all_tools_search_and_calls_deferred_app_tools() -
                 "exec",
                 r#"
 const tool = ALL_TOOLS.find(
-  ({ name }) => name === "mcp__codex_apps__calendar_timezone_option_99"
+  ({ name }) => name === "codex_apps__calendar_timezone_option_99"
 );
 if (!tool) {
   text(JSON.stringify({ found: false }));
@@ -2075,7 +2075,7 @@ async fn code_mode_can_use_mcp_image_result_with_image_helper() -> Result<()> {
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const out = await tools.mcp__rmcp__image_scenario({
+const out = await tools.rmcp_image_scenario({
   scenario: "image_only_original_detail",
 });
 const imageItem = out.content.find((item) => item.type === "image");
@@ -2176,7 +2176,7 @@ async fn code_mode_can_print_structured_mcp_tool_result_fields() -> Result<()> {
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const { content, structuredContent, isError } = await tools.mcp__rmcp__echo({
+const { content, structuredContent, isError } = await tools.rmcp_echo({
   message: "ping",
 });
 text(
@@ -2214,7 +2214,7 @@ async fn code_mode_only_can_call_mcp_tool() -> Result<()> {
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const result = await tools.mcp__rmcp__echo({ message: "ping" });
+const result = await tools.rmcp_echo({ message: "ping" });
 text(`echo=${result.structuredContent?.echo ?? "missing"}`);
 "#;
 
@@ -2244,12 +2244,12 @@ async fn code_mode_exposes_mcp_tools_on_global_tools_object() -> Result<()> {
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const { content, structuredContent, isError } = await tools.mcp__rmcp__echo({
+const { content, structuredContent, isError } = await tools.rmcp_echo({
   message: "ping",
 });
 text(
-  `hasEcho=${String(Object.keys(tools).includes("mcp__rmcp__echo"))}\n` +
-    `echoType=${typeof tools.mcp__rmcp__echo}\n` +
+  `hasEcho=${String(Object.keys(tools).includes("rmcp_echo"))}\n` +
+    `echoType=${typeof tools.rmcp_echo}\n` +
     `echo=${structuredContent?.echo ?? "missing"}\n` +
     `isError=${String(isError)}\n` +
     `contentLength=${content.length}`
@@ -2287,7 +2287,7 @@ async fn code_mode_exposes_namespaced_mcp_tools_on_global_tools_object() -> Resu
     let code = r#"
 text(JSON.stringify({
   hasExecCommand: typeof tools.exec_command === "function",
-  hasNamespacedEcho: typeof tools.mcp__rmcp__echo === "function",
+  hasNamespacedEcho: typeof tools.rmcp_echo === "function",
 }));
 "#;
 
@@ -2321,7 +2321,7 @@ async fn code_mode_exposes_normalized_illegal_mcp_tool_names() -> Result<()> {
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const result = await tools.mcp__rmcp__echo_tool({ message: "ping" });
+const result = await tools.rmcp_echo_tool({ message: "ping" });
 text(`echo=${result.structuredContent.echo}`);
 "#;
 
@@ -2502,7 +2502,7 @@ async fn code_mode_exports_all_tools_metadata_for_namespaced_mcp_tools() -> Resu
     let server = responses::start_mock_server().await;
     let code = r#"
 const tool = ALL_TOOLS.find(
-  ({ name }) => name === "mcp__rmcp__echo"
+  ({ name }) => name === "rmcp_echo"
 );
 text(JSON.stringify(tool));
 "#;
@@ -2525,12 +2525,12 @@ text(JSON.stringify(tool));
     assert_eq!(
         parsed,
         serde_json::json!({
-            "name": "mcp__rmcp__echo",
+            "name": "rmcp_echo",
             "description": concat!(
                 "Echo back the provided message and include environment data.\n\n",
                 "exec tool declaration:\n",
                 "```ts\n",
-                "declare const tools: { mcp__rmcp__echo(args: { env_var?: string; message: string; }): ",
+                "declare const tools: { rmcp_echo(args: { env_var?: string; message: string; }): ",
                 "Promise<CallToolResult<{ echo: string; env: string | null; }>>; };\n",
                 "```",
             ),
@@ -2701,7 +2701,7 @@ async fn code_mode_can_print_content_only_mcp_tool_result_fields() -> Result<()>
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const { content, structuredContent, isError } = await tools.mcp__rmcp__image_scenario({
+const { content, structuredContent, isError } = await tools.rmcp_image_scenario({
   scenario: "text_only",
   caption: "caption from mcp",
 });
@@ -2744,7 +2744,7 @@ async fn code_mode_can_print_error_mcp_tool_result_fields() -> Result<()> {
 
     let server = responses::start_mock_server().await;
     let code = r#"
-const { content, structuredContent, isError } = await tools.mcp__rmcp__echo({});
+const { content, structuredContent, isError } = await tools.rmcp_echo({});
 const firstText = content[0]?.text ?? "";
 const mentionsMissingMessage =
   firstText.includes("missing field") && firstText.includes("message");

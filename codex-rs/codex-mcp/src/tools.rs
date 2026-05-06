@@ -134,7 +134,7 @@ pub(crate) fn filter_tools(tools: Vec<ToolInfo>, filter: &ToolFilter) -> Vec<Too
 ///
 /// Raw MCP server/tool names are kept on each [`ToolInfo`] for protocol calls, while
 /// `callable_namespace` / `callable_name` are sanitized and, when necessary, hashed so
-/// every model-visible `mcp__namespace__tool` name is unique and <= 64 bytes.
+/// every flattened model-visible `namespace__tool` name is unique and <= 64 bytes.
 pub(crate) fn qualify_tools<I>(tools: I) -> HashMap<String, ToolInfo>
 where
     I: IntoIterator<Item = ToolInfo>,
@@ -327,17 +327,22 @@ fn fit_callable_parts_with_hash(
     raw_identity: &str,
 ) -> (String, String) {
     let suffix = callable_name_hash_suffix(raw_identity);
-    let max_tool_len = MAX_TOOL_NAME_LENGTH.saturating_sub(namespace.len());
-    if max_tool_len >= suffix.len() {
-        let prefix_len = max_tool_len - suffix.len();
-        return (
-            namespace.to_string(),
-            format!("{}{}", truncate_name(tool_name, prefix_len), suffix),
-        );
+
+    for prefix_len in (0..=tool_name.chars().count()).rev() {
+        let candidate_name = format!("{}{}", truncate_name(tool_name, prefix_len), suffix);
+        if qualified_name(namespace, &candidate_name).len() <= MAX_TOOL_NAME_LENGTH {
+            return (namespace.to_string(), candidate_name);
+        }
     }
 
-    let max_namespace_len = MAX_TOOL_NAME_LENGTH - suffix.len();
-    (truncate_name(namespace, max_namespace_len), suffix)
+    for namespace_len in (0..=namespace.chars().count()).rev() {
+        let candidate_namespace = truncate_name(namespace, namespace_len);
+        if qualified_name(&candidate_namespace, &suffix).len() <= MAX_TOOL_NAME_LENGTH {
+            return (candidate_namespace, suffix);
+        }
+    }
+
+    (String::new(), suffix)
 }
 
 fn unique_callable_parts(
@@ -346,9 +351,15 @@ fn unique_callable_parts(
     raw_identity: &str,
     used_names: &mut HashSet<String>,
 ) -> (String, String, String) {
-    let qualified_name = format!("{namespace}{tool_name}");
-    if qualified_name.len() <= MAX_TOOL_NAME_LENGTH && used_names.insert(qualified_name.clone()) {
-        return (namespace.to_string(), tool_name.to_string(), qualified_name);
+    let qualified_display_name = qualified_name(namespace, tool_name);
+    if qualified_display_name.len() <= MAX_TOOL_NAME_LENGTH
+        && used_names.insert(qualified_display_name.clone())
+    {
+        return (
+            namespace.to_string(),
+            tool_name.to_string(),
+            qualified_display_name,
+        );
     }
 
     let mut attempt = 0_u32;
@@ -360,10 +371,14 @@ fn unique_callable_parts(
         };
         let (namespace, tool_name) =
             fit_callable_parts_with_hash(namespace, tool_name, &hash_input);
-        let qualified_name = format!("{namespace}{tool_name}");
+        let qualified_name = qualified_name(&namespace, &tool_name);
         if used_names.insert(qualified_name.clone()) {
             return (namespace, tool_name, qualified_name);
         }
         attempt = attempt.saturating_add(1);
     }
+}
+
+fn qualified_name(namespace: &str, tool_name: &str) -> String {
+    ToolName::namespaced(namespace, tool_name).display()
 }

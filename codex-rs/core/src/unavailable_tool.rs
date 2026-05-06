@@ -39,7 +39,10 @@ pub(crate) fn collect_unavailable_called_tools(
 }
 
 fn should_collect_unavailable_tool(name: &str, namespace: Option<&str>) -> bool {
-    namespace.is_some_and(|namespace| namespace.starts_with("mcp__")) || name.starts_with("mcp__")
+    // New histories preserve the namespace split, so any missing namespaced call
+    // is eligible for a placeholder. Keep the flattened MCP branch for rollouts
+    // written before namespaced MCP calls were preserved in history.
+    namespace.is_some() || name.starts_with("mcp__")
 }
 
 #[cfg(test)]
@@ -58,11 +61,12 @@ mod tests {
     }
 
     #[test]
-    fn collect_unavailable_called_tools_detects_mcp_function_calls() {
+    fn collect_unavailable_called_tools_detects_namespaced_and_legacy_mcp_calls() {
         let input = vec![
             function_call("shell", /*namespace*/ None),
             function_call("mcp__server__lookup", /*namespace*/ None),
             function_call("_create_event", Some("mcp__codex_apps__calendar")),
+            function_call("lookup", Some("calendar")),
         ];
 
         let tools = collect_unavailable_called_tools(&input, &HashSet::new());
@@ -70,6 +74,7 @@ mod tests {
         assert_eq!(
             tools,
             vec![
+                ToolName::namespaced("calendar", "lookup"),
                 ToolName::namespaced("mcp__codex_apps__calendar", "_create_event"),
                 ToolName::plain("mcp__server__lookup"),
             ]

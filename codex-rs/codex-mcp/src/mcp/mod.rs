@@ -41,7 +41,6 @@ use crate::connection_manager::McpConnectionManager;
 use crate::runtime::McpRuntimeEnvironment;
 
 pub const CODEX_APPS_MCP_SERVER_NAME: &str = "codex_apps";
-const MCP_TOOL_NAME_PREFIX: &str = "mcp";
 const MCP_TOOL_NAME_DELIMITER: &str = "__";
 const CODEX_CONNECTORS_TOKEN_ENV_VAR: &str = "CODEX_CONNECTORS_TOKEN";
 
@@ -59,9 +58,10 @@ impl McpSnapshotDetail {
 }
 
 pub fn qualified_mcp_tool_name_prefix(server_name: &str) -> String {
-    sanitize_responses_api_tool_name(&format!(
-        "{MCP_TOOL_NAME_PREFIX}{MCP_TOOL_NAME_DELIMITER}{server_name}{MCP_TOOL_NAME_DELIMITER}"
-    ))
+    format!(
+        "{}{MCP_TOOL_NAME_DELIMITER}",
+        sanitize_responses_api_tool_name(server_name)
+    )
 }
 
 /// Returns true when MCP permission prompts should resolve as approved instead

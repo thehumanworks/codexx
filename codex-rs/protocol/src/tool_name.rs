@@ -34,7 +34,7 @@ impl ToolName {
 
     pub fn display(&self) -> String {
         match &self.namespace {
-            Some(namespace) => format!("{namespace}{}", self.name),
+            Some(namespace) => flatten_namespaced_tool_name(namespace, &self.name),
             None => self.name.clone(),
         }
     }
@@ -43,9 +43,17 @@ impl ToolName {
 impl fmt::Display for ToolName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.namespace {
-            Some(namespace) => write!(f, "{namespace}{}", self.name),
+            Some(namespace) => f.write_str(&flatten_namespaced_tool_name(namespace, &self.name)),
             None => f.write_str(&self.name),
         }
+    }
+}
+
+fn flatten_namespaced_tool_name(namespace: &str, name: &str) -> String {
+    if namespace.ends_with("__") || name.starts_with('_') {
+        format!("{namespace}{name}")
+    } else {
+        format!("{namespace}__{name}")
     }
 }
 
@@ -58,5 +66,27 @@ impl From<String> for ToolName {
 impl From<&str> for ToolName {
     fn from(name: &str) -> Self {
         Self::plain(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolName;
+
+    #[test]
+    fn display_flattens_namespaced_tools_with_double_underscore_separator() {
+        assert_eq!(ToolName::namespaced("foo_", "bar").display(), "foo___bar");
+    }
+
+    #[test]
+    fn display_preserves_legacy_flattened_namespaced_tools() {
+        assert_eq!(
+            ToolName::namespaced("mcp__rmcp__", "echo").display(),
+            "mcp__rmcp__echo"
+        );
+        assert_eq!(
+            ToolName::namespaced("mcp__codex_apps__calendar", "_create_event").display(),
+            "mcp__codex_apps__calendar_create_event"
+        );
     }
 }

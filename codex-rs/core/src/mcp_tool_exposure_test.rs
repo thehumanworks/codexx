@@ -48,10 +48,10 @@ fn make_mcp_tool(
     let tool_namespace = if server_name == CODEX_APPS_MCP_SERVER_NAME {
         connector_name
             .map(sanitize_name)
-            .map(|connector_name| format!("mcp__{server_name}__{connector_name}"))
+            .map(|connector_name| format!("{server_name}__{connector_name}"))
             .unwrap_or_else(|| server_name.to_string())
     } else {
-        format!("mcp__{server_name}__")
+        server_name.to_string()
     };
 
     ToolInfo {
@@ -82,7 +82,7 @@ fn numbered_mcp_tools(count: usize) -> HashMap<String, ToolInfo> {
         .map(|index| {
             let tool_name = format!("tool_{index}");
             (
-                format!("mcp__rmcp__{tool_name}"),
+                format!("rmcp__{tool_name}"),
                 make_mcp_tool(
                     "rmcp", &tool_name, /*connector_id*/ None, /*connector_name*/ None,
                 ),
@@ -165,7 +165,7 @@ async fn directly_exposes_explicit_apps_without_deferred_overlap() {
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mut mcp_tools = numbered_mcp_tools(DIRECT_MCP_TOOL_EXPOSURE_THRESHOLD - 1);
     mcp_tools.extend([(
-        "mcp__codex_apps__calendar_create_event".to_string(),
+        "codex_apps__calendar__create_event".to_string(),
         make_mcp_tool(
             CODEX_APPS_MCP_SERVER_NAME,
             "calendar_create_event",
@@ -187,7 +187,7 @@ async fn directly_exposes_explicit_apps_without_deferred_overlap() {
     tool_names.sort();
     assert_eq!(
         tool_names,
-        vec!["mcp__codex_apps__calendar_create_event".to_string()]
+        vec!["codex_apps__calendar__create_event".to_string()]
     );
     assert_eq!(
         exposure.deferred_tools.as_ref().map(HashMap::len),
@@ -203,8 +203,8 @@ async fn directly_exposes_explicit_apps_without_deferred_overlap() {
             .all(|direct_tool_name| !deferred_tools.contains_key(direct_tool_name)),
         "direct tools should not also be deferred: {tool_names:?}"
     );
-    assert!(!deferred_tools.contains_key("mcp__codex_apps__calendar_create_event"));
-    assert!(deferred_tools.contains_key("mcp__rmcp__tool_0"));
+    assert!(!deferred_tools.contains_key("codex_apps__calendar__create_event"));
+    assert!(deferred_tools.contains_key("rmcp__tool_0"));
 }
 
 #[tokio::test]
@@ -217,13 +217,13 @@ async fn always_defer_feature_preserves_explicit_apps() {
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mcp_tools = HashMap::from([
         (
-            "mcp__rmcp__tool".to_string(),
+            "rmcp__tool".to_string(),
             make_mcp_tool(
                 "rmcp", "tool", /*connector_id*/ None, /*connector_name*/ None,
             ),
         ),
         (
-            "mcp__codex_apps__calendar_create_event".to_string(),
+            "codex_apps__calendar__create_event".to_string(),
             make_mcp_tool(
                 CODEX_APPS_MCP_SERVER_NAME,
                 "calendar_create_event",
@@ -246,12 +246,12 @@ async fn always_defer_feature_preserves_explicit_apps() {
     direct_tool_names.sort();
     assert_eq!(
         direct_tool_names,
-        vec!["mcp__codex_apps__calendar_create_event".to_string()]
+        vec!["codex_apps__calendar__create_event".to_string()]
     );
     let deferred_tools = exposure
         .deferred_tools
         .as_ref()
         .expect("MCP tools should be discoverable through tool_search");
-    assert!(deferred_tools.contains_key("mcp__rmcp__tool"));
-    assert!(!deferred_tools.contains_key("mcp__codex_apps__calendar_create_event"));
+    assert!(deferred_tools.contains_key("rmcp__tool"));
+    assert!(!deferred_tools.contains_key("codex_apps__calendar__create_event"));
 }

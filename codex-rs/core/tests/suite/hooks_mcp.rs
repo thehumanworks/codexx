@@ -26,9 +26,9 @@ use serde_json::Value;
 use serde_json::json;
 
 const RMCP_SERVER: &str = "rmcp";
-const RMCP_NAMESPACE: &str = "mcp__rmcp__";
-const RMCP_ECHO_TOOL_NAME: &str = "mcp__rmcp__echo";
-const RMCP_HOOK_MATCHER: &str = "mcp__rmcp__.*";
+const RMCP_NAMESPACE: &str = "rmcp";
+const RMCP_ECHO_TOOL_NAME: &str = "rmcp__echo";
+const RMCP_HOOK_MATCHER: &str = "rmcp__.*";
 const RMCP_ECHO_MESSAGE: &str = "hook e2e ping";
 
 fn write_pre_tool_use_hook(home: &Path, reason: &str) -> Result<()> {

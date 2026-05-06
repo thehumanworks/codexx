@@ -336,7 +336,7 @@ async fn call_cwd_tool(
     server_name: &str,
     call_id: &str,
 ) -> anyhow::Result<Value> {
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     mount_sse_once(
         server,
         responses::sse(vec![
@@ -421,7 +421,7 @@ async fn stdio_server_round_trip() -> anyhow::Result<()> {
 
     let call_id = "call-123";
     let server_name = "rmcp";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
 
     let call_mock = mount_sse_once(
         &server,
@@ -730,7 +730,7 @@ async fn stdio_mcp_tool_call_includes_sandbox_state_meta() -> anyhow::Result<()>
 
     let call_id = "sandbox-meta-call";
     let server_name = "rmcp";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     let tool_name = format!("{namespace}sandbox_meta");
 
     let call_mock = mount_sse_once(
@@ -848,7 +848,7 @@ async fn stdio_mcp_parallel_tool_calls_default_false_runs_serially() -> anyhow::
     let first_call_id = "sync-serial-1";
     let second_call_id = "sync-serial-2";
     let server_name = "rmcp";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     let args = json!({ "sleep_after_ms": 100 }).to_string();
 
     mount_sse_once(
@@ -957,7 +957,7 @@ async fn stdio_mcp_parallel_tool_calls_opt_in_runs_concurrently() -> anyhow::Res
     let first_call_id = "sync-1";
     let second_call_id = "sync-2";
     let server_name = "rmcp";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     let args = json!({
         "sleep_after_ms": 100,
         "barrier": {
@@ -1039,8 +1039,8 @@ async fn stdio_image_responses_round_trip() -> anyhow::Result<()> {
 
     let call_id = "img-1";
     let server_name = "rmcp";
-    let tool_name = format!("mcp__{server_name}__image");
-    let namespace = format!("mcp__{server_name}__");
+    let tool_name = format!("{server_name}__image");
+    let namespace = server_name.to_string();
 
     // First stream: model decides to call the image tool.
     mount_sse_once(
@@ -1176,8 +1176,8 @@ async fn stdio_image_responses_preserve_original_detail_metadata() -> anyhow::Re
 
     let call_id = "img-original-detail-1";
     let server_name = "rmcp";
-    let tool_name = format!("mcp__{server_name}__image_scenario");
-    let namespace = format!("mcp__{server_name}__");
+    let tool_name = format!("{server_name}__image_scenario");
+    let namespace = server_name.to_string();
 
     mount_sse_once(
         &server,
@@ -1263,7 +1263,7 @@ async fn stdio_image_responses_are_sanitized_for_text_only_model() -> anyhow::Re
 
     let call_id = "img-text-only-1";
     let server_name = "rmcp";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     let text_only_model_slug = "rmcp-text-only-model";
 
     let models_mock = mount_models_once(
@@ -1408,7 +1408,7 @@ async fn stdio_server_propagates_whitelisted_env_vars() -> anyhow::Result<()> {
 
     let call_id = "call-1234";
     let server_name = "rmcp_whitelist";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
 
     mount_sse_once(
         &server,
@@ -1522,7 +1522,7 @@ async fn stdio_server_propagates_explicit_local_env_var_source() -> anyhow::Resu
     let server = responses::start_mock_server().await;
     let call_id = "call-local-source";
     let server_name = "rmcp_local_source";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     let env_name = "MCP_TEST_LOCAL_SOURCE";
     let expected_env_value = "propagated-explicit-local-source";
 
@@ -1615,7 +1615,7 @@ async fn remote_stdio_env_var_source_does_not_copy_local_env() -> anyhow::Result
     let server = responses::start_mock_server().await;
     let call_id = "call-remote-source";
     let server_name = "rmcp_remote_source";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
     let env_name = "MCP_TEST_REMOTE_SOURCE_ONLY";
 
     mount_sse_once(
@@ -1787,7 +1787,7 @@ async fn streamable_http_tool_call_round_trip() -> anyhow::Result<()> {
 
     let call_id = "call-456";
     let server_name = "rmcp_http";
-    let namespace = format!("mcp__{server_name}__");
+    let namespace = server_name.to_string();
 
     mount_sse_once(
         &server,
@@ -1954,8 +1954,8 @@ async fn streamable_http_with_oauth_round_trip_impl() -> anyhow::Result<()> {
 
     let call_id = "call-789";
     let server_name = "rmcp_http_oauth";
-    let tool_name = format!("mcp__{server_name}__echo");
-    let namespace = format!("mcp__{server_name}__");
+    let tool_name = format!("{server_name}__echo");
+    let namespace = server_name.to_string();
 
     mount_sse_once(
         &server,

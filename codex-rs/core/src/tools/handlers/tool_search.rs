@@ -202,11 +202,11 @@ mod tests {
         let handler = handler_from_tools(
             Some(&std::collections::HashMap::from([
                 (
-                    "mcp__calendar__create_event".to_string(),
+                    "calendar__create_event".to_string(),
                     tool_info("calendar", "create_event", "Create events"),
                 ),
                 (
-                    "mcp__calendar__list_events".to_string(),
+                    "calendar__list_events".to_string(),
                     tool_info("calendar", "list_events", "List events"),
                 ),
             ])),
@@ -226,8 +226,8 @@ mod tests {
             tools,
             vec![
                 LoadableToolSpec::Namespace(ResponsesApiNamespace {
-                    name: "mcp__calendar__".to_string(),
-                    description: "Tools in the mcp__calendar__ namespace.".to_string(),
+                    name: "calendar".to_string(),
+                    description: "Tools in the calendar namespace.".to_string(),
                     tools: vec![
                         ResponsesApiNamespaceTool::Function(ResponsesApiTool {
                             name: "create_event".to_string(),
@@ -380,7 +380,7 @@ mod tests {
             .map(|index| {
                 let tool_name = format!("tool_{index:03}");
                 (
-                    format!("mcp__{server_name}__{tool_name}"),
+                    format!("{server_name}__{tool_name}"),
                     tool_info(server_name, &tool_name, description_prefix),
                 )
             })
@@ -391,7 +391,7 @@ mod tests {
         ToolInfo {
             server_name: server_name.to_string(),
             callable_name: tool_name.to_string(),
-            callable_namespace: format!("mcp__{server_name}__"),
+            callable_namespace: server_name.to_string(),
             server_instructions: None,
             tool: Tool {
                 name: tool_name.to_string().into(),
