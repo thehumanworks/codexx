@@ -180,17 +180,17 @@ mod tests {
             .expect("refresh tests require state db");
         let thread_store = thread_store_from_config(&good_config, state_db.clone());
         let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
-        let thread_manager = Arc::new(ThreadManager::new(
+        let thread_manager = Arc::new(ThreadManager::builder(
             &good_config,
             auth_manager,
-            SessionSource::Exec,
             Arc::new(EnvironmentManager::default_for_tests()),
-            /*analytics_events_client*/ None,
             state_db,
             thread_store,
             agent_graph_store,
             "11111111-1111-4111-8111-111111111111".to_string(),
-        ));
+        )
+        .session_source(SessionSource::Exec)
+        .build());
         thread_manager.start_thread(good_config).await?;
         thread_manager.start_thread(bad_config).await?;
 

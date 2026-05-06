@@ -3162,17 +3162,17 @@ async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtr
     let state_db = init_state_db(&config)
         .await
         .expect("test config should initialize state db");
-    let manager = ThreadManager::new(
+    let manager = ThreadManager::builder(
         &config,
         AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy")),
-        SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-        /*analytics_events_client*/ None,
         state_db.clone(),
         thread_store_from_config(&config, state_db.clone()),
         agent_graph_store_from_state_db(state_db.clone()),
         "11111111-1111-4111-8111-111111111111".to_string(),
-    );
+    )
+    .session_source(SessionSource::Exec)
+    .build();
 
     let parent = manager
         .start_thread(config.clone())

@@ -433,17 +433,17 @@ impl TestCodexBuilder {
             let thread_store = thread_store_from_config(&config, state_db.clone());
             let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
             let installation_id = resolve_installation_id(&config.codex_home).await?;
-            ThreadManager::new(
+            ThreadManager::builder(
                 &config,
                 codex_core::test_support::auth_manager_from_auth(auth.clone()),
-                SessionSource::Exec,
                 Arc::clone(&environment_manager),
-                /*analytics_events_client*/ None,
                 state_db,
                 thread_store,
                 agent_graph_store,
                 installation_id,
             )
+            .session_source(SessionSource::Exec)
+            .build()
         } else {
             codex_core::test_support::thread_manager_with_models_provider_and_home(
                 auth.clone(),

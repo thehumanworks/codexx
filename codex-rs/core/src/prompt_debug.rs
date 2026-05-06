@@ -44,17 +44,17 @@ pub async fn build_prompt_input(
     let thread_store = thread_store_from_config(&config, state_db.clone());
     let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
     let installation_id = resolve_installation_id(&config.codex_home).await?;
-    let thread_manager = ThreadManager::new(
+    let thread_manager = ThreadManager::builder(
         &config,
         Arc::clone(&auth_manager),
-        SessionSource::Exec,
         Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await),
-        /*analytics_events_client*/ None,
         state_db,
         thread_store,
         agent_graph_store,
         installation_id,
-    );
+    )
+    .session_source(SessionSource::Exec)
+    .build();
     let thread = thread_manager.start_thread(config).await?;
 
     let output = build_prompt_input_from_session(thread.thread.codex.session.as_ref(), input).await;

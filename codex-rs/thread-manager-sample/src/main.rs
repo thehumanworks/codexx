@@ -121,17 +121,17 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     let environment_manager =
         Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await);
     let installation_id = resolve_installation_id(&config.codex_home).await?;
-    let thread_manager = ThreadManager::new(
+    let thread_manager = ThreadManager::builder(
         &config,
         auth_manager,
-        SessionSource::Exec,
         environment_manager,
-        /*analytics_events_client*/ None,
         state_db,
         Arc::clone(&thread_store),
         agent_graph_store,
         installation_id,
-    );
+    )
+    .session_source(SessionSource::Exec)
+    .build();
 
     let NewThread {
         thread_id, thread, ..

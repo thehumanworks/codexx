@@ -66,17 +66,17 @@ impl MessageProcessor {
         let state_db = init_state_db_from_config(config.as_ref()).await?;
         let thread_store = thread_store_from_config(config.as_ref(), state_db.clone());
         let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
-        let thread_manager = Arc::new(ThreadManager::new(
+        let thread_manager = Arc::new(ThreadManager::builder(
             config.as_ref(),
             auth_manager,
-            SessionSource::Mcp,
             environment_manager,
-            /*analytics_events_client*/ None,
             state_db,
             thread_store,
             agent_graph_store,
             installation_id,
-        ));
+        )
+        .session_source(SessionSource::Mcp)
+        .build());
         Some(Self {
             outgoing,
             initialized: false,

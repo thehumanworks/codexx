@@ -295,17 +295,18 @@ impl MessageProcessor {
         // resumed, or forked threads to a different persistence backend/root.
         let thread_store = thread_store_from_config(config.as_ref(), state_db.clone());
         let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
-        let thread_manager = Arc::new(ThreadManager::new(
+        let thread_manager = Arc::new(ThreadManager::builder(
             config.as_ref(),
             auth_manager.clone(),
-            session_source,
             environment_manager,
-            Some(analytics_events_client.clone()),
             state_db.clone(),
             Arc::clone(&thread_store),
             agent_graph_store.clone(),
             installation_id,
-        ));
+        )
+        .session_source(session_source)
+        .analytics_events_client(analytics_events_client.clone())
+        .build());
         thread_manager
             .plugins_manager()
             .set_analytics_events_client(analytics_events_client.clone());

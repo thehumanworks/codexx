@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::config::ThreadStoreConfig;
 use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
+use crate::extensibility::ExtensionRegistry;
 use crate::file_watcher::FileWatcher;
 use crate::mcp::McpManager;
 use crate::resolve_installation_id;
@@ -216,6 +217,107 @@ pub struct ThreadManager {
     _test_codex_home_guard: Option<TempCodexHomeGuard>,
 }
 
+/// Builder for constructing a [`ThreadManager`].
+pub struct ThreadManagerBuilder {
+    codex_home: AbsolutePathBuf,
+    bundled_skills_enabled: bool,
+    auth_manager: Arc<AuthManager>,
+    models_manager: SharedModelsManager,
+    session_source: SessionSource,
+    environment_manager: Arc<EnvironmentManager>,
+    analytics_events_client: Option<AnalyticsEventsClient>,
+    state_db: StateDbHandle,
+    thread_store: Arc<dyn ThreadStore>,
+    agent_graph_store: Arc<dyn AgentGraphStore>,
+    extensions: ExtensionRegistry,
+    installation_id: String,
+    test_codex_home_guard: Option<TempCodexHomeGuard>,
+}
+
+impl ThreadManagerBuilder {
+    /// Create a builder from the effective runtime config and process-scoped stores.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_config(
+        config: &Config,
+        auth_manager: Arc<AuthManager>,
+        environment_manager: Arc<EnvironmentManager>,
+        state_db: StateDbHandle,
+        thread_store: Arc<dyn ThreadStore>,
+        agent_graph_store: Arc<dyn AgentGraphStore>,
+        installation_id: String,
+    ) -> Self {
+        Self::new(
+            config.codex_home.clone(),
+            config.bundled_skills_enabled(),
+            auth_manager.clone(),
+            build_models_manager(config, auth_manager),
+            environment_manager,
+            state_db,
+            thread_store,
+            agent_graph_store,
+            installation_id,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        codex_home: AbsolutePathBuf,
+        bundled_skills_enabled: bool,
+        auth_manager: Arc<AuthManager>,
+        models_manager: SharedModelsManager,
+        environment_manager: Arc<EnvironmentManager>,
+        state_db: StateDbHandle,
+        thread_store: Arc<dyn ThreadStore>,
+        agent_graph_store: Arc<dyn AgentGraphStore>,
+        installation_id: String,
+    ) -> Self {
+        Self {
+            codex_home,
+            bundled_skills_enabled,
+            auth_manager,
+            models_manager,
+            session_source: SessionSource::Exec,
+            environment_manager,
+            analytics_events_client: None,
+            state_db,
+            thread_store,
+            agent_graph_store,
+            extensions: ExtensionRegistry::default(),
+            installation_id,
+            test_codex_home_guard: None,
+        }
+    }
+
+    /// Override the session source recorded on threads started by this manager.
+    pub fn session_source(mut self, session_source: SessionSource) -> Self {
+        self.session_source = session_source;
+        self
+    }
+
+    /// Attach the analytics client used by services owned by this manager.
+    pub fn analytics_events_client(
+        mut self,
+        analytics_events_client: AnalyticsEventsClient,
+    ) -> Self {
+        self.analytics_events_client = Some(analytics_events_client);
+        self
+    }
+
+    /// Register one implementation for extension trait `T`.
+    pub fn register_extension<T>(mut self, extension: Arc<T>) -> Self
+    where
+        T: ?Sized + Send + Sync + 'static,
+    {
+        self.extensions.register(extension);
+        self
+    }
+
+    /// Build a thread manager from the configured inputs.
+    pub fn build(self) -> ThreadManager {
+        ThreadManager::new(self)
+    }
+}
+
 pub struct StartThreadOptions {
     pub config: Config,
     pub initial_history: InitialHistory,
@@ -253,6 +355,7 @@ pub(crate) struct ThreadManagerState {
     thread_store: Arc<dyn ThreadStore>,
     state_db: StateDbHandle,
     agent_graph_store: Arc<dyn AgentGraphStore>,
+    extensions: ExtensionRegistry,
     session_source: SessionSource,
     installation_id: String,
     analytics_events_client: Option<AnalyticsEventsClient>,
@@ -308,19 +411,44 @@ async fn state_db_from_roots_for_tests(
 }
 
 impl ThreadManager {
+    /// Create a builder for the standard runtime thread manager.
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub fn builder(
         config: &Config,
         auth_manager: Arc<AuthManager>,
-        session_source: SessionSource,
         environment_manager: Arc<EnvironmentManager>,
-        analytics_events_client: Option<AnalyticsEventsClient>,
         state_db: StateDbHandle,
         thread_store: Arc<dyn ThreadStore>,
         agent_graph_store: Arc<dyn AgentGraphStore>,
         installation_id: String,
-    ) -> Self {
-        let codex_home = config.codex_home.clone();
+    ) -> ThreadManagerBuilder {
+        ThreadManagerBuilder::from_config(
+            config,
+            auth_manager,
+            environment_manager,
+            state_db,
+            thread_store,
+            agent_graph_store,
+            installation_id,
+        )
+    }
+
+    fn new(builder: ThreadManagerBuilder) -> Self {
+        let ThreadManagerBuilder {
+            codex_home,
+            bundled_skills_enabled,
+            auth_manager,
+            models_manager,
+            session_source,
+            environment_manager,
+            analytics_events_client,
+            state_db,
+            thread_store,
+            agent_graph_store,
+            extensions,
+            installation_id,
+            test_codex_home_guard,
+        } = builder;
         let restriction_product = session_source.restriction_product();
         let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
         let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
@@ -330,7 +458,7 @@ impl ThreadManager {
         let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
         let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
             codex_home,
-            config.bundled_skills_enabled(),
+            bundled_skills_enabled,
             restriction_product,
         ));
         let skills_watcher = build_skills_watcher(Arc::clone(&skills_manager));
@@ -338,7 +466,7 @@ impl ThreadManager {
             state: Arc::new(ThreadManagerState {
                 threads: Arc::new(RwLock::new(HashMap::new())),
                 thread_created_tx,
-                models_manager: build_models_manager(config, auth_manager.clone()),
+                models_manager,
                 environment_manager,
                 skills_manager,
                 plugins_manager,
@@ -347,6 +475,7 @@ impl ThreadManager {
                 thread_store,
                 state_db,
                 agent_graph_store,
+                extensions,
                 auth_manager,
                 session_source,
                 installation_id,
@@ -354,7 +483,7 @@ impl ThreadManager {
                 ops_log: should_use_test_thread_manager_behavior()
                     .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
             }),
-            _test_codex_home_guard: None,
+            _test_codex_home_guard: test_codex_home_guard,
         }
     }
 
@@ -440,21 +569,8 @@ impl ThreadManager {
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
-        let (thread_created_tx, _) = broadcast::channel(THREAD_CREATED_CHANNEL_CAPACITY);
-        let restriction_product = SessionSource::Exec.restriction_product();
-        let plugins_manager = Arc::new(PluginsManager::new_with_restriction_product(
-            codex_home.clone(),
-            restriction_product,
-        ));
-        let mcp_manager = Arc::new(McpManager::new(Arc::clone(&plugins_manager)));
-        let skills_manager = Arc::new(SkillsManager::new_with_restriction_product(
-            skills_codex_home,
-            /*bundled_skills_enabled*/ true,
-            restriction_product,
-        ));
-        let skills_watcher = build_skills_watcher(Arc::clone(&skills_manager));
-        // This test constructor has no Config input. Tests that need a non-local
-        // process store should construct ThreadManager::new with an explicit store.
+        // This test helper has no Config input. Tests that need a non-local
+        // process store should construct ThreadManager through the builder with an explicit store.
         let thread_store: Arc<dyn ThreadStore> = Arc::new(LocalThreadStore::new(
             LocalThreadStoreConfig {
                 codex_home: codex_home.clone(),
@@ -463,29 +579,21 @@ impl ThreadManager {
             state_db.clone(),
         ));
         let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
-        Self {
-            state: Arc::new(ThreadManagerState {
-                threads: Arc::new(RwLock::new(HashMap::new())),
-                thread_created_tx,
-                models_manager: create_model_provider(provider, Some(auth_manager.clone()))
-                    .models_manager(codex_home, /*config_model_catalog*/ None),
-                environment_manager,
-                skills_manager,
-                plugins_manager,
-                mcp_manager,
-                skills_watcher,
-                thread_store,
-                state_db,
-                agent_graph_store,
-                auth_manager,
-                session_source: SessionSource::Exec,
-                installation_id,
-                analytics_events_client: None,
-                ops_log: should_use_test_thread_manager_behavior()
-                    .then(|| Arc::new(std::sync::Mutex::new(Vec::new()))),
-            }),
-            _test_codex_home_guard: None,
-        }
+        let models_manager = create_model_provider(provider, Some(auth_manager.clone()))
+            .models_manager(codex_home, /*config_model_catalog*/ None);
+        ThreadManagerBuilder::new(
+            skills_codex_home,
+            /*bundled_skills_enabled*/ true,
+            auth_manager,
+            models_manager,
+            environment_manager,
+            state_db,
+            thread_store,
+            agent_graph_store,
+            installation_id,
+        )
+        .session_source(SessionSource::Exec)
+        .build()
     }
 
     pub fn session_source(&self) -> SessionSource {
@@ -529,6 +637,10 @@ impl ThreadManager {
 
     pub fn get_models_manager(&self) -> SharedModelsManager {
         self.state.models_manager.clone()
+    }
+
+    pub fn extensions(&self) -> &ExtensionRegistry {
+        &self.state.extensions
     }
 
     pub async fn list_models(&self, refresh_strategy: RefreshStrategy) -> Vec<ModelPreset> {
