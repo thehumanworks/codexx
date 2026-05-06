@@ -379,6 +379,7 @@ impl CatalogRequestProcessor {
         &self,
         params: SkillsListParams,
     ) -> Result<SkillsListResponse, JSONRPCErrorError> {
+        let total_started_at = Instant::now();
         let SkillsListParams {
             cwds,
             force_reload,
@@ -390,7 +391,9 @@ impl CatalogRequestProcessor {
             cwds
         };
         let cwd_set: HashSet<PathBuf> = cwds.iter().cloned().collect();
+        let cwd_count = cwds.len();
 
+        let extra_roots_started_at = Instant::now();
         let mut extra_roots_by_cwd: HashMap<PathBuf, Vec<AbsolutePathBuf>> = HashMap::new();
         for entry in per_cwd_extra_user_roots.unwrap_or_default() {
             if !cwd_set.contains(&entry.cwd) {
@@ -417,12 +420,20 @@ impl CatalogRequestProcessor {
                 .or_default()
                 .extend(valid_extra_roots);
         }
+        let extra_roots_ms = extra_roots_started_at.elapsed().as_millis();
+        let extra_root_count = extra_roots_by_cwd.values().map(Vec::len).sum::<usize>();
 
+        let load_config_started_at = Instant::now();
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let load_config_ms = load_config_started_at.elapsed().as_millis();
+        let auth_started_at = Instant::now();
         let auth = self.auth_manager.auth().await;
+        let auth_ms = auth_started_at.elapsed().as_millis();
+        let workspace_setting_started_at = Instant::now();
         let workspace_codex_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await;
+        let workspace_setting_ms = workspace_setting_started_at.elapsed().as_millis();
         let skills_manager = self.thread_manager.skills_manager();
         let plugins_manager = self.thread_manager.plugins_manager();
         let fs = self
@@ -432,9 +443,17 @@ impl CatalogRequestProcessor {
             .map(|environment| environment.get_filesystem());
         let mut data = Vec::new();
         for cwd in cwds {
+            let cwd_started_at = Instant::now();
+            let resolve_cwd_config_started_at = Instant::now();
             let (cwd_abs, config_layer_stack) = match self.resolve_cwd_config(&cwd).await {
                 Ok(resolved) => resolved,
                 Err(message) => {
+                    warn!(
+                        cwd = %cwd.display(),
+                        total_ms = cwd_started_at.elapsed().as_millis(),
+                        resolve_cwd_config_ms = resolve_cwd_config_started_at.elapsed().as_millis(),
+                        "skills/list cwd timing failed to resolve cwd config"
+                    );
                     let error_path = cwd.clone();
                     data.push(codex_app_server_protocol::SkillsListEntry {
                         cwd,
@@ -447,9 +466,11 @@ impl CatalogRequestProcessor {
                     continue;
                 }
             };
+            let resolve_cwd_config_ms = resolve_cwd_config_started_at.elapsed().as_millis();
             let extra_roots = extra_roots_by_cwd
                 .get(&cwd)
                 .map_or(&[][..], std::vec::Vec::as_slice);
+            let effective_skill_roots_started_at = Instant::now();
             let effective_skill_roots = if workspace_codex_plugins_enabled {
                 let plugins_input = config.plugins_config_input();
                 plugins_manager
@@ -458,12 +479,15 @@ impl CatalogRequestProcessor {
             } else {
                 Vec::new()
             };
+            let effective_skill_roots_ms = effective_skill_roots_started_at.elapsed().as_millis();
+            let effective_skill_root_count = effective_skill_roots.len();
             let skills_input = codex_core::skills::SkillsLoadInput::new(
                 cwd_abs.clone(),
                 effective_skill_roots,
                 config_layer_stack,
                 config.bundled_skills_enabled(),
             );
+            let load_skills_started_at = Instant::now();
             let outcome = skills_manager
                 .skills_for_cwd_with_extra_user_roots(
                     &skills_input,
@@ -472,14 +496,44 @@ impl CatalogRequestProcessor {
                     fs.clone(),
                 )
                 .await;
+            let load_skills_ms = load_skills_started_at.elapsed().as_millis();
             let errors = errors_to_info(&outcome.errors);
             let skills = skills_to_info(&outcome.skills, &outcome.disabled_paths);
+            warn!(
+                cwd = %cwd.display(),
+                total_ms = cwd_started_at.elapsed().as_millis(),
+                resolve_cwd_config_ms,
+                effective_skill_roots_ms,
+                load_skills_ms,
+                extra_root_count = extra_roots.len(),
+                effective_skill_root_count,
+                skill_count = skills.len(),
+                error_count = errors.len(),
+                "skills/list cwd timing"
+            );
             data.push(codex_app_server_protocol::SkillsListEntry {
                 cwd,
                 skills,
                 errors,
             });
         }
+        let skill_count = data.iter().map(|entry| entry.skills.len()).sum::<usize>();
+        let error_count = data.iter().map(|entry| entry.errors.len()).sum::<usize>();
+        warn!(
+            cwd_count,
+            total_ms = total_started_at.elapsed().as_millis(),
+            force_reload,
+            extra_roots_ms,
+            extra_root_count,
+            load_config_ms,
+            auth_ms,
+            workspace_setting_ms,
+            workspace_codex_plugins_enabled,
+            has_remote_fs = fs.is_some(),
+            skill_count,
+            error_count,
+            "skills/list timing"
+        );
         Ok(SkillsListResponse { data })
     }
 

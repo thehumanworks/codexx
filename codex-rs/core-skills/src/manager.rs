@@ -9,6 +9,7 @@ use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_plugins::PluginSkillRoot;
+use std::time::Instant;
 use tracing::info;
 use tracing::warn;
 
@@ -143,14 +144,28 @@ impl SkillsManager {
         extra_user_roots: &[AbsolutePathBuf],
         fs: Option<Arc<dyn ExecutorFileSystem>>,
     ) -> SkillLoadOutcome {
+        let total_started_at = Instant::now();
         let use_cwd_cache = fs.is_some();
         if use_cwd_cache
             && !force_reload
             && let Some(outcome) = self.cached_outcome_for_cwd(&input.cwd)
         {
+            warn!(
+                cwd = %input.cwd.as_path().display(),
+                total_ms = total_started_at.elapsed().as_millis(),
+                force_reload,
+                use_cwd_cache,
+                cache_hit = true,
+                effective_skill_root_count = input.effective_skill_roots.len(),
+                extra_user_root_count = extra_user_roots.len(),
+                skill_count = outcome.skills.len(),
+                error_count = outcome.errors.len(),
+                "skills manager cwd timing"
+            );
             return outcome;
         }
 
+        let skill_roots_started_at = Instant::now();
         let mut roots = skill_roots(
             fs.clone(),
             &input.config_layer_stack,
@@ -158,6 +173,7 @@ impl SkillsManager {
             input.effective_skill_roots.clone(),
         )
         .await;
+        let skill_roots_ms = skill_roots_started_at.elapsed().as_millis();
         if !bundled_skills_enabled_from_stack(&input.config_layer_stack) {
             roots.retain(|root| root.scope != SkillScope::System);
         }
@@ -173,8 +189,12 @@ impl SkillsManager {
                     }),
             );
         }
+        let root_count = roots.len();
         let skill_config_rules = skill_config_rules_from_stack(&input.config_layer_stack);
+        let build_outcome_started_at = Instant::now();
         let outcome = self.build_skill_outcome(roots, &skill_config_rules).await;
+        let build_outcome_ms = build_outcome_started_at.elapsed().as_millis();
+        let cache_write_started_at = Instant::now();
         if use_cwd_cache {
             let mut cache = self
                 .cache_by_cwd
@@ -182,6 +202,23 @@ impl SkillsManager {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             cache.insert(input.cwd.clone(), outcome.clone());
         }
+        let cache_write_ms = cache_write_started_at.elapsed().as_millis();
+        warn!(
+            cwd = %input.cwd.as_path().display(),
+            total_ms = total_started_at.elapsed().as_millis(),
+            force_reload,
+            use_cwd_cache,
+            cache_hit = false,
+            effective_skill_root_count = input.effective_skill_roots.len(),
+            extra_user_root_count = extra_user_roots.len(),
+            root_count,
+            skill_roots_ms,
+            build_outcome_ms,
+            cache_write_ms,
+            skill_count = outcome.skills.len(),
+            error_count = outcome.errors.len(),
+            "skills manager cwd timing"
+        );
         outcome
     }
 
