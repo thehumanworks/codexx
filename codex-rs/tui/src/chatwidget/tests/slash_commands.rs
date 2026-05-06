@@ -1582,6 +1582,37 @@ async fn slash_clear_requests_ui_clear_when_idle() {
 }
 
 #[tokio::test]
+async fn slash_clear_after_ctrl_c_keeps_stashed_draft_recallable() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let thread_id = ThreadId::new();
+    chat.thread_id = Some(thread_id);
+    chat.bottom_pane
+        .set_history_metadata(thread_id, /*log_id*/ 1, /*entry_count*/ 0);
+
+    submit_composer_text(&mut chat, "ok");
+    assert_eq!(next_add_to_history_event(&mut rx), "ok");
+
+    let stashed_draft = "explain why history recall lost this draft";
+
+    chat.bottom_pane
+        .set_composer_text(stashed_draft.to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(chat.bottom_pane.composer_text(), "");
+    assert_eq!(next_add_to_history_event(&mut rx), stashed_draft);
+
+    chat.bottom_pane
+        .set_composer_text("/clear".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+    assert_matches!(rx.try_recv(), Ok(AppEvent::ClearUi));
+    chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(chat.bottom_pane.composer_text(), stashed_draft);
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+    assert_eq!(chat.bottom_pane.composer_text(), "ok");
+}
+
+#[tokio::test]
 async fn slash_clear_is_disabled_while_task_running() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.bottom_pane.set_task_running(/*running*/ true);

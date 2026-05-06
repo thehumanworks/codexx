@@ -29,7 +29,7 @@ fn build_environment_update_item(
 
     let prev = previous?;
     let prev_context = EnvironmentContext::from_turn_context_item(prev, shell.name().to_string());
-    let next_context = EnvironmentContext::from_turn_context(next);
+    let next_context = EnvironmentContext::from_turn_context(next, shell);
     if prev_context.equals_except_shell(&next_context) {
         return None;
     }
@@ -50,14 +50,19 @@ fn build_permissions_update_item(
 
     let prev = previous?;
     if prev.permission_profile() == next.permission_profile()
+        && prev.workspace_roots == next.workspace_roots
         && prev.approval_policy == next.approval_policy.value()
     {
         return None;
     }
 
+    let permission_profile = next
+        .permission_profile
+        .clone()
+        .materialize_project_roots_with_workspace_roots(&next.workspace_roots);
     Some(
         PermissionsInstructions::from_permission_profile(
-            &next.permission_profile,
+            &permission_profile,
             next.approval_policy.value(),
             next.config.approvals_reviewer,
             exec_policy,

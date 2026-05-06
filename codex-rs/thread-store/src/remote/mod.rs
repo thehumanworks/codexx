@@ -349,6 +349,7 @@ mod tests {
         let (store, mut requests_rx) = test_store().await;
         let metadata = ThreadPersistenceMetadata {
             cwd: Some(PathBuf::from("/workspace")),
+            workspace_roots: Vec::new(),
             model_provider: "test-provider".to_string(),
             memory_mode: ThreadMemoryMode::Enabled,
         };
@@ -382,6 +383,7 @@ mod tests {
         let (store, mut requests_rx) = test_store().await;
         let metadata = ThreadPersistenceMetadata {
             cwd: Some(PathBuf::from("/workspace")),
+            workspace_roots: Vec::new(),
             model_provider: "test-provider".to_string(),
             memory_mode: ThreadMemoryMode::Disabled,
         };

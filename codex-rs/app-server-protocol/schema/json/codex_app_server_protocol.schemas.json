@@ -5588,45 +5588,12 @@
           "id": {
             "description": "Identifier from `default_permissions` or the implicit built-in default, such as `:workspace` or a user-defined `[permissions.<id>]` profile.",
             "type": "string"
-          },
-          "modifications": {
-            "default": [],
-            "description": "Bounded user-requested modifications applied on top of the named profile, if any.",
-            "items": {
-              "$ref": "#/definitions/v2/ActivePermissionProfileModification"
-            },
-            "type": "array"
           }
         },
         "required": [
           "id"
         ],
         "type": "object"
-      },
-      "ActivePermissionProfileModification": {
-        "oneOf": [
-          {
-            "description": "Additional concrete directory that should be writable.",
-            "properties": {
-              "path": {
-                "$ref": "#/definitions/v2/AbsolutePathBuf"
-              },
-              "type": {
-                "enum": [
-                  "additionalWritableRoot"
-                ],
-                "title": "AdditionalWritableRootActivePermissionProfileModificationType",
-                "type": "string"
-              }
-            },
-            "required": [
-              "path",
-              "type"
-            ],
-            "title": "AdditionalWritableRootActivePermissionProfileModification",
-            "type": "object"
-          }
-        ]
       },
       "AddCreditsNudgeCreditType": {
         "enum": [
@@ -11969,31 +11936,6 @@
           }
         ]
       },
-      "PermissionProfileModificationParams": {
-        "oneOf": [
-          {
-            "description": "Additional concrete directory that should be writable.",
-            "properties": {
-              "path": {
-                "$ref": "#/definitions/v2/AbsolutePathBuf"
-              },
-              "type": {
-                "enum": [
-                  "additionalWritableRoot"
-                ],
-                "title": "AdditionalWritableRootPermissionProfileModificationParamsType",
-                "type": "string"
-              }
-            },
-            "required": [
-              "path",
-              "type"
-            ],
-            "title": "AdditionalWritableRootPermissionProfileModificationParams",
-            "type": "object"
-          }
-        ]
-      },
       "PermissionProfileNetworkPermissions": {
         "properties": {
           "enabled": {
@@ -12008,19 +11950,10 @@
       "PermissionProfileSelectionParams": {
         "oneOf": [
           {
-            "description": "Select a named built-in or user-defined profile and optionally apply bounded modifications that Codex knows how to validate.",
+            "description": "Select a named built-in or user-defined profile. This updates profile identity metadata only; it does not replace the thread's effective permissions profile.",
             "properties": {
               "id": {
                 "type": "string"
-              },
-              "modifications": {
-                "items": {
-                  "$ref": "#/definitions/v2/PermissionProfileModificationParams"
-                },
-                "type": [
-                  "array",
-                  "null"
-                ]
               },
               "type": {
                 "enum": [
@@ -14532,13 +14465,6 @@
                 ],
                 "title": "WorkspaceWriteSandboxPolicyType",
                 "type": "string"
-              },
-              "writableRoots": {
-                "default": [],
-                "items": {
-                  "$ref": "#/definitions/v2/AbsolutePathBuf"
-                },
-                "type": "array"
               }
             },
             "required": [
@@ -15555,7 +15481,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Deprecated for fork. The server rejects this field because the source permission profile value is preserved across fork."
           },
           "serviceTier": {
             "type": [
@@ -17058,7 +16985,8 @@
               {
                 "type": "null"
               }
-            ]
+            ],
+            "description": "Deprecated for resume. The server rejects this field because the persisted permission profile value is preserved across resume."
           },
           "serviceTier": {
             "type": [
@@ -18100,7 +18028,7 @@
                 "type": "null"
               }
             ],
-            "description": "Override the sandbox policy for this turn and subsequent turns."
+            "description": "Deprecated for turns. The server rejects this field because the thread permission profile value is not mutable through `turn/start`."
           },
           "serviceTier": {
             "description": "Override the service tier for this turn and subsequent turns.",
