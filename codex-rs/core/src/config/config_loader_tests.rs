@@ -119,7 +119,7 @@ async fn returns_config_error_for_invalid_user_config_toml() {
 }
 
 #[tokio::test]
-async fn invalid_enum_values_emit_warnings_without_poisoning_config() -> std::io::Result<()> {
+async fn invalid_enum_values_emit_warnings_without_poisoning_config() -> anyhow::Result<()> {
     let tmp = tempdir().expect("tempdir");
     let contents = r#"
 model = "gpt-5-codex"
