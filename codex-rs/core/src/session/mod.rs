@@ -32,7 +32,6 @@ use crate::context::PersonalitySpecInstructions;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
-use crate::installation_id::resolve_installation_id;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::realtime_conversation::RealtimeConversationManager;
@@ -307,6 +306,7 @@ use crate::windows_sandbox::WindowsSandboxLevelExt;
 use codex_core_plugins::PluginsManager;
 use codex_git_utils::get_git_repo_root;
 use codex_mcp::compute_auth_statuses;
+use codex_mcp::host_owned_codex_apps_enabled;
 use codex_mcp::with_codex_apps_mcp;
 use codex_otel::SessionTelemetry;
 use codex_otel::THREAD_STARTED_METRIC;
@@ -383,6 +383,7 @@ pub struct CodexSpawnOk {
 
 pub(crate) struct CodexSpawnArgs {
     pub(crate) config: Config,
+    pub(crate) installation_id: String,
     pub(crate) auth_manager: Arc<AuthManager>,
     pub(crate) models_manager: SharedModelsManager,
     pub(crate) environment_manager: Arc<EnvironmentManager>,
@@ -446,6 +447,7 @@ impl Codex {
     async fn spawn_internal(args: CodexSpawnArgs) -> CodexResult<CodexSpawnOk> {
         let CodexSpawnArgs {
             mut config,
+            installation_id,
             auth_manager,
             models_manager,
             environment_manager,
@@ -586,7 +588,7 @@ impl Codex {
             .auth_cached()
             .and_then(|auth| auth.account_plan_type());
         let service_tier = get_service_tier(
-            config.service_tier,
+            config.service_tier.clone(),
             config.notices.fast_default_opt_out.unwrap_or(false),
             account_plan_type,
             config.features.enabled(Feature::FastMode),
@@ -629,6 +631,7 @@ impl Codex {
         let session = Session::new(
             session_configuration,
             config.clone(),
+            installation_id,
             auth_manager.clone(),
             models_manager.clone(),
             exec_policy,
@@ -784,18 +787,18 @@ impl Codex {
 }
 
 fn get_service_tier(
-    configured_service_tier: Option<ServiceTier>,
+    configured_service_tier: Option<String>,
     fast_default_opt_out: bool,
     account_plan_type: Option<AccountPlanType>,
     fast_mode_enabled: bool,
-) -> Option<ServiceTier> {
+) -> Option<String> {
     if configured_service_tier.is_some() || fast_default_opt_out || !fast_mode_enabled {
         return configured_service_tier;
     }
 
     account_plan_type
         .is_some_and(is_enterprise_default_service_tier_plan)
-        .then_some(ServiceTier::Fast)
+        .then_some(ServiceTier::Fast.request_value().to_string())
 }
 
 fn is_enterprise_default_service_tier_plan(plan_type: AccountPlanType) -> bool {

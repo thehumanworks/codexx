@@ -311,8 +311,6 @@ impl ToolRegistry {
         let display_name = tool_name.display();
         let call_id_owned = invocation.call_id.clone();
         let otel = invocation.turn.session_telemetry.clone();
-        let payload_for_response = invocation.payload.clone();
-        let log_payload = payload_for_response.log_payload();
         let metric_tags = [
             (
                 "sandbox",
@@ -360,6 +358,7 @@ impl ToolRegistry {
             Some(handler) => handler,
             None => {
                 let message = unsupported_tool_call_message(&invocation.payload, &tool_name);
+                let log_payload = invocation.payload.log_payload();
                 otel.tool_result_with_tags(
                     &display_name,
                     &call_id_owned,
@@ -379,6 +378,7 @@ impl ToolRegistry {
 
         if !handler.matches_kind(&invocation.payload) {
             let message = format!("tool {display_name} invoked with incompatible payload");
+            let log_payload = invocation.payload.log_payload();
             otel.tool_result_with_tags(
                 &display_name,
                 &call_id_owned,
@@ -426,6 +426,7 @@ impl ToolRegistry {
         let invocation_for_tool = invocation.clone();
 
         let started = Instant::now();
+        let log_payload = invocation.payload.log_payload();
         let result = otel
             .log_tool_result_with_tags(
                 &display_name,

@@ -89,6 +89,35 @@ fn shell_command_payload_command(payload: &ToolPayload) -> Option<String> {
         .map(|params| params.command)
 }
 
+// Hooks expose legacy function shell tools as joined command strings, while
+// their function payload stores argv. Split on the way back in to invert the
+// hook-facing representation.
+fn rewrite_shell_function_updated_hook_input(
+    mut invocation: ToolInvocation,
+    updated_input: JsonValue,
+    tool_name: &str,
+) -> Result<ToolInvocation, FunctionCallError> {
+    let ToolPayload::Function { arguments } = invocation.payload else {
+        return Err(FunctionCallError::RespondToModel(format!(
+            "hook input rewrite received unsupported {tool_name} payload"
+        )));
+    };
+    let command = shlex::split(updated_hook_command(&updated_input)?).ok_or_else(|| {
+        FunctionCallError::RespondToModel(
+            "hook returned shell input with an invalid command string".to_string(),
+        )
+    })?;
+    invocation.payload = ToolPayload::Function {
+        arguments: rewrite_function_arguments(&arguments, tool_name, |arguments| {
+            arguments.insert(
+                "command".to_string(),
+                JsonValue::Array(command.into_iter().map(JsonValue::String).collect()),
+            );
+        })?,
+    };
+    Ok(invocation)
+}
+
 struct RunExecLikeArgs {
     tool_name: String,
     exec_params: ExecParams,
@@ -222,6 +251,14 @@ impl ToolHandler for ShellHandler {
         shell_function_pre_tool_use_payload(invocation)
     }
 
+    fn with_updated_hook_input(
+        &self,
+        invocation: ToolInvocation,
+        updated_input: JsonValue,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        rewrite_shell_function_updated_hook_input(invocation, updated_input, "shell")
+    }
+
     fn post_tool_use_payload(
         &self,
         invocation: &ToolInvocation,
@@ -298,6 +335,14 @@ impl ToolHandler for ContainerExecHandler {
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
         shell_function_pre_tool_use_payload(invocation)
+    }
+
+    fn with_updated_hook_input(
+        &self,
+        invocation: ToolInvocation,
+        updated_input: JsonValue,
+    ) -> Result<ToolInvocation, FunctionCallError> {
+        rewrite_shell_function_updated_hook_input(invocation, updated_input, "container.exec")
     }
 
     fn post_tool_use_payload(

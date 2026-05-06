@@ -24,8 +24,6 @@ use crate::tasks::CompactTask;
 use crate::tasks::UserShellCommandMode;
 use crate::tasks::UserShellCommandTask;
 use crate::tasks::execute_user_shell_command;
-use codex_mcp::collect_mcp_snapshot_from_manager;
-use codex_mcp::compute_auth_statuses;
 use codex_protocol::models::ContentItem;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::CodexErrorInfo;
@@ -460,53 +458,6 @@ pub async fn dynamic_tool_response(sess: &Arc<Session>, id: String, response: Dy
     sess.notify_dynamic_tool_response(&id, response).await;
 }
 
-pub async fn add_to_history(sess: &Arc<Session>, config: &Arc<Config>, text: String) {
-    let id = sess.conversation_id;
-    let config = Arc::clone(config);
-    tokio::spawn(async move {
-        if let Err(e) = crate::message_history::append_entry(&text, &id, &config).await {
-            warn!("failed to append to message history: {e}");
-        }
-    });
-}
-
-pub async fn get_history_entry_request(
-    sess: &Arc<Session>,
-    config: &Arc<Config>,
-    sub_id: String,
-    offset: usize,
-    log_id: u64,
-) {
-    let config = Arc::clone(config);
-    let sess_clone = Arc::clone(sess);
-
-    tokio::spawn(async move {
-        // Run lookup in blocking thread because it does file IO + locking.
-        let entry_opt = tokio::task::spawn_blocking(move || {
-            crate::message_history::lookup(log_id, offset, &config)
-        })
-        .await
-        .unwrap_or(None);
-
-        let event = Event {
-            id: sub_id,
-            msg: EventMsg::GetHistoryEntryResponse(
-                codex_protocol::protocol::GetHistoryEntryResponseEvent {
-                    offset,
-                    log_id,
-                    entry: entry_opt.map(|e| codex_protocol::message_history::HistoryEntry {
-                        conversation_id: e.session_id,
-                        ts: e.ts,
-                        text: e.text,
-                    }),
-                },
-            ),
-        };
-
-        sess_clone.send_event_raw(event).await;
-    });
-}
-
 pub async fn refresh_mcp_servers(sess: &Arc<Session>, refresh_config: McpServerRefreshConfig) {
     let mut guard = sess.pending_mcp_server_refresh_config.lock().await;
     *guard = Some(refresh_config);
@@ -514,35 +465,6 @@ pub async fn refresh_mcp_servers(sess: &Arc<Session>, refresh_config: McpServerR
 
 pub async fn reload_user_config(sess: &Arc<Session>) {
     sess.reload_user_config_layer().await;
-}
-
-#[expect(
-    clippy::await_holding_invalid_type,
-    reason = "MCP tool listing reads through the session-owned manager guard"
-)]
-pub async fn list_mcp_tools(sess: &Session, config: &Arc<Config>, sub_id: String) {
-    let mcp_connection_manager = sess.services.mcp_connection_manager.read().await;
-    let auth = sess.services.auth_manager.auth().await;
-    let mcp_servers = sess
-        .services
-        .mcp_manager
-        .effective_servers(config, auth.as_ref())
-        .await;
-    let snapshot = collect_mcp_snapshot_from_manager(
-        &mcp_connection_manager,
-        compute_auth_statuses(
-            mcp_servers.iter(),
-            config.mcp_oauth_credentials_store_mode,
-            auth.as_ref(),
-        )
-        .await,
-    )
-    .await;
-    let event = Event {
-        id: sub_id,
-        msg: EventMsg::McpListToolsResponse(snapshot),
-    };
-    sess.send_event_raw(event).await;
 }
 
 pub async fn compact(sess: &Arc<Session>, sub_id: String) {
@@ -908,18 +830,6 @@ pub(super) async fn submission_loop(
                 }
                 Op::DynamicToolResponse { id, response } => {
                     dynamic_tool_response(&sess, id, response).await;
-                    false
-                }
-                Op::AddToHistory { text } => {
-                    add_to_history(&sess, &config, text).await;
-                    false
-                }
-                Op::GetHistoryEntryRequest { offset, log_id } => {
-                    get_history_entry_request(&sess, &config, sub.id.clone(), offset, log_id).await;
-                    false
-                }
-                Op::ListMcpTools => {
-                    list_mcp_tools(&sess, &config, sub.id.clone()).await;
                     false
                 }
                 Op::RefreshMcpServers { config } => {

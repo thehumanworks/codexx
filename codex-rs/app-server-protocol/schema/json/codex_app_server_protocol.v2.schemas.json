@@ -1576,6 +1576,30 @@
             },
             "method": {
               "enum": [
+                "plugin/share/updateTargets"
+              ],
+              "title": "Plugin/share/updateTargetsRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/PluginShareUpdateTargetsParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Plugin/share/updateTargetsRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "plugin/share/list"
               ],
               "title": "Plugin/share/listRequestMethod",
@@ -3656,13 +3680,9 @@
           ]
         },
         "service_tier": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "tools": {
@@ -9090,6 +9110,14 @@
       "title": "PluginShareDeleteResponse",
       "type": "object"
     },
+    "PluginShareDiscoverability": {
+      "enum": [
+        "LISTED",
+        "UNLISTED",
+        "PRIVATE"
+      ],
+      "type": "string"
+    },
     "PluginShareListItem": {
       "properties": {
         "localPluginPath": {
@@ -9136,15 +9164,61 @@
       "title": "PluginShareListResponse",
       "type": "object"
     },
+    "PluginSharePrincipal": {
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "principalId": {
+          "type": "string"
+        },
+        "principalType": {
+          "$ref": "#/definitions/PluginSharePrincipalType"
+        }
+      },
+      "required": [
+        "name",
+        "principalId",
+        "principalType"
+      ],
+      "type": "object"
+    },
+    "PluginSharePrincipalType": {
+      "enum": [
+        "user",
+        "group",
+        "workspace"
+      ],
+      "type": "string"
+    },
     "PluginShareSaveParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "discoverability": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/PluginShareDiscoverability"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "pluginPath": {
           "$ref": "#/definitions/AbsolutePathBuf"
         },
         "remotePluginId": {
           "type": [
             "string",
+            "null"
+          ]
+        },
+        "shareTargets": {
+          "items": {
+            "$ref": "#/definitions/PluginShareTarget"
+          },
+          "type": [
+            "array",
             "null"
           ]
         }
@@ -9170,6 +9244,57 @@
         "shareUrl"
       ],
       "title": "PluginShareSaveResponse",
+      "type": "object"
+    },
+    "PluginShareTarget": {
+      "properties": {
+        "principalId": {
+          "type": "string"
+        },
+        "principalType": {
+          "$ref": "#/definitions/PluginSharePrincipalType"
+        }
+      },
+      "required": [
+        "principalId",
+        "principalType"
+      ],
+      "type": "object"
+    },
+    "PluginShareUpdateTargetsParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "remotePluginId": {
+          "type": "string"
+        },
+        "shareTargets": {
+          "items": {
+            "$ref": "#/definitions/PluginShareTarget"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "remotePluginId",
+        "shareTargets"
+      ],
+      "title": "PluginShareUpdateTargetsParams",
+      "type": "object"
+    },
+    "PluginShareUpdateTargetsResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "principals": {
+          "items": {
+            "$ref": "#/definitions/PluginSharePrincipal"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "principals"
+      ],
+      "title": "PluginShareUpdateTargetsResponse",
       "type": "object"
     },
     "PluginSkillReadParams": {
@@ -9571,13 +9696,9 @@
           ]
         },
         "service_tier": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "tools": {
@@ -12381,13 +12502,6 @@
       "title": "ServerRequestResolvedNotification",
       "type": "object"
     },
-    "ServiceTier": {
-      "enum": [
-        "fast",
-        "flex"
-      ],
-      "type": "string"
-    },
     "SessionMigration": {
       "properties": {
         "cwd": {
@@ -13102,6 +13216,10 @@
           "description": "Usually the first user message in the thread, if available.",
           "type": "string"
         },
+        "sessionId": {
+          "description": "Session id shared by threads that belong to the same session tree.",
+          "type": "string"
+        },
         "source": {
           "allOf": [
             {
@@ -13150,6 +13268,7 @@
         "id",
         "modelProvider",
         "preview",
+        "sessionId",
         "source",
         "status",
         "turns",
@@ -13325,20 +13444,9 @@
           ]
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ServiceTier"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "threadId": {
@@ -13412,13 +13520,9 @@
           "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions."
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "thread": {
@@ -14843,20 +14947,9 @@
           ]
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ServiceTier"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "threadId": {
@@ -14919,13 +15012,9 @@
           "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions."
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "thread": {
@@ -15151,20 +15240,9 @@
           ]
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ServiceTier"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "sessionStartSource": {
@@ -15242,13 +15320,9 @@
           "description": "Legacy sandbox policy retained for compatibility. Experimental clients should prefer `permissionProfile` when they need exact runtime permissions."
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "$ref": "#/definitions/ServiceTier"
-            },
-            {
-              "type": "null"
-            }
+          "type": [
+            "string",
+            "null"
           ]
         },
         "thread": {
@@ -15915,22 +15989,11 @@
           "description": "Override the sandbox policy for this turn and subsequent turns."
         },
         "serviceTier": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "$ref": "#/definitions/ServiceTier"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "Override the service tier for this turn and subsequent turns."
+          "description": "Override the service tier for this turn and subsequent turns.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "summary": {
           "anyOf": [
