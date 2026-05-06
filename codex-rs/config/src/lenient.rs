@@ -1,129 +1,559 @@
-use serde::de::DeserializeOwned;
+use std::collections::HashMap;
+
+use crate::config_toml::RealtimeTransport;
+use crate::config_toml::RealtimeWsMode;
+use crate::config_toml::RealtimeWsVersion;
+use crate::config_toml::ThreadStoreToml;
+use crate::types::AltScreenMode;
+use crate::types::ApprovalsReviewer;
+use crate::types::AuthCredentialsStoreMode;
+use crate::types::HistoryPersistence;
+use crate::types::NotificationCondition;
+use crate::types::NotificationMethod;
+use crate::types::Notifications;
+use crate::types::OAuthCredentialsStoreMode;
+use crate::types::Personality;
+use crate::types::ServiceTier;
+use crate::types::UriBasedFileOpener;
+use crate::types::WebSearchMode;
+use crate::types::WindowsSandboxModeToml;
+use codex_protocol::config_types::ForcedLoginMethod;
+use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::config_types::SandboxMode;
+use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
+use codex_protocol::config_types::TrustLevel;
+use codex_protocol::config_types::Verbosity;
+use codex_protocol::config_types::WebSearchContextSize;
+use codex_protocol::openai_models::ReasoningEffort;
+use codex_protocol::protocol::AskForApproval;
+use codex_protocol::protocol::RealtimeVoice;
+use serde::Deserialize;
+use serde::Deserializer;
 use toml::Value as TomlValue;
 
-/// Deserializes TOML while turning invalid enum-valued settings into warnings.
+/// Deserializes TOML through a private lenient config shape, then returns a
+/// sanitized strict config.
 ///
-/// Serde reports enum failures as normal deserialization errors, which would
-/// otherwise reject the whole assembled config. Config files are user-editable,
-/// so this helper keeps the strongly typed destination type and handles enum
-/// leniency at the load boundary: deserialize, find the first invalid enum
-/// value, remove only that TOML key, record a startup warning, and retry.
+/// The important boundary is that invalid enum values are representable only in
+/// the private `LenientConfigToml` mirror below. The public `ConfigToml` and all
+/// runtime consumers still receive ordinary typed enum fields. When the
+/// intermediate shape finds an invalid enum, this removes the raw TOML value,
+/// records the same startup warning the retry-loop approach produced, and then
+/// deserializes the sanitized TOML into the requested strict type.
 pub(crate) fn deserialize_with_enum_warnings<T>(
     mut value: TomlValue,
 ) -> Result<(TomlValue, T, Vec<String>), toml::de::Error>
 where
-    T: DeserializeOwned,
+    T: serde::de::DeserializeOwned,
 {
-    let mut warnings = Vec::new();
+    let lenient_config: LenientConfigToml = value.clone().try_into()?;
+    let warnings = lenient_config.invalid_enum_warnings();
+    for warning in &warnings {
+        remove_value_at_segments(&mut value, &warning.segments);
+    }
+    let parsed: T = value.clone().try_into()?;
+    let messages = warnings
+        .into_iter()
+        .map(|warning| warning.message())
+        .collect();
+    Ok((value, parsed, messages))
+}
 
-    loop {
-        // serde_path_to_error gives us the config path that failed, so we can
-        // remove the offending TOML value without making invalid enum state
-        // representable inside ConfigToml or its nested structs. For flattened
-        // nested structs Serde can report the containing table; the removal
-        // helper uses the invalid enum variant text to narrow that to the leaf.
-        match serde_path_to_error::deserialize(value.clone()) {
-            Ok(parsed) => return Ok((value, parsed, warnings)),
-            Err(err) => {
-                let path = err.path().to_string();
-                let toml_error = err.into_inner();
-                if !is_unknown_variant_error(&toml_error) {
-                    return Err(toml_error);
-                }
+/// Result of attempting to deserialize one enum-valued field.
+///
+/// `Valid` carries the ordinary typed enum value. `Invalid` preserves the raw
+/// TOML value only long enough to produce a warning and delete the leaf before
+/// strict `ConfigToml` deserialization.
+#[derive(Debug, Clone, PartialEq)]
+enum Lenient<T> {
+    Valid(T),
+    Invalid(TomlValue),
+}
 
-                let unknown_variant = unknown_variant(&toml_error);
-                let Some((removed_path, invalid_value)) =
-                    remove_value_at_path(&mut value, &path, unknown_variant)
-                else {
-                    return Err(toml_error);
-                };
-                warnings.push(format!(
-                    "Ignoring invalid config value at {removed_path}: {invalid_value}"
-                ));
-            }
+/// Untagged helper used by `Lenient<T>` so Serde tries the typed enum first and
+/// falls back to the original TOML value when the enum cannot be parsed.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LenientInput<T> {
+    Valid(T),
+    Invalid(TomlValue),
+}
+
+impl<T> Lenient<T> {
+    /// Returns the original TOML value only when this enum field failed to
+    /// parse; callers use this as the single warning signal.
+    fn invalid_value(&self) -> Option<&TomlValue> {
+        match self {
+            Self::Valid(_) => None,
+            Self::Invalid(value) => Some(value),
         }
     }
 }
 
-/// Detects Serde's enum-variant failures without swallowing unrelated errors.
-///
-/// toml::de::Error does not expose a structured enum-kind discriminator, so the
-/// loader keeps the match deliberately narrow and lets all other parse and type
-/// errors flow through the existing config-error path.
-fn is_unknown_variant_error(err: &toml::de::Error) -> bool {
-    err.message().contains("unknown variant")
+impl<'de, T> Deserialize<'de> for Lenient<T>
+where
+    T: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(match LenientInput::<T>::deserialize(deserializer)? {
+            LenientInput::Valid(value) => Self::Valid(value),
+            LenientInput::Invalid(value) => Self::Invalid(value),
+        })
+    }
 }
 
-/// Extracts the rejected enum variant from Serde's diagnostic string.
-///
-/// The TOML error type does not expose this value directly, but Serde formats
-/// enum errors consistently as `unknown variant \`value\``. The value lets us
-/// recover a leaf key when Serde reports the containing table for flattened
-/// config structs.
-fn unknown_variant(err: &toml::de::Error) -> Option<&str> {
-    let message = err.message();
-    let variant = message.strip_prefix("unknown variant `")?;
-    let (variant, _) = variant.split_once('`')?;
-    Some(variant)
+/// Adds root-level invalid enum warnings without repeating the path and field
+/// name at each callsite.
+macro_rules! push_invalid_root_fields {
+    ($warnings:expr, $source:expr, $($field:ident),+ $(,)?) => {
+        $(
+            push_invalid_field(
+                &mut $warnings,
+                &[stringify!($field)],
+                stringify!($field),
+                &$source.$field,
+            );
+        )+
+    };
 }
 
-/// Removes the failed TOML key identified by serde_path_to_error.
+/// Adds profile-scoped invalid enum warnings while preserving the profile name
+/// as its own TOML path segment. Keeping it segmented matters because profile
+/// names can contain dots.
+macro_rules! push_invalid_profile_fields {
+    ($warnings:expr, $source:expr, $profile:expr, $($field:ident),+ $(,)?) => {
+        $(
+            push_invalid_field(
+                $warnings,
+                &["profiles", $profile, stringify!($field)],
+                &format!("profiles.{}.{}", $profile, stringify!($field)),
+                &$source.$field,
+            );
+        )+
+    };
+}
+
+/// Sparse mirror of `ConfigToml` containing only enum-valued config fields.
 ///
-/// Config enum fields live in tables rather than arrays, so the path traversal
-/// intentionally follows table keys only. If the path cannot be removed, the
-/// caller falls back to returning the original deserialization error.
-fn remove_value_at_path(
-    value: &mut TomlValue,
+/// This deliberately ignores non-enum fields. The strict `ConfigToml`
+/// deserialization after sanitization remains responsible for validating the
+/// full config shape, unknown keys, and non-enum type errors.
+#[derive(Deserialize, Default)]
+struct LenientConfigToml {
+    approval_policy: Option<Lenient<AskForApproval>>,
+    approvals_reviewer: Option<Lenient<ApprovalsReviewer>>,
+    sandbox_mode: Option<Lenient<SandboxMode>>,
+    forced_login_method: Option<Lenient<ForcedLoginMethod>>,
+    cli_auth_credentials_store: Option<Lenient<AuthCredentialsStoreMode>>,
+    mcp_oauth_credentials_store: Option<Lenient<OAuthCredentialsStoreMode>>,
+    file_opener: Option<Lenient<UriBasedFileOpener>>,
+    model_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    plan_mode_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    model_reasoning_summary: Option<Lenient<ReasoningSummary>>,
+    model_verbosity: Option<Lenient<Verbosity>>,
+    personality: Option<Lenient<Personality>>,
+    service_tier: Option<Lenient<ServiceTier>>,
+    experimental_thread_store: Option<Lenient<ThreadStoreToml>>,
+    web_search: Option<Lenient<WebSearchMode>>,
+    history: Option<LenientHistory>,
+    shell_environment_policy: Option<LenientShellEnvironmentPolicyToml>,
+    tools: Option<LenientToolsToml>,
+    tui: Option<LenientTui>,
+    realtime: Option<LenientRealtimeToml>,
+    windows: Option<LenientWindowsToml>,
+    projects: Option<HashMap<String, LenientProjectConfig>>,
+
+    #[serde(default)]
+    profiles: HashMap<String, LenientConfigProfile>,
+}
+
+impl LenientConfigToml {
+    fn invalid_enum_warnings(&self) -> Vec<InvalidEnumWarning> {
+        let mut warnings = Vec::new();
+        push_invalid_root_fields!(
+            warnings,
+            self,
+            approval_policy,
+            approvals_reviewer,
+            sandbox_mode,
+            forced_login_method,
+            cli_auth_credentials_store,
+            mcp_oauth_credentials_store,
+            file_opener,
+            model_reasoning_effort,
+            plan_mode_reasoning_effort,
+            model_reasoning_summary,
+            model_verbosity,
+            personality,
+            service_tier,
+            experimental_thread_store,
+            web_search
+        );
+
+        if let Some(history) = &self.history {
+            history.push_invalid_enum_warnings(&mut warnings);
+        }
+        if let Some(shell_environment_policy) = &self.shell_environment_policy {
+            shell_environment_policy.push_invalid_enum_warnings(&mut warnings);
+        }
+        if let Some(tools) = &self.tools {
+            tools.push_invalid_enum_warnings(&mut warnings, "tools", &["tools"]);
+        }
+        if let Some(tui) = &self.tui {
+            tui.push_invalid_enum_warnings(&mut warnings);
+        }
+        if let Some(realtime) = &self.realtime {
+            realtime.push_invalid_enum_warnings(&mut warnings);
+        }
+        if let Some(windows) = &self.windows {
+            windows.push_invalid_enum_warnings(&mut warnings);
+        }
+        let mut profiles = self.profiles.iter().collect::<Vec<_>>();
+        profiles.sort_by(|(left, _), (right, _)| left.cmp(right));
+        for (name, profile) in profiles {
+            profile.push_invalid_enum_warnings(&mut warnings, name);
+        }
+        if let Some(projects) = &self.projects {
+            let mut projects = projects.iter().collect::<Vec<_>>();
+            projects.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (name, project) in projects {
+                project.push_invalid_enum_warnings(&mut warnings, name);
+            }
+        }
+        warnings
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct LenientConfigProfile {
+    service_tier: Option<Lenient<ServiceTier>>,
+    approval_policy: Option<Lenient<AskForApproval>>,
+    approvals_reviewer: Option<Lenient<ApprovalsReviewer>>,
+    sandbox_mode: Option<Lenient<SandboxMode>>,
+    model_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    plan_mode_reasoning_effort: Option<Lenient<ReasoningEffort>>,
+    model_reasoning_summary: Option<Lenient<ReasoningSummary>>,
+    model_verbosity: Option<Lenient<Verbosity>>,
+    personality: Option<Lenient<Personality>>,
+    tools: Option<LenientToolsToml>,
+    web_search: Option<Lenient<WebSearchMode>>,
+    windows: Option<LenientWindowsToml>,
+}
+
+impl LenientConfigProfile {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>, profile: &str) {
+        push_invalid_profile_fields!(
+            warnings,
+            self,
+            profile,
+            service_tier,
+            approval_policy,
+            approvals_reviewer,
+            sandbox_mode,
+            model_reasoning_effort,
+            plan_mode_reasoning_effort,
+            model_reasoning_summary,
+            model_verbosity,
+            personality,
+            web_search
+        );
+        if let Some(tools) = &self.tools {
+            let path = format!("profiles.{profile}.tools");
+            let segments = ["profiles", profile, "tools"];
+            tools.push_invalid_enum_warnings(warnings, &path, &segments);
+        }
+        if let Some(windows) = &self.windows {
+            windows.push_invalid_enum_warnings_with_prefix(
+                warnings,
+                &format!("profiles.{profile}.windows"),
+                &["profiles", profile, "windows"],
+            );
+        }
+    }
+}
+
+/// Sparse mirror of `[history]` for the one enum-valued field inside it.
+#[derive(Deserialize, Default)]
+struct LenientHistory {
+    persistence: Option<Lenient<HistoryPersistence>>,
+}
+
+impl LenientHistory {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
+        push_invalid_field(
+            warnings,
+            &["history", "persistence"],
+            "history.persistence",
+            &self.persistence,
+        );
+    }
+}
+
+/// Sparse mirror of `[shell_environment_policy]` for enum handling.
+#[derive(Deserialize, Default)]
+struct LenientShellEnvironmentPolicyToml {
+    inherit: Option<Lenient<ShellEnvironmentPolicyInherit>>,
+}
+
+impl LenientShellEnvironmentPolicyToml {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
+        push_invalid_field(
+            warnings,
+            &["shell_environment_policy", "inherit"],
+            "shell_environment_policy.inherit",
+            &self.inherit,
+        );
+    }
+}
+
+/// Sparse mirror of `[tools]` for enum-valued nested tool settings.
+#[derive(Deserialize, Default)]
+struct LenientToolsToml {
+    #[serde(default, deserialize_with = "deserialize_lenient_web_search_tool")]
+    web_search: Option<LenientWebSearchToolConfig>,
+}
+
+impl LenientToolsToml {
+    fn push_invalid_enum_warnings(
+        &self,
+        warnings: &mut Vec<InvalidEnumWarning>,
+        path_prefix: &str,
+        segment_prefix: &[&str],
+    ) {
+        let Some(web_search) = &self.web_search else {
+            return;
+        };
+        web_search.push_invalid_enum_warnings(warnings, path_prefix, segment_prefix);
+    }
+}
+
+/// Sparse mirror of `WebSearchToolConfig` for `context_size`.
+#[derive(Deserialize)]
+struct LenientWebSearchToolConfig {
+    context_size: Option<Lenient<WebSearchContextSize>>,
+}
+
+impl LenientWebSearchToolConfig {
+    fn push_invalid_enum_warnings(
+        &self,
+        warnings: &mut Vec<InvalidEnumWarning>,
+        path_prefix: &str,
+        segment_prefix: &[&str],
+    ) {
+        push_invalid_field(
+            warnings,
+            &segments_with_suffix(segment_prefix, &["web_search", "context_size"]),
+            &format!("{path_prefix}.web_search.context_size"),
+            &self.context_size,
+        );
+    }
+}
+
+/// Reads `tools.web_search` only when it is a table.
+///
+/// The real config also accepts a boolean for this field. A non-table,
+/// non-boolean value remains a strict deserialization error later; this helper
+/// exists only to peek into the table form and warn on its enum leaf.
+fn deserialize_lenient_web_search_tool<'de, D>(
+    deserializer: D,
+) -> Result<Option<LenientWebSearchToolConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<TomlValue>::deserialize(deserializer)?;
+    match value {
+        Some(TomlValue::Table(table)) => {
+            table.try_into().map(Some).map_err(serde::de::Error::custom)
+        }
+        Some(TomlValue::Boolean(_)) | None => Ok(None),
+        Some(_) => Ok(None),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct LenientTui {
+    #[serde(rename = "notifications")]
+    notifications: Option<Lenient<Notifications>>,
+    #[serde(rename = "notification_method")]
+    method: Option<Lenient<NotificationMethod>>,
+    #[serde(rename = "notification_condition")]
+    condition: Option<Lenient<NotificationCondition>>,
+    alternate_screen: Option<Lenient<AltScreenMode>>,
+}
+
+impl LenientTui {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
+        push_invalid_field(
+            warnings,
+            &["tui", "notifications"],
+            "tui.notifications",
+            &self.notifications,
+        );
+        push_invalid_field(
+            warnings,
+            &["tui", "notification_method"],
+            "tui.notification_method",
+            &self.method,
+        );
+        push_invalid_field(
+            warnings,
+            &["tui", "notification_condition"],
+            "tui.notification_condition",
+            &self.condition,
+        );
+        push_invalid_field(
+            warnings,
+            &["tui", "alternate_screen"],
+            "tui.alternate_screen",
+            &self.alternate_screen,
+        );
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct LenientRealtimeToml {
+    version: Option<Lenient<RealtimeWsVersion>>,
+    #[serde(rename = "type")]
+    session_type: Option<Lenient<RealtimeWsMode>>,
+    transport: Option<Lenient<RealtimeTransport>>,
+    voice: Option<Lenient<RealtimeVoice>>,
+}
+
+impl LenientRealtimeToml {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
+        push_invalid_field(
+            warnings,
+            &["realtime", "version"],
+            "realtime.version",
+            &self.version,
+        );
+        push_invalid_field(
+            warnings,
+            &["realtime", "type"],
+            "realtime.type",
+            &self.session_type,
+        );
+        push_invalid_field(
+            warnings,
+            &["realtime", "transport"],
+            "realtime.transport",
+            &self.transport,
+        );
+        push_invalid_field(
+            warnings,
+            &["realtime", "voice"],
+            "realtime.voice",
+            &self.voice,
+        );
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct LenientWindowsToml {
+    sandbox: Option<Lenient<WindowsSandboxModeToml>>,
+}
+
+impl LenientWindowsToml {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
+        self.push_invalid_enum_warnings_with_prefix(warnings, "windows", &["windows"]);
+    }
+
+    fn push_invalid_enum_warnings_with_prefix(
+        &self,
+        warnings: &mut Vec<InvalidEnumWarning>,
+        path_prefix: &str,
+        segment_prefix: &[&str],
+    ) {
+        push_invalid_field(
+            warnings,
+            &segments_with_suffix(segment_prefix, &["sandbox"]),
+            &format!("{path_prefix}.sandbox"),
+            &self.sandbox,
+        );
+    }
+}
+
+/// Sparse mirror of project trust config.
+#[derive(Deserialize, Default)]
+struct LenientProjectConfig {
+    trust_level: Option<Lenient<TrustLevel>>,
+}
+
+impl LenientProjectConfig {
+    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>, project: &str) {
+        push_invalid_field(
+            warnings,
+            &["projects", project, "trust_level"],
+            &format!("projects.{project}.trust_level"),
+            &self.trust_level,
+        );
+    }
+}
+
+/// Captures everything needed to remove an invalid enum leaf and report it
+/// through the startup warning path.
+struct InvalidEnumWarning {
+    segments: Vec<String>,
+    path: String,
+    invalid_value: TomlValue,
+}
+
+impl InvalidEnumWarning {
+    /// Formats the exact warning string consumed by callers today.
+    fn message(self) -> String {
+        let Self {
+            path,
+            invalid_value,
+            ..
+        } = self;
+        format!("Ignoring invalid config value at {path}: {invalid_value}")
+    }
+}
+
+/// Adds one warning if a lenient field contains an invalid raw TOML value.
+fn push_invalid_field<T, S>(
+    warnings: &mut Vec<InvalidEnumWarning>,
+    segments: &[S],
     path: &str,
-    unknown_variant: Option<&str>,
-) -> Option<(String, TomlValue)> {
-    let mut parts = path.split('.').peekable();
-    let mut current = value;
-
-    while let Some(part) = parts.next() {
-        if parts.peek().is_none() {
-            let table = current.as_table_mut()?;
-            if let Some(variant) = unknown_variant
-                && let Some(candidate) = table.get_mut(part)
-                && candidate.as_str() != Some(variant)
-                && let Some(removed) = remove_matching_string_value(candidate, path, variant)
-            {
-                return Some(removed);
-            }
-            return table
-                .remove(part)
-                .map(|removed| (path.to_string(), removed));
-        }
-        current = current.as_table_mut()?.get_mut(part)?;
-    }
-
-    None
+    value: &Option<Lenient<T>>,
+) where
+    S: AsRef<str>,
+{
+    let Some(invalid_value) = value.as_ref().and_then(Lenient::invalid_value) else {
+        return;
+    };
+    warnings.push(InvalidEnumWarning {
+        segments: segments
+            .iter()
+            .map(|segment| segment.as_ref().to_string())
+            .collect(),
+        path: path.to_string(),
+        invalid_value: invalid_value.clone(),
+    });
 }
 
-/// Removes the first nested string value that matches the rejected enum text.
+/// Builds a temporary TOML path from a stable prefix plus one or more child
+/// keys. The resulting vector is immediately borrowed by `push_invalid_field`.
+fn segments_with_suffix(prefix: &[&str], suffix: &[&str]) -> Vec<String> {
+    prefix
+        .iter()
+        .chain(suffix.iter())
+        .map(|segment| (*segment).to_string())
+        .collect()
+}
+
+/// Deletes the offending TOML leaf before strict deserialization.
 ///
-/// This is only a fallback for flattened nested structs where Serde reports the
-/// parent table path. Exact-path removals still win whenever Serde points at
-/// the enum field itself.
-fn remove_matching_string_value(
-    value: &mut TomlValue,
-    base_path: &str,
-    needle: &str,
-) -> Option<(String, TomlValue)> {
-    let table = value.as_table_mut()?;
-    let keys = table.keys().cloned().collect::<Vec<_>>();
-    for key in keys {
-        let child_path = format!("{base_path}.{key}");
-        let child = table.get_mut(&key)?;
-        if child.as_str() == Some(needle) {
-            let removed = table.remove(&key)?;
-            return Some((child_path, removed));
-        }
-        if child.is_table()
-            && let Some(removed) = remove_matching_string_value(child, &child_path, needle)
-        {
-            return Some(removed);
-        }
+/// The input is already split into table segments, which avoids ambiguity for
+/// keys like profile names or project paths that may contain literal dots.
+fn remove_value_at_segments(value: &mut TomlValue, segments: &[String]) -> Option<TomlValue> {
+    let (last, parents) = segments.split_last()?;
+    let mut current = value;
+    for segment in parents {
+        current = current.as_table_mut()?.get_mut(segment)?;
     }
-    None
+    current.as_table_mut()?.remove(last)
 }

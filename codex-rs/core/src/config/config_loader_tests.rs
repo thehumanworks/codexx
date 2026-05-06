@@ -127,6 +127,12 @@ sandbox_mode = "make-it-so"
 
 [tui]
 notification_method = "loudly"
+
+[tools.web_search]
+context_size = "galactic"
+
+[projects."/tmp/example"]
+trust_level = "maybe"
 "#;
     let config_path = tmp.path().join(CONFIG_TOML_FILE);
     std::fs::write(&config_path, contents).expect("write config");
@@ -152,12 +158,18 @@ notification_method = "loudly"
 model = "gpt-5-codex"
 
 [tui]
+
+[tools.web_search]
+
+[projects."/tmp/example"]
 "#,
     )
     .expect("expected config should parse");
     let expected_startup_warnings = vec![
         "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
+        "Ignoring invalid config value at tools.web_search.context_size: \"galactic\"".to_string(),
         "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
+        "Ignoring invalid config value at projects./tmp/example.trust_level: \"maybe\"".to_string(),
     ];
 
     assert_eq!(
