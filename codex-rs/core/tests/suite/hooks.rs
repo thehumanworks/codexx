@@ -496,6 +496,56 @@ elif mode == "exit_2":
     Ok(())
 }
 
+fn write_updating_permission_request_hook(
+    home: &Path,
+    matcher: &str,
+    updated_input: &Value,
+) -> Result<()> {
+    let script_path = home.join("permission_request_hook.py");
+    let log_path = home.join("permission_request_hook_log.jsonl");
+    let updated_input_json =
+        serde_json::to_string(updated_input).context("serialize updated permission input")?;
+    let script = format!(
+        r#"import json
+from pathlib import Path
+import sys
+
+payload = json.load(sys.stdin)
+
+with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
+    handle.write(json.dumps(payload) + "\n")
+
+print(json.dumps({{
+    "hookSpecificOutput": {{
+        "hookEventName": "PermissionRequest",
+        "decision": {{
+            "behavior": "allow",
+            "updatedInput": {updated_input_json}
+        }}
+    }}
+}}))
+"#,
+        log_path = log_path.display(),
+        updated_input_json = updated_input_json,
+    );
+    let hooks = serde_json::json!({
+        "hooks": {
+            "PermissionRequest": [{
+                "matcher": matcher,
+                "hooks": [{
+                    "type": "command",
+                    "command": format!("python3 {}", script_path.display()),
+                    "statusMessage": "rewriting permission request input",
+                }]
+            }]
+        }
+    });
+
+    fs::write(&script_path, script).context("write updating permission hook script")?;
+    fs::write(home.join("hooks.json"), hooks.to_string()).context("write hooks.json")?;
+    Ok(())
+}
+
 fn install_allow_permission_request_hook(home: &Path) -> Result<()> {
     write_permission_request_hook(
         home,
@@ -1554,6 +1604,92 @@ async fn permission_request_hook_allows_shell_command_without_user_approval() ->
 }
 
 #[tokio::test]
+async fn permission_request_hook_rewrites_shell_command_before_execution() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "permissionrequest-shell-command-rewrite";
+    let original_marker = std::env::temp_dir().join("permissionrequest-shell-command-original");
+    let rewritten_marker = std::env::temp_dir().join("permissionrequest-shell-command-rewritten");
+    let original_command = format!("rm -f {}", original_marker.display());
+    let rewritten_command = format!("printf rewritten > {}", rewritten_marker.display());
+    let args = serde_json::json!({ "command": original_command });
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                core_test_support::responses::ev_function_call(
+                    call_id,
+                    "shell_command",
+                    &serde_json::to_string(&args)?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "permission hook rewrote it"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let updated_input = serde_json::json!({ "command": rewritten_command.clone() });
+    let mut builder = test_codex()
+        .with_pre_build_hook(move |home| {
+            if let Err(error) =
+                write_updating_permission_request_hook(home, "^Bash$", &updated_input)
+            {
+                panic!("failed to write updating permission hook fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            trust_discovered_hooks(config);
+        });
+    let test = builder.build(&server).await?;
+
+    if original_marker.exists() {
+        fs::remove_file(&original_marker).context("remove stale original permission marker")?;
+    }
+    if rewritten_marker.exists() {
+        fs::remove_file(&rewritten_marker).context("remove stale rewritten permission marker")?;
+    }
+    fs::write(&original_marker, "seed").context("create original permission marker")?;
+
+    test.submit_turn_with_approval_and_permission_profile(
+        "run the rewritten shell command after hook approval",
+        AskForApproval::OnRequest,
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    requests[1].function_call_output(call_id);
+    assert!(
+        original_marker.exists(),
+        "original command should not execute after permission rewrite"
+    );
+    assert_eq!(
+        fs::read_to_string(&rewritten_marker).context("read rewritten permission marker")?,
+        "rewritten"
+    );
+
+    let hook_inputs = read_permission_request_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 1);
+    assert_permission_request_hook_input(
+        &hook_inputs[0],
+        "Bash",
+        &original_command,
+        /*description*/ None,
+    );
+    assert!(hook_inputs[0].get("tool_use_id").is_none());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn permission_request_hook_allows_apply_patch_with_write_alias() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -1623,6 +1759,98 @@ async fn permission_request_hook_allows_apply_patch_with_write_alias() -> Result
         &patch,
         /*description*/ None,
     )?;
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn permission_request_hook_rewrites_apply_patch_before_execution() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "permissionrequest-apply-patch-rewrite";
+    let original_file = "permission_request_apply_patch_original.txt";
+    let rewritten_file = "permission_request_apply_patch_rewritten.txt";
+    let original_path = format!("../{original_file}");
+    let rewritten_path = format!("../{rewritten_file}");
+    let original_patch = format!(
+        r#"*** Begin Patch
+*** Add File: {original_path}
++original
+*** End Patch"#
+    );
+    let rewritten_patch = format!(
+        r#"*** Begin Patch
+*** Add File: {rewritten_path}
++rewritten
+*** End Patch"#
+    );
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                ev_apply_patch_function_call(call_id, &original_patch),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "permission hook rewrote apply_patch"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let updated_input = serde_json::json!({ "command": rewritten_patch.clone() });
+    let mut builder = test_codex()
+        .with_pre_build_hook(move |home| {
+            if let Err(error) =
+                write_updating_permission_request_hook(home, "^apply_patch$", &updated_input)
+            {
+                panic!("failed to write updating permission hook fixture: {error}");
+            }
+        })
+        .with_config(|config| {
+            config.include_apply_patch_tool = true;
+            trust_discovered_hooks(config);
+        });
+    let test = builder.build(&server).await?;
+
+    test.submit_turn_with_approval_and_permission_profile(
+        "apply the rewritten patch after hook approval",
+        AskForApproval::OnRequest,
+        restrictive_workspace_write_profile(),
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    requests[1].function_call_output(call_id);
+    assert!(
+        !test.workspace_path(&original_path).exists(),
+        "original patch should not create its target file"
+    );
+    assert_eq!(
+        fs::read_to_string(test.workspace_path(&rewritten_path))
+            .context("read rewritten permission apply_patch file")?,
+        "rewritten\n"
+    );
+
+    let hook_inputs = read_permission_request_hook_inputs(test.codex_home_path())?;
+    assert_eq!(hook_inputs.len(), 2);
+    assert_permission_request_hook_input(
+        &hook_inputs[0],
+        "apply_patch",
+        &original_patch,
+        /*description*/ None,
+    );
+    assert_permission_request_hook_input(
+        &hook_inputs[1],
+        "apply_patch",
+        &rewritten_patch,
+        /*description*/ None,
+    );
 
     Ok(())
 }

@@ -398,6 +398,7 @@ impl ToolOrchestrator {
         if evaluate_permission_request_hooks
             && let Some(permission_request) = tool.permission_request_payload(req)
         {
+            let permission_request_for_noop_check = permission_request.clone();
             match run_permission_request_hooks(
                 approval_ctx.session,
                 approval_ctx.turn,
@@ -406,7 +407,24 @@ impl ToolOrchestrator {
             )
             .await
             {
-                Some(PermissionRequestDecision::Allow) => {
+                Some(PermissionRequestDecision::Allow {
+                    updated_input: Some(updated_input),
+                }) => {
+                    if !permission_request_for_noop_check.updated_input_is_noop(&updated_input) {
+                        return Err(ToolError::UpdatedInput(updated_input));
+                    }
+                    let decision = ReviewDecision::Approved;
+                    otel.tool_decision(
+                        &tool_ctx.tool_name,
+                        &tool_ctx.call_id,
+                        &decision,
+                        ToolDecisionSource::Config,
+                    );
+                    return Ok(decision);
+                }
+                Some(PermissionRequestDecision::Allow {
+                    updated_input: None,
+                }) => {
                     let decision = ReviewDecision::Approved;
                     otel.tool_decision(
                         &tool_ctx.tool_name,

@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use crate::function_tool::FunctionCallError;
 use crate::goals::GoalRuntimeEvent;
+use crate::hook_runtime::MAX_HOOK_INPUT_REWRITES;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
@@ -228,7 +229,23 @@ where
         invocation: ToolInvocation,
     ) -> BoxFuture<'a, Result<AnyToolResult, FunctionCallError>> {
         Box::pin(async move {
-            let output = self.handle(invocation.clone()).await?;
+            let mut invocation = invocation;
+            let mut rewrites = 0;
+            let output = loop {
+                match self.handle(invocation.clone()).await {
+                    Err(FunctionCallError::UpdatedInput(updated_input)) => {
+                        rewrites += 1;
+                        if rewrites > MAX_HOOK_INPUT_REWRITES {
+                            return Err(FunctionCallError::RespondToModel(
+                                "hook input rewrite limit exceeded".to_string(),
+                            ));
+                        }
+                        invocation =
+                            ToolHandler::with_updated_hook_input(self, invocation, updated_input)?;
+                    }
+                    result => break result?,
+                }
+            };
             let call_id = invocation.call_id.clone();
             let payload = invocation.payload.clone();
             let post_tool_use_payload =
