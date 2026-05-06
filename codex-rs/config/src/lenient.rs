@@ -21,7 +21,6 @@ use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
-use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
 use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::openai_models::ReasoningEffort;
@@ -54,7 +53,7 @@ where
     let parsed: T = value.clone().try_into()?;
     let messages = warnings
         .into_iter()
-        .map(|warning| warning.message())
+        .map(InvalidEnumWarning::message)
         .collect();
     Ok((value, parsed, messages))
 }
@@ -164,7 +163,6 @@ struct LenientConfigToml {
     tui: Option<LenientTui>,
     realtime: Option<LenientRealtimeToml>,
     windows: Option<LenientWindowsToml>,
-    projects: Option<HashMap<String, LenientProjectConfig>>,
 
     #[serde(default)]
     profiles: HashMap<String, LenientConfigProfile>,
@@ -215,13 +213,6 @@ impl LenientConfigToml {
         profiles.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (name, profile) in profiles {
             profile.push_invalid_enum_warnings(&mut warnings, name);
-        }
-        if let Some(projects) = &self.projects {
-            let mut projects = projects.iter().collect::<Vec<_>>();
-            projects.sort_by(|(left, _), (right, _)| left.cmp(right));
-            for (name, project) in projects {
-                project.push_invalid_enum_warnings(&mut warnings, name);
-            }
         }
         warnings
     }
@@ -472,23 +463,6 @@ impl LenientWindowsToml {
             &segments_with_suffix(segment_prefix, &["sandbox"]),
             &format!("{path_prefix}.sandbox"),
             &self.sandbox,
-        );
-    }
-}
-
-/// Sparse mirror of project trust config.
-#[derive(Deserialize, Default)]
-struct LenientProjectConfig {
-    trust_level: Option<Lenient<TrustLevel>>,
-}
-
-impl LenientProjectConfig {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>, project: &str) {
-        push_invalid_field(
-            warnings,
-            &["projects", project, "trust_level"],
-            &format!("projects.{project}.trust_level"),
-            &self.trust_level,
         );
     }
 }
