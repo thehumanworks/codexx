@@ -87,367 +87,511 @@ const fn default_hide_agent_reasoning() -> Option<bool> {
     Some(false)
 }
 
-/// Base config deserialized from ~/.codex/config.toml.
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
-#[schemars(deny_unknown_fields)]
-pub struct ConfigToml {
-    /// Optional override of model selection.
-    pub model: Option<String>,
-    /// Review model override used by the `/review` feature.
-    pub review_model: Option<String>,
-
-    /// Provider to use from the model_providers map.
-    pub model_provider: Option<String>,
-
-    /// Size of the context window for the model, in tokens.
-    pub model_context_window: Option<i64>,
-
-    /// Token usage threshold triggering auto-compaction of conversation history.
-    pub model_auto_compact_token_limit: Option<i64>,
-
-    /// Default approval policy for executing commands.
-    pub approval_policy: Option<AskForApproval>,
-
-    /// Configures who approval requests are routed to for review once they have
-    /// been escalated. This does not disable separate safety checks such as
-    /// ARC.
-    pub approvals_reviewer: Option<ApprovalsReviewer>,
-
-    /// Optional policy instructions for the guardian auto-reviewer.
-    #[serde(default)]
-    pub auto_review: Option<AutoReviewToml>,
-
-    #[serde(default)]
-    pub shell_environment_policy: ShellEnvironmentPolicyToml,
-
-    /// Whether the model may request a login shell for shell-based tools.
-    /// Default to `true`
-    ///
-    /// If `true`, the model may request a login shell (`login = true`), and
-    /// omitting `login` defaults to using a login shell.
-    /// If `false`, the model can never use a login shell: `login = true`
-    /// requests are rejected, and omitting `login` defaults to a non-login
-    /// shell.
-    #[serde(default = "default_allow_login_shell")]
-    pub allow_login_shell: Option<bool>,
-
-    /// Sandbox mode to use.
-    pub sandbox_mode: Option<SandboxMode>,
-
-    /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
-    pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
-
-    /// Default permissions profile to apply. Names starting with `:` refer to
-    /// built-in profiles; other names are resolved from the `[permissions]`
-    /// table.
-    pub default_permissions: Option<String>,
-
-    /// Named permissions profiles.
-    #[serde(default)]
-    pub permissions: Option<PermissionsToml>,
-
-    /// Deprecated optional external command to spawn for end-user notifications.
-    #[serde(default)]
-    pub notify: Option<Vec<String>>,
-
-    /// System instructions.
-    pub instructions: Option<String>,
-
-    /// Developer instructions inserted as a `developer` role message.
-    #[serde(default)]
-    pub developer_instructions: Option<String>,
-
-    /// Whether to inject the `<permissions instructions>` developer block.
-    pub include_permissions_instructions: Option<bool>,
-
-    /// Whether to inject the `<apps_instructions>` developer block.
-    pub include_apps_instructions: Option<bool>,
-
-    /// Whether to inject the `<environment_context>` user block.
-    pub include_environment_context: Option<bool>,
-
-    /// Optional path to a file containing model instructions that will override
-    /// the built-in instructions for the selected model. Users are STRONGLY
-    /// DISCOURAGED from using this field, as deviating from the instructions
-    /// sanctioned by Codex will likely degrade model performance.
-    pub model_instructions_file: Option<AbsolutePathBuf>,
-
-    /// Compact prompt used for history compaction.
-    pub compact_prompt: Option<String>,
-
-    /// Optional commit attribution text for commit message co-author trailers.
-    ///
-    /// Set to an empty string to disable automatic commit attribution.
-    pub commit_attribution: Option<String>,
-
-    /// When set, restricts ChatGPT login to a specific workspace identifier.
-    #[serde(default)]
-    pub forced_chatgpt_workspace_id: Option<String>,
-
-    /// When set, restricts the login mechanism users may use.
-    #[serde(default)]
-    pub forced_login_method: Option<ForcedLoginMethod>,
-
-    /// Preferred backend for storing CLI auth credentials.
-    /// file (default): Use a file in the Codex home directory.
-    /// keyring: Use an OS-specific keyring service.
-    /// auto: Use the keyring if available, otherwise use a file.
-    #[serde(default)]
-    pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
-
-    /// Definition for MCP servers that Codex can reach out to for tool calls.
-    #[serde(default)]
-    // Uses the raw MCP input shape (custom deserialization) rather than `McpServerConfig`.
-    #[schemars(schema_with = "crate::schema::mcp_servers_schema")]
-    pub mcp_servers: HashMap<String, McpServerConfig>,
-
-    /// Preferred backend for storing MCP OAuth credentials.
-    /// keyring: Use an OS-specific keyring service.
-    ///          https://github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/oauth.rs#L2
-    /// file: Use a file in the Codex home directory.
-    /// auto (default): Use the OS-specific keyring service if available, otherwise use a file.
-    #[serde(default)]
-    pub mcp_oauth_credentials_store: Option<OAuthCredentialsStoreMode>,
-
-    /// Optional fixed port for the local HTTP callback server used during MCP OAuth login.
-    /// When unset, Codex will bind to an ephemeral port chosen by the OS.
-    pub mcp_oauth_callback_port: Option<u16>,
-
-    /// Optional redirect URI to use during MCP OAuth login.
-    /// When set, this URI is used in the OAuth authorization request instead
-    /// of the local listener address. The local callback listener still binds
-    /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
-    pub mcp_oauth_callback_url: Option<String>,
-
-    /// User-defined provider entries that extend the built-in list. Built-in
-    /// IDs cannot be overridden.
-    #[serde(default, deserialize_with = "deserialize_model_providers")]
-    pub model_providers: HashMap<String, ModelProviderInfo>,
-
-    /// Maximum number of bytes to include from an AGENTS.md project doc file.
-    #[serde(default = "default_project_doc_max_bytes")]
-    pub project_doc_max_bytes: Option<usize>,
-
-    /// Ordered list of fallback filenames to look for when AGENTS.md is missing.
-    #[serde(default = "default_project_doc_fallback_filenames")]
-    pub project_doc_fallback_filenames: Option<Vec<String>>,
-
-    /// Token budget applied when storing tool/function outputs in the context manager.
-    pub tool_output_token_limit: Option<usize>,
-
-    /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.
-    /// Default: `300000` (5 minutes).
-    pub background_terminal_max_timeout: Option<u64>,
-
-    /// Deprecated: ignored.
-    #[schemars(skip)]
-    pub js_repl_node_path: Option<AbsolutePathBuf>,
-
-    /// Deprecated: ignored.
-    #[schemars(skip)]
-    pub js_repl_node_module_dirs: Option<Vec<AbsolutePathBuf>>,
-
-    /// Optional absolute path to patched zsh used by zsh-exec-bridge-backed shell execution.
-    pub zsh_path: Option<AbsolutePathBuf>,
-
-    /// Profile to use from the `profiles` map.
-    pub profile: Option<String>,
-
-    /// Named profiles to facilitate switching between different configurations.
-    #[serde(default)]
-    pub profiles: HashMap<String, ConfigProfile>,
-
-    /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
-    #[serde(default = "default_history")]
-    pub history: Option<History>,
-
-    /// Directory where Codex stores the SQLite state DB.
-    /// Defaults to `$CODEX_SQLITE_HOME` when set. Otherwise uses `$CODEX_HOME`.
-    pub sqlite_home: Option<AbsolutePathBuf>,
-
-    /// Directory where Codex writes log files, for example `codex-tui.log`.
-    /// Defaults to `$CODEX_HOME/log`.
-    pub log_dir: Option<AbsolutePathBuf>,
-
-    /// Debugging and reproducibility settings.
-    pub debug: Option<DebugToml>,
-
-    /// Optional URI-based file opener. If set, citations to files in the model
-    /// output will be hyperlinked using the specified URI scheme.
-    pub file_opener: Option<UriBasedFileOpener>,
-
-    /// Collection of settings that are specific to the TUI.
-    pub tui: Option<Tui>,
-
-    /// When set to `true`, `AgentReasoning` events will be hidden from the
-    /// UI/output. Defaults to `false`.
-    #[serde(default = "default_hide_agent_reasoning")]
-    pub hide_agent_reasoning: Option<bool>,
-
-    /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
-    /// Defaults to `false`.
-    pub show_raw_agent_reasoning: Option<bool>,
-
-    pub model_reasoning_effort: Option<ReasoningEffort>,
-    pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
-    pub model_reasoning_summary: Option<ReasoningSummary>,
-    /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
-    pub model_verbosity: Option<Verbosity>,
-
-    /// Override to force-enable reasoning summaries for the configured model.
-    pub model_supports_reasoning_summaries: Option<bool>,
-
-    /// Optional path to a JSON model catalog (applied on startup only).
-    /// Per-thread `config` overrides are accepted but do not reapply this (no-ops).
-    pub model_catalog_json: Option<AbsolutePathBuf>,
-
-    /// Optionally specify a personality for the model
-    pub personality: Option<Personality>,
-
-    /// Optional explicit service tier preference for new turns (`fast` or `flex`).
-    pub service_tier: Option<ServiceTier>,
-
-    /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
-    pub chatgpt_base_url: Option<String>,
-
-    /// Base URL override for the built-in `openai` model provider.
-    pub openai_base_url: Option<String>,
-
-    /// Machine-local realtime audio device preferences used by realtime voice.
-    #[serde(default)]
-    pub audio: Option<RealtimeAudioToml>,
-
-    /// Experimental / do not use. Overrides only the realtime conversation
-    /// websocket transport base URL (the `Op::RealtimeConversation`
-    /// `/v1/realtime`
-    /// connection) without changing normal provider HTTP requests.
-    pub experimental_realtime_ws_base_url: Option<String>,
-    /// Experimental / do not use. Selects the realtime websocket model/snapshot
-    /// used for the `Op::RealtimeConversation` connection.
-    pub experimental_realtime_ws_model: Option<String>,
-    /// Experimental / do not use. Realtime websocket session selection.
-    /// `version` controls v1/v2 and `type` controls conversational/transcription.
-    #[serde(default)]
-    pub realtime: Option<RealtimeToml>,
-    /// Experimental / do not use. Overrides only the realtime conversation
-    /// websocket transport instructions (the `Op::RealtimeConversation`
-    /// `/ws` session.update instructions) without changing normal prompts.
-    pub experimental_realtime_ws_backend_prompt: Option<String>,
-    /// Experimental / do not use. Replaces the synthesized realtime startup
-    /// context appended to websocket session instructions. An empty string
-    /// disables startup context injection entirely.
-    pub experimental_realtime_ws_startup_context: Option<String>,
-    /// Experimental / do not use. Replaces the built-in realtime start
-    /// instructions inserted into developer messages when realtime becomes
-    /// active.
-    pub experimental_realtime_start_instructions: Option<String>,
-
-    /// Experimental / do not use. When set, app-server uses a remote thread
-    /// store at this endpoint instead of the local filesystem/SQLite store.
-    pub experimental_thread_store_endpoint: Option<String>,
-
-    /// Experimental / do not use. When set, app-server fetches thread-scoped
-    /// config from a remote service at this endpoint.
-    pub experimental_thread_config_endpoint: Option<String>,
-
-    /// Experimental / do not use. Selects the thread store implementation.
-    pub experimental_thread_store: Option<ThreadStoreToml>,
-    pub projects: Option<HashMap<String, ProjectConfig>>,
-
-    /// Controls the web search tool mode: disabled, cached, or live.
-    pub web_search: Option<WebSearchMode>,
-
-    /// Nested tools section for feature toggles
-    pub tools: Option<ToolsToml>,
-
-    /// Additional discoverable tools that can be suggested for installation.
-    pub tool_suggest: Option<ToolSuggestConfig>,
-
-    /// Agent-related settings (thread limits, etc.).
-    pub agents: Option<AgentsToml>,
-
-    /// Memories subsystem settings.
-    pub memories: Option<MemoriesToml>,
-
-    /// User-level skill config entries keyed by SKILL.md path.
-    pub skills: Option<SkillsConfig>,
-
-    /// Lifecycle hooks configured inline in TOML plus user-level overrides.
-    pub hooks: Option<HooksToml>,
-
-    /// User-level plugin config entries keyed by plugin name.
-    #[serde(default)]
-    pub plugins: HashMap<String, PluginConfig>,
-
-    /// User-level marketplace entries keyed by marketplace name.
-    #[serde(default)]
-    pub marketplaces: HashMap<String, MarketplaceConfig>,
-
-    /// Centralized feature flags (new). Prefer this over individual toggles.
-    #[serde(default)]
-    // Injects known feature keys into the schema and forbids unknown keys.
-    #[schemars(schema_with = "crate::schema::features_schema")]
-    pub features: Option<FeaturesToml>,
-
-    /// Suppress warnings about unstable (under development) features.
-    pub suppress_unstable_features_warning: Option<bool>,
-
-    /// Compatibility-only settings retained so legacy `ghost_snapshot`
-    /// config still loads.
-    #[serde(default)]
-    pub ghost_snapshot: Option<GhostSnapshotToml>,
-
-    /// Markers used to detect the project root when searching parent
-    /// directories for `.codex` folders. Defaults to [".git"] when unset.
-    #[serde(default)]
-    pub project_root_markers: Option<Vec<String>>,
-
-    /// When `true`, checks for Codex updates on startup and surfaces update prompts.
-    /// Set to `false` only if your Codex updates are centrally managed.
-    /// Defaults to `true`.
-    pub check_for_update_on_startup: Option<bool>,
-
-    /// When true, disables burst-paste detection for typed input entirely.
-    /// All characters are inserted as they are received, and no buffering
-    /// or placeholder replacement will occur for fast keypress bursts.
-    pub disable_paste_burst: Option<bool>,
-
-    /// When `false`, disables analytics across Codex product surfaces in this machine.
-    /// Defaults to `true`.
-    pub analytics: Option<AnalyticsConfigToml>,
-
-    /// When `false`, disables feedback collection across Codex product surfaces.
-    /// Defaults to `true`.
-    pub feedback: Option<FeedbackConfigToml>,
-
-    /// Settings for app-specific controls.
-    #[serde(default)]
-    pub apps: Option<AppsConfigToml>,
-
-    /// OTEL configuration.
-    pub otel: Option<OtelConfigToml>,
-
-    /// Windows-specific configuration.
-    #[serde(default)]
-    pub windows: Option<WindowsToml>,
-
-    /// Tracks whether the Windows onboarding screen has been acknowledged.
-    pub windows_wsl_setup_acknowledged: Option<bool>,
-
-    /// Collection of in-product notices (different from notifications)
-    /// See [`crate::types::Notice`] for more details
-    pub notice: Option<Notice>,
-
-    /// Legacy, now use features
-    /// Deprecated: ignored. Use `model_instructions_file`.
-    #[schemars(skip)]
-    pub experimental_instructions_file: Option<AbsolutePathBuf>,
-    pub experimental_compact_prompt_file: Option<AbsolutePathBuf>,
-    pub experimental_use_unified_exec_tool: Option<bool>,
-    pub experimental_use_freeform_apply_patch: Option<bool>,
-    /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
-    pub oss_provider: Option<String>,
+macro_rules! define_config_toml_struct {
+    (
+        $name:ident => $lenient_name:ident {
+            $(
+                $kind:ident $(($lenient_ty:ident))? {
+                    $(#[$meta:meta])*
+                    pub $field:ident: $ty:ty,
+                }
+            )*
+        }
+    ) => {
+        /// Base config deserialized from ~/.codex/config.toml.
+        #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
+        #[schemars(deny_unknown_fields)]
+        pub struct $name {
+            $(
+                $(#[$meta])*
+                pub $field: $ty,
+            )*
+        }
+    };
 }
+
+// Single source of truth for the root config fields. `direct` fields are only
+// part of `ConfigToml`; `enum`, `section`, and `map` fields are also consumed
+// by the lenient loader so invalid enum leaves can be warned on and removed.
+macro_rules! config_toml_fields {
+    ($callback:ident) => {
+        $callback! {
+            ConfigToml => LenientConfigToml {
+            direct {
+                /// Optional override of model selection.
+                pub model: Option<String>,
+            }
+            direct {
+                /// Review model override used by the `/review` feature.
+                pub review_model: Option<String>,
+            }
+            direct {
+                /// Provider to use from the model_providers map.
+                pub model_provider: Option<String>,
+            }
+            direct {
+                /// Size of the context window for the model, in tokens.
+                pub model_context_window: Option<i64>,
+            }
+            direct {
+                /// Token usage threshold triggering auto-compaction of conversation history.
+                pub model_auto_compact_token_limit: Option<i64>,
+            }
+            enum {
+                /// Default approval policy for executing commands.
+                pub approval_policy: Option<AskForApproval>,
+            }
+            enum {
+                /// Configures who approval requests are routed to for review once they have
+                /// been escalated. This does not disable separate safety checks such as
+                /// ARC.
+                pub approvals_reviewer: Option<ApprovalsReviewer>,
+            }
+            direct {
+                /// Optional policy instructions for the guardian auto-reviewer.
+                #[serde(default)]
+                pub auto_review: Option<AutoReviewToml>,
+            }
+            section(LenientShellEnvironmentPolicyToml) {
+                #[serde(default)]
+                pub shell_environment_policy: ShellEnvironmentPolicyToml,
+            }
+            direct {
+                /// Whether the model may request a login shell for shell-based tools.
+                /// Default to `true`
+                ///
+                /// If `true`, the model may request a login shell (`login = true`), and
+                /// omitting `login` defaults to using a login shell.
+                /// If `false`, the model can never use a login shell: `login = true`
+                /// requests are rejected, and omitting `login` defaults to a non-login
+                /// shell.
+                #[serde(default = "default_allow_login_shell")]
+                pub allow_login_shell: Option<bool>,
+            }
+            enum {
+                /// Sandbox mode to use.
+                pub sandbox_mode: Option<SandboxMode>,
+            }
+            direct {
+                /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
+                pub sandbox_workspace_write: Option<SandboxWorkspaceWrite>,
+            }
+            direct {
+                /// Default permissions profile to apply. Names starting with `:` refer to
+                /// built-in profiles; other names are resolved from the `[permissions]`
+                /// table.
+                pub default_permissions: Option<String>,
+            }
+            direct {
+                /// Named permissions profiles.
+                #[serde(default)]
+                pub permissions: Option<PermissionsToml>,
+            }
+            direct {
+                /// Deprecated optional external command to spawn for end-user notifications.
+                #[serde(default)]
+                pub notify: Option<Vec<String>>,
+            }
+            direct {
+                /// System instructions.
+                pub instructions: Option<String>,
+            }
+            direct {
+                /// Developer instructions inserted as a `developer` role message.
+                #[serde(default)]
+                pub developer_instructions: Option<String>,
+            }
+            direct {
+                /// Whether to inject the `<permissions instructions>` developer block.
+                pub include_permissions_instructions: Option<bool>,
+            }
+            direct {
+                /// Whether to inject the `<apps_instructions>` developer block.
+                pub include_apps_instructions: Option<bool>,
+            }
+            direct {
+                /// Whether to inject the `<environment_context>` user block.
+                pub include_environment_context: Option<bool>,
+            }
+            direct {
+                /// Optional path to a file containing model instructions that will override
+                /// the built-in instructions for the selected model. Users are STRONGLY
+                /// DISCOURAGED from using this field, as deviating from the instructions
+                /// sanctioned by Codex will likely degrade model performance.
+                pub model_instructions_file: Option<AbsolutePathBuf>,
+            }
+            direct {
+                /// Compact prompt used for history compaction.
+                pub compact_prompt: Option<String>,
+            }
+            direct {
+                /// Optional commit attribution text for commit message co-author trailers.
+                ///
+                /// Set to an empty string to disable automatic commit attribution.
+                pub commit_attribution: Option<String>,
+            }
+            direct {
+                /// When set, restricts ChatGPT login to a specific workspace identifier.
+                #[serde(default)]
+                pub forced_chatgpt_workspace_id: Option<String>,
+            }
+            enum {
+                /// When set, restricts the login mechanism users may use.
+                #[serde(default)]
+                pub forced_login_method: Option<ForcedLoginMethod>,
+            }
+            enum {
+                /// Preferred backend for storing CLI auth credentials.
+                /// file (default): Use a file in the Codex home directory.
+                /// keyring: Use an OS-specific keyring service.
+                /// auto: Use the keyring if available, otherwise use a file.
+                #[serde(default)]
+                pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
+            }
+            direct {
+                /// Definition for MCP servers that Codex can reach out to for tool calls.
+                #[serde(default)]
+                // Uses the raw MCP input shape (custom deserialization) rather than `McpServerConfig`.
+                #[schemars(schema_with = "crate::schema::mcp_servers_schema")]
+                pub mcp_servers: HashMap<String, McpServerConfig>,
+            }
+            enum {
+                /// Preferred backend for storing MCP OAuth credentials.
+                /// keyring: Use an OS-specific keyring service.
+                ///          https://github.com/openai/codex/blob/main/codex-rs/rmcp-client/src/oauth.rs#L2
+                /// file: Use a file in the Codex home directory.
+                /// auto (default): Use the OS-specific keyring service if available, otherwise use a file.
+                #[serde(default)]
+                pub mcp_oauth_credentials_store: Option<OAuthCredentialsStoreMode>,
+            }
+            direct {
+                /// Optional fixed port for the local HTTP callback server used during MCP OAuth login.
+                /// When unset, Codex will bind to an ephemeral port chosen by the OS.
+                pub mcp_oauth_callback_port: Option<u16>,
+            }
+            direct {
+                /// Optional redirect URI to use during MCP OAuth login.
+                /// When set, this URI is used in the OAuth authorization request instead
+                /// of the local listener address. The local callback listener still binds
+                /// to 127.0.0.1 (using `mcp_oauth_callback_port` when provided).
+                pub mcp_oauth_callback_url: Option<String>,
+            }
+            direct {
+                /// User-defined provider entries that extend the built-in list. Built-in
+                /// IDs cannot be overridden.
+                #[serde(default, deserialize_with = "deserialize_model_providers")]
+                pub model_providers: HashMap<String, ModelProviderInfo>,
+            }
+            direct {
+                /// Maximum number of bytes to include from an AGENTS.md project doc file.
+                #[serde(default = "default_project_doc_max_bytes")]
+                pub project_doc_max_bytes: Option<usize>,
+            }
+            direct {
+                /// Ordered list of fallback filenames to look for when AGENTS.md is missing.
+                #[serde(default = "default_project_doc_fallback_filenames")]
+                pub project_doc_fallback_filenames: Option<Vec<String>>,
+            }
+            direct {
+                /// Token budget applied when storing tool/function outputs in the context manager.
+                pub tool_output_token_limit: Option<usize>,
+            }
+            direct {
+                /// Maximum poll window for background terminal output (`write_stdin`), in milliseconds.
+                /// Default: `300000` (5 minutes).
+                pub background_terminal_max_timeout: Option<u64>,
+            }
+            direct {
+                /// Deprecated: ignored.
+                #[schemars(skip)]
+                pub js_repl_node_path: Option<AbsolutePathBuf>,
+            }
+            direct {
+                /// Deprecated: ignored.
+                #[schemars(skip)]
+                pub js_repl_node_module_dirs: Option<Vec<AbsolutePathBuf>>,
+            }
+            direct {
+                /// Optional absolute path to patched zsh used by zsh-exec-bridge-backed shell execution.
+                pub zsh_path: Option<AbsolutePathBuf>,
+            }
+            direct {
+                /// Profile to use from the `profiles` map.
+                pub profile: Option<String>,
+            }
+            map(LenientConfigProfile) {
+                /// Named profiles to facilitate switching between different configurations.
+                #[serde(default)]
+                pub profiles: HashMap<String, ConfigProfile>,
+            }
+            section(LenientHistory) {
+                /// Settings that govern if and what will be written to `~/.codex/history.jsonl`.
+                #[serde(default = "default_history")]
+                pub history: Option<History>,
+            }
+            direct {
+                /// Directory where Codex stores the SQLite state DB.
+                /// Defaults to `$CODEX_SQLITE_HOME` when set. Otherwise uses `$CODEX_HOME`.
+                pub sqlite_home: Option<AbsolutePathBuf>,
+            }
+            direct {
+                /// Directory where Codex writes log files, for example `codex-tui.log`.
+                /// Defaults to `$CODEX_HOME/log`.
+                pub log_dir: Option<AbsolutePathBuf>,
+            }
+            direct {
+                /// Debugging and reproducibility settings.
+                pub debug: Option<DebugToml>,
+            }
+            enum {
+                /// Optional URI-based file opener. If set, citations to files in the model
+                /// output will be hyperlinked using the specified URI scheme.
+                pub file_opener: Option<UriBasedFileOpener>,
+            }
+            section(LenientTui) {
+                /// Collection of settings that are specific to the TUI.
+                pub tui: Option<Tui>,
+            }
+            direct {
+                /// When set to `true`, `AgentReasoning` events will be hidden from the
+                /// UI/output. Defaults to `false`.
+                #[serde(default = "default_hide_agent_reasoning")]
+                pub hide_agent_reasoning: Option<bool>,
+            }
+            direct {
+                /// When set to `true`, `AgentReasoningRawContentEvent` events will be shown in the UI/output.
+                /// Defaults to `false`.
+                pub show_raw_agent_reasoning: Option<bool>,
+            }
+            enum {
+                pub model_reasoning_effort: Option<ReasoningEffort>,
+            }
+            enum {
+                pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
+            }
+            enum {
+                pub model_reasoning_summary: Option<ReasoningSummary>,
+            }
+            enum {
+                /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
+                pub model_verbosity: Option<Verbosity>,
+            }
+            direct {
+                /// Override to force-enable reasoning summaries for the configured model.
+                pub model_supports_reasoning_summaries: Option<bool>,
+            }
+            direct {
+                /// Optional path to a JSON model catalog (applied on startup only).
+                /// Per-thread `config` overrides are accepted but do not reapply this (no-ops).
+                pub model_catalog_json: Option<AbsolutePathBuf>,
+            }
+            enum {
+                /// Optionally specify a personality for the model
+                pub personality: Option<Personality>,
+            }
+            enum {
+                /// Optional explicit service tier preference for new turns (`fast` or `flex`).
+                pub service_tier: Option<ServiceTier>,
+            }
+            direct {
+                /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
+                pub chatgpt_base_url: Option<String>,
+            }
+            direct {
+                /// Base URL override for the built-in `openai` model provider.
+                pub openai_base_url: Option<String>,
+            }
+            direct {
+                /// Machine-local realtime audio device preferences used by realtime voice.
+                #[serde(default)]
+                pub audio: Option<RealtimeAudioToml>,
+            }
+            direct {
+                /// Experimental / do not use. Overrides only the realtime conversation
+                /// websocket transport base URL (the `Op::RealtimeConversation`
+                /// `/v1/realtime`
+                /// connection) without changing normal provider HTTP requests.
+                pub experimental_realtime_ws_base_url: Option<String>,
+            }
+            direct {
+                /// Experimental / do not use. Selects the realtime websocket model/snapshot
+                /// used for the `Op::RealtimeConversation` connection.
+                pub experimental_realtime_ws_model: Option<String>,
+            }
+            section(LenientRealtimeToml) {
+                /// Experimental / do not use. Realtime websocket session selection.
+                /// `version` controls v1/v2 and `type` controls conversational/transcription.
+                #[serde(default)]
+                pub realtime: Option<RealtimeToml>,
+            }
+            direct {
+                /// Experimental / do not use. Overrides only the realtime conversation
+                /// websocket transport instructions (the `Op::RealtimeConversation`
+                /// `/ws` session.update instructions) without changing normal prompts.
+                pub experimental_realtime_ws_backend_prompt: Option<String>,
+            }
+            direct {
+                /// Experimental / do not use. Replaces the synthesized realtime startup
+                /// context appended to websocket session instructions. An empty string
+                /// disables startup context injection entirely.
+                pub experimental_realtime_ws_startup_context: Option<String>,
+            }
+            direct {
+                /// Experimental / do not use. Replaces the built-in realtime start
+                /// instructions inserted into developer messages when realtime becomes
+                /// active.
+                pub experimental_realtime_start_instructions: Option<String>,
+            }
+            direct {
+                /// Experimental / do not use. When set, app-server uses a remote thread
+                /// store at this endpoint instead of the local filesystem/SQLite store.
+                pub experimental_thread_store_endpoint: Option<String>,
+            }
+            direct {
+                /// Experimental / do not use. When set, app-server fetches thread-scoped
+                /// config from a remote service at this endpoint.
+                pub experimental_thread_config_endpoint: Option<String>,
+            }
+            enum {
+                /// Experimental / do not use. Selects the thread store implementation.
+                pub experimental_thread_store: Option<ThreadStoreToml>,
+            }
+            direct {
+                pub projects: Option<HashMap<String, ProjectConfig>>,
+            }
+            enum {
+                /// Controls the web search tool mode: disabled, cached, or live.
+                pub web_search: Option<WebSearchMode>,
+            }
+            section(LenientToolsToml) {
+                /// Nested tools section for feature toggles
+                pub tools: Option<ToolsToml>,
+            }
+            direct {
+                /// Additional discoverable tools that can be suggested for installation.
+                pub tool_suggest: Option<ToolSuggestConfig>,
+            }
+            direct {
+                /// Agent-related settings (thread limits, etc.).
+                pub agents: Option<AgentsToml>,
+            }
+            direct {
+                /// Memories subsystem settings.
+                pub memories: Option<MemoriesToml>,
+            }
+            direct {
+                /// User-level skill config entries keyed by SKILL.md path.
+                pub skills: Option<SkillsConfig>,
+            }
+            direct {
+                /// Lifecycle hooks configured inline in TOML plus user-level overrides.
+                pub hooks: Option<HooksToml>,
+            }
+            direct {
+                /// User-level plugin config entries keyed by plugin name.
+                #[serde(default)]
+                pub plugins: HashMap<String, PluginConfig>,
+            }
+            direct {
+                /// User-level marketplace entries keyed by marketplace name.
+                #[serde(default)]
+                pub marketplaces: HashMap<String, MarketplaceConfig>,
+            }
+            direct {
+                /// Centralized feature flags (new). Prefer this over individual toggles.
+                #[serde(default)]
+                // Injects known feature keys into the schema and forbids unknown keys.
+                #[schemars(schema_with = "crate::schema::features_schema")]
+                pub features: Option<FeaturesToml>,
+            }
+            direct {
+                /// Suppress warnings about unstable (under development) features.
+                pub suppress_unstable_features_warning: Option<bool>,
+            }
+            direct {
+                /// Compatibility-only settings retained so legacy `ghost_snapshot`
+                /// config still loads.
+                #[serde(default)]
+                pub ghost_snapshot: Option<GhostSnapshotToml>,
+            }
+            direct {
+                /// Markers used to detect the project root when searching parent
+                /// directories for `.codex` folders. Defaults to [".git"] when unset.
+                #[serde(default)]
+                pub project_root_markers: Option<Vec<String>>,
+            }
+            direct {
+                /// When `true`, checks for Codex updates on startup and surfaces update prompts.
+                /// Set to `false` only if your Codex updates are centrally managed.
+                /// Defaults to `true`.
+                pub check_for_update_on_startup: Option<bool>,
+            }
+            direct {
+                /// When true, disables burst-paste detection for typed input entirely.
+                /// All characters are inserted as they are received, and no buffering
+                /// or placeholder replacement will occur for fast keypress bursts.
+                pub disable_paste_burst: Option<bool>,
+            }
+            direct {
+                /// When `false`, disables analytics across Codex product surfaces in this machine.
+                /// Defaults to `true`.
+                pub analytics: Option<AnalyticsConfigToml>,
+            }
+            direct {
+                /// When `false`, disables feedback collection across Codex product surfaces.
+                /// Defaults to `true`.
+                pub feedback: Option<FeedbackConfigToml>,
+            }
+            direct {
+                /// Settings for app-specific controls.
+                #[serde(default)]
+                pub apps: Option<AppsConfigToml>,
+            }
+            direct {
+                /// OTEL configuration.
+                pub otel: Option<OtelConfigToml>,
+            }
+            section(LenientWindowsToml) {
+                /// Windows-specific configuration.
+                #[serde(default)]
+                pub windows: Option<WindowsToml>,
+            }
+            direct {
+                /// Tracks whether the Windows onboarding screen has been acknowledged.
+                pub windows_wsl_setup_acknowledged: Option<bool>,
+            }
+            direct {
+                /// Collection of in-product notices (different from notifications)
+                /// See [`crate::types::Notice`] for more details
+                pub notice: Option<Notice>,
+            }
+            direct {
+                /// Legacy, now use features
+                /// Deprecated: ignored. Use `model_instructions_file`.
+                #[schemars(skip)]
+                pub experimental_instructions_file: Option<AbsolutePathBuf>,
+            }
+            direct {
+                pub experimental_compact_prompt_file: Option<AbsolutePathBuf>,
+            }
+            direct {
+                pub experimental_use_unified_exec_tool: Option<bool>,
+            }
+            direct {
+                pub experimental_use_freeform_apply_patch: Option<bool>,
+            }
+            direct {
+                /// Preferred OSS provider for local models, e.g. "lmstudio" or "ollama".
+                pub oss_provider: Option<String>,
+            }
+            }
+        }
+    };
+}
+
+pub(crate) use config_toml_fields;
+
+config_toml_fields!(define_config_toml_struct);
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]

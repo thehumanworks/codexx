@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 mod cloud_requirements;
 mod config_requirements;
 pub mod config_toml;

@@ -4,6 +4,8 @@ use crate::config_toml::RealtimeTransport;
 use crate::config_toml::RealtimeWsMode;
 use crate::config_toml::RealtimeWsVersion;
 use crate::config_toml::ThreadStoreToml;
+use crate::config_toml::config_toml_fields;
+use crate::profile_toml::config_profile_fields;
 use crate::types::AltScreenMode;
 use crate::types::ApprovalsReviewer;
 use crate::types::AuthCredentialsStoreMode;
@@ -46,7 +48,8 @@ where
     T: serde::de::DeserializeOwned,
 {
     let lenient_config: LenientConfigToml = value.clone().try_into()?;
-    let warnings = lenient_config.invalid_enum_warnings();
+    let mut warnings = Vec::new();
+    lenient_config.push_invalid_enum_warnings(&mut warnings, &mut WarningPath::default());
     for warning in &warnings {
         remove_value_at_segments(&mut value, &warning.segments);
     }
@@ -58,11 +61,188 @@ where
     Ok((value, parsed, messages))
 }
 
+macro_rules! define_lenient_struct_from_config_fields {
+    ($source_name:ident => $name:ident { $($entries:tt)* }) => {
+        define_lenient_struct_from_config_fields! {
+            @fields $name
+            [$($entries)*]
+            []
+            $($entries)*
+        }
+    };
+    (
+        @fields $name:ident
+        [$($entries:tt)*]
+        [$($fields:tt)*]
+    ) => {
+        #[derive(Deserialize, Default)]
+        struct $name {
+            $($fields)*
+        }
+
+        impl $name {
+            /// Adds warnings for this section and any nested sections.
+            fn push_invalid_enum_warnings(
+                &self,
+                warnings: &mut Vec<InvalidEnumWarning>,
+                path: &mut WarningPath,
+            ) {
+                let source = self;
+                walk_lenient_config_fields!(source, warnings, path, $($entries)*);
+            }
+        }
+    };
+    (
+        @fields $name:ident
+        [$($entries:tt)*]
+        [$($fields:tt)*]
+        enum {
+            $(#[$meta:meta])*
+            pub $field:ident: Option<$ty:ty>,
+        }
+        $($rest:tt)*
+    ) => {
+        define_lenient_struct_from_config_fields! {
+            @fields $name
+            [$($entries)*]
+            [
+                $($fields)*
+                $field: Option<Lenient<$ty>>,
+            ]
+            $($rest)*
+        }
+    };
+    (
+        @fields $name:ident
+        [$($entries:tt)*]
+        [$($fields:tt)*]
+        section($lenient_ty:ident) {
+            $(#[$meta:meta])*
+            pub $field:ident: $ty:ty,
+        }
+        $($rest:tt)*
+    ) => {
+        define_lenient_struct_from_config_fields! {
+            @fields $name
+            [$($entries)*]
+            [
+                $($fields)*
+                $field: Option<$lenient_ty>,
+            ]
+            $($rest)*
+        }
+    };
+    (
+        @fields $name:ident
+        [$($entries:tt)*]
+        [$($fields:tt)*]
+        map($lenient_ty:ident) {
+            $(#[$meta:meta])*
+            pub $field:ident: HashMap<String, $ty:ty>,
+        }
+        $($rest:tt)*
+    ) => {
+        define_lenient_struct_from_config_fields! {
+            @fields $name
+            [$($entries)*]
+            [
+                $($fields)*
+                #[serde(default)]
+                $field: HashMap<String, $lenient_ty>,
+            ]
+            $($rest)*
+        }
+    };
+    (
+        @fields $name:ident
+        [$($entries:tt)*]
+        [$($fields:tt)*]
+        direct {
+            $(#[$meta:meta])*
+            pub $field:ident: $ty:ty,
+        }
+        $($rest:tt)*
+    ) => {
+        define_lenient_struct_from_config_fields! {
+            @fields $name
+            [$($entries)*]
+            [$($fields)*]
+            $($rest)*
+        }
+    };
+}
+
+macro_rules! walk_lenient_config_fields {
+    ($source:ident, $warnings:ident, $path:ident,) => {};
+    (
+        $source:ident,
+        $warnings:ident,
+        $path:ident,
+        enum {
+            $(#[$meta:meta])*
+            pub $field:ident: Option<$ty:ty>,
+        }
+        $($rest:tt)*
+    ) => {
+        push_invalid_field($warnings, $path, stringify!($field), &$source.$field);
+        walk_lenient_config_fields!($source, $warnings, $path, $($rest)*);
+    };
+    (
+        $source:ident,
+        $warnings:ident,
+        $path:ident,
+        section($lenient_ty:ident) {
+            $(#[$meta:meta])*
+            pub $field:ident: $ty:ty,
+        }
+        $($rest:tt)*
+    ) => {
+        if let Some(section) = &$source.$field {
+            $path.push(stringify!($field));
+            section.push_invalid_enum_warnings($warnings, $path);
+            $path.pop();
+        }
+        walk_lenient_config_fields!($source, $warnings, $path, $($rest)*);
+    };
+    (
+        $source:ident,
+        $warnings:ident,
+        $path:ident,
+        map($lenient_ty:ident) {
+            $(#[$meta:meta])*
+            pub $field:ident: HashMap<String, $ty:ty>,
+        }
+        $($rest:tt)*
+    ) => {
+        let mut entries = $source.$field.iter().collect::<Vec<_>>();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        $path.push(stringify!($field));
+        for (name, section) in entries {
+            $path.push(name);
+            section.push_invalid_enum_warnings($warnings, $path);
+            $path.pop();
+        }
+        $path.pop();
+        walk_lenient_config_fields!($source, $warnings, $path, $($rest)*);
+    };
+    (
+        $source:ident,
+        $warnings:ident,
+        $path:ident,
+        direct {
+            $(#[$meta:meta])*
+            pub $field:ident: $ty:ty,
+        }
+        $($rest:tt)*
+    ) => {
+        walk_lenient_config_fields!($source, $warnings, $path, $($rest)*);
+    };
+}
+
 /// Defines the private lenient mirror from one TOML field list.
 ///
-/// This is the local version of generating `LenientConfigToml` from
-/// `ConfigToml`: each entry below emits both the sparse struct field used for
-/// deserialization and the warning traversal for that same TOML path.
+/// Each entry emits both the sparse struct field used for deserialization and
+/// the warning traversal for that same TOML path.
 macro_rules! define_lenient_config_shape {
     (
         $(
@@ -140,63 +320,10 @@ macro_rules! define_lenient_config_shape {
     };
 }
 
+config_toml_fields!(define_lenient_struct_from_config_fields);
+config_profile_fields!(define_lenient_struct_from_config_fields);
+
 define_lenient_config_shape! {
-    /// Sparse mirror of `ConfigToml` containing only enum-valued config fields.
-    ///
-    /// This deliberately ignores non-enum fields. The strict `ConfigToml`
-    /// deserialization after sanitization remains responsible for validating the
-    /// full config shape, unknown keys, and non-enum type errors.
-    struct LenientConfigToml {
-        enums {
-            "approval_policy" => approval_policy: AskForApproval,
-            "approvals_reviewer" => approvals_reviewer: ApprovalsReviewer,
-            "sandbox_mode" => sandbox_mode: SandboxMode,
-            "forced_login_method" => forced_login_method: ForcedLoginMethod,
-            "cli_auth_credentials_store" => cli_auth_credentials_store: AuthCredentialsStoreMode,
-            "mcp_oauth_credentials_store" => mcp_oauth_credentials_store: OAuthCredentialsStoreMode,
-            "file_opener" => file_opener: UriBasedFileOpener,
-            "model_reasoning_effort" => model_reasoning_effort: ReasoningEffort,
-            "plan_mode_reasoning_effort" => plan_mode_reasoning_effort: ReasoningEffort,
-            "model_reasoning_summary" => model_reasoning_summary: ReasoningSummary,
-            "model_verbosity" => model_verbosity: Verbosity,
-            "personality" => personality: Personality,
-            "service_tier" => service_tier: ServiceTier,
-            "experimental_thread_store" => experimental_thread_store: ThreadStoreToml,
-            "web_search" => web_search: WebSearchMode,
-        }
-        sections {
-            "history" => history: LenientHistory,
-            "shell_environment_policy" => shell_environment_policy: LenientShellEnvironmentPolicyToml,
-            "tools" => tools: LenientToolsToml,
-            "tui" => tui: LenientTui,
-            "realtime" => realtime: LenientRealtimeToml,
-            "windows" => windows: LenientWindowsToml,
-        }
-        maps {
-            "profiles" => profiles: LenientConfigProfile,
-        }
-    }
-
-    struct LenientConfigProfile {
-        enums {
-            "service_tier" => service_tier: ServiceTier,
-            "approval_policy" => approval_policy: AskForApproval,
-            "approvals_reviewer" => approvals_reviewer: ApprovalsReviewer,
-            "sandbox_mode" => sandbox_mode: SandboxMode,
-            "model_reasoning_effort" => model_reasoning_effort: ReasoningEffort,
-            "plan_mode_reasoning_effort" => plan_mode_reasoning_effort: ReasoningEffort,
-            "model_reasoning_summary" => model_reasoning_summary: ReasoningSummary,
-            "model_verbosity" => model_verbosity: Verbosity,
-            "personality" => personality: Personality,
-            "web_search" => web_search: WebSearchMode,
-        }
-        sections {
-            "tools" => tools: LenientToolsToml,
-            "windows" => windows: LenientWindowsToml,
-        }
-        maps {}
-    }
-
     /// Sparse mirror of `[history]` for the one enum-valued field inside it.
     struct LenientHistory {
         enums {
@@ -262,14 +389,6 @@ define_lenient_config_shape! {
         }
         sections {}
         maps {}
-    }
-}
-
-impl LenientConfigToml {
-    fn invalid_enum_warnings(&self) -> Vec<InvalidEnumWarning> {
-        let mut warnings = Vec::new();
-        self.push_invalid_enum_warnings(&mut warnings, &mut WarningPath::default());
-        warnings
     }
 }
 
