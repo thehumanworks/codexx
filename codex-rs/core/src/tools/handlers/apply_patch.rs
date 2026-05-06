@@ -33,6 +33,7 @@ use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::apply_patch::ApplyPatchRequest;
 use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
+use crate::tools::sandboxing::InitialApprovalState;
 use crate::tools::sandboxing::ToolCtx;
 use codex_apply_patch::ApplyPatchAction;
 use codex_apply_patch::ApplyPatchFileChange;
@@ -369,129 +370,143 @@ impl ToolHandler for ApplyPatchHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tracker,
-            call_id,
-            tool_name,
-            payload,
-            ..
-        } = invocation;
+        handle_apply_patch_invocation(invocation, InitialApprovalState::Evaluate).await
+    }
 
-        let patch_input = match payload {
-            ToolPayload::Function { arguments } => {
-                let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
-                args.input
-            }
-            ToolPayload::Custom { input } => input,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received unsupported payload".to_string(),
-                ));
-            }
-        };
+    async fn handle_after_permission_request_rewrite(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
+        handle_apply_patch_invocation(invocation, InitialApprovalState::AlreadyApproved).await
+    }
+}
 
-        // Re-parse and verify the patch so we can compute changes and approval.
-        // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
-        let cwd = turn.cwd.clone();
-        let command = vec!["apply_patch".to_string(), patch_input.clone()];
-        let Some(turn_environment) = turn.environments.primary() else {
+async fn handle_apply_patch_invocation(
+    invocation: ToolInvocation,
+    initial_approval_state: InitialApprovalState,
+) -> Result<ApplyPatchToolOutput, FunctionCallError> {
+    let ToolInvocation {
+        session,
+        turn,
+        tracker,
+        call_id,
+        tool_name,
+        payload,
+        ..
+    } = invocation;
+
+    let patch_input = match payload {
+        ToolPayload::Function { arguments } => {
+            let args: ApplyPatchToolArgs = parse_arguments(&arguments)?;
+            args.input
+        }
+        ToolPayload::Custom { input } => input,
+        _ => {
             return Err(FunctionCallError::RespondToModel(
-                "apply_patch is unavailable in this session".to_string(),
+                "apply_patch handler received unsupported payload".to_string(),
             ));
-        };
-        let fs = turn_environment.environment.get_filesystem();
-        let sandbox = turn_environment
-            .environment
-            .is_remote()
-            .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
-        match codex_apply_patch::maybe_parse_apply_patch_verified(
-            &command,
-            &cwd,
-            fs.as_ref(),
-            sandbox.as_ref(),
-        )
-        .await
-        {
-            codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
-                let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
-                    effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
-                match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
-                    .await
-                {
-                    InternalApplyPatchInvocation::Output(item) => {
-                        let content = item?;
-                        Ok(ApplyPatchToolOutput::from_text(content))
-                    }
-                    InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
-                        let changes = convert_apply_patch_to_protocol(&apply.action);
-                        let emitter =
-                            ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
-                        let event_ctx = ToolEventCtx::new(
-                            session.as_ref(),
-                            turn.as_ref(),
-                            &call_id,
-                            Some(&tracker),
-                        );
-                        emitter.begin(event_ctx).await;
+        }
+    };
 
-                        let req = ApplyPatchRequest {
-                            action: apply.action,
-                            file_paths,
-                            changes,
-                            exec_approval_requirement: apply.exec_approval_requirement,
-                            additional_permissions: effective_additional_permissions
-                                .additional_permissions,
-                            permissions_preapproved: effective_additional_permissions
-                                .permissions_preapproved,
-                        };
+    // Re-parse and verify the patch so we can compute changes and approval.
+    // Avoid building temporary ExecParams/command vectors; derive directly from inputs.
+    let cwd = turn.cwd.clone();
+    let command = vec!["apply_patch".to_string(), patch_input.clone()];
+    let Some(turn_environment) = turn.environments.primary() else {
+        return Err(FunctionCallError::RespondToModel(
+            "apply_patch is unavailable in this session".to_string(),
+        ));
+    };
+    let fs = turn_environment.environment.get_filesystem();
+    let sandbox = turn_environment
+        .environment
+        .is_remote()
+        .then(|| turn.file_system_sandbox_context(/*additional_permissions*/ None));
+    match codex_apply_patch::maybe_parse_apply_patch_verified(
+        &command,
+        &cwd,
+        fs.as_ref(),
+        sandbox.as_ref(),
+    )
+    .await
+    {
+        codex_apply_patch::MaybeApplyPatchVerified::Body(changes) => {
+            let (file_paths, effective_additional_permissions, file_system_sandbox_policy) =
+                effective_patch_permissions(session.as_ref(), turn.as_ref(), &changes).await;
+            match apply_patch::apply_patch(turn.as_ref(), &file_system_sandbox_policy, changes)
+                .await
+            {
+                InternalApplyPatchInvocation::Output(item) => {
+                    let content = item?;
+                    Ok(ApplyPatchToolOutput::from_text(content))
+                }
+                InternalApplyPatchInvocation::DelegateToRuntime(apply) => {
+                    let changes = convert_apply_patch_to_protocol(&apply.action);
+                    let emitter = ToolEmitter::apply_patch(changes.clone(), apply.auto_approved);
+                    let event_ctx = ToolEventCtx::new(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call_id,
+                        Some(&tracker),
+                    );
+                    emitter.begin(event_ctx).await;
 
-                        let mut orchestrator = ToolOrchestrator::new();
-                        let mut runtime = ApplyPatchRuntime::new();
-                        let tool_ctx = ToolCtx {
-                            session: session.clone(),
-                            turn: turn.clone(),
-                            call_id: call_id.clone(),
-                            tool_name: tool_name.display(),
-                        };
-                        let out = orchestrator
-                            .run(
-                                &mut runtime,
-                                &req,
-                                &tool_ctx,
-                                turn.as_ref(),
-                                turn.approval_policy.value(),
-                            )
-                            .await
-                            .map(|result| result.output);
-                        let event_ctx = ToolEventCtx::new(
-                            session.as_ref(),
+                    let req = ApplyPatchRequest {
+                        action: apply.action,
+                        file_paths,
+                        changes,
+                        exec_approval_requirement: apply.exec_approval_requirement,
+                        additional_permissions: effective_additional_permissions
+                            .additional_permissions,
+                        permissions_preapproved: effective_additional_permissions
+                            .permissions_preapproved,
+                    };
+
+                    let mut orchestrator = ToolOrchestrator::new();
+                    let mut runtime = ApplyPatchRuntime::new();
+                    let tool_ctx = ToolCtx {
+                        session: session.clone(),
+                        turn: turn.clone(),
+                        call_id: call_id.clone(),
+                        tool_name: tool_name.display(),
+                    };
+                    let out = orchestrator
+                        .run(
+                            &mut runtime,
+                            &req,
+                            &tool_ctx,
                             turn.as_ref(),
-                            &call_id,
-                            Some(&tracker),
-                        );
-                        let content = emitter.finish(event_ctx, out).await?;
-                        Ok(ApplyPatchToolOutput::from_text(content))
-                    }
+                            turn.approval_policy.value(),
+                            initial_approval_state,
+                        )
+                        .await
+                        .map(|result| result.output);
+                    let event_ctx = ToolEventCtx::new(
+                        session.as_ref(),
+                        turn.as_ref(),
+                        &call_id,
+                        Some(&tracker),
+                    );
+                    let content = emitter.finish(event_ctx, out).await?;
+                    Ok(ApplyPatchToolOutput::from_text(content))
                 }
             }
-            codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-                Err(FunctionCallError::RespondToModel(format!(
-                    "apply_patch verification failed: {parse_error}"
-                )))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
-                tracing::trace!("Failed to parse apply_patch input, {error:?}");
-                Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received invalid patch input".to_string(),
-                ))
-            }
-            codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
-                Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received non-apply_patch input".to_string(),
-                ))
-            }
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
+            Err(FunctionCallError::RespondToModel(format!(
+                "apply_patch verification failed: {parse_error}"
+            )))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
+            tracing::trace!("Failed to parse apply_patch input, {error:?}");
+            Err(FunctionCallError::RespondToModel(
+                "apply_patch handler received invalid patch input".to_string(),
+            ))
+        }
+        codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
+            Err(FunctionCallError::RespondToModel(
+                "apply_patch handler received non-apply_patch input".to_string(),
+            ))
         }
     }
 }
@@ -570,6 +585,7 @@ pub(crate) async fn intercept_apply_patch(
                             &tool_ctx,
                             turn.as_ref(),
                             turn.approval_policy.value(),
+                            InitialApprovalState::Evaluate,
                         )
                         .await
                         .map(|result| result.output);

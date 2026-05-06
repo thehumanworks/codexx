@@ -37,6 +37,7 @@ use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::shell::ShellRequest;
 use crate::tools::runtimes::shell::ShellRuntime;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
+use crate::tools::sandboxing::InitialApprovalState;
 use crate::tools::sandboxing::ToolCtx;
 use codex_features::Feature;
 use codex_protocol::models::AdditionalPermissionProfile;
@@ -130,6 +131,7 @@ struct RunExecLikeArgs {
     call_id: String,
     freeform: bool,
     shell_runtime_backend: ShellRuntimeBackend,
+    initial_approval_state: InitialApprovalState,
 }
 
 impl ShellHandler {
@@ -154,6 +156,50 @@ impl ShellHandler {
             justification: params.justification.clone(),
             arg0: None,
         }
+    }
+
+    async fn handle_with_permission_request_hooks(
+        invocation: ToolInvocation,
+        initial_approval_state: InitialApprovalState,
+    ) -> Result<FunctionToolOutput, FunctionCallError> {
+        let ToolInvocation {
+            session,
+            turn,
+            tracker,
+            call_id,
+            payload,
+            ..
+        } = invocation;
+
+        let arguments = match payload {
+            ToolPayload::Function { arguments } => arguments,
+            _ => {
+                return Err(FunctionCallError::RespondToModel(
+                    "unsupported payload for shell handler".to_string(),
+                ));
+            }
+        };
+
+        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+        let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
+        let prefix_rule = params.prefix_rule.clone();
+        let exec_params =
+            ShellHandler::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+        ShellHandler::run_exec_like(RunExecLikeArgs {
+            tool_name: "shell".to_string(),
+            exec_params,
+            hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+            additional_permissions: params.additional_permissions.clone(),
+            prefix_rule,
+            session,
+            turn,
+            tracker,
+            call_id,
+            freeform: false,
+            shell_runtime_backend: ShellRuntimeBackend::Generic,
+            initial_approval_state,
+        })
+        .await
     }
 }
 
@@ -209,6 +255,62 @@ impl ShellCommandHandler {
             justification: params.justification.clone(),
             arg0: None,
         })
+    }
+
+    async fn handle_with_permission_request_hooks(
+        &self,
+        invocation: ToolInvocation,
+        initial_approval_state: InitialApprovalState,
+    ) -> Result<FunctionToolOutput, FunctionCallError> {
+        let ToolInvocation {
+            session,
+            turn,
+            tracker,
+            call_id,
+            payload,
+            ..
+        } = invocation;
+
+        let ToolPayload::Function { arguments } = payload else {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "unsupported payload for shell_command handler: {}",
+                self.tool_name().display()
+            )));
+        };
+
+        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+        let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
+        let workdir = turn.resolve_path(params.workdir.clone());
+        maybe_emit_implicit_skill_invocation(
+            session.as_ref(),
+            turn.as_ref(),
+            &params.command,
+            &workdir,
+        )
+        .await;
+        let prefix_rule = params.prefix_rule.clone();
+        let exec_params = Self::to_exec_params(
+            &params,
+            session.as_ref(),
+            turn.as_ref(),
+            session.conversation_id,
+            turn.tools_config.allow_login_shell,
+        )?;
+        ShellHandler::run_exec_like(RunExecLikeArgs {
+            tool_name: self.tool_name().display(),
+            exec_params,
+            hook_command: params.command,
+            additional_permissions: params.additional_permissions.clone(),
+            prefix_rule,
+            session,
+            turn,
+            tracker,
+            call_id,
+            freeform: true,
+            shell_runtime_backend: self.shell_runtime_backend(),
+            initial_approval_state,
+        })
+        .await
     }
 }
 
@@ -268,42 +370,17 @@ impl ToolHandler for ShellHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tracker,
-            call_id,
-            payload,
-            ..
-        } = invocation;
+        Self::handle_with_permission_request_hooks(invocation, InitialApprovalState::Evaluate).await
+    }
 
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "unsupported payload for shell handler".to_string(),
-                ));
-            }
-        };
-
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
-        let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
-        let prefix_rule = params.prefix_rule.clone();
-        let exec_params =
-            ShellHandler::to_exec_params(&params, turn.as_ref(), session.conversation_id);
-        ShellHandler::run_exec_like(RunExecLikeArgs {
-            tool_name: "shell".to_string(),
-            exec_params,
-            hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
-            additional_permissions: params.additional_permissions.clone(),
-            prefix_rule,
-            session,
-            turn,
-            tracker,
-            call_id,
-            freeform: false,
-            shell_runtime_backend: ShellRuntimeBackend::Generic,
-        })
+    async fn handle_after_permission_request_rewrite(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
+        Self::handle_with_permission_request_hooks(
+            invocation,
+            InitialApprovalState::AlreadyApproved,
+        )
         .await
     }
 }
@@ -354,44 +431,69 @@ impl ToolHandler for ContainerExecHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tracker,
-            call_id,
-            payload,
-            ..
-        } = invocation;
-
-        let arguments = match payload {
-            ToolPayload::Function { arguments } => arguments,
-            _ => {
-                return Err(FunctionCallError::RespondToModel(
-                    "unsupported payload for container.exec handler".to_string(),
-                ));
-            }
-        };
-
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
-        let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
-        let prefix_rule = params.prefix_rule.clone();
-        let exec_params =
-            ShellHandler::to_exec_params(&params, turn.as_ref(), session.conversation_id);
-        ShellHandler::run_exec_like(RunExecLikeArgs {
-            tool_name: "container.exec".to_string(),
-            exec_params,
-            hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
-            additional_permissions: params.additional_permissions.clone(),
-            prefix_rule,
-            session,
-            turn,
-            tracker,
-            call_id,
-            freeform: false,
-            shell_runtime_backend: ShellRuntimeBackend::Generic,
-        })
+        handle_shell_function_invocation(
+            invocation,
+            "container.exec",
+            InitialApprovalState::Evaluate,
+        )
         .await
     }
+
+    async fn handle_after_permission_request_rewrite(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
+        handle_shell_function_invocation(
+            invocation,
+            "container.exec",
+            InitialApprovalState::AlreadyApproved,
+        )
+        .await
+    }
+}
+
+async fn handle_shell_function_invocation(
+    invocation: ToolInvocation,
+    tool_name: &str,
+    initial_approval_state: InitialApprovalState,
+) -> Result<FunctionToolOutput, FunctionCallError> {
+    let ToolInvocation {
+        session,
+        turn,
+        tracker,
+        call_id,
+        payload,
+        ..
+    } = invocation;
+
+    let arguments = match payload {
+        ToolPayload::Function { arguments } => arguments,
+        _ => {
+            return Err(FunctionCallError::RespondToModel(format!(
+                "unsupported payload for {tool_name} handler"
+            )));
+        }
+    };
+
+    let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
+    let params: ShellToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
+    let prefix_rule = params.prefix_rule.clone();
+    let exec_params = ShellHandler::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+    ShellHandler::run_exec_like(RunExecLikeArgs {
+        tool_name: tool_name.to_string(),
+        exec_params,
+        hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+        additional_permissions: params.additional_permissions.clone(),
+        prefix_rule,
+        session,
+        turn,
+        tracker,
+        call_id,
+        freeform: false,
+        shell_runtime_backend: ShellRuntimeBackend::Generic,
+        initial_approval_state,
+    })
+    .await
 }
 
 impl ToolHandler for LocalShellHandler {
@@ -478,38 +580,52 @@ impl ToolHandler for LocalShellHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tracker,
-            call_id,
-            payload,
-            ..
-        } = invocation;
-
-        let ToolPayload::LocalShell { params } = payload else {
-            return Err(FunctionCallError::RespondToModel(
-                "unsupported payload for local_shell handler".to_string(),
-            ));
-        };
-
-        let exec_params =
-            ShellHandler::to_exec_params(&params, turn.as_ref(), session.conversation_id);
-        ShellHandler::run_exec_like(RunExecLikeArgs {
-            tool_name: "local_shell".to_string(),
-            exec_params,
-            hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
-            additional_permissions: None,
-            prefix_rule: None,
-            session,
-            turn,
-            tracker,
-            call_id,
-            freeform: false,
-            shell_runtime_backend: ShellRuntimeBackend::Generic,
-        })
-        .await
+        handle_local_shell_invocation(invocation, InitialApprovalState::Evaluate).await
     }
+
+    async fn handle_after_permission_request_rewrite(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
+        handle_local_shell_invocation(invocation, InitialApprovalState::AlreadyApproved).await
+    }
+}
+
+async fn handle_local_shell_invocation(
+    invocation: ToolInvocation,
+    initial_approval_state: InitialApprovalState,
+) -> Result<FunctionToolOutput, FunctionCallError> {
+    let ToolInvocation {
+        session,
+        turn,
+        tracker,
+        call_id,
+        payload,
+        ..
+    } = invocation;
+
+    let ToolPayload::LocalShell { params } = payload else {
+        return Err(FunctionCallError::RespondToModel(
+            "unsupported payload for local_shell handler".to_string(),
+        ));
+    };
+
+    let exec_params = ShellHandler::to_exec_params(&params, turn.as_ref(), session.conversation_id);
+    ShellHandler::run_exec_like(RunExecLikeArgs {
+        tool_name: "local_shell".to_string(),
+        exec_params,
+        hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+        additional_permissions: None,
+        prefix_rule: None,
+        session,
+        turn,
+        tracker,
+        call_id,
+        freeform: false,
+        shell_runtime_backend: ShellRuntimeBackend::Generic,
+        initial_approval_state,
+    })
+    .await
 }
 
 fn shell_function_pre_tool_use_payload(invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
@@ -614,54 +730,16 @@ impl ToolHandler for ShellCommandHandler {
     }
 
     async fn handle(&self, invocation: ToolInvocation) -> Result<Self::Output, FunctionCallError> {
-        let ToolInvocation {
-            session,
-            turn,
-            tracker,
-            call_id,
-            payload,
-            ..
-        } = invocation;
+        self.handle_with_permission_request_hooks(invocation, InitialApprovalState::Evaluate)
+            .await
+    }
 
-        let ToolPayload::Function { arguments } = payload else {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "unsupported payload for shell_command handler: {}",
-                self.tool_name().display()
-            )));
-        };
-
-        let cwd = resolve_workdir_base_path(&arguments, &turn.cwd)?;
-        let params: ShellCommandToolCallParams = parse_arguments_with_base_path(&arguments, &cwd)?;
-        let workdir = turn.resolve_path(params.workdir.clone());
-        maybe_emit_implicit_skill_invocation(
-            session.as_ref(),
-            turn.as_ref(),
-            &params.command,
-            &workdir,
-        )
-        .await;
-        let prefix_rule = params.prefix_rule.clone();
-        let exec_params = Self::to_exec_params(
-            &params,
-            session.as_ref(),
-            turn.as_ref(),
-            session.conversation_id,
-            turn.tools_config.allow_login_shell,
-        )?;
-        ShellHandler::run_exec_like(RunExecLikeArgs {
-            tool_name: self.tool_name().display(),
-            exec_params,
-            hook_command: params.command,
-            additional_permissions: params.additional_permissions.clone(),
-            prefix_rule,
-            session,
-            turn,
-            tracker,
-            call_id,
-            freeform: true,
-            shell_runtime_backend: self.shell_runtime_backend(),
-        })
-        .await
+    async fn handle_after_permission_request_rewrite(
+        &self,
+        invocation: ToolInvocation,
+    ) -> Result<Self::Output, FunctionCallError> {
+        self.handle_with_permission_request_hooks(invocation, InitialApprovalState::AlreadyApproved)
+            .await
     }
 }
 
@@ -679,6 +757,7 @@ impl ShellHandler {
             call_id,
             freeform,
             shell_runtime_backend,
+            initial_approval_state,
         } = args;
 
         let mut exec_params = exec_params;
@@ -841,6 +920,7 @@ impl ShellHandler {
                 &tool_ctx,
                 &turn,
                 turn.approval_policy.value(),
+                initial_approval_state,
             )
             .await
             .map(|result| result.output);

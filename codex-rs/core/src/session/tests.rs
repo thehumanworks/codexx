@@ -1035,6 +1035,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
             &tool_ctx,
             turn.as_ref(),
             AskForApproval::Never,
+            crate::tools::sandboxing::InitialApprovalState::Evaluate,
         )
         .await
         .expect("probe runtime should succeed");

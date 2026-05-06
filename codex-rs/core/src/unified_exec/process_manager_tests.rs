@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::sandboxing::InitialApprovalState;
 use pretty_assertions::assert_eq;
 use tokio::time::Duration;
 use tokio::time::Instant;
@@ -187,6 +188,7 @@ async fn failed_initial_end_for_unstored_process_uses_fallback_output() {
         additional_permissions_preapproved: false,
         justification: None,
         prefix_rule: None,
+        initial_approval_state: InitialApprovalState::Evaluate,
     };
 
     let transcript = Arc::new(tokio::sync::Mutex::new(HeadTailBuffer::default()));

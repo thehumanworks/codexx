@@ -39,6 +39,7 @@ use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::network_approval::DeferredNetworkApproval;
+use crate::tools::sandboxing::InitialApprovalState;
 
 mod async_watcher;
 mod errors;
@@ -103,6 +104,7 @@ pub(crate) struct ExecCommandRequest {
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
     pub prefix_rule: Option<Vec<String>>,
+    pub initial_approval_state: InitialApprovalState,
 }
 
 #[derive(Debug)]

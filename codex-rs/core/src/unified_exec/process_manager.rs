@@ -1052,6 +1052,7 @@ impl UnifiedExecProcessManager {
                 &tool_ctx,
                 &context.turn,
                 context.turn.approval_policy.value(),
+                request.initial_approval_state,
             )
             .await
             .map(|result| (result.output, result.deferred_network_approval))

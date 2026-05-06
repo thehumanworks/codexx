@@ -1838,17 +1838,11 @@ async fn permission_request_hook_rewrites_apply_patch_before_execution() -> Resu
     );
 
     let hook_inputs = read_permission_request_hook_inputs(test.codex_home_path())?;
-    assert_eq!(hook_inputs.len(), 2);
+    assert_eq!(hook_inputs.len(), 1);
     assert_permission_request_hook_input(
         &hook_inputs[0],
         "apply_patch",
         &original_patch,
-        /*description*/ None,
-    );
-    assert_permission_request_hook_input(
-        &hook_inputs[1],
-        "apply_patch",
-        &rewritten_patch,
         /*description*/ None,
     );
 

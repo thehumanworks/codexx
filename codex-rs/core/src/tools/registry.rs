@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use crate::function_tool::FunctionCallError;
 use crate::goals::GoalRuntimeEvent;
-use crate::hook_runtime::MAX_HOOK_INPUT_REWRITES;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
@@ -107,6 +106,18 @@ pub trait ToolHandler: Send + Sync {
         &self,
         invocation: ToolInvocation,
     ) -> impl std::future::Future<Output = Result<Self::Output, FunctionCallError>> + Send;
+
+    /// Continue execution after a `PermissionRequest` hook rewrites input.
+    ///
+    /// Implementations that route through approval-time hooks should override
+    /// this to reuse the hook verdict instead of evaluating `PermissionRequest`
+    /// again for the rewritten payload.
+    fn handle_after_permission_request_rewrite(
+        &self,
+        invocation: ToolInvocation,
+    ) -> impl std::future::Future<Output = Result<Self::Output, FunctionCallError>> + Send {
+        self.handle(invocation)
+    }
 }
 
 /// Consumes streamed argument diffs for a tool call and emits protocol events
@@ -230,21 +241,14 @@ where
     ) -> BoxFuture<'a, Result<AnyToolResult, FunctionCallError>> {
         Box::pin(async move {
             let mut invocation = invocation;
-            let mut rewrites = 0;
-            let output = loop {
-                match self.handle(invocation.clone()).await {
-                    Err(FunctionCallError::UpdatedInput(updated_input)) => {
-                        rewrites += 1;
-                        if rewrites > MAX_HOOK_INPUT_REWRITES {
-                            return Err(FunctionCallError::RespondToModel(
-                                "hook input rewrite limit exceeded".to_string(),
-                            ));
-                        }
-                        invocation =
-                            ToolHandler::with_updated_hook_input(self, invocation, updated_input)?;
-                    }
-                    result => break result?,
+            let output = match self.handle(invocation.clone()).await {
+                Err(FunctionCallError::UpdatedInput(updated_input)) => {
+                    invocation =
+                        ToolHandler::with_updated_hook_input(self, invocation, updated_input)?;
+                    ToolHandler::handle_after_permission_request_rewrite(self, invocation.clone())
+                        .await?
                 }
+                result => result?,
             };
             let call_id = invocation.call_id.clone();
             let payload = invocation.payload.clone();

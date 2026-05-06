@@ -154,14 +154,6 @@ impl PermissionRequestPayload {
             tool_input: serde_json::Value::Object(tool_input),
         }
     }
-
-    pub(crate) fn updated_input_is_noop(&self, updated_input: &serde_json::Value) -> bool {
-        if self.tool_name.name() == "Bash" {
-            return self.tool_input.get("command") == updated_input.get("command");
-        }
-
-        self.tool_input == *updated_input
-    }
 }
 
 // Specifies what tool orchestrator should do with a given tool call.
@@ -353,6 +345,12 @@ pub(crate) struct ToolCtx {
     pub turn: Arc<TurnContext>,
     pub call_id: String,
     pub tool_name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InitialApprovalState {
+    Evaluate,
+    AlreadyApproved,
 }
 
 #[derive(Debug)]

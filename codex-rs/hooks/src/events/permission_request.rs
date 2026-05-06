@@ -1,9 +1,9 @@
 //! Permission-request hook execution.
 //!
 //! This event runs in the approval path, before guardian or user approval UI is
-//! shown. Unlike `pre_tool_use`, handlers do not rewrite tool input or block by
-//! stopping execution outright; instead they can return a concrete allow/deny
-//! decision, or decline to decide and let the normal approval flow continue.
+//! shown. Handlers can return a concrete allow/deny decision, optionally
+//! replacing the full tool input object on allow, or decline to decide and let
+//! the normal approval flow continue.
 //!
 //! The event also mirrors the rest of the hook system's lifecycle:
 //!

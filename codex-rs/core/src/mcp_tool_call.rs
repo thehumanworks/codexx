@@ -25,7 +25,6 @@ use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
-use crate::hook_runtime::MAX_HOOK_INPUT_REWRITES;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
@@ -203,43 +202,34 @@ pub(crate) async fn handle_mcp_tool_call(
     .await;
 
     let mut invocation = invocation;
-    let mut input_rewrites = 0;
-    loop {
-        let Some(decision) = maybe_request_mcp_tool_approval(
-            &sess,
-            turn_context,
-            &call_id,
-            &invocation,
-            &hook_tool_name,
-            metadata.as_ref(),
-            approval_mode,
-        )
-        .await
-        else {
-            break;
-        };
+    if let Some(decision) = maybe_request_mcp_tool_approval(
+        &sess,
+        turn_context,
+        &call_id,
+        &invocation,
+        &hook_tool_name,
+        metadata.as_ref(),
+        approval_mode,
+    )
+    .await
+    {
         let tool_input = invocation
             .arguments
             .clone()
             .unwrap_or_else(|| JsonValue::Object(serde_json::Map::new()));
         let result = match decision {
             McpToolApprovalDecision::AcceptWithUpdatedInput(updated_input) => {
-                input_rewrites += 1;
-                if input_rewrites > MAX_HOOK_INPUT_REWRITES {
-                    notify_mcp_tool_call_skip(
-                        sess.as_ref(),
-                        turn_context.as_ref(),
-                        &call_id,
-                        invocation,
-                        mcp_app_resource_uri.clone(),
-                        "hook input rewrite limit exceeded".to_string(),
-                        /*already_started*/ true,
-                    )
-                    .await
-                } else {
-                    invocation.arguments = Some(updated_input);
-                    continue;
-                }
+                invocation.arguments = Some(updated_input);
+                return handle_approved_mcp_tool_call(
+                    sess.as_ref(),
+                    turn_context.as_ref(),
+                    &call_id,
+                    invocation,
+                    metadata.as_ref(),
+                    request_meta,
+                    mcp_app_resource_uri,
+                )
+                .await;
             }
             McpToolApprovalDecision::Accept
             | McpToolApprovalDecision::AcceptForSession
