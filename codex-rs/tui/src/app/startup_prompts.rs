@@ -77,6 +77,12 @@ pub(super) fn emit_system_bwrap_warning(app_event_tx: &AppEventSender, config: &
     )));
 }
 
+pub(super) fn managed_worktree_startup_message(config: &Config) -> Option<String> {
+    let label =
+        crate::worktree_labels::label_for_cwd(config.codex_home.as_path(), config.cwd.as_path())?;
+    Some(format!("Workspace: {}", label.summary()))
+}
+
 pub(super) fn hooks_needing_review_warning(count: usize) -> Option<String> {
     match count {
         0 => None,

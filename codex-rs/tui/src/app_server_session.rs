@@ -117,6 +117,7 @@ use color_eyre::eyre::ContextCompat;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
 use std::collections::HashMap;
+use std::path::Path;
 use std::path::PathBuf;
 
 fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> color_eyre::Report {
@@ -1328,6 +1329,7 @@ async fn thread_session_state_from_thread_start_response(
     config: &Config,
     thread_params_mode: ThreadParamsMode,
 ) -> Result<ThreadSessionState, String> {
+    bind_worktree_thread_best_effort(config, response.cwd.as_path(), &response.thread.id);
     let permission_profile = permission_profile_from_thread_response(
         &response.sandbox,
         response.permission_profile.as_ref(),
@@ -1360,6 +1362,7 @@ async fn thread_session_state_from_thread_resume_response(
     config: &Config,
     thread_params_mode: ThreadParamsMode,
 ) -> Result<ThreadSessionState, String> {
+    bind_worktree_thread_best_effort(config, response.cwd.as_path(), &response.thread.id);
     let permission_profile = permission_profile_from_thread_response(
         &response.sandbox,
         response.permission_profile.as_ref(),
@@ -1392,6 +1395,7 @@ async fn thread_session_state_from_thread_fork_response(
     config: &Config,
     thread_params_mode: ThreadParamsMode,
 ) -> Result<ThreadSessionState, String> {
+    bind_worktree_thread_best_effort(config, response.cwd.as_path(), &response.thread.id);
     let permission_profile = permission_profile_from_thread_response(
         &response.sandbox,
         response.permission_profile.as_ref(),
@@ -1417,6 +1421,20 @@ async fn thread_session_state_from_thread_fork_response(
         config,
     )
     .await
+}
+
+fn bind_worktree_thread_best_effort(config: &Config, cwd: &Path, thread_id: &str) {
+    match codex_worktree::resolve_worktree(config.codex_home.as_path(), cwd) {
+        Ok(Some(_)) => {
+            if let Err(err) = codex_worktree::bind_thread(cwd, thread_id) {
+                tracing::warn!(?err, "failed to bind managed worktree to thread");
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            tracing::warn!(?err, "failed to resolve managed worktree metadata");
+        }
+    }
 }
 
 fn permission_profile_from_thread_response(

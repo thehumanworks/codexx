@@ -257,6 +257,9 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         sandbox_mode: sandbox_mode_cli_arg,
         dangerously_bypass_approvals_and_sandbox,
         cwd,
+        worktree: _,
+        worktree_base: _,
+        worktree_dirty: _,
         add_dir,
     } = shared;
 
@@ -693,6 +696,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             )
             .await
             .map_err(anyhow::Error::msg)?;
+            bind_worktree_thread_best_effort(&config, response.cwd.as_path(), &response.thread.id);
             let session_configured =
                 session_configured_from_thread_resume_response(&response, &config)
                     .map_err(anyhow::Error::msg)?;
@@ -708,6 +712,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
             )
             .await
             .map_err(anyhow::Error::msg)?;
+            bind_worktree_thread_best_effort(&config, response.cwd.as_path(), &response.thread.id);
             let session_configured =
                 session_configured_from_thread_start_response(&response, &config)
                     .map_err(anyhow::Error::msg)?;
@@ -724,6 +729,7 @@ async fn run_exec_session(args: ExecRunArgs) -> anyhow::Result<()> {
         )
         .await
         .map_err(anyhow::Error::msg)?;
+        bind_worktree_thread_best_effort(&config, response.cwd.as_path(), &response.thread.id);
         let session_configured = session_configured_from_thread_start_response(&response, &config)
             .map_err(anyhow::Error::msg)?;
         (session_configured.thread_id, session_configured)
@@ -1103,6 +1109,20 @@ fn session_configured_from_thread_resume_response(
         response.cwd.clone(),
         response.reasoning_effort,
     )
+}
+
+fn bind_worktree_thread_best_effort(config: &Config, cwd: &Path, thread_id: &str) {
+    match codex_worktree::resolve_worktree(config.codex_home.as_path(), cwd) {
+        Ok(Some(_)) => {
+            if let Err(err) = codex_worktree::bind_thread(cwd, thread_id) {
+                tracing::warn!(?err, "failed to bind managed worktree to thread");
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            tracing::warn!(?err, "failed to resolve managed worktree metadata");
+        }
+    }
 }
 
 fn review_target_to_api(target: ReviewTarget) -> ApiReviewTarget {

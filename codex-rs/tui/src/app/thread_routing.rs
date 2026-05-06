@@ -497,6 +497,10 @@ impl App {
         op: &AppCommand,
     ) -> Result<bool> {
         match op {
+            AppCommand::AddToHistory { text } => {
+                self.append_message_history_entry(thread_id, text.to_string());
+                Ok(true)
+            }
             AppCommand::Interrupt => {
                 if let Some(turn_id) = self.active_turn_id_for_thread(thread_id).await {
                     app_server.turn_interrupt(thread_id, turn_id).await?;

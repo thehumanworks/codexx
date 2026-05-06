@@ -106,6 +106,9 @@ pub(crate) enum AppCommand {
     ApproveGuardianDeniedAction {
         event: GuardianAssessmentEvent,
     },
+    AddToHistory {
+        text: String,
+    },
 }
 
 impl AppCommand {
@@ -270,6 +273,10 @@ impl AppCommand {
 
     pub(crate) fn approve_guardian_denied_action(event: GuardianAssessmentEvent) -> Self {
         Self::ApproveGuardianDeniedAction { event }
+    }
+
+    pub(crate) fn add_to_history(text: String) -> Self {
+        Self::AddToHistory { text }
     }
 
     pub(crate) fn is_review(&self) -> bool {

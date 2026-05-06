@@ -34,8 +34,18 @@ use codex_tui::ExitReason;
 use codex_tui::UpdateAction;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_cli::CliConfigOverrides;
+use codex_utils_cli::SharedCliOptions;
+use codex_utils_cli::WorktreeDirtyCliArg;
+use codex_worktree::DirtyPolicy;
+use codex_worktree::WorktreeInfo;
+use codex_worktree::WorktreeListQuery;
+use codex_worktree::WorktreeRemoveRequest;
+use codex_worktree::WorktreeRequest;
+use codex_worktree::WorktreeResolution;
 use owo_colors::OwoColorize;
+use std::fs;
 use std::io::IsTerminal;
+use std::path::Path;
 use std::path::PathBuf;
 use supports_color::Stream;
 
@@ -159,6 +169,9 @@ enum Subcommand {
 
     /// Fork a previous interactive session (picker by default; use --last to fork the most recent).
     Fork(ForkCommand),
+
+    /// Manage Codex-managed Git worktrees.
+    Worktree(WorktreeCli),
 
     /// [EXPERIMENTAL] Browse tasks from Codex Cloud and apply changes locally.
     #[clap(name = "cloud", alias = "cloud-tasks")]
@@ -328,6 +341,70 @@ struct ForkCommand {
 
     #[clap(flatten)]
     config_overrides: TuiCli,
+}
+
+#[derive(Debug, Parser)]
+#[command(bin_name = "codex worktree")]
+struct WorktreeCli {
+    #[command(subcommand)]
+    subcommand: WorktreeSubcommand,
+}
+
+#[derive(Debug, clap::Subcommand)]
+enum WorktreeSubcommand {
+    /// List Codex-managed worktrees for the current repository.
+    List(WorktreeListCommand),
+
+    /// Print the workspace path for a managed worktree.
+    Path(WorktreePathCommand),
+
+    /// Remove a Codex-managed worktree.
+    Remove(WorktreeRemoveCommand),
+
+    /// Remove stale Codex-managed worktree metadata.
+    Prune(WorktreePruneCommand),
+}
+
+#[derive(Debug, Args)]
+struct WorktreeListCommand {
+    /// Include managed worktrees from all repositories.
+    #[arg(long = "all", default_value_t = false)]
+    all: bool,
+
+    /// Print machine-readable JSON.
+    #[arg(long = "json", default_value_t = false)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorktreePathCommand {
+    /// Managed worktree name or slug.
+    name: String,
+}
+
+#[derive(Debug, Args)]
+struct WorktreeRemoveCommand {
+    /// Managed worktree name, slug, or absolute path.
+    name_or_path: String,
+
+    /// Remove even if the worktree is dirty.
+    #[arg(long = "force", short = 'f', default_value_t = false)]
+    force: bool,
+
+    /// Delete the associated branch after removing the worktree.
+    #[arg(long = "delete-branch", default_value_t = false)]
+    delete_branch: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorktreePruneCommand {
+    /// Show stale entries without deleting anything.
+    #[arg(long = "dry-run", default_value_t = false)]
+    dry_run: bool,
+
+    /// Print machine-readable JSON.
+    #[arg(long = "json", default_value_t = false)]
+    json: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -666,6 +743,244 @@ async fn run_debug_app_server_command(cmd: DebugAppServerCommand) -> anyhow::Res
     }
 }
 
+fn resolve_worktree_options_for_tui(
+    cli: &mut TuiCli,
+    remote: Option<&str>,
+    remote_auth_token_env: Option<&str>,
+) -> anyhow::Result<Option<WorktreeResolution>> {
+    resolve_worktree_options_for_shared_cli(&mut cli.shared, remote, remote_auth_token_env)
+}
+
+fn resolve_worktree_options_for_shared_cli(
+    shared: &mut SharedCliOptions,
+    remote: Option<&str>,
+    remote_auth_token_env: Option<&str>,
+) -> anyhow::Result<Option<WorktreeResolution>> {
+    let Some(branch) = shared.worktree.take() else {
+        return Ok(None);
+    };
+
+    if remote.is_some() || remote_auth_token_env.is_some() {
+        anyhow::bail!("--worktree is not supported with remote app-server sessions yet");
+    }
+
+    let codex_home = find_codex_home()?.to_path_buf();
+    let source_cwd = shared.cwd.clone().unwrap_or(std::env::current_dir()?);
+    let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home,
+        source_cwd,
+        branch,
+        base_ref: shared.worktree_base.take(),
+        dirty_policy: dirty_policy_from_cli(shared.worktree_dirty),
+    })?;
+    shared.cwd = Some(resolution.info.workspace_cwd.clone());
+
+    #[allow(clippy::print_stderr)]
+    for warning in &resolution.warnings {
+        eprintln!("warning: {}", warning.message);
+    }
+
+    Ok(Some(resolution))
+}
+
+fn dirty_policy_from_cli(arg: WorktreeDirtyCliArg) -> DirtyPolicy {
+    match arg {
+        WorktreeDirtyCliArg::Fail => DirtyPolicy::Fail,
+        WorktreeDirtyCliArg::Ignore => DirtyPolicy::Ignore,
+        WorktreeDirtyCliArg::CopyTracked => DirtyPolicy::CopyTracked,
+        WorktreeDirtyCliArg::CopyAll => DirtyPolicy::CopyAll,
+    }
+}
+
+fn run_worktree_command(cli: WorktreeCli) -> anyhow::Result<()> {
+    let codex_home = find_codex_home()?.to_path_buf();
+    match cli.subcommand {
+        WorktreeSubcommand::List(command) => {
+            let source_cwd = if command.all {
+                None
+            } else {
+                Some(std::env::current_dir()?)
+            };
+            let entries = codex_worktree::list_worktrees(WorktreeListQuery {
+                codex_home,
+                source_cwd,
+                include_all_repos: command.all,
+            })?;
+            print_worktree_list(entries, command.json)?;
+        }
+        WorktreeSubcommand::Path(command) => {
+            let entries = codex_worktree::list_worktrees(WorktreeListQuery {
+                codex_home,
+                source_cwd: Some(std::env::current_dir()?),
+                include_all_repos: false,
+            })?;
+            let entry = find_named_worktree(entries, &command.name)?;
+            println!("{}", entry.workspace_cwd.display());
+        }
+        WorktreeSubcommand::Remove(command) => {
+            let result = codex_worktree::remove_worktree(WorktreeRemoveRequest {
+                codex_home,
+                source_cwd: Some(std::env::current_dir()?),
+                name_or_path: command.name_or_path,
+                force: command.force,
+                delete_branch: command.delete_branch,
+            })?;
+            println!("removed {}", result.removed_path.display());
+            if let Some(branch) = result.deleted_branch {
+                println!("deleted branch {branch}");
+            }
+        }
+        WorktreeSubcommand::Prune(command) => {
+            let stale_paths = stale_managed_worktree_dirs(&codex_home)?;
+            if command.json {
+                println!("{}", serde_json::to_string_pretty(&stale_paths)?);
+            } else if stale_paths.is_empty() {
+                println!("No stale Codex-managed worktree directories found.");
+            } else {
+                for path in &stale_paths {
+                    if command.dry_run {
+                        println!("would remove {}", path.display());
+                    } else {
+                        fs::remove_dir_all(path)?;
+                        println!("removed {}", path.display());
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn print_worktree_list(entries: Vec<WorktreeInfo>, json: bool) -> anyhow::Result<()> {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+        return Ok(());
+    }
+
+    let mut rows = Vec::new();
+    for entry in &entries {
+        let status = if entry.dirty.is_dirty() {
+            "dirty"
+        } else {
+            "clean"
+        };
+        rows.push([
+            entry.branch.as_deref().unwrap_or(&entry.name).to_string(),
+            status.to_string(),
+            worktree_source_label(entry).to_string(),
+            entry
+                .owner_thread_id
+                .as_deref()
+                .unwrap_or("none")
+                .to_string(),
+            entry.workspace_cwd.display().to_string(),
+        ]);
+    }
+    let headers = ["BRANCH", "STATUS", "SOURCE", "THREAD", "PATH"];
+    let mut widths = headers.map(str::len);
+    for row in &rows {
+        for (idx, cell) in row.iter().enumerate() {
+            widths[idx] = widths[idx].max(cell.len());
+        }
+    }
+    println!(
+        "{branch:<branch_w$}  {status:<status_w$}  {source:<source_w$}  {thread:<thread_w$}  {path}",
+        branch = headers[0],
+        status = headers[1],
+        source = headers[2],
+        thread = headers[3],
+        path = headers[4],
+        branch_w = widths[0],
+        status_w = widths[1],
+        source_w = widths[2],
+        thread_w = widths[3],
+    );
+    for row in rows {
+        println!(
+            "{branch:<branch_w$}  {status:<status_w$}  {source:<source_w$}  {thread:<thread_w$}  {path}",
+            branch = row[0],
+            status = row[1],
+            source = row[2],
+            thread = row[3],
+            path = row[4],
+            branch_w = widths[0],
+            status_w = widths[1],
+            source_w = widths[2],
+            thread_w = widths[3],
+        );
+    }
+    Ok(())
+}
+
+fn worktree_source_label(entry: &WorktreeInfo) -> &'static str {
+    match entry.source {
+        codex_worktree::WorktreeSource::Cli => "cli",
+        codex_worktree::WorktreeSource::App => "app",
+        codex_worktree::WorktreeSource::Legacy => "legacy",
+        codex_worktree::WorktreeSource::Git => "git",
+    }
+}
+
+fn find_named_worktree(entries: Vec<WorktreeInfo>, name: &str) -> anyhow::Result<WorktreeInfo> {
+    let matches = entries
+        .into_iter()
+        .filter(|entry| {
+            entry.branch.as_deref() == Some(name) || entry.name == name || entry.slug == name
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [entry] => Ok(entry.clone()),
+        [] => anyhow::bail!("no managed worktree named {name}"),
+        _ => anyhow::bail!("multiple managed worktrees named {name}; pass a path instead"),
+    }
+}
+
+fn stale_managed_worktree_dirs(codex_home: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let root = codex_worktree::codex_worktrees_root(codex_home);
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut stale = Vec::new();
+    for repo_dir in fs::read_dir(&root)? {
+        let repo_dir = repo_dir?;
+        if !repo_dir.file_type()?.is_dir() {
+            continue;
+        }
+        for slug_dir in fs::read_dir(repo_dir.path())? {
+            let slug_dir = slug_dir?;
+            if !slug_dir.file_type()?.is_dir() {
+                continue;
+            }
+            let mut has_repo_dir = false;
+            for repo_root in fs::read_dir(slug_dir.path())? {
+                let repo_root = repo_root?;
+                if !repo_root.file_type()?.is_dir() {
+                    continue;
+                }
+                has_repo_dir = true;
+                if !repo_root.path().join(".git").exists() || !git_root_is_valid(&repo_root.path())
+                {
+                    stale.push(repo_root.path());
+                }
+            }
+            if !has_repo_dir {
+                stale.push(slug_dir.path());
+            }
+        }
+    }
+    stale.sort();
+    Ok(stale)
+}
+
+fn git_root_is_valid(path: &Path) -> bool {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(path)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 #[derive(Debug, Default, Parser, Clone)]
 struct FeatureToggles {
     /// Enable a feature (repeatable). Equivalent to `-c features.<name>=true`.
@@ -774,6 +1089,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 &mut interactive.config_overrides,
                 root_config_overrides.clone(),
             );
+            resolve_worktree_options_for_tui(
+                &mut interactive,
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+            )?;
             let exit_info = run_interactive_tui(
                 interactive,
                 root_remote.clone(),
@@ -792,6 +1112,11 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             exec_cli
                 .shared
                 .inherit_exec_root_options(&interactive.shared);
+            resolve_worktree_options_for_shared_cli(
+                &mut exec_cli.shared,
+                /*remote*/ None,
+                /*remote_auth_token_env*/ None,
+            )?;
             prepend_config_flags(
                 &mut exec_cli.config_overrides,
                 root_config_overrides.clone(),
@@ -942,6 +1267,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 include_non_interactive,
                 config_overrides,
             );
+            resolve_worktree_options_for_tui(
+                &mut interactive,
+                remote.remote.as_deref().or(root_remote.as_deref()),
+                remote
+                    .remote_auth_token_env
+                    .as_deref()
+                    .or(root_remote_auth_token_env.as_deref()),
+            )?;
             let exit_info = run_interactive_tui(
                 interactive,
                 remote.remote.or(root_remote.clone()),
@@ -968,6 +1301,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                 all,
                 config_overrides,
             );
+            resolve_worktree_options_for_tui(
+                &mut interactive,
+                remote.remote.as_deref().or(root_remote.as_deref()),
+                remote
+                    .remote_auth_token_env
+                    .as_deref()
+                    .or(root_remote_auth_token_env.as_deref()),
+            )?;
             let exit_info = run_interactive_tui(
                 interactive,
                 remote.remote.or(root_remote.clone()),
@@ -978,6 +1319,14 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             )
             .await?;
             handle_app_exit(exit_info)?;
+        }
+        Some(Subcommand::Worktree(worktree_cli)) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "worktree",
+            )?;
+            run_worktree_command(worktree_cli)?;
         }
         Some(Subcommand::Login(mut login_cli)) => {
             reject_remote_mode_for_subcommand(
@@ -2043,6 +2392,45 @@ mod tests {
             MultitoolCli::try_parse_from(["codex", "sandbox", "linux", "--full-auto", "--"]);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn top_level_worktree_flags_parse_into_interactive_shared_options() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "--worktree",
+            "parser-fix",
+            "--worktree-base",
+            "origin/main",
+            "--worktree-dirty",
+            "copy-tracked",
+        ])
+        .expect("worktree flags should parse");
+
+        assert_eq!(cli.interactive.worktree.as_deref(), Some("parser-fix"));
+        assert_eq!(
+            cli.interactive.worktree_base.as_deref(),
+            Some("origin/main")
+        );
+        assert_eq!(
+            cli.interactive.worktree_dirty,
+            WorktreeDirtyCliArg::CopyTracked
+        );
+    }
+
+    #[test]
+    fn worktree_subcommand_parses() {
+        let cli = MultitoolCli::try_parse_from(["codex", "worktree", "list", "--all", "--json"])
+            .expect("worktree list should parse");
+        let Some(Subcommand::Worktree(WorktreeCli {
+            subcommand: WorktreeSubcommand::List(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected worktree list subcommand");
+        };
+
+        assert!(command.all);
+        assert!(command.json);
     }
 
     fn sample_exit_info(conversation_id: Option<&str>, thread_name: Option<&str>) -> AppExitInfo {
