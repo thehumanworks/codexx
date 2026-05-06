@@ -433,8 +433,8 @@ jobs:
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
         with:
           name: ${{ matrix.artifact_name }}
-          # Upload the per-binary .zst files as well as the new .tar.gz
-          # equivalents we generated in the previous step.
+          # Upload the per-binary .zst files, .tar.gz equivalents, and any
+          # prebuilt archives staged above.
           path: |
             codex-rs/dist/${{ matrix.target }}/*
 
