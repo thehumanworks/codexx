@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::marker::PhantomData;
 
 use crate::config_toml::RealtimeTransport;
 use crate::config_toml::RealtimeWsMode;
@@ -58,48 +59,40 @@ where
     Ok((value, parsed, messages))
 }
 
-/// Result of attempting to deserialize one enum-valued field.
+/// Result of checking one enum-valued field.
 ///
-/// `Valid` carries the ordinary typed enum value. `Invalid` preserves the raw
-/// TOML value only long enough to produce a warning and delete the leaf before
-/// strict `ConfigToml` deserialization.
+/// The typed value is intentionally discarded: the strict `ConfigToml`
+/// deserialization below is the only place that should produce runtime config
+/// values. This wrapper only records the raw TOML value when the enum parse
+/// fails so the loader can warn and remove that leaf.
 #[derive(Debug, Clone, PartialEq)]
-enum Lenient<T> {
-    Valid(T),
-    Invalid(TomlValue),
-}
-
-/// Untagged helper used by `Lenient<T>` so Serde tries the typed enum first and
-/// falls back to the original TOML value when the enum cannot be parsed.
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LenientInput<T> {
-    Valid(T),
-    Invalid(TomlValue),
+struct Lenient<T> {
+    invalid_value: Option<TomlValue>,
+    _marker: PhantomData<T>,
 }
 
 impl<T> Lenient<T> {
     /// Returns the original TOML value only when this enum field failed to
     /// parse; callers use this as the single warning signal.
     fn invalid_value(&self) -> Option<&TomlValue> {
-        match self {
-            Self::Valid(_) => None,
-            Self::Invalid(value) => Some(value),
-        }
+        self.invalid_value.as_ref()
     }
 }
 
 impl<'de, T> Deserialize<'de> for Lenient<T>
 where
-    T: Deserialize<'de>,
+    T: serde::de::DeserializeOwned,
 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(match LenientInput::<T>::deserialize(deserializer)? {
-            LenientInput::Valid(value) => Self::Valid(value),
-            LenientInput::Invalid(value) => Self::Invalid(value),
+        let value = TomlValue::deserialize(deserializer)?;
+        let parsed: Result<T, toml::de::Error> = value.clone().try_into();
+        let invalid_value = if parsed.is_ok() { None } else { Some(value) };
+        Ok(Self {
+            invalid_value,
+            _marker: PhantomData,
         })
     }
 }
@@ -112,7 +105,6 @@ macro_rules! push_invalid_root_fields {
             push_invalid_field(
                 &mut $warnings,
                 &[stringify!($field)],
-                stringify!($field),
                 &$source.$field,
             );
         )+
@@ -128,7 +120,6 @@ macro_rules! push_invalid_profile_fields {
             push_invalid_field(
                 $warnings,
                 &["profiles", $profile, stringify!($field)],
-                &format!("profiles.{}.{}", $profile, stringify!($field)),
                 &$source.$field,
             );
         )+
@@ -198,7 +189,7 @@ impl LenientConfigToml {
             shell_environment_policy.push_invalid_enum_warnings(&mut warnings);
         }
         if let Some(tools) = &self.tools {
-            tools.push_invalid_enum_warnings(&mut warnings, "tools", &["tools"]);
+            tools.push_invalid_enum_warnings(&mut warnings, &["tools"]);
         }
         if let Some(tui) = &self.tui {
             tui.push_invalid_enum_warnings(&mut warnings);
@@ -252,14 +243,12 @@ impl LenientConfigProfile {
             web_search
         );
         if let Some(tools) = &self.tools {
-            let path = format!("profiles.{profile}.tools");
             let segments = ["profiles", profile, "tools"];
-            tools.push_invalid_enum_warnings(warnings, &path, &segments);
+            tools.push_invalid_enum_warnings(warnings, &segments);
         }
         if let Some(windows) = &self.windows {
             windows.push_invalid_enum_warnings_with_prefix(
                 warnings,
-                &format!("profiles.{profile}.windows"),
                 &["profiles", profile, "windows"],
             );
         }
@@ -274,12 +263,7 @@ struct LenientHistory {
 
 impl LenientHistory {
     fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(
-            warnings,
-            &["history", "persistence"],
-            "history.persistence",
-            &self.persistence,
-        );
+        push_invalid_field(warnings, &["history", "persistence"], &self.persistence);
     }
 }
 
@@ -294,7 +278,6 @@ impl LenientShellEnvironmentPolicyToml {
         push_invalid_field(
             warnings,
             &["shell_environment_policy", "inherit"],
-            "shell_environment_policy.inherit",
             &self.inherit,
         );
     }
@@ -311,13 +294,12 @@ impl LenientToolsToml {
     fn push_invalid_enum_warnings(
         &self,
         warnings: &mut Vec<InvalidEnumWarning>,
-        path_prefix: &str,
         segment_prefix: &[&str],
     ) {
         let Some(web_search) = &self.web_search else {
             return;
         };
-        web_search.push_invalid_enum_warnings(warnings, path_prefix, segment_prefix);
+        web_search.push_invalid_enum_warnings(warnings, segment_prefix);
     }
 }
 
@@ -331,13 +313,11 @@ impl LenientWebSearchToolConfig {
     fn push_invalid_enum_warnings(
         &self,
         warnings: &mut Vec<InvalidEnumWarning>,
-        path_prefix: &str,
         segment_prefix: &[&str],
     ) {
         push_invalid_field(
             warnings,
             &segments_with_suffix(segment_prefix, &["web_search", "context_size"]),
-            &format!("{path_prefix}.web_search.context_size"),
             &self.context_size,
         );
     }
@@ -377,28 +357,16 @@ struct LenientTui {
 
 impl LenientTui {
     fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(
-            warnings,
-            &["tui", "notifications"],
-            "tui.notifications",
-            &self.notifications,
-        );
-        push_invalid_field(
-            warnings,
-            &["tui", "notification_method"],
-            "tui.notification_method",
-            &self.method,
-        );
+        push_invalid_field(warnings, &["tui", "notifications"], &self.notifications);
+        push_invalid_field(warnings, &["tui", "notification_method"], &self.method);
         push_invalid_field(
             warnings,
             &["tui", "notification_condition"],
-            "tui.notification_condition",
             &self.condition,
         );
         push_invalid_field(
             warnings,
             &["tui", "alternate_screen"],
-            "tui.alternate_screen",
             &self.alternate_screen,
         );
     }
@@ -415,30 +383,10 @@ struct LenientRealtimeToml {
 
 impl LenientRealtimeToml {
     fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(
-            warnings,
-            &["realtime", "version"],
-            "realtime.version",
-            &self.version,
-        );
-        push_invalid_field(
-            warnings,
-            &["realtime", "type"],
-            "realtime.type",
-            &self.session_type,
-        );
-        push_invalid_field(
-            warnings,
-            &["realtime", "transport"],
-            "realtime.transport",
-            &self.transport,
-        );
-        push_invalid_field(
-            warnings,
-            &["realtime", "voice"],
-            "realtime.voice",
-            &self.voice,
-        );
+        push_invalid_field(warnings, &["realtime", "version"], &self.version);
+        push_invalid_field(warnings, &["realtime", "type"], &self.session_type);
+        push_invalid_field(warnings, &["realtime", "transport"], &self.transport);
+        push_invalid_field(warnings, &["realtime", "voice"], &self.voice);
     }
 }
 
@@ -449,19 +397,17 @@ struct LenientWindowsToml {
 
 impl LenientWindowsToml {
     fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        self.push_invalid_enum_warnings_with_prefix(warnings, "windows", &["windows"]);
+        self.push_invalid_enum_warnings_with_prefix(warnings, &["windows"]);
     }
 
     fn push_invalid_enum_warnings_with_prefix(
         &self,
         warnings: &mut Vec<InvalidEnumWarning>,
-        path_prefix: &str,
         segment_prefix: &[&str],
     ) {
         push_invalid_field(
             warnings,
             &segments_with_suffix(segment_prefix, &["sandbox"]),
-            &format!("{path_prefix}.sandbox"),
             &self.sandbox,
         );
     }
@@ -471,7 +417,6 @@ impl LenientWindowsToml {
 /// through the startup warning path.
 struct InvalidEnumWarning {
     segments: Vec<String>,
-    path: String,
     invalid_value: TomlValue,
 }
 
@@ -479,10 +424,10 @@ impl InvalidEnumWarning {
     /// Formats the exact warning string consumed by callers today.
     fn message(self) -> String {
         let Self {
-            path,
+            segments,
             invalid_value,
-            ..
         } = self;
+        let path = segments.join(".");
         format!("Ignoring invalid config value at {path}: {invalid_value}")
     }
 }
@@ -491,7 +436,6 @@ impl InvalidEnumWarning {
 fn push_invalid_field<T, S>(
     warnings: &mut Vec<InvalidEnumWarning>,
     segments: &[S],
-    path: &str,
     value: &Option<Lenient<T>>,
 ) where
     S: AsRef<str>,
@@ -504,7 +448,6 @@ fn push_invalid_field<T, S>(
             .iter()
             .map(|segment| segment.as_ref().to_string())
             .collect(),
-        path: path.to_string(),
         invalid_value: invalid_value.clone(),
     });
 }
