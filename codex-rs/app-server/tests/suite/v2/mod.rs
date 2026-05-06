@@ -16,6 +16,7 @@ mod experimental_api;
 mod experimental_feature_list;
 mod external_agent_config;
 mod fs;
+mod hooks_list;
 mod initialize;
 mod marketplace_add;
 mod marketplace_remove;
@@ -32,7 +33,9 @@ mod plan_item;
 mod plugin_install;
 mod plugin_list;
 mod plugin_read;
+mod plugin_share;
 mod plugin_uninstall;
+mod process_exec;
 mod rate_limits;
 mod realtime_conversation;
 #[cfg(debug_assertions)]
