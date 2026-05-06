@@ -93,171 +93,126 @@ struct LenientConfigToml {
 
 impl LenientConfigToml {
     fn invalid_enum_warnings(&self) -> Vec<InvalidEnumWarning> {
+        macro_rules! push_invalid_fields {
+            ($warnings:expr, $source:expr, $prefix:tt, $($field:ident),+ $(,)?) => {
+                $(
+                    push_invalid_fields!(@one $warnings, $source, $prefix, stringify!($field), $field);
+                )+
+            };
+            ($warnings:expr, $source:expr, $prefix:tt, $($path:literal => $field:ident),+ $(,)?) => {
+                $(
+                    push_invalid_fields!(@one $warnings, $source, $prefix, $path, $field);
+                )+
+            };
+            (@one $warnings:expr, $source:expr, [$($prefix:expr),*], $path:expr, $field:ident) => {
+                push_invalid_field(
+                    $warnings,
+                    &[$($prefix,)* $path],
+                    &$source.$field,
+                );
+            };
+        }
+
         let mut warnings = Vec::new();
-        push_invalid_field(&mut warnings, &["approval_policy"], &self.approval_policy);
-        push_invalid_field(
+        push_invalid_fields!(
             &mut warnings,
-            &["approvals_reviewer"],
-            &self.approvals_reviewer,
+            self,
+            [],
+            approval_policy,
+            approvals_reviewer,
+            sandbox_mode,
+            forced_login_method,
+            cli_auth_credentials_store,
+            mcp_oauth_credentials_store,
+            file_opener,
+            model_reasoning_effort,
+            plan_mode_reasoning_effort,
+            model_reasoning_summary,
+            model_verbosity,
+            personality,
+            service_tier,
+            experimental_thread_store,
+            web_search,
         );
-        push_invalid_field(&mut warnings, &["sandbox_mode"], &self.sandbox_mode);
-        push_invalid_field(
-            &mut warnings,
-            &["forced_login_method"],
-            &self.forced_login_method,
-        );
-        push_invalid_field(
-            &mut warnings,
-            &["cli_auth_credentials_store"],
-            &self.cli_auth_credentials_store,
-        );
-        push_invalid_field(
-            &mut warnings,
-            &["mcp_oauth_credentials_store"],
-            &self.mcp_oauth_credentials_store,
-        );
-        push_invalid_field(&mut warnings, &["file_opener"], &self.file_opener);
-        push_invalid_field(
-            &mut warnings,
-            &["model_reasoning_effort"],
-            &self.model_reasoning_effort,
-        );
-        push_invalid_field(
-            &mut warnings,
-            &["plan_mode_reasoning_effort"],
-            &self.plan_mode_reasoning_effort,
-        );
-        push_invalid_field(
-            &mut warnings,
-            &["model_reasoning_summary"],
-            &self.model_reasoning_summary,
-        );
-        push_invalid_field(&mut warnings, &["model_verbosity"], &self.model_verbosity);
-        push_invalid_field(&mut warnings, &["personality"], &self.personality);
-        push_invalid_field(&mut warnings, &["service_tier"], &self.service_tier);
-        push_invalid_field(
-            &mut warnings,
-            &["experimental_thread_store"],
-            &self.experimental_thread_store,
-        );
-        push_invalid_field(&mut warnings, &["web_search"], &self.web_search);
         if let Some(history) = &self.history {
-            push_invalid_field(
-                &mut warnings,
-                &["history", "persistence"],
-                &history.persistence,
-            );
+            push_invalid_fields!(&mut warnings, history, ["history"], persistence);
         }
         if let Some(shell_environment_policy) = &self.shell_environment_policy {
-            push_invalid_field(
+            push_invalid_fields!(
                 &mut warnings,
-                &["shell_environment_policy", "inherit"],
-                &shell_environment_policy.inherit,
+                shell_environment_policy,
+                ["shell_environment_policy"],
+                inherit,
             );
         }
         if let Some(tools) = &self.tools
             && let Some(web_search) = &tools.web_search
         {
-            push_invalid_field(
+            push_invalid_fields!(
                 &mut warnings,
-                &["tools", "web_search", "context_size"],
-                &web_search.context_size,
+                web_search,
+                ["tools", "web_search"],
+                context_size,
             );
         }
         if let Some(tui) = &self.tui {
-            push_invalid_field(&mut warnings, &["tui", "notifications"], &tui.notifications);
-            push_invalid_field(&mut warnings, &["tui", "notification_method"], &tui.method);
-            push_invalid_field(
+            push_invalid_fields!(&mut warnings, tui, ["tui"], notifications, alternate_screen);
+            push_invalid_fields!(
                 &mut warnings,
-                &["tui", "notification_condition"],
-                &tui.condition,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["tui", "alternate_screen"],
-                &tui.alternate_screen,
+                tui,
+                ["tui"],
+                "notification_method" => method,
+                "notification_condition" => condition,
             );
         }
         if let Some(realtime) = &self.realtime {
-            push_invalid_field(&mut warnings, &["realtime", "version"], &realtime.version);
-            push_invalid_field(&mut warnings, &["realtime", "type"], &realtime.session_type);
-            push_invalid_field(
+            push_invalid_fields!(
                 &mut warnings,
-                &["realtime", "transport"],
-                &realtime.transport,
+                realtime,
+                ["realtime"],
+                version,
+                transport,
+                voice
             );
-            push_invalid_field(&mut warnings, &["realtime", "voice"], &realtime.voice);
+            push_invalid_fields!(&mut warnings, realtime, ["realtime"], "type" => session_type);
         }
         if let Some(windows) = &self.windows {
-            push_invalid_field(&mut warnings, &["windows", "sandbox"], &windows.sandbox);
+            push_invalid_fields!(&mut warnings, windows, ["windows"], sandbox);
         }
         let mut profiles = self.profiles.iter().collect::<Vec<_>>();
         profiles.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (name, profile) in profiles {
-            push_invalid_field(
+            push_invalid_fields!(
                 &mut warnings,
-                &["profiles", name, "service_tier"],
-                &profile.service_tier,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "approval_policy"],
-                &profile.approval_policy,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "approvals_reviewer"],
-                &profile.approvals_reviewer,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "sandbox_mode"],
-                &profile.sandbox_mode,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "model_reasoning_effort"],
-                &profile.model_reasoning_effort,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "plan_mode_reasoning_effort"],
-                &profile.plan_mode_reasoning_effort,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "model_reasoning_summary"],
-                &profile.model_reasoning_summary,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "model_verbosity"],
-                &profile.model_verbosity,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "personality"],
-                &profile.personality,
-            );
-            push_invalid_field(
-                &mut warnings,
-                &["profiles", name, "web_search"],
-                &profile.web_search,
+                profile,
+                ["profiles", name],
+                service_tier,
+                approval_policy,
+                approvals_reviewer,
+                sandbox_mode,
+                model_reasoning_effort,
+                plan_mode_reasoning_effort,
+                model_reasoning_summary,
+                model_verbosity,
+                personality,
+                web_search,
             );
             if let Some(tools) = &profile.tools
                 && let Some(web_search) = &tools.web_search
             {
-                push_invalid_field(
+                push_invalid_fields!(
                     &mut warnings,
-                    &["profiles", name, "tools", "web_search", "context_size"],
-                    &web_search.context_size,
+                    web_search,
+                    ["profiles", name, "tools", "web_search"],
+                    context_size,
                 );
             }
             if let Some(windows) = &profile.windows {
-                push_invalid_field(
+                push_invalid_fields!(
                     &mut warnings,
-                    &["profiles", name, "windows", "sandbox"],
-                    &windows.sandbox,
+                    windows,
+                    ["profiles", name, "windows"],
+                    sandbox
                 );
             }
         }
