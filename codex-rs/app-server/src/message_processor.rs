@@ -60,10 +60,11 @@ use codex_app_server_protocol::ServerRequestPayload;
 use codex_app_server_protocol::experimental_required_message;
 use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::workspace_settings;
+use codex_core::CoreApiOptions;
 use codex_core::ThreadManager;
 use codex_core::agent_graph_store_from_state_db;
 use codex_core::config::Config;
-use codex_core::thread_store_from_config;
+use codex_core::thread_store_from_config_with_options;
 use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
@@ -263,6 +264,7 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) rpc_transport: AppServerRpcTransport,
     pub(crate) remote_control_handle: Option<RemoteControlHandle>,
     pub(crate) plugin_startup_tasks: crate::PluginStartupTasks,
+    pub(crate) core_api_options: CoreApiOptions,
 }
 
 impl MessageProcessor {
@@ -286,6 +288,7 @@ impl MessageProcessor {
             rpc_transport,
             remote_control_handle,
             plugin_startup_tasks,
+            core_api_options,
         } = args;
         auth_manager.set_external_auth(Arc::new(ExternalAuthRefreshBridge {
             outgoing: outgoing.clone(),
@@ -293,7 +296,11 @@ impl MessageProcessor {
         // The thread store is intentionally process-scoped. Config reloads can
         // affect per-thread behavior, but they must not move newly started,
         // resumed, or forked threads to a different persistence backend/root.
-        let thread_store = thread_store_from_config(config.as_ref(), state_db.clone());
+        let thread_store = thread_store_from_config_with_options(
+            config.as_ref(),
+            state_db.clone(),
+            &core_api_options,
+        );
         let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
         let thread_manager = Arc::new(ThreadManager::new(
             config.as_ref(),

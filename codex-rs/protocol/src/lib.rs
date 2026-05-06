@@ -1,10 +1,13 @@
 pub mod account;
 mod agent_path;
 pub mod auth;
+mod opaque_identity;
 mod session_id;
 mod thread_id;
 mod tool_name;
 pub use agent_path::AgentPath;
+pub use opaque_identity::CODEX_CORE_IDENTITY_HEADER;
+pub use opaque_identity::OpaqueIdentity;
 pub use session_id::SessionId;
 pub use thread_id::ThreadId;
 pub use tool_name::ToolName;

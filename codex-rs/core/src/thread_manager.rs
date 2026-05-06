@@ -24,6 +24,9 @@ use codex_agent_graph_store::LocalAgentGraphStore;
 use codex_analytics::AnalyticsEventsClient;
 use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
+use codex_config::NoopThreadConfigLoader;
+use codex_config::RemoteThreadConfigLoader;
+use codex_config::ThreadConfigLoader;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
 use codex_login::AuthManager;
@@ -33,6 +36,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OPENAI_PROVIDER_ID;
 use codex_models_manager::manager::RefreshStrategy;
 use codex_models_manager::manager::SharedModelsManager;
+use codex_protocol::OpaqueIdentity;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::CollaborationModeMask;
 use codex_protocol::error::CodexErr;
@@ -228,6 +232,12 @@ pub struct StartThreadOptions {
     pub environments: Vec<TurnEnvironmentSelection>,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CoreApiOptions {
+    /// Opaque caller identity forwarded to remote core contract implementations.
+    pub opaque_identity: Option<OpaqueIdentity>,
+}
+
 pub(crate) struct ResumeThreadWithHistoryOptions {
     pub(crate) config: Config,
     pub(crate) initial_history: InitialHistory,
@@ -276,13 +286,41 @@ pub async fn init_state_db_from_config(config: &Config) -> Option<StateDbHandle>
 }
 
 pub fn thread_store_from_config(config: &Config, state_db: StateDbHandle) -> Arc<dyn ThreadStore> {
+    thread_store_from_config_with_options(config, state_db, &CoreApiOptions::default())
+}
+
+pub fn thread_store_from_config_with_options(
+    config: &Config,
+    state_db: StateDbHandle,
+    options: &CoreApiOptions,
+) -> Arc<dyn ThreadStore> {
     match &config.experimental_thread_store {
         ThreadStoreConfig::Local => Arc::new(LocalThreadStore::new(
             LocalThreadStoreConfig::from_config(config),
             state_db,
         )),
-        ThreadStoreConfig::Remote { endpoint } => Arc::new(RemoteThreadStore::new(endpoint)),
+        ThreadStoreConfig::Remote { endpoint } => Arc::new(RemoteThreadStore::new_with_identity(
+            endpoint,
+            options.opaque_identity.clone(),
+        )),
         ThreadStoreConfig::InMemory { id } => InMemoryThreadStore::for_id(id),
+    }
+}
+
+pub fn thread_config_loader_from_config(config: &Config) -> Arc<dyn ThreadConfigLoader> {
+    thread_config_loader_from_config_with_options(config, &CoreApiOptions::default())
+}
+
+pub fn thread_config_loader_from_config_with_options(
+    config: &Config,
+    options: &CoreApiOptions,
+) -> Arc<dyn ThreadConfigLoader> {
+    match config.experimental_thread_config_endpoint.as_deref() {
+        Some(endpoint) => Arc::new(RemoteThreadConfigLoader::new_with_identity(
+            endpoint,
+            options.opaque_identity.clone(),
+        )),
+        None => Arc::new(NoopThreadConfigLoader),
     }
 }
 

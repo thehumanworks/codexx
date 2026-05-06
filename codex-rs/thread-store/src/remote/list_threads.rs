@@ -66,7 +66,11 @@ pub(super) async fn list_threads(
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
+    use codex_protocol::CODEX_CORE_IDENTITY_HEADER;
+    use codex_protocol::OpaqueIdentity;
     use codex_protocol::openai_models::ReasoningEffort;
     use codex_protocol::protocol::SessionSource;
     use pretty_assertions::assert_eq;
@@ -83,7 +87,9 @@ mod tests {
     use crate::ThreadStore;
 
     #[derive(Default)]
-    struct TestServer;
+    struct TestServer {
+        captured_identity: Option<Arc<Mutex<Option<Vec<u8>>>>>,
+    }
 
     #[tonic::async_trait]
     impl thread_store_server::ThreadStore for TestServer {
@@ -91,6 +97,16 @@ mod tests {
             &self,
             request: Request<proto::ListThreadsRequest>,
         ) -> Result<Response<proto::ListThreadsResponse>, Status> {
+            if let Some(captured_identity) = &self.captured_identity {
+                let identity = request
+                    .metadata()
+                    .get_bin(CODEX_CORE_IDENTITY_HEADER)
+                    .and_then(|value| value.to_bytes().ok())
+                    .map(|value| value.to_vec());
+                *captured_identity
+                    .lock()
+                    .expect("captured identity mutex poisoned") = identity;
+            }
             let request = request.into_inner();
             assert_eq!(request.page_size, 2);
             assert_eq!(request.cursor.as_deref(), Some("cursor-1"));
@@ -171,7 +187,7 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         let server = tokio::spawn(async move {
             Server::builder()
-                .add_service(ThreadStoreServer::new(TestServer))
+                .add_service(ThreadStoreServer::new(TestServer::default()))
                 .serve_with_incoming_shutdown(
                     tokio_stream::wrappers::TcpListenerStream::new(listener),
                     async {
@@ -220,6 +236,61 @@ mod tests {
         assert_eq!(
             item.git_info.as_ref().and_then(|git| git.branch.as_deref()),
             Some("main")
+        );
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("join server").expect("server");
+    }
+
+    #[tokio::test]
+    async fn list_threads_forwards_identity_as_metadata() {
+        let captured_identity = Arc::new(Mutex::new(None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("test server addr");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server_identity = captured_identity.clone();
+        let server = tokio::spawn(async move {
+            Server::builder()
+                .add_service(ThreadStoreServer::new(TestServer {
+                    captured_identity: Some(server_identity),
+                }))
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+        });
+
+        let store = RemoteThreadStore::new_with_identity(
+            format!("http://{addr}"),
+            Some(OpaqueIdentity::from_bytes(b"tenant-key-\x00\xff".to_vec())),
+        );
+        store
+            .list_threads(ListThreadsParams {
+                page_size: 2,
+                cursor: Some("cursor-1".to_string()),
+                sort_key: ThreadSortKey::UpdatedAt,
+                sort_direction: crate::SortDirection::Desc,
+                allowed_sources: vec![SessionSource::Cli],
+                model_providers: Some(vec!["openai".to_string()]),
+                cwd_filters: Some(vec![PathBuf::from("/workspace")]),
+                archived: true,
+                search_term: Some("needle".to_string()),
+                use_state_db_only: true,
+            })
+            .await
+            .expect("list threads");
+
+        assert_eq!(
+            captured_identity
+                .lock()
+                .expect("captured identity mutex poisoned")
+                .as_deref(),
+            Some(&b"tenant-key-\x00\xff"[..])
         );
 
         let _ = shutdown_tx.send(());

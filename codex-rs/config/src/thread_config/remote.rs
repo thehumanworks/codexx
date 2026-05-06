@@ -6,6 +6,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::WireApi;
+use codex_protocol::CODEX_CORE_IDENTITY_HEADER;
+use codex_protocol::OpaqueIdentity;
 use codex_protocol::config_types::ModelProviderAuthInfo;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
@@ -17,29 +19,75 @@ use super::ThreadConfigLoader;
 use super::ThreadConfigSource;
 use super::UserThreadConfig;
 use proto::thread_config_loader_client::ThreadConfigLoaderClient;
+use tonic::codegen::InterceptedService;
+use tonic::metadata::BinaryMetadataValue;
+use tonic::service::Interceptor;
+use tonic::transport::Channel;
+use tonic::transport::Endpoint;
 
 #[path = "proto/codex.thread_config.v1.rs"]
 mod proto;
 
 const REMOTE_THREAD_CONFIG_LOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Clone, Debug)]
+struct IdentityInterceptor {
+    identity: Option<OpaqueIdentity>,
+}
+
+impl Interceptor for IdentityInterceptor {
+    fn call(
+        &mut self,
+        mut request: tonic::Request<()>,
+    ) -> Result<tonic::Request<()>, tonic::Status> {
+        if let Some(identity) = &self.identity {
+            request.metadata_mut().insert_bin(
+                CODEX_CORE_IDENTITY_HEADER,
+                BinaryMetadataValue::from_bytes(identity.as_bytes()),
+            );
+        }
+        Ok(request)
+    }
+}
+
+type RemoteThreadConfigLoaderClient =
+    ThreadConfigLoaderClient<InterceptedService<Channel, IdentityInterceptor>>;
+
 /// gRPC-backed [`ThreadConfigLoader`] implementation.
 #[derive(Clone, Debug)]
 pub struct RemoteThreadConfigLoader {
     endpoint: String,
+    identity: Option<OpaqueIdentity>,
 }
 
 impl RemoteThreadConfigLoader {
     pub fn new(endpoint: impl Into<String>) -> Self {
         Self {
             endpoint: endpoint.into(),
+            identity: None,
         }
     }
 
-    async fn client(
-        &self,
-    ) -> Result<ThreadConfigLoaderClient<tonic::transport::Channel>, ThreadConfigLoadError> {
-        ThreadConfigLoaderClient::connect(self.endpoint.clone())
+    pub fn new_with_identity(
+        endpoint: impl Into<String>,
+        identity: Option<OpaqueIdentity>,
+    ) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            identity,
+        }
+    }
+
+    async fn client(&self) -> Result<RemoteThreadConfigLoaderClient, ThreadConfigLoadError> {
+        let channel = Endpoint::new(self.endpoint.clone())
+            .map_err(|err| {
+                ThreadConfigLoadError::new(
+                    ThreadConfigLoadErrorCode::RequestFailed,
+                    /*status_code*/ None,
+                    format!("invalid remote thread config loader endpoint: {err}"),
+                )
+            })?
+            .connect()
             .await
             .map_err(|err| {
                 ThreadConfigLoadError::new(
@@ -47,7 +95,13 @@ impl RemoteThreadConfigLoader {
                     /*status_code*/ None,
                     format!("failed to connect to remote thread config loader: {err}"),
                 )
-            })
+            })?;
+        Ok(ThreadConfigLoaderClient::with_interceptor(
+            channel,
+            IdentityInterceptor {
+                identity: self.identity.clone(),
+            },
+        ))
     }
 }
 
@@ -299,9 +353,13 @@ mod tests {
     use std::collections::BTreeMap;
     use std::collections::HashMap;
     use std::num::NonZeroU64;
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
     use codex_model_provider_info::ModelProviderInfo;
     use codex_model_provider_info::WireApi;
+    use codex_protocol::CODEX_CORE_IDENTITY_HEADER;
+    use codex_protocol::OpaqueIdentity;
     use codex_protocol::config_types::ModelProviderAuthInfo;
     use codex_utils_absolute_path::AbsolutePathBuf;
     use pretty_assertions::assert_eq;
@@ -319,6 +377,7 @@ mod tests {
     struct TestServer {
         sources: Vec<proto::ThreadConfigSource>,
         expected_cwd: String,
+        captured_identity: Option<Arc<Mutex<Option<Vec<u8>>>>>,
     }
 
     #[tonic::async_trait]
@@ -327,6 +386,16 @@ mod tests {
             &self,
             request: Request<proto::LoadThreadConfigRequest>,
         ) -> Result<Response<proto::LoadThreadConfigResponse>, Status> {
+            if let Some(captured_identity) = &self.captured_identity {
+                let identity = request
+                    .metadata()
+                    .get_bin(CODEX_CORE_IDENTITY_HEADER)
+                    .and_then(|value| value.to_bytes().ok())
+                    .map(|value| value.to_vec());
+                *captured_identity
+                    .lock()
+                    .expect("captured identity mutex poisoned") = identity;
+            }
             assert_eq!(
                 request.into_inner(),
                 proto::LoadThreadConfigRequest {
@@ -355,6 +424,7 @@ mod tests {
                 .add_service(ThreadConfigLoaderServer::new(TestServer {
                     sources: proto_sources(),
                     expected_cwd,
+                    captured_identity: None,
                 }))
                 .serve_with_incoming_shutdown(
                     tokio_stream::wrappers::TcpListenerStream::new(listener),
@@ -377,6 +447,57 @@ mod tests {
         server.await.expect("join server").expect("server");
 
         assert_eq!(loaded.expect("load thread config"), expected_sources());
+    }
+
+    #[tokio::test]
+    async fn load_thread_config_forwards_identity_as_metadata() {
+        let cwd = workspace_dir().join("project");
+        let expected_cwd = cwd.to_string_lossy().into_owned();
+        let captured_identity = Arc::new(Mutex::new(None));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind test server");
+        let addr = listener.local_addr().expect("test server addr");
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server_identity = captured_identity.clone();
+        let server = tokio::spawn(async move {
+            Server::builder()
+                .add_service(ThreadConfigLoaderServer::new(TestServer {
+                    sources: proto_sources(),
+                    expected_cwd,
+                    captured_identity: Some(server_identity),
+                }))
+                .serve_with_incoming_shutdown(
+                    tokio_stream::wrappers::TcpListenerStream::new(listener),
+                    async {
+                        let _ = shutdown_rx.await;
+                    },
+                )
+                .await
+        });
+
+        let loader = RemoteThreadConfigLoader::new_with_identity(
+            format!("http://{addr}"),
+            Some(OpaqueIdentity::from_bytes(b"tenant-key-\x00\xff".to_vec())),
+        );
+        let loaded = loader
+            .load(ThreadConfigContext {
+                thread_id: Some("thread-1".to_string()),
+                cwd: Some(cwd),
+            })
+            .await;
+
+        let _ = shutdown_tx.send(());
+        server.await.expect("join server").expect("server");
+
+        assert_eq!(loaded.expect("load thread config"), expected_sources());
+        assert_eq!(
+            captured_identity
+                .lock()
+                .expect("captured identity mutex poisoned")
+                .as_deref(),
+            Some(&b"tenant-key-\x00\xff"[..])
+        );
     }
 
     #[test]

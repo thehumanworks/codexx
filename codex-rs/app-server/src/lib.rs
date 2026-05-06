@@ -4,10 +4,10 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::LoaderOverrides;
 use codex_config::NoopThreadConfigLoader;
-use codex_config::RemoteThreadConfigLoader;
-use codex_config::ThreadConfigLoader;
+use codex_core::CoreApiOptions;
 use codex_core::config::Config;
 use codex_core::resolve_installation_id;
+use codex_core::thread_config_loader_from_config_with_options;
 use codex_exec_server::EnvironmentManagerArgs;
 use codex_features::Feature;
 use codex_login::AuthManager;
@@ -114,13 +114,6 @@ enum LogFormat {
 }
 
 type StderrLogLayer = Box<dyn Layer<Registry> + Send + Sync + 'static>;
-
-fn configured_thread_config_loader(config: &Config) -> Arc<dyn ThreadConfigLoader> {
-    match config.experimental_thread_config_endpoint.as_deref() {
-        Some(endpoint) => Arc::new(RemoteThreadConfigLoader::new(endpoint)),
-        None => Arc::new(NoopThreadConfigLoader),
-    }
-}
 
 /// Control-plane messages from the processor/transport side to the outbound router task.
 ///
@@ -373,15 +366,17 @@ pub enum PluginStartupTasks {
     Skip,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppServerRuntimeOptions {
     pub plugin_startup_tasks: PluginStartupTasks,
+    pub core_api_options: CoreApiOptions,
 }
 
 impl Default for AppServerRuntimeOptions {
     fn default() -> Self {
         Self {
             plugin_startup_tasks: PluginStartupTasks::Start,
+            core_api_options: CoreApiOptions::default(),
         }
     }
 }
@@ -456,7 +451,10 @@ pub async fn run_main_with_transport_options(
         .await
     {
         Ok(config) => {
-            let discovered_thread_config_loader = configured_thread_config_loader(&config);
+            let discovered_thread_config_loader = thread_config_loader_from_config_with_options(
+                &config,
+                &runtime_options.core_api_options,
+            );
             config_manager
                 .replace_thread_config_loader(Arc::clone(&discovered_thread_config_loader));
             let auth_manager =
@@ -770,6 +768,7 @@ pub async fn run_main_with_transport_options(
             rpc_transport: analytics_rpc_transport(&transport),
             remote_control_handle: Some(remote_control_handle.clone()),
             plugin_startup_tasks: runtime_options.plugin_startup_tasks,
+            core_api_options: runtime_options.core_api_options.clone(),
         }));
         let mut thread_created_rx = processor.thread_created_receiver();
         let mut running_turn_count_rx = processor.subscribe_running_assistant_turn_count();

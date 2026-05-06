@@ -302,6 +302,7 @@ async fn build_test_processor(
         rpc_transport: AppServerRpcTransport::Stdio,
         remote_control_handle: None,
         plugin_startup_tasks: crate::PluginStartupTasks::Start,
+        core_api_options: codex_core::CoreApiOptions::default(),
     }));
     (processor, outgoing_rx)
 }

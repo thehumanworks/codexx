@@ -12,6 +12,8 @@ mod remote;
 mod store;
 mod types;
 
+pub use codex_protocol::CODEX_CORE_IDENTITY_HEADER;
+pub use codex_protocol::OpaqueIdentity;
 pub use error::ThreadStoreError;
 pub use error::ThreadStoreResult;
 pub use in_memory::InMemoryThreadStore;
