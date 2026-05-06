@@ -26,6 +26,7 @@ use std::fmt;
 
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
 
 pub use crate::tui_keymap::KeybindingSpec;
@@ -87,11 +88,34 @@ pub enum OAuthCredentialsStoreMode {
     Keyring,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum WindowsSandboxModeToml {
     Elevated,
     Unelevated,
+}
+
+impl<'de> Deserialize<'de> for WindowsSandboxModeToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        let normalized = value
+            .trim()
+            .to_ascii_lowercase()
+            .replace(['_', ' '], "-");
+
+        match normalized.as_str() {
+            "elevated" => Ok(Self::Elevated),
+            // Accept WSL-style spellings as compatibility aliases so a bad
+            // manual edit or stale UI write does not brick the app on startup.
+            "unelevated" | "wsl" | "wsl2" | "wsl-2" => Ok(Self::Unelevated),
+            _ => Err(serde::de::Error::unknown_variant(
+                &value,
+                &["elevated", "unelevated", "wsl", "wsl2", "wsl-2"],
+            )),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]

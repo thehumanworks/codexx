@@ -86,3 +86,13 @@ fn memories_config_clamps_rate_limit_remaining_threshold() {
         }
     );
 }
+
+#[test]
+fn deserialize_windows_sandbox_mode_accepts_wsl_aliases() {
+    for mode in ["wsl", "wsl2", "wsl-2", "wsL2"] {
+        let cfg: WindowsToml = toml::from_str(&format!(r#"sandbox = "{mode}""#))
+            .expect("should deserialize WSL alias as a sandbox mode");
+
+        assert_eq!(cfg.sandbox, Some(WindowsSandboxModeToml::Unelevated));
+    }
+}
