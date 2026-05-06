@@ -2083,6 +2083,7 @@ async fn send_input_accepts_structured_items() {
             UserInput::Mention {
                 name: "drive".to_string(),
                 path: "app://google_drive".to_string(),
+                computer_use_native_app_bundle_id: None,
             },
             UserInput::Text {
                 text: "read the folder".to_string(),

@@ -15,9 +15,23 @@ use crate::mention_syntax::TOOL_MENTION_SIGIL;
 
 use super::PluginCapabilitySummary;
 
+const COMPUTER_USE_PLUGIN_CONFIG_NAME: &str = "computer-use@openai-bundled";
+
 pub(crate) struct CollectedToolMentions {
     pub(crate) plain_names: HashSet<String>,
     pub(crate) paths: HashSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ExplicitPluginMention {
+    pub(crate) plugin: PluginCapabilitySummary,
+    pub(crate) has_computer_use_native_fallback: bool,
+}
+
+#[derive(Clone, Debug)]
+struct StructuredPluginMention {
+    config_name: String,
+    has_computer_use_native_fallback: bool,
 }
 
 pub(crate) fn collect_tool_mentions_from_messages(messages: &[String]) -> CollectedToolMentions {
@@ -63,7 +77,7 @@ pub(crate) fn collect_explicit_app_ids(input: &[UserInput]) -> HashSet<String> {
 pub(crate) fn collect_explicit_plugin_mentions(
     input: &[UserInput],
     plugins: &[PluginCapabilitySummary],
-) -> Vec<PluginCapabilitySummary> {
+) -> Vec<ExplicitPluginMention> {
     if plugins.is_empty() {
         return Vec::new();
     }
@@ -76,30 +90,77 @@ pub(crate) fn collect_explicit_plugin_mentions(
         })
         .collect::<Vec<String>>();
 
-    let mentioned_config_names: HashSet<String> = input
+    let structured_mentions = input
         .iter()
         .filter_map(|item| match item {
-            UserInput::Mention { path, .. } => Some(path.clone()),
+            UserInput::Mention {
+                path,
+                computer_use_native_app_bundle_id,
+                ..
+            } => Some((path.clone(), computer_use_native_app_bundle_id.clone())),
             _ => None,
         })
-        .chain(
-            // Plugin plaintext links use `@`, not the default `$` tool sigil.
-            collect_tool_mentions_from_messages_with_sigil(&messages, PLUGIN_TEXT_MENTION_SIGIL)
-                .paths,
-        )
-        .filter(|path| tool_kind_for_path(path.as_str()) == ToolMentionKind::Plugin)
-        .filter_map(|path| plugin_config_name_from_path(path.as_str()).map(str::to_string))
-        .collect();
+        .filter(|(path, _)| tool_kind_for_path(path.as_str()) == ToolMentionKind::Plugin)
+        .filter_map(|(path, native_app_bundle_id)| {
+            plugin_config_name_from_path(path.as_str()).map(|config_name| StructuredPluginMention {
+                config_name: config_name.to_string(),
+                has_computer_use_native_fallback: native_app_bundle_id
+                    .as_deref()
+                    .is_some_and(|bundle_id| !bundle_id.trim().is_empty()),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let linked_config_names =
+        collect_tool_mentions_from_messages_with_sigil(&messages, PLUGIN_TEXT_MENTION_SIGIL)
+            .paths
+            .into_iter()
+            .filter(|path| tool_kind_for_path(path.as_str()) == ToolMentionKind::Plugin)
+            .filter_map(|path| plugin_config_name_from_path(path.as_str()).map(str::to_string))
+            .collect::<HashSet<_>>();
+
+    let mentioned_config_names = structured_mentions
+        .iter()
+        .map(|mention| mention.config_name.clone())
+        .chain(linked_config_names)
+        .collect::<HashSet<_>>();
 
     if mentioned_config_names.is_empty() {
         return Vec::new();
     }
 
-    plugins
+    let mut mentioned_plugins = plugins
         .iter()
         .filter(|plugin| mentioned_config_names.contains(plugin.config_name.as_str()))
-        .cloned()
-        .collect()
+        .map(|plugin| {
+            let has_computer_use_native_fallback = structured_mentions.iter().any(|mention| {
+                mention.config_name == plugin.config_name
+                    && mention.has_computer_use_native_fallback
+            });
+            ExplicitPluginMention {
+                plugin: plugin.clone(),
+                has_computer_use_native_fallback,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if mentioned_plugins
+        .iter()
+        .any(|mention| mention.has_computer_use_native_fallback)
+        && !mentioned_plugins
+            .iter()
+            .any(|mention| mention.plugin.config_name.as_str() == COMPUTER_USE_PLUGIN_CONFIG_NAME)
+        && let Some(computer_use_plugin) = plugins
+            .iter()
+            .find(|plugin| plugin.config_name.as_str() == COMPUTER_USE_PLUGIN_CONFIG_NAME)
+    {
+        mentioned_plugins.push(ExplicitPluginMention {
+            plugin: computer_use_plugin.clone(),
+            has_computer_use_native_fallback: false,
+        });
+    }
+
+    mentioned_plugins
 }
 
 pub(crate) use crate::build_skill_name_counts;

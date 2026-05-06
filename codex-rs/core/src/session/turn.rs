@@ -276,7 +276,7 @@ pub(crate) async fn run_turn(
         build_plugin_injections(&mentioned_plugins, &mcp_tools, &available_connectors);
     let mentioned_plugin_metadata = mentioned_plugins
         .iter()
-        .filter_map(crate::plugins::PluginCapabilitySummary::telemetry_metadata)
+        .filter_map(|mention| mention.plugin.telemetry_metadata())
         .collect::<Vec<_>>();
 
     let mut explicitly_enabled_connectors = collect_explicit_app_ids(&input);

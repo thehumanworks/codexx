@@ -315,6 +315,7 @@ async fn explicit_plugin_mentions_inject_plugin_guidance() -> Result<()> {
             items: vec![codex_protocol::user_input::UserInput::Mention {
                 name: "sample".into(),
                 path: format!("plugin://{SAMPLE_PLUGIN_CONFIG_NAME}"),
+                computer_use_native_app_bundle_id: None,
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,
@@ -396,6 +397,7 @@ async fn explicit_plugin_mentions_track_plugin_used_analytics() -> Result<()> {
             items: vec![codex_protocol::user_input::UserInput::Mention {
                 name: "sample".into(),
                 path: format!("plugin://{SAMPLE_PLUGIN_CONFIG_NAME}"),
+                computer_use_native_app_bundle_id: None,
             }],
             final_output_json_schema: None,
             responsesapi_client_metadata: None,

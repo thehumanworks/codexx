@@ -13,6 +13,7 @@ pub(crate) fn render_explicit_plugin_instructions(
     plugin: &PluginCapabilitySummary,
     available_mcp_servers: &[String],
     available_apps: &[String],
+    has_computer_use_native_fallback: bool,
 ) -> Option<String> {
     let mut lines = vec![format!(
         "Capabilities from the `{}` plugin:",
@@ -46,6 +47,13 @@ pub(crate) fn render_explicit_plugin_instructions(
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
+    }
+
+    if has_computer_use_native_fallback {
+        lines.push(
+            "- This plugin also corresponds to a native desktop app available through Computer Use. Prefer plugin-associated capabilities first; if they are unavailable, insufficient, or fail, use the Computer Use tool surface for the native app fallback. If Computer Use tools are not already visible, use `tool_search` for `computer use` to discover them."
+                .to_string(),
+        );
     }
 
     if lines.len() == 1 {

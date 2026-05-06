@@ -1160,6 +1160,7 @@ fn user_message_display_from_inputs_matches_flattened_user_message_shape() {
         UserInput::Mention {
             name: "repo".to_string(),
             path: "app://repo".to_string(),
+            computer_use_native_app_bundle_id: None,
         },
         UserInput::Text {
             text: "world".to_string(),

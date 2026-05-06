@@ -1256,6 +1256,7 @@ async fn submit_user_message_emits_structured_plugin_mentions_from_bindings() {
             UserInput::Mention {
                 name: "Sample Plugin".to_string(),
                 path: "plugin://sample@test".to_string(),
+                computer_use_native_app_bundle_id: None,
             },
         ]
     );

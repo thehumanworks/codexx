@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use codex_protocol::user_input::UserInput;
 use pretty_assertions::assert_eq;
 
+use super::ExplicitPluginMention;
 use super::collect_explicit_app_ids;
 use super::collect_explicit_plugin_mentions;
 use crate::plugins::PluginCapabilitySummary;
@@ -25,6 +26,16 @@ fn plugin(config_name: &str, display_name: &str) -> PluginCapabilitySummary {
     }
 }
 
+fn explicit_plugin_mention(
+    plugin: PluginCapabilitySummary,
+    has_computer_use_native_fallback: bool,
+) -> ExplicitPluginMention {
+    ExplicitPluginMention {
+        plugin,
+        has_computer_use_native_fallback,
+    }
+}
+
 #[test]
 fn collect_explicit_app_ids_from_linked_text_mentions() {
     let input = vec![text_input("use [$calendar](app://calendar)")];
@@ -41,6 +52,7 @@ fn collect_explicit_app_ids_dedupes_structured_and_linked_mentions() {
         UserInput::Mention {
             name: "calendar".to_string(),
             path: "app://calendar".to_string(),
+            computer_use_native_app_bundle_id: None,
         },
     ];
 
@@ -58,14 +70,17 @@ fn collect_explicit_app_ids_ignores_non_app_paths() {
         UserInput::Mention {
             name: "docs".to_string(),
             path: "mcp://docs".to_string(),
+            computer_use_native_app_bundle_id: None,
         },
         UserInput::Mention {
             name: "skill".to_string(),
             path: "skill://team/skill".to_string(),
+            computer_use_native_app_bundle_id: None,
         },
         UserInput::Mention {
             name: "file".to_string(),
             path: "/tmp/file.txt".to_string(),
+            computer_use_native_app_bundle_id: None,
         },
     ];
 
@@ -85,11 +100,18 @@ fn collect_explicit_plugin_mentions_from_structured_paths() {
         &[UserInput::Mention {
             name: "sample".to_string(),
             path: "plugin://sample@test".to_string(),
+            computer_use_native_app_bundle_id: None,
         }],
         &plugins,
     );
 
-    assert_eq!(mentioned, vec![plugin("sample@test", "sample")]);
+    assert_eq!(
+        mentioned,
+        vec![explicit_plugin_mention(
+            plugin("sample@test", "sample"),
+            false,
+        )]
+    );
 }
 
 #[test]
@@ -104,7 +126,13 @@ fn collect_explicit_plugin_mentions_from_linked_text_mentions() {
         &plugins,
     );
 
-    assert_eq!(mentioned, vec![plugin("sample@test", "sample")]);
+    assert_eq!(
+        mentioned,
+        vec![explicit_plugin_mention(
+            plugin("sample@test", "sample"),
+            false,
+        )]
+    );
 }
 
 #[test]
@@ -120,12 +148,19 @@ fn collect_explicit_plugin_mentions_dedupes_structured_and_linked_mentions() {
             UserInput::Mention {
                 name: "sample".to_string(),
                 path: "plugin://sample@test".to_string(),
+                computer_use_native_app_bundle_id: None,
             },
         ],
         &plugins,
     );
 
-    assert_eq!(mentioned, vec![plugin("sample@test", "sample")]);
+    assert_eq!(
+        mentioned,
+        vec![explicit_plugin_mention(
+            plugin("sample@test", "sample"),
+            false,
+        )]
+    );
 }
 
 #[test]
@@ -139,7 +174,7 @@ fn collect_explicit_plugin_mentions_ignores_non_plugin_paths() {
         &plugins,
     );
 
-    assert_eq!(mentioned, Vec::<PluginCapabilitySummary>::new());
+    assert_eq!(mentioned, Vec::<ExplicitPluginMention>::new());
 }
 
 #[test]
@@ -151,5 +186,59 @@ fn collect_explicit_plugin_mentions_ignores_dollar_linked_plugin_mentions() {
         &plugins,
     );
 
-    assert_eq!(mentioned, Vec::<PluginCapabilitySummary>::new());
+    assert_eq!(mentioned, Vec::<ExplicitPluginMention>::new());
+}
+
+#[test]
+fn collect_explicit_plugin_mentions_marks_structured_native_fallbacks() {
+    let zoom = plugin("zoom@test", "Zoom");
+    let mentioned = collect_explicit_plugin_mentions(
+        &[UserInput::Mention {
+            name: "Zoom".to_string(),
+            path: "plugin://zoom@test".to_string(),
+            computer_use_native_app_bundle_id: Some("us.zoom.xos".to_string()),
+        }],
+        &[zoom.clone()],
+    );
+
+    assert_eq!(mentioned, vec![explicit_plugin_mention(zoom, true)]);
+}
+
+#[test]
+fn collect_explicit_plugin_mentions_preserves_computer_use_context_for_native_fallbacks() {
+    let zoom = plugin("zoom@test", "Zoom");
+    let computer_use = plugin("computer-use@openai-bundled", "Computer Use");
+
+    let mentioned = collect_explicit_plugin_mentions(
+        &[UserInput::Mention {
+            name: "Zoom".to_string(),
+            path: "plugin://zoom@test".to_string(),
+            computer_use_native_app_bundle_id: Some("us.zoom.xos".to_string()),
+        }],
+        &[zoom.clone(), computer_use.clone()],
+    );
+
+    assert_eq!(
+        mentioned,
+        vec![
+            explicit_plugin_mention(zoom, true),
+            explicit_plugin_mention(computer_use, false),
+        ]
+    );
+}
+
+#[test]
+fn collect_explicit_plugin_mentions_ignores_empty_native_fallback_markers() {
+    let zoom = plugin("zoom@test", "Zoom");
+
+    let mentioned = collect_explicit_plugin_mentions(
+        &[UserInput::Mention {
+            name: "Zoom".to_string(),
+            path: "plugin://zoom@test".to_string(),
+            computer_use_native_app_bundle_id: Some("   ".to_string()),
+        }],
+        &[zoom.clone()],
+    );
+
+    assert_eq!(mentioned, vec![explicit_plugin_mention(zoom, false)]);
 }

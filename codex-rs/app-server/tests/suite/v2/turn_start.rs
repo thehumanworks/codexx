@@ -570,6 +570,7 @@ async fn turn_start_accepts_text_at_limit_with_mention_item() -> Result<()> {
                 V2UserInput::Mention {
                     name: "Demo App".to_string(),
                     path: "app://demo-app".to_string(),
+                    computer_use_native_app_bundle_id: None,
                 },
             ],
             ..Default::default()

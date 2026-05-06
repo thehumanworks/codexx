@@ -5758,6 +5758,7 @@ impl ChatWidget {
                     items.push(UserInput::Mention {
                         name: plugin.display_name.clone(),
                         path: binding.path.clone(),
+                        computer_use_native_app_bundle_id: None,
                     });
                 }
             }
@@ -5780,6 +5781,7 @@ impl ChatWidget {
                     items.push(UserInput::Mention {
                         name: app.name.clone(),
                         path: binding.path.clone(),
+                        computer_use_native_app_bundle_id: None,
                     });
                 }
             }
@@ -5794,6 +5796,7 @@ impl ChatWidget {
                 items.push(UserInput::Mention {
                     name: app.name.clone(),
                     path: format!("app://{app_id}"),
+                    computer_use_native_app_bundle_id: None,
                 });
             }
         }

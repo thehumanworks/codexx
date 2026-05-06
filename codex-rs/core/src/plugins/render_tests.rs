@@ -21,3 +21,42 @@ fn render_plugins_section_includes_descriptions_and_skill_naming_guidance() {
 
     assert_eq!(rendered, expected);
 }
+
+#[test]
+fn render_explicit_plugin_instructions_mentions_native_app_fallback() {
+    let rendered = render_explicit_plugin_instructions(
+        &PluginCapabilitySummary {
+            config_name: "zoom@test".to_string(),
+            display_name: "Zoom".to_string(),
+            ..PluginCapabilitySummary::default()
+        },
+        &[],
+        &[],
+        true,
+    )
+    .expect("native app fallback should render instructions");
+
+    let expected = "Capabilities from the `Zoom` plugin:\n- This plugin also corresponds to a native desktop app available through Computer Use. Prefer plugin-associated capabilities first; if they are unavailable, insufficient, or fail, use the Computer Use tool surface for the native app fallback. If Computer Use tools are not already visible, use `tool_search` for `computer use` to discover them.\nUse these plugin-associated capabilities to help solve the task.";
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
+fn render_explicit_plugin_instructions_omits_native_app_fallback_without_deduped_match() {
+    let rendered = render_explicit_plugin_instructions(
+        &PluginCapabilitySummary {
+            config_name: "zoom@test".to_string(),
+            display_name: "Zoom".to_string(),
+            has_skills: true,
+            ..PluginCapabilitySummary::default()
+        },
+        &[],
+        &[],
+        false,
+    )
+    .expect("skill guidance should still render instructions");
+
+    let expected = "Capabilities from the `Zoom` plugin:\n- Skills from this plugin are prefixed with `Zoom:`.\nUse these plugin-associated capabilities to help solve the task.";
+
+    assert_eq!(rendered, expected);
+}

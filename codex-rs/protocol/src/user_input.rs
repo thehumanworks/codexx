@@ -36,7 +36,14 @@ pub enum UserInput {
     ///
     /// `path` identifies the exact mention target, for example
     /// `app://<connector-id>` or `plugin://<plugin-name>@<marketplace-name>`.
-    Mention { name: String, path: String },
+    Mention {
+        name: String,
+        path: String,
+        /// Present only when a plugin mention replaced a matching native app
+        /// mention in the UI and Computer Use remains a viable fallback.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        computer_use_native_app_bundle_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, TS, JsonSchema)]

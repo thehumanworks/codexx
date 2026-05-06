@@ -7,13 +7,13 @@ use codex_protocol::models::ResponseItem;
 use crate::connectors;
 use crate::context::ContextualUserFragment;
 use crate::context::PluginInstructions;
-use crate::plugins::PluginCapabilitySummary;
+use crate::plugins::ExplicitPluginMention;
 use crate::plugins::render_explicit_plugin_instructions;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::ToolInfo;
 
 pub(crate) fn build_plugin_injections(
-    mentioned_plugins: &[PluginCapabilitySummary],
+    mentioned_plugins: &[ExplicitPluginMention],
     mcp_tools: &HashMap<String, ToolInfo>,
     available_connectors: &[connectors::AppInfo],
 ) -> Vec<ResponseItem> {
@@ -25,7 +25,8 @@ pub(crate) fn build_plugin_injections(
     // model at the plugin's visible MCP servers, enabled apps, and skill prefix.
     mentioned_plugins
         .iter()
-        .filter_map(|plugin| {
+        .filter_map(|mention| {
+            let plugin = &mention.plugin;
             let available_mcp_servers = mcp_tools
                 .values()
                 .filter(|tool| {
@@ -52,9 +53,14 @@ pub(crate) fn build_plugin_injections(
                 .collect::<BTreeSet<String>>()
                 .into_iter()
                 .collect::<Vec<_>>();
-            render_explicit_plugin_instructions(plugin, &available_mcp_servers, &available_apps)
-                .map(PluginInstructions::new)
-                .map(ContextualUserFragment::into)
+            render_explicit_plugin_instructions(
+                plugin,
+                &available_mcp_servers,
+                &available_apps,
+                mention.has_computer_use_native_fallback,
+            )
+            .map(PluginInstructions::new)
+            .map(ContextualUserFragment::into)
         })
         .collect()
 }
