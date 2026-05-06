@@ -405,10 +405,7 @@ impl ThreadRequestProcessor {
         request_id: ConnectionRequestId,
         params: ThreadSetNameParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
-        match self
-            .thread_set_name_response_inner(&request_id, params)
-            .await
-        {
+        match self.thread_set_name_response_inner(params).await {
             Ok((response, notification)) => {
                 self.outgoing
                     .send_response(request_id.clone(), response)
@@ -749,6 +746,7 @@ impl ThreadRequestProcessor {
             personality,
             ephemeral,
             session_start_source,
+            thread_source,
             environments,
             persist_extended_history,
         } = params;
@@ -802,6 +800,7 @@ impl ThreadRequestProcessor {
                 typesafe_overrides,
                 dynamic_tools,
                 session_start_source,
+                thread_source.map(Into::into),
                 environment_selections,
                 service_name,
                 experimental_raw_events,
@@ -885,6 +884,7 @@ impl ThreadRequestProcessor {
         typesafe_overrides: ConfigOverrides,
         dynamic_tools: Option<Vec<ApiDynamicToolSpec>>,
         session_start_source: Option<codex_app_server_protocol::ThreadStartSource>,
+        thread_source: Option<codex_protocol::protocol::ThreadSource>,
         environments: Option<Vec<TurnEnvironmentSelection>>,
         service_name: Option<String>,
         experimental_raw_events: bool,
@@ -1001,6 +1001,7 @@ impl ThreadRequestProcessor {
                     codex_app_server_protocol::ThreadStartSource::Clear => InitialHistory::Cleared,
                 },
                 session_source: None,
+                thread_source,
                 dynamic_tools: core_dynamic_tools,
                 persist_extended_history: false,
                 metrics_service_name: service_name,
@@ -1335,7 +1336,6 @@ impl ThreadRequestProcessor {
 
     async fn thread_set_name_response_inner(
         &self,
-        request_id: &ConnectionRequestId,
         params: ThreadSetNameParams,
     ) -> Result<(ThreadSetNameResponse, Option<ThreadNameUpdatedNotification>), JSONRPCErrorError>
     {
@@ -1347,13 +1347,6 @@ impl ThreadRequestProcessor {
         };
 
         let _thread_list_state_permit = self.acquire_thread_list_state_permit().await?;
-        if let Ok(thread) = self.thread_manager.get_thread(thread_id).await {
-            self.submit_core_op(request_id, thread.as_ref(), Op::SetThreadName { name })
-                .await
-                .map_err(|err| internal_error(format!("failed to set thread name: {err}")))?;
-            return Ok((ThreadSetNameResponse {}, None));
-        }
-
         self.thread_store
             .update_thread_metadata(StoreUpdateThreadMetadataParams {
                 thread_id,
@@ -2393,6 +2386,11 @@ impl ThreadRequestProcessor {
                         return Ok(());
                     }
                 };
+                thread.thread_source = codex_thread
+                    .config_snapshot()
+                    .await
+                    .thread_source
+                    .map(Into::into);
 
                 self.thread_watch_manager
                     .upsert_thread(thread.clone())
@@ -2880,6 +2878,7 @@ impl ThreadRequestProcessor {
             base_instructions,
             developer_instructions,
             ephemeral,
+            thread_source,
             exclude_turns,
             persist_extended_history,
         } = params;
@@ -2970,6 +2969,7 @@ impl ThreadRequestProcessor {
                     history: history_items.clone(),
                     rollout_path: source_thread.rollout_path.clone(),
                 }),
+                thread_source.map(Into::into),
                 /*persist_extended_history*/ false,
                 self.request_trace_context(&request_id).await,
             )
@@ -3029,6 +3029,11 @@ impl ThreadRequestProcessor {
             }
             thread
         };
+        thread.thread_source = forked_thread
+            .config_snapshot()
+            .await
+            .thread_source
+            .map(Into::into);
 
         self.thread_watch_manager
             .upsert_thread_silently(thread.clone())
@@ -3631,6 +3636,7 @@ pub(crate) fn thread_from_stored_thread(
         agent_nickname: source.get_nickname(),
         agent_role: source.get_agent_role(),
         source: source.into(),
+        thread_source: thread.thread_source.map(Into::into),
         git_info,
         name: thread.name,
         turns: Vec::new(),
@@ -3693,6 +3699,7 @@ fn summary_from_state_db_metadata(
     cwd: PathBuf,
     cli_version: String,
     source: String,
+    _thread_source: Option<codex_protocol::protocol::ThreadSource>,
     agent_nickname: Option<String>,
     agent_role: Option<String>,
     git_sha: Option<String>,
@@ -3743,6 +3750,7 @@ fn summary_from_thread_metadata(metadata: &ThreadMetadata) -> ConversationSummar
         metadata.cwd.clone(),
         metadata.cli_version.clone(),
         metadata.source.clone(),
+        metadata.thread_source,
         metadata.agent_nickname.clone(),
         metadata.agent_role.clone(),
         metadata.git_sha.clone(),
@@ -3826,6 +3834,7 @@ fn build_thread_from_snapshot(
         agent_nickname: config_snapshot.session_source.get_nickname(),
         agent_role: config_snapshot.session_source.get_agent_role(),
         source: config_snapshot.session_source.clone().into(),
+        thread_source: config_snapshot.thread_source.map(Into::into),
         git_info: None,
         name: None,
         turns: Vec::new(),
