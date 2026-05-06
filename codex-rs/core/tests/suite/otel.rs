@@ -1195,11 +1195,11 @@ fn auto_review_denial(response_id: &str) -> String {
     ])
 }
 
-fn escalated_exec_command_call(call_id: &str) -> serde_json::Value {
+fn escalated_shell_call(call_id: &str) -> serde_json::Value {
     ev_function_call(
         call_id,
-        "exec_command",
-        r#"{"cmd":"/usr/bin/touch codex-otel-escalation-test","sandbox_permissions":"require_escalated","justification":"Exercise Auto-review escalation telemetry."}"#,
+        "shell",
+        r#"{"command":["/usr/bin/touch","codex-otel-escalation-test"],"sandbox_permissions":"require_escalated","justification":"Exercise Auto-review escalation telemetry."}"#,
     )
 }
 
@@ -1344,19 +1344,19 @@ async fn escalated_auto_review_denial_records_auto_review_then_user_tool_decisio
         vec![
             sse(vec![
                 ev_response_created("resp-main-1"),
-                escalated_exec_command_call("auto_review_call_1"),
+                escalated_shell_call("auto_review_call_1"),
                 ev_completed("resp-main-1"),
             ]),
             auto_review_denial("resp-guardian-1"),
             sse(vec![
                 ev_response_created("resp-main-2"),
-                escalated_exec_command_call("auto_review_call_2"),
+                escalated_shell_call("auto_review_call_2"),
                 ev_completed("resp-main-2"),
             ]),
             auto_review_denial("resp-guardian-2"),
             sse(vec![
                 ev_response_created("resp-main-3"),
-                escalated_exec_command_call("auto_review_call_3"),
+                escalated_shell_call("auto_review_call_3"),
                 ev_completed("resp-main-3"),
             ]),
             auto_review_denial("resp-guardian-3"),
