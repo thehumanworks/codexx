@@ -464,6 +464,7 @@ pub(crate) struct App {
     status_line_invalid_items_warned: Arc<AtomicBool>,
     // Shared across ChatWidget instances so invalid terminal-title config warnings only emit once.
     terminal_title_invalid_items_warned: Arc<AtomicBool>,
+    skill_load_warnings_by_cwd: HashMap<PathBuf, Vec<SkillErrorInfo>>,
 
     // Esc-backtracking state grouped
     pub(crate) backtrack: crate::app_backtrack::BacktrackState,
@@ -886,6 +887,7 @@ See the Codex keymap documentation for supported actions and examples."
             commit_anim_running: Arc::new(AtomicBool::new(false)),
             status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
             terminal_title_invalid_items_warned: terminal_title_invalid_items_warned.clone(),
+            skill_load_warnings_by_cwd: HashMap::new(),
             backtrack: BacktrackState::default(),
             backtrack_render_pending: false,
             feedback: feedback.clone(),
