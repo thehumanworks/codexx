@@ -125,13 +125,24 @@ pub fn config_error_from_typed_toml<T: DeserializeOwned>(
                 .or_else(|| toml_err.span())
                 .map(|span| text_range_from_span(contents, span))
                 .unwrap_or_else(default_range);
+            let message = enrich_config_error_message(path_hint.clone(), toml_err.message());
             Some(ConfigError::new(
                 path.as_ref().to_path_buf(),
                 range,
-                toml_err.message(),
+                message,
             ))
         }
     }
+}
+
+fn enrich_config_error_message(path: SerdePath, message: String) -> String {
+    if is_windows_sandbox_mode_path(&path) && message.contains("unknown variant") {
+        return format!(
+            "{message}. `[windows].sandbox` only accepts `elevated` or `unelevated`. If you meant WSL2, run Codex inside WSL instead of setting this config value."
+        );
+    }
+
+    message
 }
 
 pub async fn first_layer_config_error<T: DeserializeOwned>(
@@ -326,6 +337,13 @@ fn span_for_config_path(contents: &str, path: &SerdePath) -> Option<std::ops::Ra
 fn is_features_table_path(path: &SerdePath) -> bool {
     let mut segments = path.iter();
     matches!(segments.next(), Some(SerdeSegment::Map { key }) if key == "features")
+        && segments.next().is_none()
+}
+
+fn is_windows_sandbox_mode_path(path: &SerdePath) -> bool {
+    let mut segments = path.iter();
+    matches!(segments.next(), Some(SerdeSegment::Map { key }) if key == "windows")
+        && matches!(segments.next(), Some(SerdeSegment::Map { key }) if key == "sandbox")
         && segments.next().is_none()
 }
 

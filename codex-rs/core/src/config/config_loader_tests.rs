@@ -245,6 +245,32 @@ fn schema_error_points_to_feature_value() {
     assert_eq!(error.range.start.column, value_column);
 }
 
+#[test]
+fn windows_sandbox_schema_error_includes_wsl_guidance() {
+    let tmp = tempdir().expect("tempdir");
+    let contents = "[windows]\nsandbox = \"wsL2\"";
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let _guard = codex_utils_absolute_path::AbsolutePathBufGuard::new(tmp.path());
+    let error = codex_config::config_error_from_typed_toml::<ConfigToml>(&config_path, contents)
+        .expect("schema error");
+
+    assert!(
+        error
+            .message
+            .contains("`[windows].sandbox` only accepts `elevated` or `unelevated`"),
+        "unexpected error: {}",
+        error.message
+    );
+    assert!(
+        error.message.contains("run Codex inside WSL"),
+        "unexpected error: {}",
+        error.message
+    );
+    assert_eq!(error.range.start.line, 2);
+}
+
 #[tokio::test]
 async fn merges_managed_config_layer_on_top() {
     let tmp = tempdir().expect("tempdir");
