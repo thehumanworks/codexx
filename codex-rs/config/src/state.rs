@@ -213,6 +213,12 @@ impl ConfigLayerStack {
         self
     }
 
+    /// Appends warnings discovered after the raw layers have been assembled.
+    ///
+    /// Invalid enum warnings are produced while deserializing the effective
+    /// config, so they are not tied to any single raw layer load. Keeping this
+    /// merge point on the stack lets callers surface them through the same
+    /// startup-warning channel used by file-level config diagnostics.
     pub fn with_additional_startup_warnings(mut self, warnings: Vec<String>) -> Self {
         if warnings.is_empty() {
             return self;
@@ -311,6 +317,13 @@ impl ConfigLayerStack {
         merged
     }
 
+    /// Deserializes the merged config-layer view and returns any soft warnings.
+    ///
+    /// This is the boundary where user-editable config stays lenient for
+    /// invalid enum values while consumers still receive a fully typed config.
+    /// The returned TOML value is the sanitized effective config, with invalid
+    /// enum keys removed, so callers that inspect raw values see the same shape
+    /// that was actually deserialized.
     pub fn deserialize_effective_config_with_warnings<T>(
         &self,
     ) -> Result<(TomlValue, T, Vec<String>), toml::de::Error>

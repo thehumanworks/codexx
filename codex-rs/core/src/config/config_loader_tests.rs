@@ -143,6 +143,8 @@ notification_method = "loudly"
     )
     .await?;
 
+    // The invalid enum leaves are removed before ConfigToml is produced, but
+    // unrelated valid settings still survive in the effective config.
     let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
         layers.deserialize_effective_config_with_warnings()?;
     let expected_config = toml::from_str::<TomlValue>(

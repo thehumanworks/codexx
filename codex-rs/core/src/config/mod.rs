@@ -967,6 +967,10 @@ impl ConfigBuilder {
         // relative paths to absolute paths based on the parent folder of the
         // respective config file, so we should be safe to deserialize without
         // AbsolutePathBufGuard here.
+        //
+        // Invalid enum-valued settings are dropped during deserialization and
+        // returned as warnings. This keeps ConfigToml strict and prevents raw
+        // invalid values from leaking into downstream config consumers.
         let (_merged_toml, config_toml, enum_warnings) = match config_layer_stack
             .deserialize_effective_config_with_warnings::<ConfigToml>()
         {
@@ -1227,6 +1231,9 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     .await?;
 
     let _guard = AbsolutePathBufGuard::new(codex_home);
+    // This helper returns ConfigToml directly, so enum warnings are intentionally
+    // not surfaced here. The full ConfigBuilder path is responsible for
+    // attaching them to startup warnings.
     let (_merged_toml, cfg, _enum_warnings) = config_layer_stack
         .deserialize_effective_config_with_warnings::<ConfigToml>()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))

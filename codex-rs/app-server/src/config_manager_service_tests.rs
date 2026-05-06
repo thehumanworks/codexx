@@ -469,6 +469,9 @@ async fn invalid_user_value_written_if_overridden_by_managed() {
         CloudRequirementsLoader::default(),
     );
 
+    // Write validation checks the effective merged config. The invalid user
+    // value is allowed here because the managed layer still supplies the
+    // effective approval policy.
     let result = service
         .write_value(ConfigValueWriteParams {
             file_path: Some(tmp.path().join(CONFIG_TOML_FILE).display().to_string()),
