@@ -286,6 +286,166 @@ fn explicit_unreadable_paths_are_excluded_from_readable_roots() {
 }
 
 #[test]
+fn reopened_readable_children_under_unreadable_roots_get_metadata_traversal() {
+    let unreadable = absolute_path("/tmp/codex-home");
+    let readable_file = absolute_path("/tmp/codex-home/.gitconfig");
+    let writable_dir = absolute_path("/tmp/codex-home/.cache/uv");
+    let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path { path: unreadable },
+            access: FileSystemAccessMode::None,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: readable_file,
+            },
+            access: FileSystemAccessMode::Read,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path { path: writable_dir },
+            access: FileSystemAccessMode::Write,
+        },
+    ]);
+
+    let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+        command: vec!["/bin/true".to_string()],
+        file_system_sandbox_policy: &file_system_policy,
+        network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+        sandbox_policy_cwd: Path::new("/"),
+        enforce_managed_network: false,
+        network: None,
+        extra_allow_unix_sockets: &[],
+    });
+    let unreadable_roots = file_system_policy.get_unreadable_roots_with_cwd(Path::new("/"));
+    let expected_unreadable_root = unreadable_roots.first().expect("expected unreadable root");
+
+    let policy = seatbelt_policy_arg(&args);
+    assert!(
+        policy.contains(
+            "(allow file-read-metadata (literal (param \"READABLE_TRAVERSAL_ROOT_0\")) (vnode-type DIRECTORY))"
+        ),
+        "expected metadata traversal rule for reopened readable descendants:\n{policy}"
+    );
+    assert!(
+        policy.contains(
+            "(allow file-read-metadata (literal (param \"READABLE_TRAVERSAL_ROOT_1\")) (vnode-type DIRECTORY))"
+        ),
+        "expected metadata traversal rule for reopened writable descendants:\n{policy}"
+    );
+    let traversal_definitions: Vec<String> = args
+        .iter()
+        .filter(|arg| arg.starts_with("-DREADABLE_TRAVERSAL_ROOT_"))
+        .cloned()
+        .collect();
+    assert_eq!(
+        traversal_definitions,
+        vec![
+            format!(
+                "-DREADABLE_TRAVERSAL_ROOT_0={}",
+                expected_unreadable_root.display()
+            ),
+            format!(
+                "-DREADABLE_TRAVERSAL_ROOT_1={}",
+                expected_unreadable_root.join(".cache").display()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn reopened_children_under_unreadable_roots_work_under_seatbelt() {
+    let tmp = TempDir::new().expect("tempdir");
+    let parent = tmp.path().join("home");
+    let gitconfig = parent.join(".gitconfig");
+    let blocked = parent.join(".config").join("my-app").join(".env");
+    let writable_dir = parent.join(".cache").join("uv");
+    let writable_file = writable_dir.join("state.txt");
+    fs::create_dir_all(blocked.parent().expect("blocked parent")).expect("create blocked parent");
+    fs::create_dir_all(&writable_dir).expect("create writable dir");
+    fs::write(&gitconfig, "visible").expect("write readable child");
+    fs::write(&blocked, "secret").expect("write blocked child");
+
+    let file_system_policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::Root,
+            },
+            access: FileSystemAccessMode::Read,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: AbsolutePathBuf::from_absolute_path(&parent).expect("absolute parent"),
+            },
+            access: FileSystemAccessMode::None,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: AbsolutePathBuf::from_absolute_path(&gitconfig).expect("absolute gitconfig"),
+            },
+            access: FileSystemAccessMode::Read,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: AbsolutePathBuf::from_absolute_path(&writable_dir)
+                    .expect("absolute writable dir"),
+            },
+            access: FileSystemAccessMode::Write,
+        },
+    ]);
+
+    let run = |script: &str, path: &Path| {
+        let args = create_seatbelt_command_args(CreateSeatbeltCommandArgsParams {
+            command: vec![
+                "/bin/bash".to_string(),
+                "-c".to_string(),
+                script.to_string(),
+                "bash".to_string(),
+                path.to_string_lossy().to_string(),
+            ],
+            file_system_sandbox_policy: &file_system_policy,
+            network_sandbox_policy: NetworkSandboxPolicy::Restricted,
+            sandbox_policy_cwd: tmp.path(),
+            enforce_managed_network: false,
+            network: None,
+            extra_allow_unix_sockets: &[],
+        });
+        Command::new(MACOS_PATH_TO_SEATBELT_EXECUTABLE)
+            .args(&args)
+            .current_dir(tmp.path())
+            .output()
+            .expect("execute seatbelt command")
+    };
+
+    let ls_parent = run(r#"ls "$1" >/dev/null"#, &parent);
+    assert!(
+        !ls_parent.status.success(),
+        "parent listing should stay denied"
+    );
+
+    let read_allowed = run(r#"cat "$1" >/dev/null"#, &gitconfig);
+    assert!(
+        read_allowed.status.success(),
+        "allowed child read should work"
+    );
+
+    let read_blocked = run(r#"cat "$1" >/dev/null"#, &blocked);
+    assert!(
+        !read_blocked.status.success(),
+        "unlisted child should stay denied"
+    );
+
+    let write_allowed = run(r#"printf ok > "$1""#, &writable_file);
+    assert!(
+        write_allowed.status.success(),
+        "allowed writable child should accept writes"
+    );
+    assert_eq!(
+        fs::read_to_string(&writable_file).expect("read writable child"),
+        "ok"
+    );
+}
+
+#[test]
 fn unreadable_globstar_slash_matches_zero_or_more_directories() {
     let regex = seatbelt_regex_for_unreadable_glob("/tmp/repo/**/*.env");
     assert_eq!(regex.as_deref(), Some(r"^/tmp/repo/(.*/)?[^/]*\.env$"));

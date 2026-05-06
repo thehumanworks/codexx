@@ -220,7 +220,7 @@ struct FileSystemSemanticSignature {
 
 /// Runtime matcher for read-deny entries in a filesystem sandbox policy.
 pub struct ReadDenyMatcher {
-    denied_candidates: Vec<Vec<PathBuf>>,
+    exact_candidates: Vec<ResolvedFileSystemEntry>,
     deny_read_matchers: Vec<GlobMatcher>,
     invalid_pattern: bool,
 }
@@ -236,13 +236,25 @@ impl ReadDenyMatcher {
             return None;
         }
 
-        // Exact roots are stored as all meaningful path spellings we can derive
-        // cheaply. This lets direct tool checks catch both a symlink path and
-        // its canonical target without changing the policy entries themselves.
-        let denied_candidates = file_system_sandbox_policy
-            .get_unreadable_roots_with_cwd(cwd)
+        // Exact entries are stored with all meaningful path spellings we can
+        // derive cheaply. That lets direct tool checks preserve the same
+        // most-specific precedence as the main resolver while still catching
+        // both a symlink path and its canonical target.
+        let exact_candidates = file_system_sandbox_policy
+            .resolved_entries_with_cwd(cwd)
             .into_iter()
-            .map(|path| normalized_and_canonical_candidates(path.as_path()))
+            .flat_map(|entry| {
+                normalized_and_canonical_candidates(entry.path.as_path())
+                    .into_iter()
+                    .filter_map(move |path| {
+                        AbsolutePathBuf::from_absolute_path(path).ok().map(|path| {
+                            ResolvedFileSystemEntry {
+                                path,
+                                access: entry.access,
+                            }
+                        })
+                    })
+            })
             .collect();
         // Pattern entries stay as policy-level globs. They are matched at read
         // time here instead of being snapshotted to startup filesystem state.
@@ -259,7 +271,7 @@ impl ReadDenyMatcher {
             })
             .collect();
         Some(Self {
-            denied_candidates,
+            exact_candidates,
             deny_read_matchers,
             invalid_pattern,
         })
@@ -273,17 +285,20 @@ impl ReadDenyMatcher {
             return true;
         }
 
-        // Check exact roots against each candidate spelling before evaluating
-        // glob matchers. Exact entries are subtree denies; glob entries match
-        // according to the pattern compiler's path-separator rules.
+        // Exact entries preserve the same most-specific precedence as the
+        // policy resolver, across every candidate spelling we know about.
         let path_candidates = normalized_and_canonical_candidates(path);
-        if self.denied_candidates.iter().any(|denied_candidates| {
-            path_candidates.iter().any(|candidate| {
-                denied_candidates.iter().any(|denied_candidate| {
-                    candidate == denied_candidate || candidate.starts_with(denied_candidate)
-                })
+        if self
+            .exact_candidates
+            .iter()
+            .filter(|entry| {
+                path_candidates
+                    .iter()
+                    .any(|candidate| candidate.starts_with(entry.path.as_path()))
             })
-        }) {
+            .max_by_key(|entry| resolved_entry_precedence(entry))
+            .is_some_and(|entry| !entry.access.can_read())
+        {
             return true;
         }
 
@@ -2853,6 +2868,36 @@ mod tests {
         assert!(is_read_denied(&nested, &policy, temp.path()));
         assert!(!is_read_denied(
             &temp.path().join("other.txt"),
+            &policy,
+            temp.path()
+        ));
+    }
+
+    #[test]
+    fn exact_path_denies_honor_more_specific_read_allows() {
+        let temp = TempDir::new().expect("tempdir");
+        let denied_dir = AbsolutePathBuf::resolve_path_against_base("denied", temp.path());
+        let allowed_dir = denied_dir.join("allowed");
+        let allowed_file = allowed_dir.join("visible.txt");
+        let blocked_file = denied_dir.join("blocked.txt");
+        std::fs::create_dir_all(allowed_dir.as_path()).expect("create allowed dir");
+        std::fs::write(allowed_file.as_path(), "visible").expect("write allowed");
+        std::fs::write(blocked_file.as_path(), "blocked").expect("write blocked");
+
+        let policy = FileSystemSandboxPolicy::restricted(vec![
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Path { path: denied_dir },
+                access: FileSystemAccessMode::None,
+            },
+            FileSystemSandboxEntry {
+                path: FileSystemPath::Path { path: allowed_dir },
+                access: FileSystemAccessMode::Read,
+            },
+        ]);
+
+        assert!(is_read_denied(blocked_file.as_path(), &policy, temp.path()));
+        assert!(!is_read_denied(
+            allowed_file.as_path(),
             &policy,
             temp.path()
         ));

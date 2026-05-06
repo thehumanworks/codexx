@@ -404,6 +404,49 @@ fn seatbelt_protected_metadata_name_regex(root: &AbsolutePathBuf, name: &str) ->
     }
 }
 
+fn build_seatbelt_reopened_read_traversal_policy(
+    readable_roots: &[AbsolutePathBuf],
+    unreadable_roots: &[AbsolutePathBuf],
+) -> (String, Vec<(String, PathBuf)>) {
+    let mut traversal_roots = BTreeMap::new();
+
+    for readable_root in readable_roots {
+        for unreadable_root in unreadable_roots.iter().filter(|unreadable_root| {
+            readable_root
+                .as_path()
+                .starts_with(unreadable_root.as_path())
+        }) {
+            let mut ancestor = readable_root.as_path().parent();
+            while let Some(path) = ancestor {
+                if !path.starts_with(unreadable_root.as_path()) {
+                    break;
+                }
+                if let Ok(path) = AbsolutePathBuf::from_absolute_path(path) {
+                    traversal_roots
+                        .entry(path.to_string_lossy().to_string())
+                        .or_insert(path);
+                }
+                if path == unreadable_root.as_path() {
+                    break;
+                }
+                ancestor = path.parent();
+            }
+        }
+    }
+
+    let mut policy_components = Vec::new();
+    let mut params = Vec::new();
+    for (index, root) in traversal_roots.into_values().enumerate() {
+        let param = format!("READABLE_TRAVERSAL_ROOT_{index}");
+        params.push((param.clone(), root.into_path_buf()));
+        policy_components.push(format!(
+            "(allow file-read-metadata (literal (param \"{param}\")) (vnode-type DIRECTORY))"
+        ));
+    }
+
+    (policy_components.join("\n"), params)
+}
+
 fn protected_metadata_names_for_writable_root(
     file_system_sandbox_policy: &FileSystemSandboxPolicy,
     writable_root: &WritableRoot,
@@ -652,6 +695,7 @@ pub fn create_seatbelt_command_args(args: CreateSeatbeltCommandArgsParams<'_>) -
             )
         };
 
+    let readable_roots = file_system_sandbox_policy.get_readable_roots_with_cwd(sandbox_policy_cwd);
     let (file_read_policy, file_read_dir_params) =
         if file_system_sandbox_policy.has_full_disk_read_access() {
             if unreadable_roots.is_empty() {
@@ -665,7 +709,7 @@ pub fn create_seatbelt_command_args(args: CreateSeatbeltCommandArgsParams<'_>) -
                     "READABLE_ROOT",
                     vec![SeatbeltAccessRoot {
                         root: root_absolute_path(),
-                        excluded_subpaths: unreadable_roots,
+                        excluded_subpaths: unreadable_roots.clone(),
                         protected_metadata_names: Vec::new(),
                     }],
                 );
@@ -678,9 +722,9 @@ pub fn create_seatbelt_command_args(args: CreateSeatbeltCommandArgsParams<'_>) -
             let (policy, params) = build_seatbelt_access_policy(
                 "file-read*",
                 "READABLE_ROOT",
-                file_system_sandbox_policy
-                    .get_readable_roots_with_cwd(sandbox_policy_cwd)
-                    .into_iter()
+                readable_roots
+                    .iter()
+                    .cloned()
                     .map(|root| SeatbeltAccessRoot {
                         excluded_subpaths: unreadable_roots
                             .iter()
@@ -701,6 +745,8 @@ pub fn create_seatbelt_command_args(args: CreateSeatbeltCommandArgsParams<'_>) -
                 )
             }
         };
+    let (reopened_read_traversal_policy, reopened_read_traversal_dir_params) =
+        build_seatbelt_reopened_read_traversal_policy(&readable_roots, &unreadable_roots);
 
     let proxy = proxy_policy_inputs(network, extra_allow_unix_sockets);
     let network_policy =
@@ -712,6 +758,7 @@ pub fn create_seatbelt_command_args(args: CreateSeatbeltCommandArgsParams<'_>) -
     let mut policy_sections = vec![
         MACOS_SEATBELT_BASE_POLICY.to_string(),
         file_read_policy,
+        reopened_read_traversal_policy,
         file_write_policy,
         deny_read_policy,
         network_policy,
@@ -724,6 +771,7 @@ pub fn create_seatbelt_command_args(args: CreateSeatbeltCommandArgsParams<'_>) -
 
     let dir_params = [
         file_read_dir_params,
+        reopened_read_traversal_dir_params,
         file_write_dir_params,
         macos_dir_params(),
         unix_socket_dir_params(&proxy),
