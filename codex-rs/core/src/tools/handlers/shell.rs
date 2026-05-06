@@ -12,6 +12,7 @@ use crate::function_tool::FunctionCallError;
 use crate::maybe_emit_implicit_skill_invocation;
 use crate::session::turn_context::TurnContext;
 use crate::shell::Shell;
+use crate::shell::ShellType;
 use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
@@ -90,6 +91,7 @@ struct RunExecLikeArgs {
     tool_name: String,
     exec_params: ExecParams,
     hook_command: String,
+    shell_type: Option<ShellType>,
     additional_permissions: Option<AdditionalPermissionProfile>,
     prefix_rule: Option<Vec<String>>,
     session: Arc<crate::session::session::Session>,
@@ -255,6 +257,7 @@ impl ToolHandler for ShellHandler {
             tool_name: "shell".to_string(),
             exec_params,
             hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+            shell_type: None,
             additional_permissions: params.additional_permissions.clone(),
             prefix_rule,
             session,
@@ -333,6 +336,7 @@ impl ToolHandler for ContainerExecHandler {
             tool_name: "container.exec".to_string(),
             exec_params,
             hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+            shell_type: None,
             additional_permissions: params.additional_permissions.clone(),
             prefix_rule,
             session,
@@ -414,6 +418,7 @@ impl ToolHandler for LocalShellHandler {
             tool_name: "local_shell".to_string(),
             exec_params,
             hook_command: codex_shell_command::parse_command::shlex_join(&params.command),
+            shell_type: None,
             additional_permissions: None,
             prefix_rule: None,
             session,
@@ -542,10 +547,12 @@ impl ToolHandler for ShellCommandHandler {
             session.conversation_id,
             turn.tools_config.allow_login_shell,
         )?;
+        let shell_type = Some(session.user_shell().shell_type.clone());
         ShellHandler::run_exec_like(RunExecLikeArgs {
             tool_name: self.tool_name().display(),
             exec_params,
             hook_command: params.command,
+            shell_type,
             additional_permissions: params.additional_permissions.clone(),
             prefix_rule,
             session,
@@ -565,6 +572,7 @@ impl ShellHandler {
             tool_name,
             exec_params,
             hook_command,
+            shell_type,
             additional_permissions,
             prefix_rule,
             session,
@@ -698,6 +706,7 @@ impl ShellHandler {
 
         let req = ShellRequest {
             command: exec_params.command.clone(),
+            shell_type,
             hook_command,
             cwd: exec_params.cwd.clone(),
             timeout_ms: exec_params.expiration.timeout_ms(),

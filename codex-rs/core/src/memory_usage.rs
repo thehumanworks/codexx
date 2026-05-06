@@ -80,7 +80,7 @@ fn shell_command_for_invocation(invocation: &ToolInvocation) -> Option<(Vec<Stri
                 )
                 .ok()?;
                 Some((
-                    command,
+                    command.command,
                     invocation.turn.resolve_path(params.workdir).to_path_buf(),
                 ))
             }),
