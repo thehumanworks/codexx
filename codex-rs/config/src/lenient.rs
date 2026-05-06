@@ -58,75 +58,6 @@ where
     Ok((value, parsed, messages))
 }
 
-/// Result of checking one enum-valued field.
-///
-/// The typed value is intentionally discarded: the strict `ConfigToml`
-/// deserialization below is the only place that should produce runtime config
-/// values. This wrapper only records the raw TOML value when the enum parse
-/// fails so the loader can warn and remove that leaf.
-#[derive(Debug, Clone, PartialEq)]
-enum Lenient<T> {
-    Valid(T),
-    Invalid(TomlValue),
-}
-
-impl<T> Lenient<T> {
-    /// Returns the original TOML value only when this enum field failed to
-    /// parse; callers use this as the single warning signal.
-    fn invalid_value(&self) -> Option<&TomlValue> {
-        match self {
-            Self::Valid(_) => None,
-            Self::Invalid(value) => Some(value),
-        }
-    }
-}
-
-impl<'de, T> Deserialize<'de> for Lenient<T>
-where
-    T: serde::de::DeserializeOwned,
-{
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let value = TomlValue::deserialize(deserializer)?;
-        let parsed: Result<T, toml::de::Error> = value.clone().try_into();
-        Ok(match parsed {
-            Ok(parsed) => Self::Valid(parsed),
-            Err(_) => Self::Invalid(value),
-        })
-    }
-}
-
-/// Adds root-level invalid enum warnings without repeating the path and field
-/// name at each callsite.
-macro_rules! push_invalid_root_fields {
-    ($warnings:expr, $source:expr, $($field:ident),+ $(,)?) => {
-        $(
-            push_invalid_field(
-                &mut $warnings,
-                &[stringify!($field)],
-                &$source.$field,
-            );
-        )+
-    };
-}
-
-/// Adds profile-scoped invalid enum warnings while preserving the profile name
-/// as its own TOML path segment. Keeping it segmented matters because profile
-/// names can contain dots.
-macro_rules! push_invalid_profile_fields {
-    ($warnings:expr, $source:expr, $profile:expr, $($field:ident),+ $(,)?) => {
-        $(
-            push_invalid_field(
-                $warnings,
-                &["profiles", $profile, stringify!($field)],
-                &$source.$field,
-            );
-        )+
-    };
-}
-
 /// Sparse mirror of `ConfigToml` containing only enum-valued config fields.
 ///
 /// This deliberately ignores non-enum fields. The strict `ConfigToml`
@@ -163,26 +94,53 @@ struct LenientConfigToml {
 impl LenientConfigToml {
     fn invalid_enum_warnings(&self) -> Vec<InvalidEnumWarning> {
         let mut warnings = Vec::new();
-        push_invalid_root_fields!(
-            warnings,
-            self,
-            approval_policy,
-            approvals_reviewer,
-            sandbox_mode,
-            forced_login_method,
-            cli_auth_credentials_store,
-            mcp_oauth_credentials_store,
-            file_opener,
-            model_reasoning_effort,
-            plan_mode_reasoning_effort,
-            model_reasoning_summary,
-            model_verbosity,
-            personality,
-            service_tier,
-            experimental_thread_store,
-            web_search
+        push_invalid_field(&mut warnings, &["approval_policy"], &self.approval_policy);
+        push_invalid_field(
+            &mut warnings,
+            &["approvals_reviewer"],
+            &self.approvals_reviewer,
         );
-
+        push_invalid_field(&mut warnings, &["sandbox_mode"], &self.sandbox_mode);
+        push_invalid_field(
+            &mut warnings,
+            &["forced_login_method"],
+            &self.forced_login_method,
+        );
+        push_invalid_field(
+            &mut warnings,
+            &["cli_auth_credentials_store"],
+            &self.cli_auth_credentials_store,
+        );
+        push_invalid_field(
+            &mut warnings,
+            &["mcp_oauth_credentials_store"],
+            &self.mcp_oauth_credentials_store,
+        );
+        push_invalid_field(&mut warnings, &["file_opener"], &self.file_opener);
+        push_invalid_field(
+            &mut warnings,
+            &["model_reasoning_effort"],
+            &self.model_reasoning_effort,
+        );
+        push_invalid_field(
+            &mut warnings,
+            &["plan_mode_reasoning_effort"],
+            &self.plan_mode_reasoning_effort,
+        );
+        push_invalid_field(
+            &mut warnings,
+            &["model_reasoning_summary"],
+            &self.model_reasoning_summary,
+        );
+        push_invalid_field(&mut warnings, &["model_verbosity"], &self.model_verbosity);
+        push_invalid_field(&mut warnings, &["personality"], &self.personality);
+        push_invalid_field(&mut warnings, &["service_tier"], &self.service_tier);
+        push_invalid_field(
+            &mut warnings,
+            &["experimental_thread_store"],
+            &self.experimental_thread_store,
+        );
+        push_invalid_field(&mut warnings, &["web_search"], &self.web_search);
         if let Some(history) = &self.history {
             push_invalid_field(
                 &mut warnings,
@@ -236,7 +194,72 @@ impl LenientConfigToml {
         let mut profiles = self.profiles.iter().collect::<Vec<_>>();
         profiles.sort_by(|(left, _), (right, _)| left.cmp(right));
         for (name, profile) in profiles {
-            profile.push_invalid_enum_warnings(&mut warnings, name);
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "service_tier"],
+                &profile.service_tier,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "approval_policy"],
+                &profile.approval_policy,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "approvals_reviewer"],
+                &profile.approvals_reviewer,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "sandbox_mode"],
+                &profile.sandbox_mode,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "model_reasoning_effort"],
+                &profile.model_reasoning_effort,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "plan_mode_reasoning_effort"],
+                &profile.plan_mode_reasoning_effort,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "model_reasoning_summary"],
+                &profile.model_reasoning_summary,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "model_verbosity"],
+                &profile.model_verbosity,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "personality"],
+                &profile.personality,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["profiles", name, "web_search"],
+                &profile.web_search,
+            );
+            if let Some(tools) = &profile.tools
+                && let Some(web_search) = &tools.web_search
+            {
+                push_invalid_field(
+                    &mut warnings,
+                    &["profiles", name, "tools", "web_search", "context_size"],
+                    &web_search.context_size,
+                );
+            }
+            if let Some(windows) = &profile.windows {
+                push_invalid_field(
+                    &mut warnings,
+                    &["profiles", name, "windows", "sandbox"],
+                    &windows.sandbox,
+                );
+            }
         }
         warnings
     }
@@ -256,42 +279,6 @@ struct LenientConfigProfile {
     tools: Option<LenientToolsToml>,
     web_search: Option<Lenient<WebSearchMode>>,
     windows: Option<LenientWindowsToml>,
-}
-
-impl LenientConfigProfile {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>, profile: &str) {
-        push_invalid_profile_fields!(
-            warnings,
-            self,
-            profile,
-            service_tier,
-            approval_policy,
-            approvals_reviewer,
-            sandbox_mode,
-            model_reasoning_effort,
-            plan_mode_reasoning_effort,
-            model_reasoning_summary,
-            model_verbosity,
-            personality,
-            web_search
-        );
-        if let Some(tools) = &self.tools
-            && let Some(web_search) = &tools.web_search
-        {
-            push_invalid_field(
-                warnings,
-                &["profiles", profile, "tools", "web_search", "context_size"],
-                &web_search.context_size,
-            );
-        }
-        if let Some(windows) = &self.windows {
-            push_invalid_field(
-                warnings,
-                &["profiles", profile, "windows", "sandbox"],
-                &windows.sandbox,
-            );
-        }
-    }
 }
 
 /// Sparse mirror of `[history]` for the one enum-valued field inside it.
@@ -363,6 +350,45 @@ struct LenientRealtimeToml {
 #[derive(Deserialize, Default)]
 struct LenientWindowsToml {
     sandbox: Option<Lenient<WindowsSandboxModeToml>>,
+}
+
+/// Result of checking one enum-valued field.
+///
+/// The typed value is intentionally discarded after parsing: the strict
+/// `ConfigToml` deserialization below is the only place that should produce
+/// runtime config values.
+#[derive(Debug, Clone, PartialEq)]
+enum Lenient<T> {
+    Valid(T),
+    Invalid(TomlValue),
+}
+
+impl<T> Lenient<T> {
+    /// Returns the original TOML value only when this enum field failed to
+    /// parse; callers use this as the single warning signal.
+    fn invalid_value(&self) -> Option<&TomlValue> {
+        match self {
+            Self::Valid(_) => None,
+            Self::Invalid(value) => Some(value),
+        }
+    }
+}
+
+impl<'de, T> Deserialize<'de> for Lenient<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = TomlValue::deserialize(deserializer)?;
+        let parsed: Result<T, toml::de::Error> = value.clone().try_into();
+        Ok(match parsed {
+            Ok(parsed) => Self::Valid(parsed),
+            Err(_) => Self::Invalid(value),
+        })
+    }
 }
 
 /// Captures everything needed to remove an invalid enum leaf and report it
