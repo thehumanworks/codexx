@@ -176,6 +176,39 @@ theme = "loudly"
 }
 
 #[tokio::test]
+async fn invalid_enum_values_do_not_poison_relative_path_resolution() -> anyhow::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    std::fs::write(
+        tmp.path().join(CONFIG_TOML_FILE),
+        r#"
+model_instructions_file = "instructions.md"
+sandbox_mode = "make-it-so"
+"#,
+    )
+    .expect("write config");
+    std::fs::write(tmp.path().join("instructions.md"), "resolved instructions")
+        .expect("write instructions");
+
+    let config = ConfigBuilder::default()
+        .codex_home(tmp.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(tmp.path().to_path_buf()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+
+    assert_eq!(
+        (config.base_instructions.as_deref(), config.startup_warnings,),
+        (
+            Some("resolved instructions"),
+            vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()],
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn invalid_untagged_notification_value_does_not_delete_tui_table() -> anyhow::Result<()> {
     let tmp = tempdir().expect("tempdir");
     let contents = r#"

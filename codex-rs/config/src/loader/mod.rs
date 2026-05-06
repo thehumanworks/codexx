@@ -15,6 +15,7 @@ use crate::diagnostics::ConfigError;
 use crate::diagnostics::config_error_from_toml;
 use crate::diagnostics::first_layer_config_error_from_entries as typed_first_layer_config_error_from_entries;
 use crate::diagnostics::io_error_from_config_error;
+use crate::lenient::deserialize_with_enum_warnings;
 use crate::merge::merge_toml_values;
 use crate::overrides::build_cli_overrides_layer;
 use crate::project_root_markers::default_project_root_markers;
@@ -870,9 +871,14 @@ pub fn resolve_relative_paths_in_config_toml(
     base_dir: &Path,
 ) -> io::Result<TomlValue> {
     // Use the serialize/deserialize round-trip to convert the
-    // `toml::Value` into a `ConfigToml` with `AbsolutePath
+    // `toml::Value` into a `ConfigToml` with `AbsolutePathBuf` fields resolved
+    // by the guard. Invalid enum values are ignored only for this typed
+    // projection; copy_shape_from_original preserves them in the raw layer so
+    // the final config load can still surface the startup warning.
     let _guard = AbsolutePathBufGuard::new(base_dir);
-    let Ok(resolved) = value_from_config_toml.clone().try_into::<ConfigToml>() else {
+    let Ok((_sanitized, resolved, _enum_warnings)) =
+        deserialize_with_enum_warnings::<ConfigToml>(value_from_config_toml.clone())
+    else {
         return Ok(value_from_config_toml);
     };
     drop(_guard);
