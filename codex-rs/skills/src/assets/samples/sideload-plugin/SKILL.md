@@ -1,9 +1,9 @@
 ---
-name: plugin-sideload
+name: sideload-plugin
 description: Install a local Codex plugin into the temporary local Codex plugin cache for development and testing. Use after plugin-creator or when a user asks to try, reinstall, refresh, or test a local plugin in Codex without publishing it.
 ---
 
-# Plugin Sideload
+# Sideload Plugin
 
 Use this skill to copy a local plugin into Codex's local plugin cache so it can be tested in the current Codex installation.
 
@@ -14,13 +14,13 @@ This is a development workflow. The plugin cache is temporary runtime state unde
 Install a local plugin source directory into the dev marketplace cache and enable it:
 
 ```bash
-python3 .agents/skills/plugin-sideload/scripts/install_plugin_to_cache.py <plugin-path>
+python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugin-path>
 ```
 
 On Windows, run the same script with the Python launcher or `python`:
 
 ```powershell
-py -3 .agents\skills\plugin-sideload\scripts\install_plugin_to_cache.py <plugin-path>
+py -3 .agents\skills\sideload-plugin\scripts\install_plugin_to_cache.py <plugin-path>
 ```
 
 The script:
@@ -41,31 +41,31 @@ Restart Codex after installation so the refreshed plugin cache and enabled plugi
 Reinstall after editing plugin files:
 
 ```bash
-python3 .agents/skills/plugin-sideload/scripts/install_plugin_to_cache.py <plugin-path>
+python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugin-path>
 ```
 
 Use a custom marketplace namespace:
 
 ```bash
-python3 .agents/skills/plugin-sideload/scripts/install_plugin_to_cache.py <plugin-path> --marketplace debug
+python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugin-path> --marketplace debug
 ```
 
 Install to a specific cache version:
 
 ```bash
-python3 .agents/skills/plugin-sideload/scripts/install_plugin_to_cache.py <plugin-path> --version local
+python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugin-path> --version local
 ```
 
 Install without modifying `$CODEX_HOME/config.toml`:
 
 ```bash
-python3 .agents/skills/plugin-sideload/scripts/install_plugin_to_cache.py <plugin-path> --no-enable
+python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugin-path> --no-enable
 ```
 
 Use a non-default Codex home:
 
 ```bash
-python3 .agents/skills/plugin-sideload/scripts/install_plugin_to_cache.py <plugin-path> --codex-home <path>
+python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugin-path> --codex-home <path>
 ```
 
 ## Behavior
@@ -89,7 +89,7 @@ Use `plugin-creator` or a real marketplace workflow when the goal is to publish,
 After changing the script, run a smoke test with a temporary Codex home:
 
 ```bash
-python3 codex-rs/skills/src/assets/samples/plugin-sideload/scripts/install_plugin_to_cache.py \
+python3 codex-rs/skills/src/assets/samples/sideload-plugin/scripts/install_plugin_to_cache.py \
   <plugin-path> \
   --codex-home <temporary-codex-home>
 ```

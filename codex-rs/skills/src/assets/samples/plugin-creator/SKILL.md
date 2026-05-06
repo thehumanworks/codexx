@@ -56,7 +56,7 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
   author, homepage, repository, license, keywords, and interface fields from explicit user input
   or strong repo context; when that evidence is missing, ask the user for the value instead of
   inventing one.
-- For local testing after scaffold creation, use `plugin-sideload`; it installs the plugin into the temporary `$CODEX_HOME/plugins/cache` development cache.
+- For local testing after scaffold creation, use `sideload-plugin`; it installs the plugin into the temporary `$CODEX_HOME/plugins/cache` development cache.
 - Creates or updates `<repo-root>/.agents/plugins/marketplace.json` when `--with-marketplace` is set.
   - If the marketplace file does not exist yet, seed top-level `name` plus `interface.displayName` placeholders before adding the first plugin entry.
 - `<plugin-name>` is normalized using skill-creator naming rules:

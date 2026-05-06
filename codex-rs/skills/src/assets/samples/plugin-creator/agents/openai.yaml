@@ -1,6 +1,6 @@
 interface:
   display_name: "Plugin Creator"
   short_description: "Scaffold plugins and marketplace entries"
-  default_prompt: "Use $plugin-creator to scaffold a plugin with placeholder plugin.json, optional structure, and a marketplace.json entry. Fill metadata from explicit user input or strong local context, and ask rather than guess when values are unknown. Use $plugin-sideload next when the user wants to install the local plugin into the temporary Codex cache for testing."
+  default_prompt: "Use $plugin-creator to scaffold a plugin with placeholder plugin.json, optional structure, and a marketplace.json entry. Fill metadata from explicit user input or strong local context, and ask rather than guess when values are unknown. Use $sideload-plugin next when the user wants to install the local plugin into the temporary Codex cache for testing."
   icon_small: "./assets/plugin-creator-small.svg"
   icon_large: "./assets/plugin-creator.png"
