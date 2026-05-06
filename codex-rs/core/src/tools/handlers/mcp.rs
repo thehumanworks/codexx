@@ -48,6 +48,9 @@ impl ToolHandler for McpHandler {
         })
     }
 
+    // MCP hooks expose the full arguments object, so rewrites replace the
+    // serialized raw argument payload wholesale rather than patching one
+    // handler-owned field.
     fn with_updated_hook_input(
         &self,
         mut invocation: ToolInvocation,
