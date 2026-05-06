@@ -304,6 +304,9 @@ impl MessageProcessor {
             agent_graph_store.clone(),
             installation_id,
         )
+        .register_extension(Arc::new(
+            crate::plugin_install_suggest::PluginInstallSuggestToolProvider,
+        ) as Arc<dyn codex_core::ToolProvider>)
         .session_source(session_source)
         .analytics_events_client(analytics_events_client.clone())
         .build());

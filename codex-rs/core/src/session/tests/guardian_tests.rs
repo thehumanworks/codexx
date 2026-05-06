@@ -769,6 +769,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         analytics_events_client: None,
         state_db: None,
         thread_store,
+        extensions: ExtensionRegistry::default(),
     })
     .await
     .expect("spawn guardian subagent");

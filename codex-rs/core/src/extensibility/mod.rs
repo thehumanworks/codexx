@@ -3,7 +3,23 @@
 use std::any::Any;
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+
+use crate::tools::registry::ToolHandler as CoreToolHandler;
+use crate::tools::registry::ToolKind;
+use codex_tools::ToolName;
+
+pub use crate::function_tool::FunctionCallError;
+pub use crate::tools::context::FunctionToolOutput;
+pub use crate::tools::context::ToolInvocation;
+
+type FunctionHandler = dyn Fn(
+        ToolInvocation,
+    ) -> Pin<Box<dyn Future<Output = Result<FunctionToolOutput, FunctionCallError>> + Send>>
+    + Send
+    + Sync;
 
 /// Stores registered implementations of codex-core extension traits.
 ///
@@ -49,6 +65,49 @@ impl ExtensionRegistry {
 
 /// Provides tools through codex-core extensibility.
 ///
-/// Implementations are markers for now; tool-surface methods will be added as
-/// the extensibility API takes shape.
-pub trait ToolProvider: Send + Sync + 'static {}
+/// Implementations are expected to return handlers owned by the provider. Tool
+/// specs may still be provided by the existing built-in plan while handlers
+/// migrate behind this extension point.
+pub trait ToolProvider: Send + Sync + 'static {
+    /// Return tool handlers owned by this provider.
+    fn handlers(&self) -> Vec<ToolHandler>;
+}
+
+/// A tool handler supplied by an extension provider.
+pub struct ToolHandler {
+    tool_name: ToolName,
+    function: Arc<FunctionHandler>,
+}
+
+impl ToolHandler {
+    /// Wrap a function tool handler for registration with codex-core.
+    pub fn function<F, Fut>(tool_name: ToolName, handler: F) -> Self
+    where
+        F: Fn(ToolInvocation) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<FunctionToolOutput, FunctionCallError>> + Send + 'static,
+    {
+        Self {
+            tool_name,
+            function: Arc::new(move |invocation| Box::pin(handler(invocation))),
+        }
+    }
+}
+
+impl CoreToolHandler for ToolHandler {
+    type Output = FunctionToolOutput;
+
+    fn tool_name(&self) -> ToolName {
+        self.tool_name.clone()
+    }
+
+    fn kind(&self) -> ToolKind {
+        ToolKind::Function
+    }
+
+    fn handle(
+        &self,
+        invocation: ToolInvocation,
+    ) -> impl Future<Output = Result<Self::Output, FunctionCallError>> + Send {
+        (self.function)(invocation)
+    }
+}

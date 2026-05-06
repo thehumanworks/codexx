@@ -89,7 +89,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
     use crate::tools::handlers::PlanHandler;
     use crate::tools::handlers::ReadMcpResourceHandler;
     use crate::tools::handlers::RequestPermissionsHandler;
-    use crate::tools::handlers::RequestPluginInstallHandler;
     use crate::tools::handlers::RequestUserInputHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
@@ -285,7 +284,7 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 builder.register_handler(Arc::new(ToolSearchHandler::new(entries)));
             }
             ToolHandlerKind::RequestPluginInstall => {
-                builder.register_handler(Arc::new(RequestPluginInstallHandler));
+                // Registered by ToolProvider extensions.
             }
             ToolHandlerKind::UpdateGoal => {
                 builder.register_handler(Arc::new(UpdateGoalHandler));

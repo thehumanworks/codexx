@@ -32,6 +32,7 @@ use crate::context::PersonalitySpecInstructions;
 use crate::default_skill_metadata_budget;
 use crate::environment_selection::ResolvedTurnEnvironments;
 use crate::exec_policy::ExecPolicyManager;
+use crate::extensibility::ExtensionRegistry;
 use crate::parse_turn_item;
 use crate::path_utils::normalize_for_native_workdir;
 use crate::realtime_conversation::RealtimeConversationManager;
@@ -411,6 +412,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) state_db: Option<state_db::StateDbHandle>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
+    pub(crate) extensions: ExtensionRegistry,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -471,6 +473,7 @@ impl Codex {
             analytics_events_client,
             state_db,
             thread_store,
+            extensions,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -648,6 +651,7 @@ impl Codex {
             analytics_events_client,
             state_db,
             thread_store,
+            extensions,
             parent_rollout_thread_trace,
         )
         .await

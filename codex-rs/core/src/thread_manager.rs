@@ -1356,6 +1356,7 @@ impl ThreadManagerState {
             analytics_events_client: self.analytics_events_client.clone(),
             state_db: Some(self.state_db.clone()),
             thread_store: Arc::clone(&self.thread_store),
+            extensions: self.extensions.clone(),
         })
         .await?;
         let new_thread = self

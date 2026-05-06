@@ -1,4 +1,5 @@
 use crate::context_manager::truncate_function_output_payload;
+use crate::function_tool::FunctionCallError;
 use crate::original_image_detail::sanitize_original_image_detail;
 use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
@@ -7,7 +8,12 @@ use crate::tools::TELEMETRY_PREVIEW_MAX_LINES;
 use crate::tools::TELEMETRY_PREVIEW_TRUNCATION_NOTICE;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::resolve_max_tokens;
+use codex_app_server_protocol::McpServerElicitationRequestParams;
+use codex_login::CodexAuth;
+use codex_mcp::ToolInfo;
 use codex_protocol::mcp::CallToolResult;
+use codex_rmcp_client::ElicitationResponse;
+use codex_core_plugins::PluginsManager;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -24,6 +30,8 @@ use codex_utils_string::take_bytes_at_char_boundary;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -46,14 +54,109 @@ pub enum ToolCallSource {
 
 #[derive(Clone)]
 pub struct ToolInvocation {
-    pub session: Arc<Session>,
-    pub turn: Arc<TurnContext>,
-    pub cancellation_token: CancellationToken,
-    pub tracker: SharedTurnDiffTracker,
-    pub call_id: String,
-    pub tool_name: ToolName,
-    pub source: ToolCallSource,
-    pub payload: ToolPayload,
+    pub(crate) session: Arc<Session>,
+    pub(crate) turn: Arc<TurnContext>,
+    pub(crate) cancellation_token: CancellationToken,
+    pub(crate) tracker: SharedTurnDiffTracker,
+    pub(crate) call_id: String,
+    pub(crate) tool_name: ToolName,
+    pub(crate) source: ToolCallSource,
+    pub(crate) payload: ToolPayload,
+}
+
+impl ToolInvocation {
+    pub fn function_arguments(&self, tool_name: &str) -> Result<&str, FunctionCallError> {
+        match &self.payload {
+            ToolPayload::Function { arguments } => Ok(arguments),
+            _ => Err(FunctionCallError::Fatal(format!(
+                "{tool_name} handler received unsupported payload"
+            ))),
+        }
+    }
+
+    pub fn call_id(&self) -> &str {
+        self.call_id.as_str()
+    }
+
+    pub fn app_server_client_name(&self) -> Option<&str> {
+        self.turn.app_server_client_name.as_deref()
+    }
+
+    pub fn config(&self) -> &crate::config::Config {
+        self.turn.config.as_ref()
+    }
+
+    pub fn codex_home(&self) -> &codex_utils_absolute_path::AbsolutePathBuf {
+        &self.turn.config.codex_home
+    }
+
+    pub fn conversation_id_string(&self) -> String {
+        self.session.conversation_id.to_string()
+    }
+
+    pub fn turn_id(&self) -> String {
+        self.turn.sub_id.clone()
+    }
+
+    pub async fn auth(&self) -> Option<CodexAuth> {
+        self.session.services.auth_manager.auth().await
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "tool extensions read through the session-owned MCP manager guard"
+    )]
+    pub async fn list_mcp_tools(&self) -> HashMap<String, ToolInfo> {
+        self.session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await
+            .list_all_tools()
+            .await
+    }
+
+    #[expect(
+        clippy::await_holding_invalid_type,
+        reason = "tool extensions refresh through the session-owned MCP manager guard"
+    )]
+    pub async fn hard_refresh_codex_apps_tools_cache(
+        &self,
+    ) -> anyhow::Result<HashMap<String, ToolInfo>> {
+        self.session
+            .services
+            .mcp_connection_manager
+            .read()
+            .await
+            .hard_refresh_codex_apps_tools_cache()
+            .await
+    }
+
+    pub async fn request_mcp_server_elicitation(
+        &self,
+        request_id: String,
+        params: McpServerElicitationRequestParams,
+    ) -> Option<ElicitationResponse> {
+        self.session
+            .request_mcp_server_elicitation(
+                self.turn.as_ref(),
+                rmcp::model::RequestId::String(request_id.into()),
+                params,
+            )
+            .await
+    }
+
+    pub async fn reload_user_config_layer(&self) {
+        self.session.reload_user_config_layer().await;
+    }
+
+    pub async fn merge_connector_selection(&self, connector_ids: HashSet<String>) {
+        self.session.merge_connector_selection(connector_ids).await;
+    }
+
+    pub fn plugins_manager(&self) -> &PluginsManager {
+        self.session.services.plugins_manager.as_ref()
+    }
 }
 
 #[derive(Clone, Debug)]

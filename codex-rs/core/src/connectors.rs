@@ -115,7 +115,7 @@ pub(crate) async fn list_accessible_and_enabled_connectors_from_manager(
     .collect()
 }
 
-pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
+pub async fn list_tool_suggest_discoverable_tools_with_auth(
     config: &Config,
     auth: Option<&CodexAuth>,
     accessible_connectors: &[AppInfo],
@@ -162,7 +162,7 @@ pub async fn list_cached_accessible_connectors_from_mcp_tools(
     })
 }
 
-pub(crate) fn refresh_accessible_connectors_cache_from_mcp_tools(
+pub fn refresh_accessible_connectors_cache_from_mcp_tools(
     config: &Config,
     auth: Option<&CodexAuth>,
     mcp_tools: &HashMap<String, ToolInfo>,
@@ -515,7 +515,7 @@ async fn chatgpt_get_request_with_auth_provider<T: DeserializeOwned>(
     }
 }
 
-pub(crate) fn accessible_connectors_from_mcp_tools(
+pub fn accessible_connectors_from_mcp_tools(
     mcp_tools: &HashMap<String, ToolInfo>,
 ) -> Vec<AppInfo> {
     // ToolInfo already carries plugin provenance, so app-level plugin sources

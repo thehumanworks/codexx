@@ -370,6 +370,7 @@ impl Session {
         analytics_events_client: Option<AnalyticsEventsClient>,
         state_db: Option<state_db::StateDbHandle>,
         thread_store: Arc<dyn ThreadStore>,
+        extensions: ExtensionRegistry,
         parent_rollout_thread_trace: ThreadTraceContext,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
@@ -838,6 +839,7 @@ impl Session {
                 state_db: state_db_ctx.clone(),
                 live_thread: live_thread_init.as_ref().cloned(),
                 thread_store: Arc::clone(&thread_store),
+                extensions,
                 model_client: ModelClient::new(
                     Some(Arc::clone(&auth_manager)),
                     session_id,

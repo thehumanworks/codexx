@@ -545,6 +545,7 @@ fn test_tool_runtime(session: Arc<Session>, turn_context: Arc<TurnContext>) -> T
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            tool_providers: Vec::new(),
         },
     ));
     let tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
@@ -3762,6 +3763,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .await
             .expect("state db should initialize"),
         )),
+        extensions: ExtensionRegistry::default(),
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
             thread_id.into(),
@@ -5448,6 +5450,7 @@ where
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
             state_db,
         )),
+        extensions: ExtensionRegistry::default(),
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
             thread_id.into(),
@@ -8287,6 +8290,7 @@ async fn fatal_tool_error_stops_turn_and_reports_error() {
             parallel_mcp_server_names: HashSet::new(),
             discoverable_tools: None,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
+            tool_providers: Vec::new(),
         },
     );
     let item = ResponseItem::CustomToolCall {

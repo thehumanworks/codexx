@@ -1,3 +1,4 @@
+use crate::extensibility::ToolProvider;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
@@ -50,6 +51,7 @@ pub(crate) struct ToolRouterParams<'a> {
     pub(crate) parallel_mcp_server_names: HashSet<String>,
     pub(crate) discoverable_tools: Option<Vec<DiscoverableTool>>,
     pub(crate) dynamic_tools: &'a [DynamicToolSpec],
+    pub(crate) tool_providers: Vec<Arc<dyn ToolProvider>>,
 }
 
 impl ToolRouter {
@@ -61,8 +63,9 @@ impl ToolRouter {
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools,
+            tool_providers,
         } = params;
-        let builder = build_specs_with_discoverable_tools(
+        let mut builder = build_specs_with_discoverable_tools(
             config,
             mcp_tools,
             deferred_mcp_tools,
@@ -70,6 +73,11 @@ impl ToolRouter {
             discoverable_tools,
             dynamic_tools,
         );
+        for provider in tool_providers {
+            for handler in provider.handlers() {
+                builder.register_handler(Arc::new(handler));
+            }
+        }
         let (specs, registry) = builder.build();
         let deferred_dynamic_tools = dynamic_tools
             .iter()
