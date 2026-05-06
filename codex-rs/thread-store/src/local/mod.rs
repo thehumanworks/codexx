@@ -525,6 +525,7 @@ mod tests {
                 include_archived: true,
                 metadata: ThreadPersistenceMetadata {
                     cwd: None,
+                    workspace_roots: Vec::new(),
                     model_provider: "test-provider".to_string(),
                     memory_mode: ThreadMemoryMode::Enabled,
                 },
@@ -755,6 +756,7 @@ mod tests {
     fn thread_metadata() -> ThreadPersistenceMetadata {
         ThreadPersistenceMetadata {
             cwd: Some(std::env::current_dir().expect("cwd")),
+            workspace_roots: Vec::new(),
             model_provider: "test-provider".to_string(),
             memory_mode: ThreadMemoryMode::Enabled,
         }
