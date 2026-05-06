@@ -1,3 +1,4 @@
+use super::CODEX_AGENT_IDENTITY_ENV_VAR;
 use super::*;
 use crate::auth::storage::FileAuthStorage;
 use crate::auth::storage::get_auth_file;
