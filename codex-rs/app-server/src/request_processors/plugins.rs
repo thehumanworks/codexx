@@ -319,11 +319,15 @@ impl PluginRequestProcessor {
         &self,
         params: PluginListParams,
     ) -> Result<PluginListResponse, JSONRPCErrorError> {
+        let total_started_at = Instant::now();
         let plugins_manager = self.thread_manager.plugins_manager();
         let PluginListParams { cwds } = params;
         let roots = cwds.unwrap_or_default();
+        let roots_count = roots.len();
 
+        let load_config_started_at = Instant::now();
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        let load_config_ms = load_config_started_at.elapsed().as_millis();
         let empty_response = || PluginListResponse {
             marketplaces: Vec::new(),
             marketplace_load_errors: Vec::new(),
@@ -332,23 +336,30 @@ impl PluginRequestProcessor {
         if !config.features.enabled(Feature::Plugins) {
             return Ok(empty_response());
         }
+        let auth_started_at = Instant::now();
         let auth = self.auth_manager.auth().await;
+        let auth_ms = auth_started_at.elapsed().as_millis();
+        let workspace_setting_started_at = Instant::now();
         if !self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
             .await
         {
             return Ok(empty_response());
         }
+        let workspace_setting_ms = workspace_setting_started_at.elapsed().as_millis();
         let plugins_input = config.plugins_config_input();
+        let background_tasks_started_at = Instant::now();
         plugins_manager.maybe_start_plugin_list_background_tasks_for_config(
             &plugins_input,
             auth.clone(),
             &roots,
             Some(self.effective_plugins_changed_callback()),
         );
+        let background_tasks_ms = background_tasks_started_at.elapsed().as_millis();
 
         let config_for_marketplace_listing = plugins_input.clone();
         let plugins_manager_for_marketplace_listing = plugins_manager.clone();
+        let local_marketplace_listing_started_at = Instant::now();
         let (mut data, marketplace_load_errors) = match tokio::task::spawn_blocking(move || {
             let outcome = plugins_manager_for_marketplace_listing
                 .list_marketplaces_for_config(&config_for_marketplace_listing, &roots)?;
@@ -406,7 +417,10 @@ impl PluginRequestProcessor {
                 )));
             }
         };
+        let local_marketplace_listing_ms =
+            local_marketplace_listing_started_at.elapsed().as_millis();
 
+        let remote_marketplace_fetch_started_at = Instant::now();
         if config.features.enabled(Feature::RemotePlugin) {
             let remote_plugin_service_config = RemotePluginServiceConfig {
                 chatgpt_base_url: config.chatgpt_base_url.clone(),
@@ -444,7 +458,9 @@ impl PluginRequestProcessor {
                 }
             }
         }
+        let remote_marketplace_fetch_ms = remote_marketplace_fetch_started_at.elapsed().as_millis();
 
+        let featured_plugin_ids_started_at = Instant::now();
         let featured_plugin_ids = if data
             .iter()
             .any(|marketplace| marketplace.name == OPENAI_CURATED_MARKETPLACE_NAME)
@@ -465,6 +481,29 @@ impl PluginRequestProcessor {
         } else {
             Vec::new()
         };
+        let featured_plugin_ids_ms = featured_plugin_ids_started_at.elapsed().as_millis();
+        let plugin_count = data
+            .iter()
+            .map(|marketplace| marketplace.plugins.len())
+            .sum::<usize>();
+
+        info!(
+            roots_count,
+            total_ms = total_started_at.elapsed().as_millis(),
+            load_config_ms,
+            auth_ms,
+            workspace_setting_ms,
+            background_tasks_ms,
+            local_marketplace_listing_ms,
+            remote_marketplace_fetch_ms,
+            featured_plugin_ids_ms,
+            marketplace_count = data.len(),
+            plugin_count,
+            marketplace_load_error_count = marketplace_load_errors.len(),
+            featured_plugin_id_count = featured_plugin_ids.len(),
+            remote_plugin_enabled = config.features.enabled(Feature::RemotePlugin),
+            "plugin/list timing"
+        );
 
         Ok(PluginListResponse {
             marketplaces: data,
