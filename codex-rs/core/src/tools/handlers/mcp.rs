@@ -104,9 +104,9 @@ impl ToolHandler for McpHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hook_runtime::tool_compat;
     use crate::session::tests::make_session_and_context;
     use crate::tools::context::ToolCallSource;
-    use crate::tools::hook_compat;
     use crate::turn_diff_tracker::TurnDiffTracker;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -128,7 +128,7 @@ mod tests {
         };
         let (session, turn) = make_session_and_context().await;
         assert_eq!(
-            hook_compat::pre_tool_use_payload(&ToolInvocation {
+            tool_compat::pre_tool_use_payload(&ToolInvocation {
                 session: session.into(),
                 turn: turn.into(),
                 cancellation_token: tokio_util::sync::CancellationToken::new(),
@@ -138,7 +138,7 @@ mod tests {
                 source: ToolCallSource::Direct,
                 payload,
             }),
-            Some(crate::tools::registry::PreToolUsePayload {
+            Some(tool_compat::PreToolUsePayload {
                 tool_name: HookToolName::new("mcp__memory__create_entities"),
                 tool_input: json!({
                     "entities": [{
@@ -214,6 +214,6 @@ mod tests {
 
     #[test]
     fn mcp_hook_tool_input_defaults_empty_args_to_object() {
-        assert_eq!(hook_compat::mcp_hook_tool_input("  "), json!({}));
+        assert_eq!(tool_compat::mcp_hook_tool_input("  "), json!({}));
     }
 }

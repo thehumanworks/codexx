@@ -6,12 +6,12 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
+use crate::hook_runtime::tool_compat;
 use crate::session::tests::make_session_and_context;
 use crate::tools::context::ExecCommandToolOutput;
 use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
-use crate::tools::hook_compat;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::ToolHandler;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -186,7 +186,7 @@ async fn exec_command_pre_tool_use_payload_uses_raw_command() {
     };
     let (session, turn) = make_session_and_context().await;
     assert_eq!(
-        hook_compat::pre_tool_use_payload(&ToolInvocation {
+        tool_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
             turn: turn.into(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),
@@ -196,7 +196,7 @@ async fn exec_command_pre_tool_use_payload_uses_raw_command() {
             source: crate::tools::context::ToolCallSource::Direct,
             payload,
         }),
-        Some(crate::tools::registry::PreToolUsePayload {
+        Some(tool_compat::PreToolUsePayload {
             tool_name: HookToolName::bash(),
             tool_input: serde_json::json!({ "command": "printf exec command" }),
         })
@@ -210,7 +210,7 @@ async fn exec_command_pre_tool_use_payload_skips_write_stdin() {
     };
     let (session, turn) = make_session_and_context().await;
     assert_eq!(
-        hook_compat::pre_tool_use_payload(&ToolInvocation {
+        tool_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
             turn: turn.into(),
             cancellation_token: tokio_util::sync::CancellationToken::new(),

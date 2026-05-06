@@ -11,7 +11,20 @@ use crate::tools::handlers::shell_command_payload_command;
 use crate::tools::handlers::shell_function_payload_command;
 use crate::tools::handlers::unified_exec::ExecCommandArgs;
 use crate::tools::hook_names::HookToolName;
-use crate::tools::registry::PreToolUsePayload;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PreToolUsePayload {
+    /// Hook-facing tool name model.
+    ///
+    /// The canonical name is serialized to hook stdin, while aliases are used
+    /// only for matcher compatibility.
+    pub(crate) tool_name: HookToolName,
+    /// Tool-specific input exposed at `tool_input`.
+    ///
+    /// Shell-like tools use `{ "command": ... }`; MCP tools use their resolved
+    /// JSON arguments.
+    pub(crate) tool_input: Value,
+}
 
 /// Projects native tool payloads into the stable input shape exposed to hooks.
 ///

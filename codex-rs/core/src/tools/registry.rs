@@ -9,6 +9,7 @@ use crate::hook_runtime::PreToolUseHookResult;
 use crate::hook_runtime::record_additional_contexts;
 use crate::hook_runtime::run_post_tool_use_hooks;
 use crate::hook_runtime::run_pre_tool_use_hooks;
+use crate::hook_runtime::tool_compat;
 use crate::memory_usage::emit_metric_for_tool_read;
 use crate::sandbox_tags::permission_profile_policy_tag;
 use crate::sandbox_tags::permission_profile_sandbox_tag;
@@ -17,7 +18,6 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
-use crate::tools::hook_compat;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::tool_dispatch_trace::ToolDispatchTrace;
 use codex_hooks::HookEvent;
@@ -129,20 +129,6 @@ impl AnyToolResult {
         } = self;
         result.code_mode_result(&payload)
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PreToolUsePayload {
-    /// Hook-facing tool name model.
-    ///
-    /// The canonical name is serialized to hook stdin, while aliases are used
-    /// only for matcher compatibility.
-    pub(crate) tool_name: HookToolName,
-    /// Tool-specific input exposed at `tool_input`.
-    ///
-    /// Shell-like tools use `{ "command": ... }`; MCP tools use their resolved
-    /// JSON arguments.
-    pub(crate) tool_input: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -342,7 +328,7 @@ impl ToolRegistry {
             return Err(err);
         }
 
-        if let Some(pre_tool_use_payload) = hook_compat::pre_tool_use_payload(&invocation) {
+        if let Some(pre_tool_use_payload) = tool_compat::pre_tool_use_payload(&invocation) {
             match run_pre_tool_use_hooks(
                 &invocation.session,
                 &invocation.turn,
@@ -360,9 +346,9 @@ impl ToolRegistry {
                 PreToolUseHookResult::Continue {
                     updated_input: Some(updated_input),
                 } => {
-                    invocation = hook_compat::apply_updated_input(invocation, updated_input)?;
+                    invocation = tool_compat::apply_updated_input(invocation, updated_input)?;
                 }
-                crate::hook_runtime::PreToolUseHookResult::Continue {
+                PreToolUseHookResult::Continue {
                     updated_input: None,
                 } => {}
             }
