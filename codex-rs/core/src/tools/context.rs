@@ -111,6 +111,8 @@ pub trait ToolOutput: Send {
         response_input_to_code_mode_result(self.to_response_item("", payload))
     }
 
+    /// Returns the caller-visible value that code mode should receive after a
+    /// `PostToolUse` hook accepts `updatedToolOutput`.
     fn rewritten_code_mode_result(
         &self,
         _payload: &ToolPayload,
@@ -506,6 +508,9 @@ impl ToolOutput for ExecCommandToolOutput {
         })
     }
 
+    // Code mode consumes exec results as a structured envelope, so preserve
+    // metadata such as exit code and timing while replacing only the
+    // caller-visible command output.
     fn rewritten_code_mode_result(
         &self,
         payload: &ToolPayload,
