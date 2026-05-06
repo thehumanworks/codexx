@@ -29,7 +29,6 @@ pub enum ToolHandlerKind {
     Plan,
     ReadMcpResource,
     ReportAgentJobResult,
-    RequestPluginInstall,
     RequestPermissions,
     RequestUserInput,
     ResumeAgentV1,

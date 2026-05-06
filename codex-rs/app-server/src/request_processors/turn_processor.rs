@@ -13,6 +13,7 @@ pub(crate) struct TurnRequestProcessor {
     thread_state_manager: ThreadStateManager,
     thread_watch_manager: ThreadWatchManager,
     thread_list_state_permit: Arc<Semaphore>,
+    plugin_install_suggest_client_names: crate::plugin_install_suggest::AppServerClientNames,
 }
 
 impl TurnRequestProcessor {
@@ -29,6 +30,7 @@ impl TurnRequestProcessor {
         thread_state_manager: ThreadStateManager,
         thread_watch_manager: ThreadWatchManager,
         thread_list_state_permit: Arc<Semaphore>,
+        plugin_install_suggest_client_names: crate::plugin_install_suggest::AppServerClientNames,
     ) -> Self {
         Self {
             auth_manager,
@@ -42,6 +44,7 @@ impl TurnRequestProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
+            plugin_install_suggest_client_names,
         }
     }
 
@@ -330,7 +333,7 @@ impl TurnRequestProcessor {
                 .inspect_err(|error| {
                     self.track_error_response(&request_id, error, /*error_type*/ None);
                 })?;
-        Self::set_app_server_client_info(
+        self.set_app_server_client_info(
             thread.as_ref(),
             app_server_client_name,
             app_server_client_version,
@@ -541,10 +544,12 @@ impl TurnRequestProcessor {
     }
 
     async fn set_app_server_client_info(
+        &self,
         thread: &CodexThread,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
+        let client_name_for_tool_provider = app_server_client_name.clone();
         let mcp_elicitations_auto_deny = xcode_26_4_mcp_elicitations_auto_deny(
             app_server_client_name.as_deref(),
             app_server_client_version.as_deref(),
@@ -556,7 +561,13 @@ impl TurnRequestProcessor {
                 mcp_elicitations_auto_deny,
             )
             .await
-            .map_err(|err| internal_error(format!("failed to set app server client info: {err}")))
+            .map_err(|err| internal_error(format!("failed to set app server client info: {err}")))?;
+        crate::plugin_install_suggest::set_app_server_client_name(
+            &self.plugin_install_suggest_client_names,
+            thread.session_configured().thread_id,
+            client_name_for_tool_provider,
+        );
+        Ok(())
     }
 
     async fn turn_steer_inner(

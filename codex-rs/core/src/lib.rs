@@ -34,6 +34,7 @@ mod environment_selection;
 pub mod exec;
 pub mod exec_env;
 pub mod extensibility;
+pub use extensibility::AnyToolHandler;
 pub use extensibility::ExtensionRegistry;
 pub use extensibility::FunctionCallError;
 pub use extensibility::FunctionToolOutput;

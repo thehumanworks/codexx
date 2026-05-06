@@ -302,7 +302,7 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
             parallel_mcp_server_names,
             discoverable_tools: None,
             dynamic_tools: exec.turn.dynamic_tools.as_slice(),
-            tool_providers: Vec::new(),
+            extension_tool_handlers: Vec::new(),
         },
     )
 }

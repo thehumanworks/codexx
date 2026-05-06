@@ -1868,10 +1868,7 @@ fn request_plugin_install_description_lists_discoverable_tools() {
         Some(discoverable_tools),
         &[],
     );
-    assert!(handlers.contains(&ToolHandlerSpec {
-        name: ToolName::plain(REQUEST_PLUGIN_INSTALL_TOOL_NAME),
-        kind: ToolHandlerKind::RequestPluginInstall,
-    }));
+    assert!(handlers.is_empty());
 
     let request_plugin_install = find_tool(&tools, REQUEST_PLUGIN_INSTALL_TOOL_NAME);
     let ToolSpec::Function(ResponsesApiTool {

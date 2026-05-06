@@ -26,6 +26,7 @@ use crate::tools::hook_names::HookToolName;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::PreToolUsePayload;
+use crate::tools::registry::ToolArgumentDiffContext;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -64,11 +65,11 @@ struct ApplyPatchArgumentDiffConsumer {
 impl ToolArgumentDiffConsumer for ApplyPatchArgumentDiffConsumer {
     fn consume_diff(
         &mut self,
-        turn: &TurnContext,
+        context: ToolArgumentDiffContext<'_>,
         call_id: String,
         diff: &str,
     ) -> Option<EventMsg> {
-        if !turn.features.enabled(Feature::ApplyPatchStreamingEvents) {
+        if !context.feature_enabled(Feature::ApplyPatchStreamingEvents) {
             return None;
         }
 

@@ -283,9 +283,6 @@ pub(crate) fn build_specs_with_discoverable_tools(
                 );
                 builder.register_handler(Arc::new(ToolSearchHandler::new(entries)));
             }
-            ToolHandlerKind::RequestPluginInstall => {
-                // Registered by ToolProvider extensions.
-            }
             ToolHandlerKind::UpdateGoal => {
                 builder.register_handler(Arc::new(UpdateGoalHandler));
             }

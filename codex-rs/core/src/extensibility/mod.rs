@@ -3,23 +3,17 @@
 use std::any::Any;
 use std::any::TypeId;
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::tools::registry::ToolHandler as CoreToolHandler;
-use crate::tools::registry::ToolKind;
-use codex_tools::ToolName;
+use crate::config::Config;
+use codex_core_plugins::PluginsManager;
 
 pub use crate::function_tool::FunctionCallError;
 pub use crate::tools::context::FunctionToolOutput;
 pub use crate::tools::context::ToolInvocation;
-
-type FunctionHandler = dyn Fn(
-        ToolInvocation,
-    ) -> Pin<Box<dyn Future<Output = Result<FunctionToolOutput, FunctionCallError>> + Send>>
-    + Send
-    + Sync;
+pub use crate::tools::registry::AnyToolHandler;
+pub use crate::tools::registry::ToolHandler;
+pub use crate::tools::registry::ToolKind;
 
 /// Stores registered implementations of codex-core extension traits.
 ///
@@ -63,51 +57,54 @@ impl ExtensionRegistry {
     }
 }
 
+/// Runtime context available when extension providers create tool handlers.
+#[derive(Clone)]
+pub struct ToolProviderContext {
+    config: Arc<Config>,
+    plugins_manager: Arc<PluginsManager>,
+    conversation_id: String,
+    turn_id: String,
+}
+
+impl ToolProviderContext {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        config: Arc<Config>,
+        plugins_manager: Arc<PluginsManager>,
+        conversation_id: String,
+        turn_id: String,
+    ) -> Self {
+        Self {
+            config,
+            plugins_manager,
+            conversation_id,
+            turn_id,
+        }
+    }
+
+    pub fn config(&self) -> Arc<Config> {
+        Arc::clone(&self.config)
+    }
+
+    pub fn plugins_manager(&self) -> Arc<PluginsManager> {
+        Arc::clone(&self.plugins_manager)
+    }
+
+    pub fn conversation_id(&self) -> String {
+        self.conversation_id.clone()
+    }
+
+    pub fn turn_id(&self) -> String {
+        self.turn_id.clone()
+    }
+}
+
 /// Provides tools through codex-core extensibility.
 ///
 /// Implementations are expected to return handlers owned by the provider. Tool
 /// specs may still be provided by the existing built-in plan while handlers
 /// migrate behind this extension point.
 pub trait ToolProvider: Send + Sync + 'static {
-    /// Return tool handlers owned by this provider.
-    fn handlers(&self) -> Vec<ToolHandler>;
-}
-
-/// A tool handler supplied by an extension provider.
-pub struct ToolHandler {
-    tool_name: ToolName,
-    function: Arc<FunctionHandler>,
-}
-
-impl ToolHandler {
-    /// Wrap a function tool handler for registration with codex-core.
-    pub fn function<F, Fut>(tool_name: ToolName, handler: F) -> Self
-    where
-        F: Fn(ToolInvocation) -> Fut + Send + Sync + 'static,
-        Fut: Future<Output = Result<FunctionToolOutput, FunctionCallError>> + Send + 'static,
-    {
-        Self {
-            tool_name,
-            function: Arc::new(move |invocation| Box::pin(handler(invocation))),
-        }
-    }
-}
-
-impl CoreToolHandler for ToolHandler {
-    type Output = FunctionToolOutput;
-
-    fn tool_name(&self) -> ToolName {
-        self.tool_name.clone()
-    }
-
-    fn kind(&self) -> ToolKind {
-        ToolKind::Function
-    }
-
-    fn handle(
-        &self,
-        invocation: ToolInvocation,
-    ) -> impl Future<Output = Result<Self::Output, FunctionCallError>> + Send {
-        (self.function)(invocation)
-    }
+    /// Return tool handlers owned by this provider for the current config.
+    fn handlers(&self, context: ToolProviderContext) -> Vec<Arc<dyn AnyToolHandler>>;
 }

@@ -1,5 +1,4 @@
 use crate::CommandToolOptions;
-use crate::REQUEST_PLUGIN_INSTALL_TOOL_NAME;
 use crate::REQUEST_USER_INPUT_TOOL_NAME;
 use crate::ResponsesApiNamespace;
 use crate::ResponsesApiNamespaceTool;
@@ -327,10 +326,6 @@ pub fn build_tool_registry_plan(
             )),
             /*supports_parallel_tool_calls*/ true,
             /*code_mode_enabled*/ false,
-        );
-        plan.register_handler(
-            REQUEST_PLUGIN_INSTALL_TOOL_NAME,
-            ToolHandlerKind::RequestPluginInstall,
         );
     }
 

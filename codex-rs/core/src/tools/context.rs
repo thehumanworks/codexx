@@ -9,11 +9,9 @@ use crate::tools::TELEMETRY_PREVIEW_TRUNCATION_NOTICE;
 use crate::turn_diff_tracker::TurnDiffTracker;
 use crate::unified_exec::resolve_max_tokens;
 use codex_app_server_protocol::McpServerElicitationRequestParams;
-use codex_login::CodexAuth;
 use codex_mcp::ToolInfo;
 use codex_protocol::mcp::CallToolResult;
 use codex_rmcp_client::ElicitationResponse;
-use codex_core_plugins::PluginsManager;
 use codex_protocol::models::DEFAULT_IMAGE_DETAIL;
 use codex_protocol::models::FunctionCallOutputBody;
 use codex_protocol::models::FunctionCallOutputContentItem;
@@ -78,30 +76,6 @@ impl ToolInvocation {
         self.call_id.as_str()
     }
 
-    pub fn app_server_client_name(&self) -> Option<&str> {
-        self.turn.app_server_client_name.as_deref()
-    }
-
-    pub fn config(&self) -> &crate::config::Config {
-        self.turn.config.as_ref()
-    }
-
-    pub fn codex_home(&self) -> &codex_utils_absolute_path::AbsolutePathBuf {
-        &self.turn.config.codex_home
-    }
-
-    pub fn conversation_id_string(&self) -> String {
-        self.session.conversation_id.to_string()
-    }
-
-    pub fn turn_id(&self) -> String {
-        self.turn.sub_id.clone()
-    }
-
-    pub async fn auth(&self) -> Option<CodexAuth> {
-        self.session.services.auth_manager.auth().await
-    }
-
     #[expect(
         clippy::await_holding_invalid_type,
         reason = "tool extensions read through the session-owned MCP manager guard"
@@ -152,10 +126,6 @@ impl ToolInvocation {
 
     pub async fn merge_connector_selection(&self, connector_ids: HashSet<String>) {
         self.session.merge_connector_selection(connector_ids).await;
-    }
-
-    pub fn plugins_manager(&self) -> &PluginsManager {
-        self.session.services.plugins_manager.as_ref()
     }
 }
 

@@ -316,6 +316,8 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) thread_list_state_permit: Arc<Semaphore>,
     pub(super) thread_goal_processor: ThreadGoalRequestProcessor,
     pub(super) state_db: Option<StateDbHandle>,
+    pub(super) plugin_install_suggest_client_names:
+        crate::plugin_install_suggest::AppServerClientNames,
     pub(super) background_tasks: TaskTracker,
 }
 
@@ -336,6 +338,7 @@ impl ThreadRequestProcessor {
         thread_list_state_permit: Arc<Semaphore>,
         thread_goal_processor: ThreadGoalRequestProcessor,
         state_db: Option<StateDbHandle>,
+        plugin_install_suggest_client_names: crate::plugin_install_suggest::AppServerClientNames,
     ) -> Self {
         Self {
             auth_manager,
@@ -352,6 +355,7 @@ impl ThreadRequestProcessor {
             thread_list_state_permit,
             thread_goal_processor,
             state_db,
+            plugin_install_suggest_client_names,
             background_tasks: TaskTracker::new(),
         }
     }
@@ -657,10 +661,12 @@ impl ThreadRequestProcessor {
     }
 
     async fn set_app_server_client_info(
+        plugin_install_suggest_client_names: &crate::plugin_install_suggest::AppServerClientNames,
         thread: &CodexThread,
         app_server_client_name: Option<String>,
         app_server_client_version: Option<String>,
     ) -> Result<(), JSONRPCErrorError> {
+        let client_name_for_tool_provider = app_server_client_name.clone();
         let mcp_elicitations_auto_deny = xcode_26_4_mcp_elicitations_auto_deny(
             app_server_client_name.as_deref(),
             app_server_client_version.as_deref(),
@@ -672,7 +678,13 @@ impl ThreadRequestProcessor {
                 mcp_elicitations_auto_deny,
             )
             .await
-            .map_err(|err| internal_error(format!("failed to set app server client info: {err}")))
+            .map_err(|err| internal_error(format!("failed to set app server client info: {err}")))?;
+        crate::plugin_install_suggest::set_app_server_client_name(
+            plugin_install_suggest_client_names,
+            thread.session_configured().thread_id,
+            client_name_for_tool_provider,
+        );
+        Ok(())
     }
 
     async fn finalize_thread_teardown(&self, thread_id: ThreadId) {
@@ -849,6 +861,8 @@ impl ThreadRequestProcessor {
         let config_manager = self.config_manager.clone();
         let outgoing = Arc::clone(&listener_task_context.outgoing);
         let error_request_id = request_id.clone();
+        let plugin_install_suggest_client_names =
+            Arc::clone(&self.plugin_install_suggest_client_names);
         let thread_start_task = async move {
             if let Err(error) = Self::thread_start_task(
                 listener_task_context,
@@ -865,6 +879,7 @@ impl ThreadRequestProcessor {
                 service_name,
                 experimental_raw_events,
                 request_trace,
+                plugin_install_suggest_client_names,
             )
             .await
             {
@@ -949,6 +964,7 @@ impl ThreadRequestProcessor {
         service_name: Option<String>,
         experimental_raw_events: bool,
         request_trace: Option<W3cTraceContext>,
+        plugin_install_suggest_client_names: crate::plugin_install_suggest::AppServerClientNames,
     ) -> Result<(), JSONRPCErrorError> {
         let requested_cwd = typesafe_overrides.cwd.clone();
         let mut config = config_manager
@@ -1081,6 +1097,7 @@ impl ThreadRequestProcessor {
             })?;
 
         Self::set_app_server_client_info(
+            &plugin_install_suggest_client_names,
             thread.as_ref(),
             app_server_client_name,
             app_server_client_version,
@@ -2404,6 +2421,7 @@ impl ThreadRequestProcessor {
                 ..
             }) => {
                 if let Err(err) = Self::set_app_server_client_info(
+                    &self.plugin_install_suggest_client_names,
                     codex_thread.as_ref(),
                     app_server_client_name,
                     app_server_client_version,
@@ -2638,6 +2656,7 @@ impl ThreadRequestProcessor {
             )
             .await?;
             Self::set_app_server_client_info(
+                &self.plugin_install_suggest_client_names,
                 existing_thread.as_ref(),
                 app_server_client_name,
                 app_server_client_version,
@@ -3053,6 +3072,7 @@ impl ThreadRequestProcessor {
             })?;
 
         Self::set_app_server_client_info(
+            &self.plugin_install_suggest_client_names,
             forked_thread.as_ref(),
             app_server_client_name,
             app_server_client_version,

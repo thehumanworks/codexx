@@ -295,6 +295,9 @@ impl MessageProcessor {
         // resumed, or forked threads to a different persistence backend/root.
         let thread_store = thread_store_from_config(config.as_ref(), state_db.clone());
         let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
+        let plugin_install_suggest_client_names:
+            crate::plugin_install_suggest::AppServerClientNames =
+            Arc::new(std::sync::RwLock::new(Default::default()));
         let thread_manager = Arc::new(ThreadManager::builder(
             config.as_ref(),
             auth_manager.clone(),
@@ -305,7 +308,10 @@ impl MessageProcessor {
             installation_id,
         )
         .register_extension(Arc::new(
-            crate::plugin_install_suggest::PluginInstallSuggestToolProvider,
+            crate::plugin_install_suggest::PluginInstallSuggestToolProvider::new(
+                auth_manager.clone(),
+                Arc::clone(&plugin_install_suggest_client_names),
+            ),
         ) as Arc<dyn codex_core::ToolProvider>)
         .session_source(session_source)
         .analytics_events_client(analytics_events_client.clone())
@@ -406,6 +412,7 @@ impl MessageProcessor {
             Arc::clone(&thread_list_state_permit),
             thread_goal_processor.clone(),
             Some(state_db.clone()),
+            Arc::clone(&plugin_install_suggest_client_names),
         );
         let turn_processor = TurnRequestProcessor::new(
             auth_manager.clone(),
@@ -419,6 +426,7 @@ impl MessageProcessor {
             thread_state_manager,
             thread_watch_manager,
             thread_list_state_permit,
+            plugin_install_suggest_client_names,
         );
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.

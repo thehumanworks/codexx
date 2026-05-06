@@ -1,4 +1,3 @@
-use crate::extensibility::ToolProvider;
 use crate::function_tool::FunctionCallError;
 use crate::sandboxing::SandboxPermissions;
 use crate::session::session::Session;
@@ -6,6 +5,7 @@ use crate::session::turn_context::TurnContext;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::registry::AnyToolHandler;
 use crate::tools::registry::AnyToolResult;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::registry::ToolRegistry;
@@ -51,7 +51,7 @@ pub(crate) struct ToolRouterParams<'a> {
     pub(crate) parallel_mcp_server_names: HashSet<String>,
     pub(crate) discoverable_tools: Option<Vec<DiscoverableTool>>,
     pub(crate) dynamic_tools: &'a [DynamicToolSpec],
-    pub(crate) tool_providers: Vec<Arc<dyn ToolProvider>>,
+    pub(crate) extension_tool_handlers: Vec<Arc<dyn AnyToolHandler>>,
 }
 
 impl ToolRouter {
@@ -63,7 +63,7 @@ impl ToolRouter {
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools,
-            tool_providers,
+            extension_tool_handlers,
         } = params;
         let mut builder = build_specs_with_discoverable_tools(
             config,
@@ -73,10 +73,8 @@ impl ToolRouter {
             discoverable_tools,
             dynamic_tools,
         );
-        for provider in tool_providers {
-            for handler in provider.handlers() {
-                builder.register_handler(Arc::new(handler));
-            }
+        for handler in extension_tool_handlers {
+            builder.register_any_handler_if_configured(handler);
         }
         let (specs, registry) = builder.build();
         let deferred_dynamic_tools = dynamic_tools

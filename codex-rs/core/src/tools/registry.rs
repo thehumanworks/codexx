@@ -25,9 +25,11 @@ use codex_hooks::HookResult;
 use codex_hooks::HookToolInput;
 use codex_hooks::HookToolInputLocalShell;
 use codex_hooks::HookToolKind;
+use codex_features::Feature;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::EventMsg;
 use codex_tools::ConfiguredToolSpec;
+use codex_tools::ResponsesApiNamespaceTool;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
 use codex_utils_readiness::Readiness;
@@ -94,11 +96,25 @@ pub trait ToolHandler: Send + Sync {
     ) -> impl std::future::Future<Output = Result<Self::Output, FunctionCallError>> + Send;
 }
 
+pub struct ToolArgumentDiffContext<'a> {
+    turn: &'a TurnContext,
+}
+
+impl<'a> ToolArgumentDiffContext<'a> {
+    pub(crate) fn new(turn: &'a TurnContext) -> Self {
+        Self { turn }
+    }
+
+    pub fn feature_enabled(&self, feature: Feature) -> bool {
+        self.turn.features.enabled(feature)
+    }
+}
+
 /// Consumes streamed argument diffs for a tool call and emits protocol events
 /// derived from partial tool input.
-pub(crate) trait ToolArgumentDiffConsumer: Send {
+pub trait ToolArgumentDiffConsumer: Send {
     /// Consume the next argument diff for a tool call.
-    fn consume_diff(&mut self, turn: &TurnContext, call_id: String, diff: &str)
+    fn consume_diff(&mut self, context: ToolArgumentDiffContext<'_>, call_id: String, diff: &str)
     -> Option<EventMsg>;
 
     /// Finish consuming argument diffs before the tool call completes.
@@ -107,7 +123,7 @@ pub(crate) trait ToolArgumentDiffConsumer: Send {
     }
 }
 
-pub(crate) struct AnyToolResult {
+pub struct AnyToolResult {
     pub(crate) call_id: String,
     pub(crate) payload: ToolPayload,
     pub(crate) result: Box<dyn ToolOutput>,
@@ -134,7 +150,7 @@ impl AnyToolResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PreToolUsePayload {
+pub struct PreToolUsePayload {
     /// Hook-facing tool name model.
     ///
     /// The canonical name is serialized to hook stdin, while aliases are used
@@ -148,7 +164,7 @@ pub(crate) struct PreToolUsePayload {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct PostToolUsePayload {
+pub struct PostToolUsePayload {
     /// Hook-facing tool name model.
     ///
     /// The canonical name is serialized to hook stdin, while aliases are used
@@ -162,7 +178,9 @@ pub(crate) struct PostToolUsePayload {
     pub(crate) tool_response: Value,
 }
 
-trait AnyToolHandler: Send + Sync {
+pub trait AnyToolHandler: Send + Sync {
+    fn tool_name(&self) -> ToolName;
+
     fn matches_kind(&self, payload: &ToolPayload) -> bool;
 
     fn is_mutating<'a>(&'a self, invocation: &'a ToolInvocation) -> BoxFuture<'a, bool>;
@@ -180,6 +198,10 @@ impl<T> AnyToolHandler for T
 where
     T: ToolHandler,
 {
+    fn tool_name(&self) -> ToolName {
+        ToolHandler::tool_name(self)
+    }
+
     fn matches_kind(&self, payload: &ToolPayload) -> bool {
         ToolHandler::matches_kind(self, payload)
     }
@@ -539,11 +561,43 @@ impl ToolRegistryBuilder {
     where
         H: ToolHandler + 'static,
     {
+        self.register_any_handler(handler);
+    }
+
+    pub fn register_any_handler(&mut self, handler: Arc<dyn AnyToolHandler>) {
         let name = handler.tool_name();
         let display_name = name.display();
-        let handler: Arc<dyn AnyToolHandler> = handler;
         if self.handlers.insert(name, handler).is_some() {
             warn!("overwriting handler for tool {display_name}");
+        }
+    }
+
+    pub fn register_any_handler_if_configured(&mut self, handler: Arc<dyn AnyToolHandler>) {
+        let name = handler.tool_name();
+        let has_spec = self.specs.iter().any(|configured_tool| match &configured_tool.spec {
+            ToolSpec::Function(tool) if name.namespace.is_none() => tool.name == name.name,
+            ToolSpec::Freeform(tool) if name.namespace.is_none() => tool.name == name.name,
+            ToolSpec::Namespace(namespace) => namespace.tools.iter().any(|tool| match tool {
+                ResponsesApiNamespaceTool::Function(tool) => {
+                    name.namespace.as_deref() == Some(namespace.name.as_str())
+                        && tool.name == name.name
+                }
+            }),
+            ToolSpec::ToolSearch { .. } if name.namespace.is_none() => name.name == "tool_search",
+            ToolSpec::LocalShell {} if name.namespace.is_none() => name.name == "local_shell",
+            ToolSpec::ImageGeneration { .. } if name.namespace.is_none() => {
+                name.name == "image_generation"
+            }
+            ToolSpec::WebSearch { .. } if name.namespace.is_none() => name.name == "web_search",
+            ToolSpec::Function(_)
+            | ToolSpec::Freeform(_)
+            | ToolSpec::ToolSearch { .. }
+            | ToolSpec::LocalShell {}
+            | ToolSpec::ImageGeneration { .. }
+            | ToolSpec::WebSearch { .. } => false,
+        });
+        if has_spec {
+            self.register_any_handler(handler);
         }
     }
 

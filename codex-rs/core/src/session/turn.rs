@@ -20,6 +20,7 @@ use crate::compact_remote_v2::run_inline_remote_auto_compact_task as run_inline_
 use crate::connectors;
 use crate::context::ContextualUserFragment;
 use crate::extensibility::ToolProvider;
+use crate::extensibility::ToolProviderContext;
 use crate::feedback_tags;
 use crate::hook_runtime::PendingInputHookDisposition;
 use crate::hook_runtime::emit_hook_completed_events;
@@ -54,6 +55,7 @@ use crate::stream_events_utils::record_completed_response_item;
 use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::parallel::ToolCallRuntime;
+use crate::tools::registry::ToolArgumentDiffContext;
 use crate::tools::registry::ToolArgumentDiffConsumer;
 use crate::tools::router::ToolRouterParams;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -1188,7 +1190,10 @@ pub(crate) async fn built_tools(
         None
     };
     let auth = sess.services.auth_manager.auth().await;
-    let discoverable_tools = if apps_enabled && turn_context.tools_config.tool_suggest {
+    let plugin_install_suggest_enabled = apps_enabled
+        && turn_context.tools_config.tool_suggest
+        && turn_context.app_server_client_name.as_deref() != Some("codex-tui");
+    let discoverable_tools = if plugin_install_suggest_enabled {
         if let Some(accessible_connectors) = accessible_connectors_with_enabled_state.as_ref() {
             match connectors::list_tool_suggest_discoverable_tools_with_auth(
                 &turn_context.config,
@@ -1266,6 +1271,20 @@ pub(crate) async fn built_tools(
         })
         .collect::<HashSet<_>>();
 
+    let provider_context = ToolProviderContext::new(
+        Arc::clone(&turn_context.config),
+        Arc::clone(&sess.services.plugins_manager),
+        sess.conversation_id.to_string(),
+        turn_context.sub_id.clone(),
+    );
+    let extension_tool_handlers = sess
+        .services
+        .extensions
+        .get::<dyn ToolProvider>()
+        .into_iter()
+        .flat_map(|provider| provider.handlers(provider_context.clone()))
+        .collect();
+
     Ok(Arc::new(ToolRouter::from_config(
         &turn_context.tools_config,
         ToolRouterParams {
@@ -1275,7 +1294,7 @@ pub(crate) async fn built_tools(
             parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools: turn_context.dynamic_tools.as_slice(),
-            tool_providers: sess.services.extensions.get::<dyn ToolProvider>(),
+            extension_tool_handlers,
         },
     )))
 }
@@ -2178,7 +2197,11 @@ async fn try_run_sampling_request(
                     Some(call_id) => call_id,
                     None => active_call_id.clone(),
                 };
-                if let Some(event) = consumer.consume_diff(turn_context.as_ref(), call_id, &delta) {
+                if let Some(event) = consumer.consume_diff(
+                    ToolArgumentDiffContext::new(turn_context.as_ref()),
+                    call_id,
+                    &delta,
+                ) {
                     sess.send_event(&turn_context, event).await;
                 }
             }
