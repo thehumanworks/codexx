@@ -128,6 +128,7 @@ fn sample_thread_with_metadata(
 ) -> Thread {
     Thread {
         id: thread_id.to_string(),
+        session_id: format!("session-{thread_id}"),
         forked_from_id: None,
         preview: "first prompt".to_string(),
         ephemeral,
