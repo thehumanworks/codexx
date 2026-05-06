@@ -1,3 +1,4 @@
+use super::ApiClientFactory;
 use super::AuthRequestTelemetryContext;
 use super::ModelClient;
 use super::PendingUnauthorizedRetry;
@@ -11,6 +12,7 @@ use codex_api::ApiError;
 use codex_api::ResponseEvent;
 use codex_app_server_protocol::AuthMode;
 use codex_model_provider::BearerAuthProvider;
+use codex_model_provider::create_model_provider;
 use codex_model_provider_info::WireApi;
 use codex_model_provider_info::create_oss_provider_with_base_url;
 use codex_otel::SessionTelemetry;
@@ -308,6 +310,10 @@ async fn summarize_memories_returns_empty_for_empty_input() {
 
     let output = client
         .summarize_memories(
+            &ApiClientFactory::new(create_model_provider(
+                create_oss_provider_with_base_url("https://example.com/v1", WireApi::Responses),
+                /*auth_manager*/ None,
+            )),
             Vec::new(),
             &model_info,
             /*effort*/ None,

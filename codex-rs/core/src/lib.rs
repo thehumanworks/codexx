@@ -178,6 +178,8 @@ mod tasks;
 mod user_shell_command;
 pub mod util;
 
+pub use client::ApiClient;
+pub use client::ApiClientFactory;
 pub use client::ModelClient;
 pub use client::ModelClientSession;
 pub use client::X_CODEX_INSTALLATION_ID_HEADER;

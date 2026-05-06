@@ -164,6 +164,7 @@ use tracing::instrument;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::client::ApiClientFactory;
 use crate::client::ModelClient;
 use crate::codex_thread::ThreadConfigSnapshot;
 use crate::compact::collect_user_messages;
@@ -307,6 +308,7 @@ use codex_git_utils::get_git_repo_root;
 use codex_mcp::compute_auth_statuses;
 use codex_mcp::host_owned_codex_apps_enabled;
 use codex_mcp::with_codex_apps_mcp;
+use codex_model_provider::create_model_provider;
 use codex_otel::SessionTelemetry;
 use codex_otel::THREAD_STARTED_METRIC;
 use codex_otel::TelemetryAuthMode;

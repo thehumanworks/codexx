@@ -1,3 +1,4 @@
+use crate::client::ApiClientFactory;
 use crate::client::ModelClient;
 use crate::realtime_context::build_realtime_startup_context;
 use crate::realtime_prompt::prepare_realtime_backend_prompt;
@@ -229,6 +230,7 @@ struct RealtimeStart {
     extra_headers: Option<HeaderMap>,
     session_config: RealtimeSessionConfig,
     model_client: ModelClient,
+    api_client_factory: ApiClientFactory,
     sdp: Option<String>,
 }
 
@@ -281,6 +283,7 @@ impl RealtimeConversationManager {
             extra_headers,
             session_config,
             model_client,
+            api_client_factory,
             sdp,
         } = start;
         let event_parser = session_config.event_parser;
@@ -310,6 +313,7 @@ impl RealtimeConversationManager {
         let (task, sdp) = if let Some(sdp) = sdp {
             let call = model_client
                 .create_realtime_call_with_headers(
+                    &api_client_factory,
                     sdp,
                     session_config.clone(),
                     extra_headers.unwrap_or_default(),
@@ -789,6 +793,7 @@ async fn handle_start_inner(
         extra_headers,
         session_config,
         model_client: sess.services.model_client.clone(),
+        api_client_factory: sess.services.api_client_factory.clone(),
         sdp,
     };
     let start_output = sess.conversation.start(start).await?;

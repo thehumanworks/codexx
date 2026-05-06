@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use crate::SkillsManager;
 use crate::agent::AgentControl;
+use crate::client::ApiClientFactory;
 use crate::client::ModelClient;
 use crate::config::StartedNetworkProxy;
 use crate::exec_policy::ExecPolicyManager;
@@ -66,6 +67,8 @@ pub(crate) struct SessionServices {
     pub(crate) thread_store: Arc<dyn ThreadStore>,
     /// Session-scoped model client shared across turns.
     pub(crate) model_client: ModelClient,
+    /// Factory used to construct codex-api clients from the session's current auth/provider state.
+    pub(crate) api_client_factory: ApiClientFactory,
     pub(crate) code_mode_service: CodeModeService,
     /// Shared process-level environment registry. Sessions carry an `Arc` handle so they can pass
     /// the same manager through child-thread spawn paths without reconstructing it.

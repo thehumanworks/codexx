@@ -169,6 +169,7 @@ async fn run_remote_compact_task_inner_impl(
         .services
         .model_client
         .compact_conversation_history(
+            &sess.services.api_client_factory,
             &prompt,
             &turn_context.model_info,
             CompactConversationRequestSettings {

@@ -795,6 +795,22 @@ impl Session {
                 SessionId::from(thread_id)
             };
             let agent_control = agent_control.with_session_id(session_id);
+            let model_provider = create_model_provider(
+                session_configuration.provider.clone(),
+                Some(Arc::clone(&auth_manager)),
+            );
+            let api_client_factory = ApiClientFactory::new(Arc::clone(&model_provider));
+            let model_client = ModelClient::from_model_provider(
+                model_provider,
+                session_id,
+                thread_id,
+                installation_id.clone(),
+                session_configuration.session_source.clone(),
+                config.model_verbosity,
+                config.features.enabled(Feature::EnableRequestCompression),
+                config.features.enabled(Feature::RuntimeMetrics),
+                Self::build_model_client_beta_features_header(config.as_ref()),
+            );
             let services = SessionServices {
                 // Initialize the MCP connection manager with an uninitialized
                 // instance. It will be replaced with one created via
@@ -836,18 +852,8 @@ impl Session {
                 state_db: state_db_ctx.clone(),
                 live_thread: live_thread_init.as_ref().cloned(),
                 thread_store: Arc::clone(&thread_store),
-                model_client: ModelClient::new(
-                    Some(Arc::clone(&auth_manager)),
-                    session_id,
-                    thread_id,
-                    installation_id.clone(),
-                    session_configuration.provider.clone(),
-                    session_configuration.session_source.clone(),
-                    config.model_verbosity,
-                    config.features.enabled(Feature::EnableRequestCompression),
-                    config.features.enabled(Feature::RuntimeMetrics),
-                    Self::build_model_client_beta_features_header(config.as_ref()),
-                ),
+                model_client,
+                api_client_factory,
                 code_mode_service: crate::tools::code_mode::CodeModeService::new(),
                 environment_manager,
             };

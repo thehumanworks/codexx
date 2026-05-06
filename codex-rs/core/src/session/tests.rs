@@ -3710,6 +3710,22 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .expect("create environment"),
     );
 
+    let model_provider = create_model_provider(
+        session_configuration.provider.clone(),
+        Some(auth_manager.clone()),
+    );
+    let api_client_factory = ApiClientFactory::new(Arc::clone(&model_provider));
+    let model_client = ModelClient::from_model_provider(
+        model_provider,
+        thread_id.into(),
+        thread_id,
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        session_configuration.session_source.clone(),
+        config.model_verbosity,
+        config.features.enabled(Feature::EnableRequestCompression),
+        config.features.enabled(Feature::RuntimeMetrics),
+        Session::build_model_client_beta_features_header(config.as_ref()),
+    );
     let services = SessionServices {
         mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::new_uninitialized(
             &config.permissions.approval_policy,
@@ -3759,18 +3775,8 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
             .await
             .expect("state db should initialize"),
         )),
-        model_client: ModelClient::new(
-            Some(auth_manager.clone()),
-            thread_id.into(),
-            thread_id,
-            /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
-            session_configuration.provider.clone(),
-            session_configuration.session_source.clone(),
-            config.model_verbosity,
-            config.features.enabled(Feature::EnableRequestCompression),
-            config.features.enabled(Feature::RuntimeMetrics),
-            Session::build_model_client_beta_features_header(config.as_ref()),
-        ),
+        model_client,
+        api_client_factory,
         code_mode_service: crate::tools::code_mode::CodeModeService::new(),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
@@ -5397,6 +5403,22 @@ where
     )
     .await
     .expect("state db should initialize");
+    let model_provider = create_model_provider(
+        session_configuration.provider.clone(),
+        Some(Arc::clone(&auth_manager)),
+    );
+    let api_client_factory = ApiClientFactory::new(Arc::clone(&model_provider));
+    let model_client = ModelClient::from_model_provider(
+        model_provider,
+        thread_id.into(),
+        thread_id,
+        /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
+        session_configuration.session_source.clone(),
+        config.model_verbosity,
+        config.features.enabled(Feature::EnableRequestCompression),
+        config.features.enabled(Feature::RuntimeMetrics),
+        Session::build_model_client_beta_features_header(config.as_ref()),
+    );
     let services = SessionServices {
         mcp_connection_manager: Arc::new(RwLock::new(McpConnectionManager::new_uninitialized(
             &config.permissions.approval_policy,
@@ -5441,18 +5463,8 @@ where
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
             state_db,
         )),
-        model_client: ModelClient::new(
-            Some(Arc::clone(&auth_manager)),
-            thread_id.into(),
-            thread_id,
-            /*installation_id*/ "11111111-1111-4111-8111-111111111111".to_string(),
-            session_configuration.provider.clone(),
-            session_configuration.session_source.clone(),
-            config.model_verbosity,
-            config.features.enabled(Feature::EnableRequestCompression),
-            config.features.enabled(Feature::RuntimeMetrics),
-            Session::build_model_client_beta_features_header(config.as_ref()),
-        ),
+        model_client,
+        api_client_factory,
         code_mode_service: crate::tools::code_mode::CodeModeService::new(),
         environment_manager: Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
     };
