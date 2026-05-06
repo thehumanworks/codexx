@@ -4305,6 +4305,35 @@ async fn to_mcp_config_omits_builtin_mcps_when_feature_is_disabled() -> std::io:
 }
 
 #[tokio::test]
+async fn to_mcp_config_reserves_builtin_mcp_names_when_feature_is_disabled() -> std::io::Result<()>
+{
+    let codex_home = TempDir::new()?;
+    let config = Config::load_from_base_config_with_overrides(
+        ConfigToml {
+            mcp_servers: HashMap::from([(
+                codex_mcp::MEMORIES_MCP_SERVER_NAME.to_string(),
+                http_mcp("https://user.example/memories"),
+            )]),
+            ..ConfigToml::default()
+        },
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+    let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
+
+    let mcp_config = config.to_mcp_config(&plugins_manager).await;
+
+    assert!(
+        !mcp_config
+            .configured_mcp_servers
+            .contains_key(codex_mcp::MEMORIES_MCP_SERVER_NAME)
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn to_mcp_config_reserves_enabled_builtin_mcp_names() -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let mut config = Config::load_from_base_config_with_overrides(

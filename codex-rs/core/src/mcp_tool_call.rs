@@ -42,6 +42,7 @@ use codex_features::Feature;
 use codex_hooks::PermissionRequestDecision;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
 use codex_mcp::MCP_TOOL_CODEX_APPS_META_KEY;
+use codex_mcp::MEMORIES_MCP_SERVER_NAME;
 use codex_mcp::McpPermissionPromptAutoApproveContext;
 use codex_mcp::SandboxState;
 use codex_mcp::auth_elicitation_completed_result;
@@ -310,9 +311,9 @@ async fn handle_approved_mcp_tool_call(
     request_meta: Option<JsonValue>,
     mcp_app_resource_uri: Option<String>,
 ) -> HandledMcpToolCall {
-    maybe_mark_thread_memory_mode_polluted(sess, turn_context).await;
-
     let server = invocation.server.clone();
+    maybe_mark_thread_memory_mode_polluted(sess, turn_context, &server).await;
+
     let tool_name = invocation.tool.clone();
     let arguments_value = invocation.arguments.clone();
     let connector_id = metadata.and_then(|metadata| metadata.connector_id.as_deref());
@@ -738,8 +739,14 @@ async fn augment_mcp_tool_request_meta_with_sandbox_state(
     Ok(meta)
 }
 
-async fn maybe_mark_thread_memory_mode_polluted(sess: &Session, turn_context: &TurnContext) {
-    if !turn_context.config.memories.disable_on_external_context {
+async fn maybe_mark_thread_memory_mode_polluted(
+    sess: &Session,
+    turn_context: &TurnContext,
+    server_name: &str,
+) {
+    if !turn_context.config.memories.disable_on_external_context
+        || !mcp_tool_call_may_include_external_context(server_name)
+    {
         return;
     }
     state_db::mark_thread_memory_mode_polluted(
@@ -748,6 +755,10 @@ async fn maybe_mark_thread_memory_mode_polluted(sess: &Session, turn_context: &T
         "mcp_tool_call",
     )
     .await;
+}
+
+fn mcp_tool_call_may_include_external_context(server_name: &str) -> bool {
+    server_name != MEMORIES_MCP_SERVER_NAME
 }
 
 fn sanitize_mcp_tool_result_for_model(

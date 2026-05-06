@@ -1129,6 +1129,14 @@ async fn install_host_owned_codex_apps_manager(session: &Session, turn_context: 
     *session.services.mcp_connection_manager.write().await = manager;
 }
 
+#[test]
+fn memories_mcp_call_does_not_include_external_context() {
+    assert!(!mcp_tool_call_may_include_external_context(
+        MEMORIES_MCP_SERVER_NAME
+    ));
+    assert!(mcp_tool_call_may_include_external_context("external"));
+}
+
 #[tokio::test]
 async fn codex_apps_auth_elicitation_feature_disabled_returns_original_result() {
     let (session, turn_context, rx_event) = make_session_and_context_with_rx().await;

@@ -1097,6 +1097,8 @@ impl Config {
                 && self.memories.use_memories,
         });
         let mut configured_mcp_servers = self.mcp_servers.get().clone();
+        // Built-in server names are reserved even when the built-in itself is disabled.
+        configured_mcp_servers.remove(codex_mcp::MEMORIES_MCP_SERVER_NAME);
         for plugin in loaded_plugins
             .plugins()
             .iter()
@@ -1109,6 +1111,9 @@ impl Config {
                 self.config_layer_stack.requirements().plugins.as_ref(),
             );
             for (name, plugin_server) in plugin_mcp_servers {
+                if name == codex_mcp::MEMORIES_MCP_SERVER_NAME {
+                    continue;
+                }
                 configured_mcp_servers.entry(name).or_insert(plugin_server);
             }
         }
