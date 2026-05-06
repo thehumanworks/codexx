@@ -1833,6 +1833,13 @@
         },
         {
           "properties": {
+            "computer_use_native_app_bundle_id": {
+              "default": null,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "name": {
               "type": "string"
             },
