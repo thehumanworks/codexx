@@ -17,8 +17,7 @@ description: Create and scaffold plugin directories for Codex with a required `.
 python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py <plugin-name>
 ```
 
-2. Open `<plugin-path>/.codex-plugin/plugin.json` and replace `[TODO: ...]` placeholders only
-   with real values from the user. Ask for needed values, and leave irrelevant fields blank.
+2. Open `<plugin-path>/.codex-plugin/plugin.json` and replace `[TODO: ...]` placeholders.
 
 3. Generate or update the repo marketplace entry when the plugin should appear in Codex UI ordering:
 
@@ -50,15 +49,10 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
 - If the user has not made the plugin location explicit, ask whether they want a repo-local plugin or a home-local plugin before generating marketplace entries.
 - Creates plugin root at `/<parent-plugin-directory>/<plugin-name>/`.
 - Always creates `/<parent-plugin-directory>/<plugin-name>/.codex-plugin/plugin.json`.
-- The scaffold script may create a broad manifest template. After running it, edit
-  `.codex-plugin/plugin.json` so optional metadata reflects real user input:
-  - keep `"name"`
-  - keep component paths such as `"skills"`, `"mcpServers"`, or `"apps"` only when the matching files or directories exist
-  - ask the user for real description, version, and interface metadata before filling them
-  - leave irrelevant or unknown optional fields blank rather than inventing author, URL, license, prompt, icon, logo, or screenshot metadata
+- Fills the manifest with the full schema shape, placeholder values, and the complete `interface` section.
 - For local testing after scaffold creation, use `plugin-sideload`; it installs the plugin into the temporary `$CODEX_HOME/plugins/cache` development cache.
 - Creates or updates `<repo-root>/.agents/plugins/marketplace.json` when `--with-marketplace` is set.
-  - If the marketplace file does not exist yet, replace placeholder top-level marketplace metadata with real values, or ask the user before leaving the file as part of the result.
+  - If the marketplace file does not exist yet, seed top-level `name` plus `interface.displayName` placeholders before adding the first plugin entry.
 - `<plugin-name>` is normalized using skill-creator naming rules:
   - `My Plugin` → `my-plugin`
   - `My--Plugin` → `my-plugin`
@@ -145,8 +139,7 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
 
 - Outer folder name and `plugin.json` `"name"` are always the same normalized plugin name.
 - Do not remove required structure; keep `.codex-plugin/plugin.json` present.
-- Before replacing placeholder optional metadata, ask the user for the real value or leave the field blank when it is not relevant.
-- Do not replace placeholders with invented values.
+- Keep manifest values as placeholders until a human or follow-up step explicitly fills them.
 - If creating files inside an existing plugin path, use `--force` only when overwrite is intentional.
 - Preserve any existing marketplace `interface.displayName`.
 - When generating marketplace entries, always write `policy.installation`, `policy.authentication`, and `category` even if their values are defaults.
