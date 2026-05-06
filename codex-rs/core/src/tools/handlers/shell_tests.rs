@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use codex_protocol::models::ShellCommandToolCallParams;
+use codex_protocol::models::ShellToolCallParams;
 use core_test_support::PathBufExt;
 use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
@@ -16,8 +17,10 @@ use crate::tools::context::FunctionToolOutput;
 use crate::tools::context::ToolCallSource;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolPayload;
+use crate::tools::handlers::ContainerExecHandler;
 use crate::tools::handlers::LocalShellHandler;
 use crate::tools::handlers::ShellCommandHandler;
+use crate::tools::handlers::ShellHandler;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::registry::ToolHandler;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -266,6 +269,106 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
             tool_name: HookToolName::bash(),
             tool_input: json!({ "command": "printf shell command" }),
         })
+    );
+}
+
+#[tokio::test]
+async fn shell_handler_rewrites_hook_command_back_to_argv() {
+    let payload = ToolPayload::Function {
+        arguments: json!({
+            "command": ["bash", "-lc", "printf old"],
+            "workdir": "subdir",
+        })
+        .to_string(),
+    };
+    let (session, turn) = make_session_and_context().await;
+    let handler = ShellHandler;
+
+    let invocation = handler
+        .with_updated_hook_input(
+            ToolInvocation {
+                session: session.into(),
+                turn: turn.into(),
+                cancellation_token: tokio_util::sync::CancellationToken::new(),
+                tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+                call_id: "call-43".to_string(),
+                tool_name: codex_tools::ToolName::plain("shell"),
+                source: ToolCallSource::Direct,
+                payload,
+            },
+            json!({ "command": "bash -lc 'printf new'" }),
+        )
+        .expect("shell rewrite should succeed");
+
+    let ToolPayload::Function { arguments } = invocation.payload else {
+        panic!("shell rewrite should preserve a function payload");
+    };
+    assert_eq!(
+        serde_json::from_str::<ShellToolCallParams>(&arguments)
+            .expect("rewritten shell arguments should parse"),
+        ShellToolCallParams {
+            command: vec![
+                "bash".to_string(),
+                "-lc".to_string(),
+                "printf new".to_string(),
+            ],
+            workdir: Some("subdir".to_string()),
+            timeout_ms: None,
+            sandbox_permissions: None,
+            additional_permissions: None,
+            prefix_rule: None,
+            justification: None,
+        }
+    );
+}
+
+#[tokio::test]
+async fn container_exec_handler_rewrites_hook_command_back_to_argv() {
+    let payload = ToolPayload::Function {
+        arguments: json!({
+            "command": ["bash", "-lc", "printf old"],
+            "workdir": "subdir",
+        })
+        .to_string(),
+    };
+    let (session, turn) = make_session_and_context().await;
+    let handler = ContainerExecHandler;
+
+    let invocation = handler
+        .with_updated_hook_input(
+            ToolInvocation {
+                session: session.into(),
+                turn: turn.into(),
+                cancellation_token: tokio_util::sync::CancellationToken::new(),
+                tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
+                call_id: "call-44".to_string(),
+                tool_name: codex_tools::ToolName::plain("container.exec"),
+                source: ToolCallSource::Direct,
+                payload,
+            },
+            json!({ "command": "bash -lc 'printf new'" }),
+        )
+        .expect("container.exec rewrite should succeed");
+
+    let ToolPayload::Function { arguments } = invocation.payload else {
+        panic!("container.exec rewrite should preserve a function payload");
+    };
+    assert_eq!(
+        serde_json::from_str::<ShellToolCallParams>(&arguments)
+            .expect("rewritten container.exec arguments should parse"),
+        ShellToolCallParams {
+            command: vec![
+                "bash".to_string(),
+                "-lc".to_string(),
+                "printf new".to_string(),
+            ],
+            workdir: Some("subdir".to_string()),
+            timeout_ms: None,
+            sandbox_permissions: None,
+            additional_permissions: None,
+            prefix_rule: None,
+            justification: None,
+        }
     );
 }
 
