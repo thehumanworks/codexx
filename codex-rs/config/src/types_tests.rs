@@ -2,6 +2,26 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn windows_sandbox_mode_accepts_legacy_wsl2_alias_case_insensitively() {
+    let mode: WindowsSandboxModeToml =
+        toml::from_str("\"wsL2\"").expect("should deserialize legacy WSL2 alias");
+
+    assert_eq!(mode, WindowsSandboxModeToml::Unelevated);
+}
+
+#[test]
+fn windows_sandbox_mode_rejects_unknown_values() {
+    let err = toml::from_str::<WindowsSandboxModeToml>("\"sandboxie\"")
+        .expect_err("unknown sandbox values should be rejected");
+
+    assert!(
+        err.to_string()
+            .contains("expected `elevated`, `unelevated`, or legacy alias `wsl2`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
 fn deserialize_skill_config_with_name_selector() {
     let cfg: SkillConfig = toml::from_str(
         r#"

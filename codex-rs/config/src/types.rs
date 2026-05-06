@@ -27,6 +27,8 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use serde::de::Error as _;
+use std::str::FromStr;
 
 pub use crate::tui_keymap::KeybindingSpec;
 pub use crate::tui_keymap::KeybindingsSpec;
@@ -111,11 +113,34 @@ pub enum OAuthCredentialsStoreMode {
     Keyring,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum WindowsSandboxModeToml {
     Elevated,
     Unelevated,
+}
+
+impl FromStr for WindowsSandboxModeToml {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "elevated" => Ok(Self::Elevated),
+            "unelevated" | "wsl2" => Ok(Self::Unelevated),
+            _ => Err("expected `elevated`, `unelevated`, or legacy alias `wsl2`"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for WindowsSandboxModeToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Self::from_str(&value).map_err(D::Error::custom)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
