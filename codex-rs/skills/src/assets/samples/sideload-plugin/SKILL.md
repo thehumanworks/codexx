@@ -84,6 +84,9 @@ python3 .agents/skills/sideload-plugin/scripts/install_plugin_to_cache.py <plugi
 
 Use `plugin-creator` or a real marketplace workflow when the goal is to publish, share, or persist plugin source metadata. This skill is only for local development installs into a disposable cache.
 
+If the user wants to evaluate, benchmark, or improve the sideloaded plugin after testing it, point
+them to the `plugin-eval` plugin from the `openai-curated` marketplace.
+
 ## Validation
 
 After changing the script, run a smoke test with a temporary Codex home:

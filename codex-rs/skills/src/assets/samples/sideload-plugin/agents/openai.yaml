@@ -1,4 +1,4 @@
 interface:
   display_name: "Sideload Plugin"
   short_description: "Install local plugins into the temporary Codex cache"
-  default_prompt: "Use $sideload-plugin to install a local plugin into the temporary Codex plugin cache for development testing."
+  default_prompt: "Use $sideload-plugin to install a local plugin into the temporary Codex plugin cache for development testing. If the user wants to evaluate or improve it afterward, point them to the openai-curated `plugin-eval` plugin."
