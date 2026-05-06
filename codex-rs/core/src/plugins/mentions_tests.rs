@@ -109,7 +109,7 @@ fn collect_explicit_plugin_mentions_from_structured_paths() {
         mentioned,
         vec![explicit_plugin_mention(
             plugin("sample@test", "sample"),
-            false,
+            /*has_computer_use_native_fallback*/ false,
         )]
     );
 }
@@ -130,7 +130,7 @@ fn collect_explicit_plugin_mentions_from_linked_text_mentions() {
         mentioned,
         vec![explicit_plugin_mention(
             plugin("sample@test", "sample"),
-            false,
+            /*has_computer_use_native_fallback*/ false,
         )]
     );
 }
@@ -158,7 +158,7 @@ fn collect_explicit_plugin_mentions_dedupes_structured_and_linked_mentions() {
         mentioned,
         vec![explicit_plugin_mention(
             plugin("sample@test", "sample"),
-            false,
+            /*has_computer_use_native_fallback*/ false,
         )]
     );
 }
@@ -198,10 +198,15 @@ fn collect_explicit_plugin_mentions_marks_structured_native_fallbacks() {
             path: "plugin://zoom@test".to_string(),
             computer_use_native_app_bundle_id: Some("us.zoom.xos".to_string()),
         }],
-        &[zoom.clone()],
+        std::slice::from_ref(&zoom),
     );
 
-    assert_eq!(mentioned, vec![explicit_plugin_mention(zoom, true)]);
+    assert_eq!(
+        mentioned,
+        vec![explicit_plugin_mention(
+            zoom, /*has_computer_use_native_fallback*/ true
+        )]
+    );
 }
 
 #[test]
@@ -221,8 +226,11 @@ fn collect_explicit_plugin_mentions_preserves_computer_use_context_for_native_fa
     assert_eq!(
         mentioned,
         vec![
-            explicit_plugin_mention(zoom, true),
-            explicit_plugin_mention(computer_use, false),
+            explicit_plugin_mention(zoom, /*has_computer_use_native_fallback*/ true),
+            explicit_plugin_mention(
+                computer_use,
+                /*has_computer_use_native_fallback*/ false
+            ),
         ]
     );
 }
@@ -237,8 +245,13 @@ fn collect_explicit_plugin_mentions_ignores_empty_native_fallback_markers() {
             path: "plugin://zoom@test".to_string(),
             computer_use_native_app_bundle_id: Some("   ".to_string()),
         }],
-        &[zoom.clone()],
+        std::slice::from_ref(&zoom),
     );
 
-    assert_eq!(mentioned, vec![explicit_plugin_mention(zoom, false)]);
+    assert_eq!(
+        mentioned,
+        vec![explicit_plugin_mention(
+            zoom, /*has_computer_use_native_fallback*/ false
+        )]
+    );
 }

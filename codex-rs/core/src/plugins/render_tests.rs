@@ -32,7 +32,7 @@ fn render_explicit_plugin_instructions_mentions_native_app_fallback() {
         },
         &[],
         &[],
-        true,
+        /*has_computer_use_native_fallback*/ true,
     )
     .expect("native app fallback should render instructions");
 
@@ -52,7 +52,7 @@ fn render_explicit_plugin_instructions_omits_native_app_fallback_without_deduped
         },
         &[],
         &[],
-        false,
+        /*has_computer_use_native_fallback*/ false,
     )
     .expect("skill guidance should still render instructions");
 
