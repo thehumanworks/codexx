@@ -1031,7 +1031,7 @@ async fn danger_full_access_tool_attempts_do_not_enforce_managed_network() -> an
     orchestrator
         .run(
             &mut tool,
-            &(),
+            (),
             &tool_ctx,
             turn.as_ref(),
             AskForApproval::Never,

@@ -456,6 +456,16 @@ if mode == "allow":
             "decision": {{"behavior": "allow"}}
         }}
     }}))
+elif mode == "allow_update":
+    print(json.dumps({{
+        "hookSpecificOutput": {{
+            "hookEventName": "PermissionRequest",
+            "decision": {{
+                "behavior": "allow",
+                "updatedInput": {{"command": reason}}
+            }}
+        }}
+    }}))
 elif mode == "deny":
     print(json.dumps({{
         "hookSpecificOutput": {{
@@ -1550,6 +1560,82 @@ async fn permission_request_hook_allows_shell_command_without_user_approval() ->
             .as_str()
             .is_some_and(|turn_id| !turn_id.is_empty())
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn permission_request_hook_rewrites_shell_command_before_normal_approval() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let call_id = "permissionrequest-shell-command-rewrite";
+    let original_marker = std::env::temp_dir().join("permissionrequest-original-marker");
+    let original_command = format!("rm -f {}", original_marker.display());
+    let rewritten_command = "echo rewritten-by-permission-request".to_string();
+    let args = serde_json::json!({ "command": original_command });
+    let responses = mount_sse_sequence(
+        &server,
+        vec![
+            sse(vec![
+                ev_response_created("resp-1"),
+                core_test_support::responses::ev_function_call(
+                    call_id,
+                    "shell_command",
+                    &serde_json::to_string(&args)?,
+                ),
+                ev_completed("resp-1"),
+            ]),
+            sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-1", "permission request hook rewrote it"),
+                ev_completed("resp-2"),
+            ]),
+        ],
+    )
+    .await;
+
+    let rewritten_command_for_hook = rewritten_command.clone();
+    let mut builder = test_codex()
+        .with_pre_build_hook(move |home| {
+            if let Err(error) = write_permission_request_hook(
+                home,
+                Some(PERMISSION_REQUEST_HOOK_MATCHER),
+                "allow_update",
+                &rewritten_command_for_hook,
+            ) {
+                panic!("failed to write permission request hook test fixture: {error}");
+            }
+        })
+        .with_config(trust_discovered_hooks);
+    let test = builder.build(&server).await?;
+
+    fs::write(&original_marker, "seed").context("create original permission request marker")?;
+    test.submit_turn_with_approval_and_permission_profile(
+        "run the shell command after hook rewrite",
+        AskForApproval::OnRequest,
+        PermissionProfile::Disabled,
+    )
+    .await?;
+
+    let requests = responses.requests();
+    assert_eq!(requests.len(), 2);
+    let output_item = requests[1].function_call_output(call_id);
+    let output = output_item
+        .get("output")
+        .and_then(Value::as_str)
+        .expect("shell command output string");
+    assert!(
+        original_marker.exists(),
+        "original command should not execute after hook rewrite"
+    );
+    assert!(output.contains("rewritten-by-permission-request"));
+
+    assert_single_permission_request_hook_input(
+        test.codex_home_path(),
+        &original_command,
+        /*description*/ None,
+    )?;
 
     Ok(())
 }

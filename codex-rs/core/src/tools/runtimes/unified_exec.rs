@@ -42,12 +42,14 @@ use codex_network_proxy::NetworkProxy;
 use codex_protocol::error::CodexErr;
 use codex_protocol::error::SandboxErr;
 use codex_protocol::models::AdditionalPermissionProfile;
+use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_tools::UnifiedExecShellMode;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -71,6 +73,7 @@ pub struct UnifiedExecRequest {
     #[cfg(unix)]
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
+    pub prefix_rule: Option<Vec<String>>,
     pub exec_approval_requirement: ExecApprovalRequirement,
 }
 
@@ -217,6 +220,62 @@ impl Approvable<UnifiedExecRequest> for UnifiedExecRuntime<'_> {
 }
 
 impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRuntime<'a> {
+    fn with_updated_permission_request_input<'b>(
+        &'b self,
+        req: &'b UnifiedExecRequest,
+        updated_input: Value,
+        ctx: &'b ToolCtx,
+        approval_policy: AskForApproval,
+    ) -> BoxFuture<'b, Result<UnifiedExecRequest, ToolError>> {
+        Box::pin(async move {
+            let command = updated_input
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    ToolError::Rejected(
+                        "PermissionRequest updatedInput must include string field `command`"
+                            .to_string(),
+                    )
+                })?;
+            let mut updated = req.clone();
+            updated.hook_command = command.to_string();
+            updated.justification = match updated_input.get("description") {
+                Some(Value::String(description)) => Some(description.clone()),
+                Some(_) => {
+                    return Err(ToolError::Rejected(
+                        "PermissionRequest updatedInput field `description` must be a string"
+                            .to_string(),
+                    ));
+                }
+                None => None,
+            };
+            let Some(script) = updated.command.last_mut() else {
+                return Err(ToolError::Rejected(
+                    "unified exec command args are empty".to_string(),
+                ));
+            };
+            *script = command.to_string();
+            let file_system_sandbox_policy = ctx.turn.file_system_sandbox_policy();
+            updated.exec_approval_requirement = ctx
+                .session
+                .services
+                .exec_policy
+                .create_exec_approval_requirement_for_command(
+                    crate::exec_policy::ExecApprovalRequest {
+                        command: &updated.command,
+                        approval_policy,
+                        permission_profile: ctx.turn.permission_profile(),
+                        file_system_sandbox_policy: &file_system_sandbox_policy,
+                        sandbox_cwd: updated.cwd.as_path(),
+                        sandbox_permissions: updated_exec_policy_sandbox_permissions(&updated),
+                        prefix_rule: updated.prefix_rule.clone(),
+                    },
+                )
+                .await;
+            Ok(updated)
+        })
+    }
+
     fn sandbox_cwd<'b>(&self, req: &'b UnifiedExecRequest) -> Option<&'b AbsolutePathBuf> {
         Some(&req.cwd)
     }
@@ -356,6 +415,15 @@ impl<'a> ToolRuntime<UnifiedExecRequest, UnifiedExecProcess> for UnifiedExecRunt
                 other => ToolError::Rejected(other.to_string()),
             })
     }
+}
+
+fn updated_exec_policy_sandbox_permissions(req: &UnifiedExecRequest) -> SandboxPermissions {
+    #[cfg(unix)]
+    if req.additional_permissions_preapproved {
+        return SandboxPermissions::UseDefault;
+    }
+
+    req.sandbox_permissions
 }
 
 #[cfg(test)]

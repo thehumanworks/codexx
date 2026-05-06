@@ -229,7 +229,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
             } else {
                 effective_additional_permissions.sandbox_permissions
             },
-            prefix_rule,
+            prefix_rule: prefix_rule.clone(),
         })
         .await;
 
@@ -247,6 +247,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
         additional_permissions_preapproved: effective_additional_permissions
             .permissions_preapproved,
         justification: exec_params.justification.clone(),
+        prefix_rule,
         exec_approval_requirement,
     };
     let mut orchestrator = ToolOrchestrator::new();
@@ -268,7 +269,7 @@ async fn run_exec_like(args: RunExecLikeArgs) -> Result<FunctionToolOutput, Func
     let out = orchestrator
         .run(
             &mut runtime,
-            &req,
+            req,
             &tool_ctx,
             &turn,
             turn.approval_policy.value(),

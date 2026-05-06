@@ -422,7 +422,7 @@ impl ToolHandler for ApplyPatchHandler {
                         let out = orchestrator
                             .run(
                                 &mut runtime,
-                                &req,
+                                req,
                                 &tool_ctx,
                                 turn.as_ref(),
                                 turn.approval_policy.value(),
@@ -530,7 +530,7 @@ pub(crate) async fn intercept_apply_patch(
                     let out = orchestrator
                         .run(
                             &mut runtime,
-                            &req,
+                            req,
                             &tool_ctx,
                             turn.as_ref(),
                             turn.approval_policy.value(),

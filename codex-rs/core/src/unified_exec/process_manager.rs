@@ -1034,6 +1034,7 @@ impl UnifiedExecProcessManager {
             #[cfg(unix)]
             additional_permissions_preapproved: request.additional_permissions_preapproved,
             justification: request.justification.clone(),
+            prefix_rule: request.prefix_rule.clone(),
             exec_approval_requirement,
         };
         let tool_ctx = ToolCtx {
@@ -1045,7 +1046,7 @@ impl UnifiedExecProcessManager {
         orchestrator
             .run(
                 &mut runtime,
-                &req,
+                req,
                 &tool_ctx,
                 &context.turn,
                 context.turn.approval_policy.value(),

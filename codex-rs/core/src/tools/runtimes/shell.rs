@@ -38,11 +38,13 @@ use crate::tools::sandboxing::with_cached_approval;
 use codex_network_proxy::NetworkProxy;
 use codex_protocol::exec_output::ExecToolCallOutput;
 use codex_protocol::models::AdditionalPermissionProfile;
+use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::ReviewDecision;
 use codex_sandboxing::SandboxablePreference;
 use codex_shell_command::powershell::prefix_powershell_script_with_utf8;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::future::BoxFuture;
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -59,6 +61,7 @@ pub struct ShellRequest {
     #[cfg(unix)]
     pub additional_permissions_preapproved: bool,
     pub justification: Option<String>,
+    pub prefix_rule: Option<Vec<String>>,
     pub exec_approval_requirement: ExecApprovalRequirement,
 }
 
@@ -215,6 +218,75 @@ impl Approvable<ShellRequest> for ShellRuntime {
 }
 
 impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
+    fn with_updated_permission_request_input<'a>(
+        &'a self,
+        req: &'a ShellRequest,
+        updated_input: Value,
+        ctx: &'a ToolCtx,
+        approval_policy: AskForApproval,
+    ) -> BoxFuture<'a, Result<ShellRequest, ToolError>> {
+        Box::pin(async move {
+            let command = updated_input
+                .get("command")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    ToolError::Rejected(
+                        "PermissionRequest updatedInput must include string field `command`"
+                            .to_string(),
+                    )
+                })?;
+            let mut updated = req.clone();
+            updated.hook_command = command.to_string();
+            updated.justification = match updated_input.get("description") {
+                Some(Value::String(description)) => Some(description.clone()),
+                Some(_) => {
+                    return Err(ToolError::Rejected(
+                        "PermissionRequest updatedInput field `description` must be a string"
+                            .to_string(),
+                    ));
+                }
+                None => None,
+            };
+            updated.command = match self.backend {
+                ShellRuntimeBackend::Generic => shlex::split(command).ok_or_else(|| {
+                    ToolError::Rejected(
+                        "PermissionRequest updatedInput contained an invalid shell command"
+                            .to_string(),
+                    )
+                })?,
+                ShellRuntimeBackend::ShellCommandClassic
+                | ShellRuntimeBackend::ShellCommandZshFork => {
+                    let mut command_argv = updated.command;
+                    let Some(script) = command_argv.last_mut() else {
+                        return Err(ToolError::Rejected(
+                            "shell command args are empty".to_string(),
+                        ));
+                    };
+                    *script = command.to_string();
+                    command_argv
+                }
+            };
+            let file_system_sandbox_policy = ctx.turn.file_system_sandbox_policy();
+            updated.exec_approval_requirement = ctx
+                .session
+                .services
+                .exec_policy
+                .create_exec_approval_requirement_for_command(
+                    crate::exec_policy::ExecApprovalRequest {
+                        command: &updated.command,
+                        approval_policy,
+                        permission_profile: ctx.turn.permission_profile(),
+                        file_system_sandbox_policy: &file_system_sandbox_policy,
+                        sandbox_cwd: updated.cwd.as_path(),
+                        sandbox_permissions: updated_exec_policy_sandbox_permissions(&updated),
+                        prefix_rule: updated.prefix_rule.clone(),
+                    },
+                )
+                .await;
+            Ok(updated)
+        })
+    }
+
     fn network_approval_spec(
         &self,
         req: &ShellRequest,
@@ -291,4 +363,13 @@ impl ToolRuntime<ShellRequest, ExecToolCallOutput> for ShellRuntime {
             .map_err(ToolError::Codex)?;
         Ok(out)
     }
+}
+
+fn updated_exec_policy_sandbox_permissions(req: &ShellRequest) -> SandboxPermissions {
+    #[cfg(unix)]
+    if req.additional_permissions_preapproved {
+        return SandboxPermissions::UseDefault;
+    }
+
+    req.sandbox_permissions
 }

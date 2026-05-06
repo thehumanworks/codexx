@@ -31,6 +31,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use futures::Future;
 use futures::future::BoxFuture;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
@@ -360,6 +361,26 @@ pub(crate) trait ToolRuntime<Req, Out>: Approvable<Req> + Sandboxable {
 
     fn sandbox_cwd<'a>(&self, _req: &'a Req) -> Option<&'a AbsolutePathBuf> {
         None
+    }
+
+    /// Rebuilds a typed request after a `PermissionRequest` hook replaces the
+    /// full hook-facing input object.
+    ///
+    /// Implementations should only support this when they can faithfully
+    /// reconstruct the request that will later be evaluated by the normal
+    /// policy / guardian / user approval path.
+    fn with_updated_permission_request_input<'a>(
+        &'a self,
+        _req: &'a Req,
+        _updated_input: Value,
+        _ctx: &'a ToolCtx,
+        _approval_policy: AskForApproval,
+    ) -> BoxFuture<'a, Result<Req, ToolError>> {
+        Box::pin(async {
+            Err(ToolError::Rejected(
+                "updatedInput is not supported for this PermissionRequest target".to_string(),
+            ))
+        })
     }
 
     async fn run(

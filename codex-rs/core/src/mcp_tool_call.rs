@@ -215,6 +215,7 @@ pub(crate) async fn handle_mcp_tool_call(
     )
     .await;
 
+    let mut invocation = invocation;
     if let Some(decision) = maybe_request_mcp_tool_approval(
         &sess,
         turn_context,
@@ -223,9 +224,28 @@ pub(crate) async fn handle_mcp_tool_call(
         &hook_tool_name,
         metadata.as_ref(),
         approval_mode,
+        /*evaluate_permission_request_hooks*/ true,
     )
     .await
     {
+        let decision = match decision {
+            McpToolApprovalDecision::AcceptWithUpdatedInput(updated_input) => {
+                invocation.arguments = Some(updated_input);
+                maybe_request_mcp_tool_approval(
+                    &sess,
+                    turn_context,
+                    &call_id,
+                    &invocation,
+                    &hook_tool_name,
+                    metadata.as_ref(),
+                    approval_mode,
+                    /*evaluate_permission_request_hooks*/ false,
+                )
+                .await
+                .unwrap_or(McpToolApprovalDecision::Accept)
+            }
+            decision => decision,
+        };
         let result = match decision {
             McpToolApprovalDecision::Accept
             | McpToolApprovalDecision::AcceptForSession
@@ -278,6 +298,9 @@ pub(crate) async fn handle_mcp_tool_call(
                     /*already_started*/ true,
                 )
                 .await
+            }
+            McpToolApprovalDecision::AcceptWithUpdatedInput(_) => {
+                unreachable!("updated MCP tool input should be re-approved before dispatch")
             }
         };
 
@@ -951,6 +974,7 @@ async fn maybe_track_codex_app_used(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum McpToolApprovalDecision {
     Accept,
+    AcceptWithUpdatedInput(JsonValue),
     AcceptForSession,
     AcceptAndRemember,
     Decline { message: Option<String> },
@@ -1139,6 +1163,7 @@ fn mcp_tool_approval_prompt_options(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn maybe_request_mcp_tool_approval(
     sess: &Arc<Session>,
     turn_context: &Arc<TurnContext>,
@@ -1147,6 +1172,7 @@ async fn maybe_request_mcp_tool_approval(
     hook_tool_name: &str,
     metadata: Option<&McpToolApprovalMetadata>,
     approval_mode: AppToolApproval,
+    evaluate_permission_request_hooks: bool,
 ) -> Option<McpToolApprovalDecision> {
     if mcp_permission_prompt_is_auto_approved(
         turn_context.approval_policy.value(),
@@ -1199,29 +1225,40 @@ async fn maybe_request_mcp_tool_approval(
         return Some(McpToolApprovalDecision::Accept);
     }
 
-    match run_permission_request_hooks(
-        sess,
-        turn_context,
-        call_id,
-        PermissionRequestPayload {
-            tool_name: HookToolName::new(hook_tool_name),
-            tool_input: invocation
-                .arguments
-                .clone()
-                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
-        },
-    )
-    .await
-    {
-        Some(PermissionRequestDecision::Allow) => {
-            return Some(McpToolApprovalDecision::Accept);
+    if evaluate_permission_request_hooks {
+        match run_permission_request_hooks(
+            sess,
+            turn_context,
+            call_id,
+            PermissionRequestPayload {
+                tool_name: HookToolName::new(hook_tool_name),
+                tool_input: invocation
+                    .arguments
+                    .clone()
+                    .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
+            },
+        )
+        .await
+        {
+            Some(PermissionRequestDecision::Allow {
+                updated_input: Some(updated_input),
+            }) => {
+                return Some(McpToolApprovalDecision::AcceptWithUpdatedInput(
+                    updated_input,
+                ));
+            }
+            Some(PermissionRequestDecision::Allow {
+                updated_input: None,
+            }) => {
+                return Some(McpToolApprovalDecision::Accept);
+            }
+            Some(PermissionRequestDecision::Deny { message }) => {
+                return Some(McpToolApprovalDecision::Decline {
+                    message: Some(message),
+                });
+            }
+            None => {}
         }
-        Some(PermissionRequestDecision::Deny { message }) => {
-            return Some(McpToolApprovalDecision::Decline {
-                message: Some(message),
-            });
-        }
-        None => {}
     }
 
     let tool_call_mcp_elicitation_enabled = turn_context
@@ -1967,6 +2004,7 @@ async fn apply_mcp_tool_approval_decision(
             }
         }
         McpToolApprovalDecision::Accept
+        | McpToolApprovalDecision::AcceptWithUpdatedInput(_)
         | McpToolApprovalDecision::Decline { .. }
         | McpToolApprovalDecision::Cancel
         | McpToolApprovalDecision::BlockedBySafetyMonitor(_) => {}
