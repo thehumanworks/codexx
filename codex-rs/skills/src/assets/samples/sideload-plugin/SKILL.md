@@ -5,7 +5,7 @@ description: Install a local Codex plugin into the temporary local Codex plugin 
 
 # Sideload Plugin
 
-Use this skill to copy a local plugin into Codex's local plugin cache so it can be tested in the current Codex installation.
+Use this skill to copy a local plugin into Codex's local plugin cache so it can be tested in the current Codex installation. A plugin directory by itself is not usable by Codex; it must be sideloaded like this or installed through a marketplace workflow first.
 
 This is a development workflow. The plugin cache is temporary runtime state under `$CODEX_HOME/plugins/cache` and can be overwritten, refreshed, deleted, or replaced by Codex at any time. Do not treat it as source storage, a publication mechanism, or a durable install location.
 

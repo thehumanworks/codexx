@@ -46,6 +46,9 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
 
 `<parent-plugin-directory>` is the directory where the plugin folder `<plugin-name>` will be created (for example `~/code/plugins`).
 
+Creating a plugin directory does not make the plugin usable by Codex yet. Codex can use it only
+after it is sideloaded for local testing or installed through a marketplace workflow.
+
 ## What this skill creates
 
 - If the user has not made the plugin location explicit, ask whether they want a repo-local plugin or a home-local plugin before generating marketplace entries.
@@ -148,6 +151,8 @@ python3 .agents/skills/plugin-creator/scripts/create_basic_plugin.py my-plugin -
 
 - Outer folder name and `plugin.json` `"name"` are always the same normalized plugin name.
 - Do not remove required structure; keep `.codex-plugin/plugin.json` present.
+- Make clear that a newly scaffolded plugin is not usable until it is sideloaded or installed from
+  a marketplace.
 - Prefer completing manifest metadata during scaffold creation when the value is supported by
   explicit user input or strong local context.
 - If a metadata value is still unknown, ask the user before replacing its placeholder; do not
