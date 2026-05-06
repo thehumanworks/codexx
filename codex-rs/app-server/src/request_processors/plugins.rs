@@ -487,7 +487,7 @@ impl PluginRequestProcessor {
             .map(|marketplace| marketplace.plugins.len())
             .sum::<usize>();
 
-        info!(
+        warn!(
             roots_count,
             total_ms = total_started_at.elapsed().as_millis(),
             load_config_ms,
