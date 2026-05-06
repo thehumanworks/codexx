@@ -184,22 +184,54 @@ impl LenientConfigToml {
         );
 
         if let Some(history) = &self.history {
-            history.push_invalid_enum_warnings(&mut warnings);
+            push_invalid_field(
+                &mut warnings,
+                &["history", "persistence"],
+                &history.persistence,
+            );
         }
         if let Some(shell_environment_policy) = &self.shell_environment_policy {
-            shell_environment_policy.push_invalid_enum_warnings(&mut warnings);
+            push_invalid_field(
+                &mut warnings,
+                &["shell_environment_policy", "inherit"],
+                &shell_environment_policy.inherit,
+            );
         }
-        if let Some(tools) = &self.tools {
-            tools.push_invalid_enum_warnings(&mut warnings, &["tools"]);
+        if let Some(tools) = &self.tools
+            && let Some(web_search) = &tools.web_search
+        {
+            push_invalid_field(
+                &mut warnings,
+                &["tools", "web_search", "context_size"],
+                &web_search.context_size,
+            );
         }
         if let Some(tui) = &self.tui {
-            tui.push_invalid_enum_warnings(&mut warnings);
+            push_invalid_field(&mut warnings, &["tui", "notifications"], &tui.notifications);
+            push_invalid_field(&mut warnings, &["tui", "notification_method"], &tui.method);
+            push_invalid_field(
+                &mut warnings,
+                &["tui", "notification_condition"],
+                &tui.condition,
+            );
+            push_invalid_field(
+                &mut warnings,
+                &["tui", "alternate_screen"],
+                &tui.alternate_screen,
+            );
         }
         if let Some(realtime) = &self.realtime {
-            realtime.push_invalid_enum_warnings(&mut warnings);
+            push_invalid_field(&mut warnings, &["realtime", "version"], &realtime.version);
+            push_invalid_field(&mut warnings, &["realtime", "type"], &realtime.session_type);
+            push_invalid_field(
+                &mut warnings,
+                &["realtime", "transport"],
+                &realtime.transport,
+            );
+            push_invalid_field(&mut warnings, &["realtime", "voice"], &realtime.voice);
         }
         if let Some(windows) = &self.windows {
-            windows.push_invalid_enum_warnings(&mut warnings);
+            push_invalid_field(&mut warnings, &["windows", "sandbox"], &windows.sandbox);
         }
         let mut profiles = self.profiles.iter().collect::<Vec<_>>();
         profiles.sort_by(|(left, _), (right, _)| left.cmp(right));
@@ -243,14 +275,20 @@ impl LenientConfigProfile {
             personality,
             web_search
         );
-        if let Some(tools) = &self.tools {
-            let segments = ["profiles", profile, "tools"];
-            tools.push_invalid_enum_warnings(warnings, &segments);
+        if let Some(tools) = &self.tools
+            && let Some(web_search) = &tools.web_search
+        {
+            push_invalid_field(
+                warnings,
+                &["profiles", profile, "tools", "web_search", "context_size"],
+                &web_search.context_size,
+            );
         }
         if let Some(windows) = &self.windows {
-            windows.push_invalid_enum_warnings_with_prefix(
+            push_invalid_field(
                 warnings,
-                &["profiles", profile, "windows"],
+                &["profiles", profile, "windows", "sandbox"],
+                &windows.sandbox,
             );
         }
     }
@@ -262,26 +300,10 @@ struct LenientHistory {
     persistence: Option<Lenient<HistoryPersistence>>,
 }
 
-impl LenientHistory {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(warnings, &["history", "persistence"], &self.persistence);
-    }
-}
-
 /// Sparse mirror of `[shell_environment_policy]` for enum handling.
 #[derive(Deserialize, Default)]
 struct LenientShellEnvironmentPolicyToml {
     inherit: Option<Lenient<ShellEnvironmentPolicyInherit>>,
-}
-
-impl LenientShellEnvironmentPolicyToml {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(
-            warnings,
-            &["shell_environment_policy", "inherit"],
-            &self.inherit,
-        );
-    }
 }
 
 /// Sparse mirror of `[tools]` for enum-valued nested tool settings.
@@ -291,37 +313,10 @@ struct LenientToolsToml {
     web_search: Option<LenientWebSearchToolConfig>,
 }
 
-impl LenientToolsToml {
-    fn push_invalid_enum_warnings(
-        &self,
-        warnings: &mut Vec<InvalidEnumWarning>,
-        segment_prefix: &[&str],
-    ) {
-        let Some(web_search) = &self.web_search else {
-            return;
-        };
-        web_search.push_invalid_enum_warnings(warnings, segment_prefix);
-    }
-}
-
 /// Sparse mirror of `WebSearchToolConfig` for `context_size`.
 #[derive(Deserialize)]
 struct LenientWebSearchToolConfig {
     context_size: Option<Lenient<WebSearchContextSize>>,
-}
-
-impl LenientWebSearchToolConfig {
-    fn push_invalid_enum_warnings(
-        &self,
-        warnings: &mut Vec<InvalidEnumWarning>,
-        segment_prefix: &[&str],
-    ) {
-        push_invalid_field(
-            warnings,
-            &segments_with_suffix(segment_prefix, &["web_search", "context_size"]),
-            &self.context_size,
-        );
-    }
 }
 
 /// Reads `tools.web_search` only when it is a table.
@@ -356,23 +351,6 @@ struct LenientTui {
     alternate_screen: Option<Lenient<AltScreenMode>>,
 }
 
-impl LenientTui {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(warnings, &["tui", "notifications"], &self.notifications);
-        push_invalid_field(warnings, &["tui", "notification_method"], &self.method);
-        push_invalid_field(
-            warnings,
-            &["tui", "notification_condition"],
-            &self.condition,
-        );
-        push_invalid_field(
-            warnings,
-            &["tui", "alternate_screen"],
-            &self.alternate_screen,
-        );
-    }
-}
-
 #[derive(Deserialize, Default)]
 struct LenientRealtimeToml {
     version: Option<Lenient<RealtimeWsVersion>>,
@@ -382,36 +360,9 @@ struct LenientRealtimeToml {
     voice: Option<Lenient<RealtimeVoice>>,
 }
 
-impl LenientRealtimeToml {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        push_invalid_field(warnings, &["realtime", "version"], &self.version);
-        push_invalid_field(warnings, &["realtime", "type"], &self.session_type);
-        push_invalid_field(warnings, &["realtime", "transport"], &self.transport);
-        push_invalid_field(warnings, &["realtime", "voice"], &self.voice);
-    }
-}
-
 #[derive(Deserialize, Default)]
 struct LenientWindowsToml {
     sandbox: Option<Lenient<WindowsSandboxModeToml>>,
-}
-
-impl LenientWindowsToml {
-    fn push_invalid_enum_warnings(&self, warnings: &mut Vec<InvalidEnumWarning>) {
-        self.push_invalid_enum_warnings_with_prefix(warnings, &["windows"]);
-    }
-
-    fn push_invalid_enum_warnings_with_prefix(
-        &self,
-        warnings: &mut Vec<InvalidEnumWarning>,
-        segment_prefix: &[&str],
-    ) {
-        push_invalid_field(
-            warnings,
-            &segments_with_suffix(segment_prefix, &["sandbox"]),
-            &self.sandbox,
-        );
-    }
 }
 
 /// Captures everything needed to remove an invalid enum leaf and report it
@@ -451,16 +402,6 @@ fn push_invalid_field<T, S>(
             .collect(),
         invalid_value: invalid_value.clone(),
     });
-}
-
-/// Builds a temporary TOML path from a stable prefix plus one or more child
-/// keys. The resulting vector is immediately borrowed by `push_invalid_field`.
-fn segments_with_suffix(prefix: &[&str], suffix: &[&str]) -> Vec<String> {
-    prefix
-        .iter()
-        .chain(suffix.iter())
-        .map(|segment| (*segment).to_string())
-        .collect()
 }
 
 /// Deletes the offending TOML leaf before strict deserialization.
