@@ -353,9 +353,6 @@ impl ToolEmitter {
                 let result = Err(FunctionCallError::RespondToModel(normalized));
                 (event, result)
             }
-            Err(ToolError::UpdatedInput(updated_input)) => {
-                return Err(FunctionCallError::UpdatedInput(updated_input));
-            }
         };
         self.emit(ctx, event).await;
         result

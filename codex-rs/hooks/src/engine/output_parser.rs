@@ -23,12 +23,8 @@ pub(crate) struct PreToolUseOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum PermissionRequestDecision {
-    Allow {
-        updated_input: Option<serde_json::Value>,
-    },
-    Deny {
-        message: String,
-    },
+    Allow,
+    Deny { message: String },
 }
 
 #[derive(Debug, Clone)]
@@ -319,9 +315,7 @@ fn unsupported_permission_request_hook_specific_output(
     decision: Option<&PermissionRequestDecisionWire>,
 ) -> Option<String> {
     let decision = decision?;
-    if decision.updated_input.is_some()
-        && !matches!(decision.behavior, PermissionRequestBehaviorWire::Allow)
-    {
+    if decision.updated_input.is_some() {
         Some("PermissionRequest hook returned unsupported updatedInput".to_string())
     } else if decision.updated_permissions.is_some() {
         Some("PermissionRequest hook returned unsupported updatedPermissions".to_string())
@@ -336,9 +330,7 @@ fn permission_request_decision(
     decision: &PermissionRequestDecisionWire,
 ) -> PermissionRequestDecision {
     match decision.behavior {
-        PermissionRequestBehaviorWire::Allow => PermissionRequestDecision::Allow {
-            updated_input: decision.updated_input.clone(),
-        },
+        PermissionRequestBehaviorWire::Allow => PermissionRequestDecision::Allow,
         PermissionRequestBehaviorWire::Deny => PermissionRequestDecision::Deny {
             message: decision
                 .message
@@ -445,7 +437,7 @@ mod tests {
     use super::parse_permission_request;
 
     #[test]
-    fn permission_request_accepts_allow_updated_input_field() {
+    fn permission_request_rejects_reserved_updated_input_field() {
         let parsed = parse_permission_request(
             &json!({
                 "continue": true,
@@ -453,31 +445,6 @@ mod tests {
                     "hookEventName": "PermissionRequest",
                     "decision": {
                         "behavior": "allow",
-                        "updatedInput": {}
-                    }
-                }
-            })
-            .to_string(),
-        )
-        .expect("permission request hook output should parse");
-
-        assert_eq!(
-            parsed.decision,
-            Some(super::PermissionRequestDecision::Allow {
-                updated_input: Some(json!({})),
-            })
-        );
-    }
-
-    #[test]
-    fn permission_request_rejects_deny_updated_input_field() {
-        let parsed = parse_permission_request(
-            &json!({
-                "continue": true,
-                "hookSpecificOutput": {
-                    "hookEventName": "PermissionRequest",
-                    "decision": {
-                        "behavior": "deny",
                         "updatedInput": {}
                     }
                 }

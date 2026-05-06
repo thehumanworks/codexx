@@ -372,9 +372,6 @@ impl ToolHandler for ExecCommandHandler {
             .await
         {
             Ok(response) => Ok(response),
-            Err(UnifiedExecError::UpdatedInput(updated_input)) => {
-                Err(FunctionCallError::UpdatedInput(updated_input))
-            }
             Err(UnifiedExecError::SandboxDenied { output, .. }) => {
                 let output_text = output.aggregated_output.text;
                 let original_token_count = approx_token_count(&output_text);

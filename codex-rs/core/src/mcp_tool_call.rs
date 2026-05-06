@@ -25,7 +25,6 @@ use crate::guardian::guardian_timeout_message;
 use crate::guardian::new_guardian_review_id;
 use crate::guardian::review_approval_request;
 use crate::guardian::routes_approval_to_guardian;
-use crate::hook_runtime::MAX_HOOK_INPUT_REWRITES;
 use crate::hook_runtime::run_permission_request_hooks;
 use crate::mcp_openai_file::rewrite_mcp_tool_arguments_for_openai_files;
 use crate::mcp_tool_approval_templates::RenderedMcpToolApprovalParam;
@@ -34,6 +33,7 @@ use crate::session::session::Session;
 use crate::session::turn_context::TurnContext;
 use crate::tools::hook_names::HookToolName;
 use crate::tools::sandboxing::PermissionRequestPayload;
+use crate::turn_metadata::McpTurnMetadataContext;
 use codex_analytics::AppInvocation;
 use codex_analytics::InvocationType;
 use codex_analytics::build_track_events_context;
@@ -197,45 +197,18 @@ pub(crate) async fn handle_mcp_tool_call(
     )
     .await;
 
-    let mut invocation = invocation;
-    let mut input_rewrites = 0;
-    loop {
-        let Some(decision) = maybe_request_mcp_tool_approval(
-            &sess,
-            turn_context,
-            &call_id,
-            &invocation,
-            &hook_tool_name,
-            metadata.as_ref(),
-            approval_mode,
-        )
-        .await
-        else {
-            break;
-        };
-        let tool_input = invocation
-            .arguments
-            .clone()
-            .unwrap_or_else(|| JsonValue::Object(serde_json::Map::new()));
+    if let Some(decision) = maybe_request_mcp_tool_approval(
+        &sess,
+        turn_context,
+        &call_id,
+        &invocation,
+        &hook_tool_name,
+        metadata.as_ref(),
+        approval_mode,
+    )
+    .await
+    {
         let result = match decision {
-            McpToolApprovalDecision::AcceptWithUpdatedInput(updated_input) => {
-                input_rewrites += 1;
-                if input_rewrites > MAX_HOOK_INPUT_REWRITES {
-                    notify_mcp_tool_call_skip(
-                        sess.as_ref(),
-                        turn_context.as_ref(),
-                        &call_id,
-                        invocation,
-                        mcp_app_resource_uri.clone(),
-                        "hook input rewrite limit exceeded".to_string(),
-                        /*already_started*/ true,
-                    )
-                    .await
-                } else {
-                    invocation.arguments = Some(updated_input);
-                    continue;
-                }
-            }
             McpToolApprovalDecision::Accept
             | McpToolApprovalDecision::AcceptForSession
             | McpToolApprovalDecision::AcceptAndRemember => {
@@ -302,7 +275,8 @@ pub(crate) async fn handle_mcp_tool_call(
 
         return HandledMcpToolCall {
             result: CallToolResult::from_result(result),
-            tool_input,
+            tool_input: arguments_value
+                .unwrap_or_else(|| JsonValue::Object(serde_json::Map::new())),
         };
     }
 
@@ -841,7 +815,6 @@ async fn maybe_track_codex_app_used(
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum McpToolApprovalDecision {
     Accept,
-    AcceptWithUpdatedInput(JsonValue),
     AcceptForSession,
     AcceptAndRemember,
     Decline { message: Option<String> },
@@ -923,7 +896,13 @@ fn build_mcp_tool_call_request_meta(
 ) -> Option<serde_json::Value> {
     let mut request_meta = serde_json::Map::new();
 
-    if let Some(turn_metadata) = turn_context.turn_metadata_state.current_meta_value() {
+    if let Some(turn_metadata) = turn_context
+        .turn_metadata_state
+        .current_meta_value_for_mcp_request(McpTurnMetadataContext {
+            model: turn_context.model_info.slug.as_str(),
+            reasoning_effort: turn_context.effective_reasoning_effort(),
+        })
+    {
         request_meta.insert(
             crate::X_CODEX_TURN_METADATA_HEADER.to_string(),
             turn_metadata,
@@ -1099,34 +1078,21 @@ async fn maybe_request_mcp_tool_approval(
         return Some(McpToolApprovalDecision::Accept);
     }
 
-    let permission_request_tool_input = invocation
-        .arguments
-        .clone()
-        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     match run_permission_request_hooks(
         sess,
         turn_context,
         call_id,
         PermissionRequestPayload {
             tool_name: HookToolName::new(hook_tool_name),
-            tool_input: permission_request_tool_input.clone(),
+            tool_input: invocation
+                .arguments
+                .clone()
+                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
         },
     )
     .await
     {
-        Some(PermissionRequestDecision::Allow {
-            updated_input: Some(updated_input),
-        }) => {
-            if updated_input == permission_request_tool_input {
-                return Some(McpToolApprovalDecision::Accept);
-            }
-            return Some(McpToolApprovalDecision::AcceptWithUpdatedInput(
-                updated_input,
-            ));
-        }
-        Some(PermissionRequestDecision::Allow {
-            updated_input: None,
-        }) => {
+        Some(PermissionRequestDecision::Allow) => {
             return Some(McpToolApprovalDecision::Accept);
         }
         Some(PermissionRequestDecision::Deny { message }) => {
@@ -1880,7 +1846,6 @@ async fn apply_mcp_tool_approval_decision(
             }
         }
         McpToolApprovalDecision::Accept
-        | McpToolApprovalDecision::AcceptWithUpdatedInput(_)
         | McpToolApprovalDecision::Decline { .. }
         | McpToolApprovalDecision::Cancel
         | McpToolApprovalDecision::BlockedBySafetyMonitor(_) => {}
