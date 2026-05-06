@@ -2,6 +2,30 @@ use super::*;
 use pretty_assertions::assert_eq;
 
 #[test]
+fn windows_sandbox_mode_accepts_wsl2_alias() {
+    let cfg: WindowsToml = toml::from_str(
+        r#"
+            sandbox = "wsl2"
+        "#,
+    )
+    .expect("should deserialize wsl2 as a windows sandbox alias");
+
+    assert_eq!(cfg.sandbox, Some(WindowsSandboxModeToml::Unelevated));
+}
+
+#[test]
+fn windows_sandbox_mode_accepts_mixed_case_wsl2_alias() {
+    let cfg: WindowsToml = toml::from_str(
+        r#"
+            sandbox = "wsL2"
+        "#,
+    )
+    .expect("should deserialize mixed-case wsl2 alias");
+
+    assert_eq!(cfg.sandbox, Some(WindowsSandboxModeToml::Unelevated));
+}
+
+#[test]
 fn deserialize_skill_config_with_name_selector() {
     let cfg: SkillConfig = toml::from_str(
         r#"

@@ -111,11 +111,29 @@ pub enum OAuthCredentialsStoreMode {
     Keyring,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq, JsonSchema)]
 pub enum WindowsSandboxModeToml {
     Elevated,
     Unelevated,
+}
+
+impl<'de> Deserialize<'de> for WindowsSandboxModeToml {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        match raw.to_ascii_lowercase().as_str() {
+            "elevated" => Ok(Self::Elevated),
+            // Accept the legacy/common WSL2 label as a compatibility alias for the
+            // non-admin Windows sandbox mode instead of hard-failing startup.
+            "unelevated" | "wsl2" => Ok(Self::Unelevated),
+            _ => Err(serde::de::Error::unknown_variant(
+                &raw,
+                &["elevated", "unelevated", "wsl2"],
+            )),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
