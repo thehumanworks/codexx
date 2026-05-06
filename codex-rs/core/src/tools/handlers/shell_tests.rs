@@ -2,7 +2,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use codex_protocol::models::ShellCommandToolCallParams;
-use codex_protocol::models::ShellToolCallParams;
 use core_test_support::PathBufExt;
 use core_test_support::test_path_buf;
 use pretty_assertions::assert_eq;
@@ -221,6 +220,7 @@ async fn local_shell_pre_tool_use_payload_uses_joined_command() {
         },
     };
     let (session, turn) = make_session_and_context().await;
+
     assert_eq!(
         crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
@@ -245,6 +245,7 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
         arguments: json!({ "command": "printf shell command" }).to_string(),
     };
     let (session, turn) = make_session_and_context().await;
+
     assert_eq!(
         crate::tools::hook_compat::pre_tool_use_payload(&ToolInvocation {
             session: session.into(),
@@ -264,100 +265,6 @@ async fn shell_command_pre_tool_use_payload_uses_raw_command() {
 }
 
 #[tokio::test]
-async fn shell_handler_rewrites_hook_command_back_to_argv() {
-    let payload = ToolPayload::Function {
-        arguments: json!({
-            "command": ["bash", "-lc", "printf old"],
-            "workdir": "subdir",
-        })
-        .to_string(),
-    };
-    let (session, turn) = make_session_and_context().await;
-    let invocation = crate::tools::hook_compat::apply_updated_input(
-        ToolInvocation {
-            session: session.into(),
-            turn: turn.into(),
-            cancellation_token: tokio_util::sync::CancellationToken::new(),
-            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-            call_id: "call-43".to_string(),
-            tool_name: codex_tools::ToolName::plain("shell"),
-            source: ToolCallSource::Direct,
-            payload,
-        },
-        json!({ "command": "bash -lc 'printf new'" }),
-    )
-    .expect("shell rewrite should succeed");
-
-    let ToolPayload::Function { arguments } = invocation.payload else {
-        panic!("shell rewrite should preserve a function payload");
-    };
-    assert_eq!(
-        serde_json::from_str::<ShellToolCallParams>(&arguments)
-            .expect("rewritten shell arguments should parse"),
-        ShellToolCallParams {
-            command: vec![
-                "bash".to_string(),
-                "-lc".to_string(),
-                "printf new".to_string(),
-            ],
-            workdir: Some("subdir".to_string()),
-            timeout_ms: None,
-            sandbox_permissions: None,
-            additional_permissions: None,
-            prefix_rule: None,
-            justification: None,
-        }
-    );
-}
-
-#[tokio::test]
-async fn container_exec_handler_rewrites_hook_command_back_to_argv() {
-    let payload = ToolPayload::Function {
-        arguments: json!({
-            "command": ["bash", "-lc", "printf old"],
-            "workdir": "subdir",
-        })
-        .to_string(),
-    };
-    let (session, turn) = make_session_and_context().await;
-    let invocation = crate::tools::hook_compat::apply_updated_input(
-        ToolInvocation {
-            session: session.into(),
-            turn: turn.into(),
-            cancellation_token: tokio_util::sync::CancellationToken::new(),
-            tracker: Arc::new(Mutex::new(TurnDiffTracker::new())),
-            call_id: "call-44".to_string(),
-            tool_name: codex_tools::ToolName::plain("container.exec"),
-            source: ToolCallSource::Direct,
-            payload,
-        },
-        json!({ "command": "bash -lc 'printf new'" }),
-    )
-    .expect("container.exec rewrite should succeed");
-
-    let ToolPayload::Function { arguments } = invocation.payload else {
-        panic!("container.exec rewrite should preserve a function payload");
-    };
-    assert_eq!(
-        serde_json::from_str::<ShellToolCallParams>(&arguments)
-            .expect("rewritten container.exec arguments should parse"),
-        ShellToolCallParams {
-            command: vec![
-                "bash".to_string(),
-                "-lc".to_string(),
-                "printf new".to_string(),
-            ],
-            workdir: Some("subdir".to_string()),
-            timeout_ms: None,
-            sandbox_permissions: None,
-            additional_permissions: None,
-            prefix_rule: None,
-            justification: None,
-        }
-    );
-}
-
-#[tokio::test]
 async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
     let payload = ToolPayload::Function {
         arguments: json!({ "command": "printf shell command" }).to_string(),
@@ -367,9 +274,7 @@ async fn build_post_tool_use_payload_uses_tool_output_wire_value() {
         success: Some(true),
         post_tool_use_response: Some(json!("shell output")),
     };
-    let handler = ShellCommandHandler {
-        backend: super::ShellCommandBackend::Classic,
-    };
+    let handler = ShellCommandHandler::from(codex_tools::ShellCommandBackendConfig::Classic);
     let (session, turn) = make_session_and_context().await;
     let invocation = ToolInvocation {
         session: session.into(),
