@@ -357,17 +357,11 @@ fn apps_require_feature_flag_and_chatgpt_auth() {
 fn from_sources_applies_base_profile_and_overrides() {
     let mut base_entries = BTreeMap::new();
     base_entries.insert("plugins".to_string(), true);
-    let base_features = FeaturesToml {
-        entries: base_entries,
-        ..Default::default()
-    };
+    let base_features = FeaturesToml::from(base_entries);
 
     let mut profile_entries = BTreeMap::new();
     profile_entries.insert("code_mode_only".to_string(), true);
-    let profile_features = FeaturesToml {
-        entries: profile_entries,
-        ..Default::default()
-    };
+    let profile_features = FeaturesToml::from(profile_entries);
 
     let features = Features::from_sources(
         FeatureConfigSource {
@@ -499,6 +493,38 @@ hide_spawn_agent_metadata = true
 }
 
 #[test]
+fn simple_feature_config_deserializes_enabled_table() {
+    let features: FeaturesToml = toml::from_str(
+        r#"
+code_mode.enabled = true
+
+[personality]
+enabled = false
+"#,
+    )
+    .expect("features table should deserialize");
+
+    assert_eq!(
+        features.entries(),
+        BTreeMap::from([
+            ("code_mode".to_string(), true),
+            ("personality".to_string(), false),
+        ])
+    );
+
+    let resolved = Features::from_sources(
+        FeatureConfigSource {
+            features: Some(&features),
+            ..Default::default()
+        },
+        FeatureConfigSource::default(),
+        FeatureOverrides::default(),
+    );
+    assert_eq!(resolved.enabled(Feature::CodeMode), true);
+    assert_eq!(resolved.enabled(Feature::Personality), false);
+}
+
+#[test]
 fn multi_agent_v2_feature_config_usage_hint_enabled_does_not_enable_feature() {
     let features_toml: FeaturesToml = toml::from_str(
         r#"
@@ -540,15 +566,15 @@ fn materialize_resolved_enabled_writes_all_features_and_preserves_custom_config(
     features.enable(Feature::MultiAgentV2);
     features.disable(Feature::ToolSearch);
 
-    let mut features_toml = FeaturesToml {
-        multi_agent_v2: Some(FeatureToml::Config(crate::MultiAgentV2ConfigToml {
-            enabled: Some(false),
-            min_wait_timeout_ms: Some(2500),
-            ..Default::default()
-        })),
-        entries: BTreeMap::from([("include_apply_patch_tool".to_string(), true)]),
+    let mut features_toml = FeaturesToml::from(BTreeMap::from([(
+        "include_apply_patch_tool".to_string(),
+        true,
+    )]));
+    features_toml.multi_agent_v2 = Some(FeatureToml::Config(crate::MultiAgentV2ConfigToml {
+        enabled: Some(false),
+        min_wait_timeout_ms: Some(2500),
         ..Default::default()
-    };
+    }));
 
     features_toml.materialize_resolved_enabled(&features);
 
@@ -587,9 +613,17 @@ fn unstable_warning_event_only_mentions_enabled_under_development_features() {
     configured_features.insert("child_agents_md".to_string(), TomlValue::Boolean(true));
     configured_features.insert("personality".to_string(), TomlValue::Boolean(true));
     configured_features.insert("unknown".to_string(), TomlValue::Boolean(true));
+    configured_features.insert(
+        "code_mode".to_string(),
+        TomlValue::Table(Table::from_iter([(
+            "enabled".to_string(),
+            TomlValue::Boolean(true),
+        )])),
+    );
 
     let mut features = Features::with_defaults();
     features.enable(Feature::ChildAgentsMd);
+    features.enable(Feature::CodeMode);
 
     let warning = unstable_features_warning_event(
         Some(&configured_features),
@@ -603,6 +637,7 @@ fn unstable_warning_event_only_mentions_enabled_under_development_features() {
         panic!("expected warning event");
     };
     assert!(message.contains("child_agents_md"));
+    assert!(message.contains("code_mode"));
     assert!(!message.contains("personality"));
     assert!(message.contains("/tmp/config.toml"));
 }

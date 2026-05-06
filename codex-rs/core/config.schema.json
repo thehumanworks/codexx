@@ -359,256 +359,256 @@
           "description": "Optional feature toggles scoped to this profile.",
           "properties": {
             "apply_patch_freeform": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "apply_patch_streaming_events": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "apps": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "apps_mcp_path_override": {
               "$ref": "#/definitions/FeatureToml_for_AppsMcpPathOverrideConfigToml"
             },
             "auth_elicitation": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "browser_use": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "browser_use_external": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "builtin_mcp": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "child_agents_md": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "chronicle": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "code_mode": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "code_mode_only": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "codex_git_commit": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "codex_hooks": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "collab": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "collaboration_modes": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "computer_use": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "connectors": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "default_mode_request_user_input": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "elevated_windows_sandbox": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "enable_experimental_windows_sandbox": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "enable_fanout": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "enable_mcp_apps": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "enable_request_compression": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "exec_permission_approvals": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "experimental_use_freeform_apply_patch": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "experimental_use_unified_exec_tool": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "experimental_windows_sandbox": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "external_migration": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "fast_mode": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "goals": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "guardian_approval": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "hooks": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "image_detail_original": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "image_generation": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "in_app_browser": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "include_apply_patch_tool": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "js_repl": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "js_repl_tools_only": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "memories": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "memory_tool": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "multi_agent": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "multi_agent_v2": {
               "$ref": "#/definitions/FeatureToml_for_MultiAgentV2ConfigToml"
             },
             "personality": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "plugin_hooks": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "plugins": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "prevent_idle_sleep": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "realtime_conversation": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "remote_compaction_v2": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "remote_control": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "remote_models": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "remote_plugin": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "request_permissions": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "request_permissions_tool": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "request_rule": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "responses_websocket_response_processed": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "responses_websockets": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "responses_websockets_v2": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "runtime_metrics": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "search_tool": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "shell_snapshot": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "shell_tool": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "shell_zsh_fork": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "skill_env_var_dependency_prompt": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "skill_mcp_dependency_install": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "sqlite": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "steer": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "telepathy": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "terminal_resize_reflow": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "tool_call_mcp_elicitation": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "tool_search": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "tool_search_always_defer_mcp_tools": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "tool_suggest": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "tui_app_server": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "unavailable_dummy_tools": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "undo": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "unified_exec": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "use_legacy_landlock": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "use_linux_sandbox_bwrap": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "web_search": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "web_search_cached": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "web_search_request": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "workspace_dependencies": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             },
             "workspace_owner_usage_nudge": {
-              "type": "boolean"
+              "$ref": "#/definitions/FeatureToggleToml"
             }
           },
           "type": "object"
@@ -785,6 +785,28 @@
         }
       },
       "type": "object"
+    },
+    "FeatureToggleConfigToml": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "type": "object"
+    },
+    "FeatureToggleToml": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "$ref": "#/definitions/FeatureToggleConfigToml"
+        }
+      ]
     },
     "FeatureToml_for_AppsMcpPathOverrideConfigToml": {
       "anyOf": [
@@ -3917,256 +3939,256 @@
       "description": "Centralized feature flags (new). Prefer this over individual toggles.",
       "properties": {
         "apply_patch_freeform": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "apply_patch_streaming_events": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "apps": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "apps_mcp_path_override": {
           "$ref": "#/definitions/FeatureToml_for_AppsMcpPathOverrideConfigToml"
         },
         "auth_elicitation": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "browser_use": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "browser_use_external": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "builtin_mcp": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "child_agents_md": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "chronicle": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "code_mode": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "code_mode_only": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "codex_git_commit": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "codex_hooks": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "collab": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "collaboration_modes": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "computer_use": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "connectors": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "default_mode_request_user_input": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "elevated_windows_sandbox": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "enable_experimental_windows_sandbox": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "enable_fanout": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "enable_mcp_apps": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "enable_request_compression": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "exec_permission_approvals": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "experimental_use_freeform_apply_patch": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "experimental_use_unified_exec_tool": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "experimental_windows_sandbox": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "external_migration": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "fast_mode": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "goals": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "guardian_approval": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "hooks": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "image_detail_original": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "image_generation": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "in_app_browser": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "include_apply_patch_tool": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "js_repl": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "js_repl_tools_only": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "memories": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "memory_tool": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "multi_agent": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "multi_agent_v2": {
           "$ref": "#/definitions/FeatureToml_for_MultiAgentV2ConfigToml"
         },
         "personality": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "plugin_hooks": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "plugins": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "prevent_idle_sleep": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "realtime_conversation": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "remote_compaction_v2": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "remote_control": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "remote_models": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "remote_plugin": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "request_permissions": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "request_permissions_tool": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "request_rule": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "responses_websocket_response_processed": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "responses_websockets": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "responses_websockets_v2": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "runtime_metrics": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "search_tool": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "shell_snapshot": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "shell_tool": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "shell_zsh_fork": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "skill_env_var_dependency_prompt": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "skill_mcp_dependency_install": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "sqlite": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "steer": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "telepathy": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "terminal_resize_reflow": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "tool_call_mcp_elicitation": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "tool_search": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "tool_search_always_defer_mcp_tools": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "tool_suggest": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "tui_app_server": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "unavailable_dummy_tools": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "undo": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "unified_exec": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "use_legacy_landlock": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "use_linux_sandbox_bwrap": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "web_search": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "web_search_cached": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "web_search_request": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "workspace_dependencies": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         },
         "workspace_owner_usage_nudge": {
-          "type": "boolean"
+          "$ref": "#/definitions/FeatureToggleToml"
         }
       },
       "type": "object"

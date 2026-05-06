@@ -8823,6 +8823,37 @@ shell_tool = true
 }
 
 #[tokio::test]
+async fn simple_features_can_be_configured_with_enabled_tables() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    std::fs::write(
+        codex_home.path().join(CONFIG_TOML_FILE),
+        r#"profile = "dev"
+
+[features.code_mode]
+enabled = true
+
+[features.personality]
+enabled = false
+
+[profiles.dev.features.shell_tool]
+enabled = false
+"#,
+    )?;
+
+    let config = ConfigBuilder::without_managed_config_for_tests()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(codex_home.path().to_path_buf()))
+        .build()
+        .await?;
+
+    assert!(config.features.enabled(Feature::CodeMode));
+    assert!(!config.features.enabled(Feature::Personality));
+    assert!(!config.features.enabled(Feature::ShellTool));
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn approvals_reviewer_defaults_to_manual_only_without_guardian_feature() -> std::io::Result<()>
 {
     let codex_home = TempDir::new()?;

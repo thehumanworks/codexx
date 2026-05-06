@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use toml::Table;
+use toml::Value as TomlValue;
 
 mod feature_configs;
 mod legacy;
@@ -576,7 +577,7 @@ pub struct FeaturesToml {
     pub apps_mcp_path_override: Option<FeatureToml<AppsMcpPathOverrideConfigToml>>,
     /// Boolean feature toggles keyed by canonical or legacy feature name.
     #[serde(flatten)]
-    entries: BTreeMap<String, bool>,
+    entries: BTreeMap<String, FeatureToggleToml>,
 }
 
 impl Features {
@@ -588,7 +589,11 @@ impl Features {
 
 impl FeaturesToml {
     pub fn entries(&self) -> BTreeMap<String, bool> {
-        let mut entries = self.entries.clone();
+        let mut entries = self
+            .entries
+            .iter()
+            .map(|(key, feature)| (key.clone(), feature.enabled()))
+            .collect::<BTreeMap<_, _>>();
         if let Some(enabled) = self.multi_agent_v2.as_ref().and_then(FeatureToml::enabled) {
             entries.insert(Feature::MultiAgentV2.key().to_string(), enabled);
         }
@@ -618,7 +623,7 @@ impl FeaturesToml {
             } else if spec.id == Feature::AppsMcpPathOverride {
                 materialize_resolved_feature_enabled(apps_mcp_path_override, enabled);
             } else {
-                entries.insert(spec.key.to_string(), enabled);
+                entries.insert(spec.key.to_string(), FeatureToggleToml::Enabled(enabled));
             }
         }
     }
@@ -637,10 +642,36 @@ fn materialize_resolved_feature_enabled<T: FeatureConfig>(
 impl From<BTreeMap<String, bool>> for FeaturesToml {
     fn from(entries: BTreeMap<String, bool>) -> Self {
         Self {
-            entries,
+            entries: entries
+                .into_iter()
+                .map(|(key, enabled)| (key, FeatureToggleToml::Enabled(enabled)))
+                .collect(),
             ..Default::default()
         }
     }
+}
+
+// To be used for features that only need enabled/disabled configuration.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(untagged)]
+pub enum FeatureToggleToml {
+    Enabled(bool),
+    Config(FeatureToggleConfigToml),
+}
+
+impl FeatureToggleToml {
+    fn enabled(&self) -> bool {
+        match self {
+            Self::Enabled(enabled) => *enabled,
+            Self::Config(config) => config.enabled,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FeatureToggleConfigToml {
+    pub enabled: bool,
 }
 
 // To be used for features that need more configuration than just enabled/disabled and
@@ -1174,7 +1205,15 @@ pub fn unstable_features_warning_event(
     let mut under_development_feature_keys = Vec::new();
     if let Some(table) = effective_features {
         for (key, value) in table {
-            if value.as_bool() != Some(true) {
+            let enabled = match value {
+                TomlValue::Boolean(enabled) => *enabled,
+                TomlValue::Table(table) => table
+                    .get("enabled")
+                    .and_then(TomlValue::as_bool)
+                    .unwrap_or(false),
+                _ => false,
+            };
+            if !enabled {
                 continue;
             }
             let Some(spec) = FEATURES.iter().find(|spec| spec.key == key.as_str()) else {

@@ -43,14 +43,16 @@ pub fn features_schema(schema_gen: &mut SchemaGenerator) -> Schema {
             );
             continue;
         }
-        validation
-            .properties
-            .insert(feature.key.to_string(), schema_gen.subschema_for::<bool>());
+        validation.properties.insert(
+            feature.key.to_string(),
+            schema_gen.subschema_for::<codex_features::FeatureToggleToml>(),
+        );
     }
     for legacy_key in legacy_feature_keys() {
-        validation
-            .properties
-            .insert(legacy_key.to_string(), schema_gen.subschema_for::<bool>());
+        validation.properties.insert(
+            legacy_key.to_string(),
+            schema_gen.subschema_for::<codex_features::FeatureToggleToml>(),
+        );
     }
     validation.additional_properties = Some(Box::new(Schema::Bool(false)));
     object.object = Some(Box::new(validation));
