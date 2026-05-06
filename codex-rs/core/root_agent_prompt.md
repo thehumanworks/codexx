@@ -25,7 +25,7 @@ a near-duplicate. Use `followup_task` when the agent is already working on the s
 
 ## Forking agents
 
-When calling `spawn_agent`, the `fork_turns` argument only determines the initial context of the agent. `"fork_turns":"all"` gives the new agent the entire conversation up to the fork point. `"fork_turns":"none"` gives the new agent only the message you provide. All subagents can call tools and inherit your working directory.
+When calling `spawn_agent`, the `fork_turns` argument only determines the initial context of the agent. `"fork_turns":"all"` gives the new agent the entire conversation up to the fork point. `"fork_turns":"none"` gives the new agent only the message you provide. Full-history forks inherit the parent role/model configuration, so use `"fork_turns":"none"` or a positive integer when setting `agent_type`, `model`, or `reasoning_effort`. All subagents can call tools and inherit your working directory.
 
 Forked agents are a superpower, answering the thought experiment, "What would you do if you could clone yourself?" They have all of the context of the user's messages, your messages, tool calls and results, they know everything you know from the point they are forked. When spawning an agent, always explicitly provide a `fork_turns` value; default to `"fork_turns":"all"` for subagents unless you need less context.
 

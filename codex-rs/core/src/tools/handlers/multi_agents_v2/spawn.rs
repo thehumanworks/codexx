@@ -22,6 +22,8 @@ use std::collections::HashSet;
 
 pub(crate) struct Handler;
 
+const FULL_HISTORY_WITH_CHILD_CONFIG_ERROR: &str = "fork_turns=`all` cannot be combined with agent_type, model, or reasoning_effort because full-history forks inherit the parent configuration. Use fork_turns=`none` or a positive integer to apply child overrides.";
+
 impl ToolHandler for Handler {
     type Output = SpawnAgentResult;
 
@@ -70,6 +72,7 @@ impl ToolHandler for Handler {
             ));
         }
         let fork_mode = if is_watchdog { None } else { args.fork_mode()? };
+        reject_full_history_child_config_overrides(role_name, &args, &fork_mode)?;
         let initial_operation = parse_collab_input(Some(args.message), /*items*/ None)?;
         let prompt = render_input_preview(&initial_operation);
         session
@@ -257,6 +260,26 @@ impl ToolHandler for Handler {
             })
         }
     }
+}
+
+fn reject_full_history_child_config_overrides(
+    role_name: Option<&str>,
+    args: &SpawnAgentArgs,
+    fork_mode: &Option<SpawnAgentForkMode>,
+) -> Result<(), FunctionCallError> {
+    if !matches!(fork_mode, Some(SpawnAgentForkMode::FullHistory)) {
+        return Ok(());
+    }
+
+    let has_role_override =
+        role_name.is_some_and(|role_name| !role_name.eq_ignore_ascii_case(DEFAULT_ROLE_NAME));
+    if has_role_override || args.model.is_some() || args.reasoning_effort.is_some() {
+        return Err(FunctionCallError::RespondToModel(
+            FULL_HISTORY_WITH_CHILD_CONFIG_ERROR.to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 async fn spawn_watchdog(

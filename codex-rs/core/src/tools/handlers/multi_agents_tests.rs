@@ -119,27 +119,6 @@ fn thread_manager() -> ThreadManager {
     )
 }
 
-async fn spawned_thread_id_after(
-    manager: &ThreadManager,
-    before_thread_ids: &[ThreadId],
-) -> ThreadId {
-    let mut spawned_thread_ids = manager
-        .list_thread_ids()
-        .await
-        .into_iter()
-        .filter(|thread_id| !before_thread_ids.contains(thread_id))
-        .collect::<Vec<_>>();
-    spawned_thread_ids.sort_by_key(ToString::to_string);
-    assert_eq!(
-        spawned_thread_ids.len(),
-        1,
-        "spawn_agent should add exactly one child thread"
-    );
-    spawned_thread_ids
-        .pop()
-        .expect("spawned thread id should be present")
-}
-
 async fn install_role_with_model_override(turn: &mut TurnContext) -> String {
     let role_name = "fork-context-role".to_string();
     tokio::fs::create_dir_all(&turn.config.codex_home)
@@ -426,13 +405,8 @@ async fn spawn_agent_fork_context_ignores_child_model_overrides() {
 }
 
 #[test]
-fn multi_agent_v2_spawn_fork_turns_all_ignores_agent_type_override() {
+fn multi_agent_v2_spawn_fork_turns_all_rejects_agent_type_override() {
     run_large_stack_async(|| async {
-        #[derive(Debug, Deserialize)]
-        struct SpawnAgentResult {
-            task_name: String,
-        }
-
         let (mut session, mut turn) = make_session_and_context().await;
         let role_name = install_role_with_model_override(&mut turn).await;
         let manager = thread_manager();
@@ -455,7 +429,7 @@ fn multi_agent_v2_spawn_fork_turns_all_ignores_agent_type_override() {
         let session = Arc::new(session);
         let turn = Arc::new(turn);
 
-        let output = SpawnAgentHandlerV2
+        let err = SpawnAgentHandlerV2
             .handle(invocation(
                 session.clone(),
                 turn,
@@ -468,32 +442,21 @@ fn multi_agent_v2_spawn_fork_turns_all_ignores_agent_type_override() {
                 })),
             ))
             .await
-            .expect("fork_turns=all should ignore agent_type overrides");
-        let (content, _) = expect_text_output(output);
-        let result: SpawnAgentResult =
-            serde_json::from_str(&content).expect("spawn_agent result should be json");
-        assert_eq!(result.task_name, "/root/fork_context_v2");
-        let agent_id = spawned_thread_id_after(&manager, &before_thread_ids).await;
-        let snapshot = manager
-            .get_thread(agent_id)
-            .await
-            .expect("spawned agent thread should exist")
-            .config_snapshot()
-            .await;
-        assert_ne!(snapshot.model, "gpt-5-role-override");
-        assert_ne!(snapshot.model_provider_id, "ollama");
-        assert_eq!(snapshot.session_source.get_agent_role(), None);
+            .expect_err("fork_turns=all should reject unapplied agent_type overrides");
+
+        assert_eq!(
+            err,
+            FunctionCallError::RespondToModel(
+                "fork_turns=`all` cannot be combined with agent_type, model, or reasoning_effort because full-history forks inherit the parent configuration. Use fork_turns=`none` or a positive integer to apply child overrides.".to_string()
+            )
+        );
+        assert_eq!(manager.list_thread_ids().await, before_thread_ids);
     });
 }
 
 #[test]
-fn multi_agent_v2_spawn_defaults_to_full_fork_and_ignores_child_model_overrides() {
+fn multi_agent_v2_spawn_defaults_to_full_fork_rejects_child_model_overrides() {
     run_large_stack_async(|| async {
-        #[derive(Debug, Deserialize)]
-        struct SpawnAgentResult {
-            task_name: String,
-        }
-
         let (mut session, mut turn) = make_session_and_context().await;
         let manager = thread_manager();
         let root = manager
@@ -502,7 +465,6 @@ fn multi_agent_v2_spawn_defaults_to_full_fork_and_ignores_child_model_overrides(
             .expect("root thread should start");
         session.services.agent_control = manager.agent_control();
         session.conversation_id = root.thread_id;
-        let parent_reasoning_effort = turn.config.model_reasoning_effort;
         let before_thread_ids = manager.list_thread_ids().await;
         let mut config = (*turn.config).clone();
         config
@@ -513,7 +475,7 @@ fn multi_agent_v2_spawn_defaults_to_full_fork_and_ignores_child_model_overrides(
         let session = Arc::new(session);
         let turn = Arc::new(turn);
 
-        let output = SpawnAgentHandlerV2
+        let err = SpawnAgentHandlerV2
             .handle(invocation(
                 session.clone(),
                 turn,
@@ -526,20 +488,15 @@ fn multi_agent_v2_spawn_defaults_to_full_fork_and_ignores_child_model_overrides(
                 })),
             ))
             .await
-            .expect("default full fork should ignore child model overrides");
-        let (content, _) = expect_text_output(output);
-        let result: SpawnAgentResult =
-            serde_json::from_str(&content).expect("spawn_agent result should be json");
-        assert_eq!(result.task_name, "/root/fork_context_v2");
-        let agent_id = spawned_thread_id_after(&manager, &before_thread_ids).await;
-        let snapshot = manager
-            .get_thread(agent_id)
-            .await
-            .expect("spawned agent thread should exist")
-            .config_snapshot()
-            .await;
-        assert_ne!(snapshot.model, "gpt-5-child-override");
-        assert_eq!(snapshot.reasoning_effort, parent_reasoning_effort);
+            .expect_err("default full fork should reject unapplied model overrides");
+
+        assert_eq!(
+            err,
+            FunctionCallError::RespondToModel(
+                "fork_turns=`all` cannot be combined with agent_type, model, or reasoning_effort because full-history forks inherit the parent configuration. Use fork_turns=`none` or a positive integer to apply child overrides.".to_string()
+            )
+        );
+        assert_eq!(manager.list_thread_ids().await, before_thread_ids);
     });
 }
 
@@ -1563,107 +1520,109 @@ async fn spawn_agent_errors_when_manager_dropped() {
     );
 }
 
-#[tokio::test]
-async fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_path() {
-    #[derive(Debug, Deserialize)]
-    struct SpawnAgentResult {
-        task_name: String,
-        nickname: Option<String>,
-    }
+#[test]
+fn multi_agent_v2_spawn_returns_path_and_send_message_accepts_relative_path() {
+    run_large_stack_async(|| async {
+        #[derive(Debug, Deserialize)]
+        struct SpawnAgentResult {
+            task_name: String,
+            nickname: Option<String>,
+        }
 
-    let (mut session, mut turn) = make_session_and_context().await;
-    let manager = thread_manager();
-    let root = manager
-        .start_thread((*turn.config).clone())
-        .await
-        .expect("root thread should start");
-    session.services.agent_control = manager.agent_control();
-    session.conversation_id = root.thread_id;
-    let mut config = (*turn.config).clone();
-    config
-        .features
-        .enable(Feature::MultiAgentV2)
-        .expect("test config should allow feature update");
-    turn.config = Arc::new(config);
+        let (mut session, mut turn) = make_session_and_context().await;
+        let manager = thread_manager();
+        let root = manager
+            .start_thread((*turn.config).clone())
+            .await
+            .expect("root thread should start");
+        session.services.agent_control = manager.agent_control();
+        session.conversation_id = root.thread_id;
+        let mut config = (*turn.config).clone();
+        config
+            .features
+            .enable(Feature::MultiAgentV2)
+            .expect("test config should allow feature update");
+        turn.config = Arc::new(config);
 
-    let session = Arc::new(session);
-    let turn = Arc::new(turn);
-    let spawn_output = SpawnAgentHandlerV2
-        .handle(invocation(
-            session.clone(),
-            turn.clone(),
-            "spawn_agent",
-            function_payload(json!({
-                "message": "inspect this repo",
-                "task_name": "test_process"
-            })),
-        ))
-        .await
-        .expect("spawn_agent should succeed");
-    let (content, _) = expect_text_output(spawn_output);
-    let spawn_result: SpawnAgentResult =
-        serde_json::from_str(&content).expect("spawn result should parse");
-    assert_eq!(spawn_result.task_name, "/root/test_process");
-    assert!(spawn_result.nickname.is_some());
+        let session = Arc::new(session);
+        let turn = Arc::new(turn);
+        let spawn_output = SpawnAgentHandlerV2
+            .handle(invocation(
+                session.clone(),
+                turn.clone(),
+                "spawn_agent",
+                function_payload(json!({
+                    "message": "inspect this repo",
+                    "task_name": "test_process"
+                })),
+            ))
+            .await
+            .expect("spawn_agent should succeed");
+        let (content, _) = expect_text_output(spawn_output);
+        let spawn_result: SpawnAgentResult =
+            serde_json::from_str(&content).expect("spawn result should parse");
+        assert_eq!(spawn_result.task_name, "/root/test_process");
+        assert!(spawn_result.nickname.is_some());
 
-    let child_thread_id = session
-        .services
-        .agent_control
-        .resolve_agent_reference(
-            session.conversation_id,
-            &turn.session_source,
-            "test_process",
-        )
-        .await
-        .expect("relative path should resolve");
-    let child_snapshot = manager
-        .get_thread(child_thread_id)
-        .await
-        .expect("child thread should exist")
-        .config_snapshot()
-        .await;
-    assert_eq!(
-        child_snapshot.session_source.get_agent_path().as_deref(),
-        Some("/root/test_process")
-    );
-    assert!(manager.captured_ops().iter().any(|(id, op)| {
-        *id == child_thread_id
-            && matches!(
-                op,
-                Op::InterAgentCommunication { communication }
-                    if communication.author == AgentPath::root()
-                        && communication.recipient.as_str() == "/root/test_process"
-                        && communication.other_recipients.is_empty()
-                        && communication.content == "inspect this repo"
-                        && communication.trigger_turn
+        let child_thread_id = session
+            .services
+            .agent_control
+            .resolve_agent_reference(
+                session.conversation_id,
+                &turn.session_source,
+                "test_process",
             )
-    }));
+            .await
+            .expect("relative path should resolve");
+        let child_snapshot = manager
+            .get_thread(child_thread_id)
+            .await
+            .expect("child thread should exist")
+            .config_snapshot()
+            .await;
+        assert_eq!(
+            child_snapshot.session_source.get_agent_path().as_deref(),
+            Some("/root/test_process")
+        );
+        assert!(manager.captured_ops().iter().any(|(id, op)| {
+            *id == child_thread_id
+                && matches!(
+                    op,
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == AgentPath::root()
+                            && communication.recipient.as_str() == "/root/test_process"
+                            && communication.other_recipients.is_empty()
+                            && communication.content == "inspect this repo"
+                            && communication.trigger_turn
+                )
+        }));
 
-    SendMessageHandlerV2
-        .handle(invocation(
-            session.clone(),
-            turn.clone(),
-            "send_message",
-            function_payload(json!({
-                "target": "test_process",
-                "message": "continue"
-            })),
-        ))
-        .await
-        .expect("send_message should accept v2 path");
+        SendMessageHandlerV2
+            .handle(invocation(
+                session.clone(),
+                turn.clone(),
+                "send_message",
+                function_payload(json!({
+                    "target": "test_process",
+                    "message": "continue"
+                })),
+            ))
+            .await
+            .expect("send_message should accept v2 path");
 
-    assert!(manager.captured_ops().iter().any(|(id, op)| {
-        *id == child_thread_id
-            && matches!(
-                op,
-                Op::InterAgentCommunication { communication }
-                    if communication.author == AgentPath::root()
-                        && communication.recipient.as_str() == "/root/test_process"
-                        && communication.other_recipients.is_empty()
-                        && communication.content == "continue"
-                        && !communication.trigger_turn
-            )
-    }));
+        assert!(manager.captured_ops().iter().any(|(id, op)| {
+            *id == child_thread_id
+                && matches!(
+                    op,
+                    Op::InterAgentCommunication { communication }
+                        if communication.author == AgentPath::root()
+                            && communication.recipient.as_str() == "/root/test_process"
+                            && communication.other_recipients.is_empty()
+                            && communication.content == "continue"
+                            && !communication.trigger_turn
+                )
+        }));
+    });
 }
 
 #[tokio::test]
@@ -2804,43 +2763,45 @@ async fn multi_agent_v2_interrupted_turn_does_not_notify_parent() {
     assert_eq!(notifications, Vec::<String>::new());
 }
 
-#[tokio::test]
-async fn multi_agent_v2_spawn_omits_agent_id_when_named() {
-    let (mut session, mut turn) = make_session_and_context().await;
-    let manager = thread_manager();
-    let root = manager
-        .start_thread((*turn.config).clone())
-        .await
-        .expect("root thread should start");
-    session.services.agent_control = manager.agent_control();
-    session.conversation_id = root.thread_id;
-    let mut config = (*turn.config).clone();
-    config
-        .features
-        .enable(Feature::MultiAgentV2)
-        .expect("test config should allow feature update");
-    turn.config = Arc::new(config);
+#[test]
+fn multi_agent_v2_spawn_omits_agent_id_when_named() {
+    run_large_stack_async(|| async {
+        let (mut session, mut turn) = make_session_and_context().await;
+        let manager = thread_manager();
+        let root = manager
+            .start_thread((*turn.config).clone())
+            .await
+            .expect("root thread should start");
+        session.services.agent_control = manager.agent_control();
+        session.conversation_id = root.thread_id;
+        let mut config = (*turn.config).clone();
+        config
+            .features
+            .enable(Feature::MultiAgentV2)
+            .expect("test config should allow feature update");
+        turn.config = Arc::new(config);
 
-    let output = SpawnAgentHandlerV2
-        .handle(invocation(
-            Arc::new(session),
-            Arc::new(turn),
-            "spawn_agent",
-            function_payload(json!({
-                "message": "inspect this repo",
-                "task_name": "test_process"
-            })),
-        ))
-        .await
-        .expect("spawn_agent should succeed");
-    let (content, success) = expect_text_output(output);
-    let result: serde_json::Value =
-        serde_json::from_str(&content).expect("spawn_agent result should be json");
+        let output = SpawnAgentHandlerV2
+            .handle(invocation(
+                Arc::new(session),
+                Arc::new(turn),
+                "spawn_agent",
+                function_payload(json!({
+                    "message": "inspect this repo",
+                    "task_name": "test_process"
+                })),
+            ))
+            .await
+            .expect("spawn_agent should succeed");
+        let (content, success) = expect_text_output(output);
+        let result: serde_json::Value =
+            serde_json::from_str(&content).expect("spawn_agent result should be json");
 
-    assert!(result.get("agent_id").is_none());
-    assert_eq!(result["task_name"], "/root/test_process");
-    assert!(result.get("nickname").is_some());
-    assert_eq!(success, Some(true));
+        assert!(result.get("agent_id").is_none());
+        assert_eq!(result["task_name"], "/root/test_process");
+        assert!(result.get("nickname").is_some());
+        assert_eq!(success, Some(true));
+    });
 }
 
 #[tokio::test]

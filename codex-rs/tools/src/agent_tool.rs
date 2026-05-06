@@ -671,7 +671,7 @@ fn spawn_agent_common_properties_v2(agent_type_description: &str) -> BTreeMap<St
         (
             "fork_turns".to_string(),
             JsonSchema::string(Some(
-                "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns."
+                "Optional number of turns to fork. Defaults to `all`. Use `none`, `all`, or a positive integer string such as `3` to fork only the most recent turns. Full-history forks (`all` or omitted) inherit the parent role/model configuration, so use `none` or a positive integer when setting agent_type, model, or reasoning_effort."
                     .to_string(),
             )),
         ),

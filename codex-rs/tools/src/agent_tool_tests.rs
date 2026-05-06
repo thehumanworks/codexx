@@ -73,6 +73,14 @@ fn spawn_agent_tool_v2_requires_task_name_and_lists_visible_models() {
     assert!(properties.contains_key("task_name"));
     assert!(properties.contains_key("message"));
     assert!(properties.contains_key("fork_turns"));
+    assert!(
+        properties
+            .get("fork_turns")
+            .and_then(|schema| schema.description.as_deref())
+            .is_some_and(|description| description.contains(
+                "Full-history forks (`all` or omitted) inherit the parent role/model configuration"
+            ))
+    );
     assert!(!properties.contains_key("items"));
     assert!(!properties.contains_key("fork_context"));
     assert_eq!(
