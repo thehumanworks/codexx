@@ -79,6 +79,68 @@ async fn exec_server_starts_process_over_websocket() -> anyhow::Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exec_server_sigterm_shuts_down_gracefully() -> anyhow::Result<()> {
+    let mut server = exec_server().await?;
+    let initialize_id = server
+        .send_request(
+            "initialize",
+            serde_json::to_value(InitializeParams {
+                client_name: "exec-server-test".to_string(),
+                resume_session_id: None,
+            })?,
+        )
+        .await?;
+    let _ = server
+        .wait_for_event(|event| {
+            matches!(
+                event,
+                JSONRPCMessage::Response(JSONRPCResponse { id, .. }) if id == &initialize_id
+            )
+        })
+        .await?;
+
+    server
+        .send_notification("initialized", serde_json::json!({}))
+        .await?;
+
+    let process_start_id = server
+        .send_request(
+            "process/start",
+            serde_json::json!({
+                "processId": "proc-sigterm",
+                "argv": ["/bin/sh", "-c", "sleep 30"],
+                "cwd": std::env::current_dir()?,
+                "env": {},
+                "tty": false,
+                "pipeStdin": false,
+                "arg0": null
+            }),
+        )
+        .await?;
+    let _ = server
+        .wait_for_event(|event| {
+            matches!(
+                event,
+                JSONRPCMessage::Response(JSONRPCResponse { id, .. }) if id == &process_start_id
+            )
+        })
+        .await?;
+
+    let status = server.send_sigterm_and_wait().await?;
+    assert!(
+        status.success(),
+        "expected graceful SIGTERM exit, got {status}"
+    );
+
+    server
+        .next_event()
+        .await
+        .expect_err("websocket should disconnect during SIGTERM shutdown");
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn exec_server_defaults_omitted_pipe_stdin_to_closed_stdin() -> anyhow::Result<()> {
     let mut server = exec_server().await?;
     let initialize_id = server

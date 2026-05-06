@@ -1,3 +1,4 @@
+use std::io::Result as IoResult;
 use std::io::Write as _;
 use std::net::SocketAddr;
 use tokio::io;
@@ -5,6 +6,9 @@ use tokio::io::AsyncRead;
 use tokio::io::AsyncWrite;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+use tracing::info;
 use tracing::warn;
 
 use crate::ExecServerRuntimePaths;
@@ -92,13 +96,27 @@ where
 {
     let processor = ConnectionProcessor::new(runtime_paths);
     tracing::info!("codex-exec-server listening on stdio");
+    let shutdown_token = CancellationToken::new();
+    let signal_shutdown_token = shutdown_token.clone();
+    let signal_task = tokio::spawn(async move {
+        match shutdown_signal().await {
+            Ok(()) => {
+                info!("received SIGTERM; shutting down codex-exec-server");
+                signal_shutdown_token.cancel();
+            }
+            Err(err) => {
+                warn!("failed to listen for exec-server shutdown signal: {err}");
+            }
+        }
+    });
     processor
-        .run_connection(JsonRpcConnection::from_stdio(
-            reader,
-            writer,
-            "exec-server stdio".to_string(),
-        ))
+        .run_connection(
+            JsonRpcConnection::from_stdio(reader, writer, "exec-server stdio".to_string()),
+            shutdown_token,
+        )
         .await;
+    signal_task.abort();
+    processor.shutdown().await;
     Ok(())
 }
 
@@ -113,17 +131,41 @@ async fn run_websocket_listener(
     println!("ws://{local_addr}");
     std::io::stdout().flush()?;
 
+    let shutdown_token = CancellationToken::new();
+    let connection_tasks = TaskTracker::new();
+    let shutdown_signal = shutdown_signal();
+    tokio::pin!(shutdown_signal);
     loop {
-        let (stream, peer_addr) = listener.accept().await?;
+        let accepted = tokio::select! {
+            accepted = listener.accept() => accepted?,
+            shutdown_result = &mut shutdown_signal => {
+                if let Err(err) = shutdown_result {
+                    warn!("failed to listen for exec-server shutdown signal: {err}");
+                }
+                info!("received SIGTERM; shutting down codex-exec-server");
+                break;
+            }
+        };
+        let (stream, peer_addr) = accepted;
         let processor = processor.clone();
-        tokio::spawn(async move {
-            match accept_async(stream).await {
+        let connection_shutdown_token = shutdown_token.clone();
+        connection_tasks.spawn(async move {
+            let websocket = tokio::select! {
+                websocket = accept_async(stream) => websocket,
+                _ = connection_shutdown_token.cancelled() => {
+                    return;
+                }
+            };
+            match websocket {
                 Ok(websocket) => {
                     processor
-                        .run_connection(JsonRpcConnection::from_websocket(
-                            websocket,
-                            format!("exec-server websocket {peer_addr}"),
-                        ))
+                        .run_connection(
+                            JsonRpcConnection::from_websocket(
+                                websocket,
+                                format!("exec-server websocket {peer_addr}"),
+                            ),
+                            connection_shutdown_token,
+                        )
                         .await;
                 }
                 Err(err) => {
@@ -133,6 +175,31 @@ async fn run_websocket_listener(
                 }
             }
         });
+    }
+
+    shutdown_token.cancel();
+    connection_tasks.close();
+    connection_tasks.wait().await;
+    processor.shutdown().await;
+    info!("codex-exec-server shutdown complete");
+    Ok(())
+}
+
+async fn shutdown_signal() -> IoResult<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::SignalKind;
+        use tokio::signal::unix::signal;
+
+        let mut term = signal(SignalKind::terminate())?;
+        let _ = term.recv().await;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::future::pending::<()>().await;
+        Ok(())
     }
 }
 

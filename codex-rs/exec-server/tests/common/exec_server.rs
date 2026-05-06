@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
+#[cfg(unix)]
+use std::process::Command as StdCommand;
 use std::process::Stdio;
 use std::time::Duration;
 
@@ -175,6 +177,27 @@ impl ExecServerHarness {
             .await
             .map_err(|_| anyhow!("timed out waiting for exec-server shutdown"))??;
         Ok(())
+    }
+
+    #[cfg(unix)]
+    pub(crate) async fn send_sigterm_and_wait(
+        &mut self,
+    ) -> anyhow::Result<std::process::ExitStatus> {
+        let pid = self
+            .child
+            .id()
+            .ok_or_else(|| anyhow!("exec-server process has no pid"))?;
+        let status = StdCommand::new("kill")
+            .arg("-TERM")
+            .arg(pid.to_string())
+            .status()?;
+        if !status.success() {
+            return Err(anyhow!("kill -TERM exited with {status}"));
+        }
+        timeout(CONNECT_TIMEOUT, self.child.wait())
+            .await
+            .map_err(|_| anyhow!("timed out waiting for exec-server SIGTERM shutdown"))?
+            .map_err(Into::into)
     }
 
     async fn send_message(&mut self, message: JSONRPCMessage) -> anyhow::Result<()> {

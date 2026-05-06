@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::warn;
 
@@ -31,13 +32,22 @@ impl ConnectionProcessor {
         }
     }
 
-    pub(crate) async fn run_connection(&self, connection: JsonRpcConnection) {
+    pub(crate) async fn run_connection(
+        &self,
+        connection: JsonRpcConnection,
+        shutdown_token: CancellationToken,
+    ) {
         run_connection(
             connection,
             Arc::clone(&self.session_registry),
             self.runtime_paths.clone(),
+            shutdown_token,
         )
         .await;
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        self.session_registry.shutdown_all().await;
     }
 }
 
@@ -45,6 +55,7 @@ async fn run_connection(
     connection: JsonRpcConnection,
     session_registry: Arc<SessionRegistry>,
     runtime_paths: ExecServerRuntimePaths,
+    shutdown_token: CancellationToken,
 ) {
     let router = Arc::new(build_router());
     let (json_outgoing_tx, mut incoming_rx, mut disconnected_rx, connection_tasks) =
@@ -74,7 +85,17 @@ async fn run_connection(
     });
 
     // Process inbound events sequentially to preserve initialize/initialized ordering.
-    while let Some(event) = incoming_rx.recv().await {
+    loop {
+        let event = tokio::select! {
+            event = incoming_rx.recv() => event,
+            _ = shutdown_token.cancelled() => {
+                debug!("exec-server connection shutting down after signal");
+                break;
+            }
+        };
+        let Some(event) = event else {
+            break;
+        };
         if !handler.is_session_attached() {
             debug!("exec-server connection evicted after session resume");
             break;
@@ -100,6 +121,10 @@ async fn run_connection(
                             message = route(Arc::clone(&handler), request) => message,
                             _ = disconnected_rx.changed() => {
                                 debug!("exec-server transport disconnected while handling request");
+                                break;
+                            }
+                            _ = shutdown_token.cancelled() => {
+                                debug!("exec-server shutdown while handling request");
                                 break;
                             }
                         };
@@ -137,6 +162,10 @@ async fn run_connection(
                             debug!(
                                 "exec-server transport disconnected while handling notification"
                             );
+                            break;
+                        }
+                        _ = shutdown_token.cancelled() => {
+                            debug!("exec-server shutdown while handling notification");
                             break;
                         }
                     };
@@ -200,6 +229,7 @@ mod tests {
     use tokio::io::duplex;
     use tokio::task::JoinHandle;
     use tokio::time::timeout;
+    use tokio_util::sync::CancellationToken;
 
     use super::run_connection;
     use crate::ExecServerRuntimePaths;
@@ -317,7 +347,12 @@ mod tests {
         let (server_writer, client_reader) = duplex(1 << 20);
         let connection =
             JsonRpcConnection::from_stdio(server_reader, server_writer, label.to_string());
-        let task = tokio::spawn(run_connection(connection, registry, test_runtime_paths()));
+        let task = tokio::spawn(run_connection(
+            connection,
+            registry,
+            test_runtime_paths(),
+            CancellationToken::new(),
+        ));
         (client_writer, BufReader::new(client_reader).lines(), task)
     }
 

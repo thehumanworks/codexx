@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::Digest as _;
 use tokio::time::sleep;
 use tokio_tungstenite::connect_async;
+use tokio_util::sync::CancellationToken;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -194,10 +195,13 @@ pub async fn run_remote_executor(
             Ok((websocket, _)) => {
                 backoff = Duration::from_secs(1);
                 processor
-                    .run_connection(JsonRpcConnection::from_websocket(
-                        websocket,
-                        "remote exec-server websocket".to_string(),
-                    ))
+                    .run_connection(
+                        JsonRpcConnection::from_websocket(
+                            websocket,
+                            "remote exec-server websocket".to_string(),
+                        ),
+                        CancellationToken::new(),
+                    )
                     .await;
             }
             Err(err) => {
