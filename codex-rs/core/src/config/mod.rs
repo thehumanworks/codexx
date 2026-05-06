@@ -976,11 +976,11 @@ impl ConfigBuilder {
         // respective config file, so we should be safe to deserialize without
         // AbsolutePathBufGuard here.
         //
-        // Invalid enum-valued settings are dropped during deserialization and
-        // returned as warnings. This keeps ConfigToml strict and prevents raw
-        // invalid values from leaking into downstream config consumers.
+        // Invalid enum-valued settings default at the typed field boundary and
+        // are removed from the merged TOML view when the best-effort scan can
+        // identify the offending leaf.
         let (_merged_toml, config_toml, enum_warnings) = match config_layer_stack
-            .deserialize_effective_config_with_warnings::<ConfigToml>()
+            .deserialize_effective_config_with_warnings()
         {
             Ok(result) => result,
             Err(err) => {
@@ -1309,7 +1309,7 @@ pub async fn load_config_as_toml_with_cli_and_loader_overrides(
     // not surfaced here. The full ConfigBuilder path is responsible for
     // attaching them to startup warnings.
     let (_merged_toml, cfg, _enum_warnings) = config_layer_stack
-        .deserialize_effective_config_with_warnings::<ConfigToml>()
+        .deserialize_effective_config_with_warnings()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
         .map_err(|e| {
             tracing::error!("Failed to deserialize overridden config: {e}");

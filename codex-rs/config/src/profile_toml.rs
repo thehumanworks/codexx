@@ -2,6 +2,8 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_with::DefaultOnError;
+use serde_with::serde_as;
 
 use crate::config_toml::ToolsToml;
 use crate::types::AnalyticsConfigToml;
@@ -20,24 +22,43 @@ use codex_protocol::protocol::AskForApproval;
 
 /// Collection of common configuration options that a user can define as a unit
 /// in `config.toml`.
+#[serde_as]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ConfigProfile {
     pub model: Option<String>,
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub service_tier: Option<ServiceTier>,
     /// The key in the `model_providers` map identifying the
     /// [`ModelProviderInfo`] to use.
     pub model_provider: Option<String>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub approval_policy: Option<AskForApproval>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub sandbox_mode: Option<SandboxMode>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub model_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub model_reasoning_summary: Option<ReasoningSummary>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub model_verbosity: Option<Verbosity>,
     /// Optional path to a JSON model catalog (applied on startup only).
     pub model_catalog_json: Option<AbsolutePathBuf>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub personality: Option<Personality>,
     pub chatgpt_base_url: Option<String>,
     /// Optional path to a file containing model instructions.
@@ -62,6 +83,8 @@ pub struct ConfigProfile {
     pub experimental_use_freeform_apply_patch: Option<bool>,
     pub tools_view_image: Option<bool>,
     pub tools: Option<ToolsToml>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub web_search: Option<WebSearchMode>,
     pub analytics: Option<AnalyticsConfigToml>,
     /// TUI settings scoped to this profile.
@@ -78,12 +101,14 @@ pub struct ConfigProfile {
 }
 
 /// TUI settings supported inside a named profile.
+#[serde_as]
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(deny_unknown_fields)]
 pub struct ProfileTui {
     /// Preferred layout for resume/fork session picker results.
     #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub session_picker_view: Option<SessionPickerViewMode>,
 }
 

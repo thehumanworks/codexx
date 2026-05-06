@@ -6,6 +6,7 @@ use super::fingerprint::version_for_toml;
 use super::key_aliases::normalized_with_key_aliases;
 use super::lenient::deserialize_with_enum_warnings;
 use super::merge::merge_toml_values;
+use crate::config_toml::ConfigToml;
 use codex_app_server_protocol::ConfigLayer;
 use codex_app_server_protocol::ConfigLayerMetadata;
 use codex_app_server_protocol::ConfigLayerSource;
@@ -323,12 +324,9 @@ impl ConfigLayerStack {
     /// invalid enum values while consumers still receive a fully typed config.
     /// Each layer is sanitized before it is merged so a higher-precedence
     /// invalid enum value falls back to a valid lower-precedence value.
-    pub fn deserialize_effective_config_with_warnings<T>(
+    pub fn deserialize_effective_config_with_warnings(
         &self,
-    ) -> Result<(TomlValue, T, Vec<String>), toml::de::Error>
-    where
-        T: serde::de::DeserializeOwned,
-    {
+    ) -> Result<(TomlValue, ConfigToml, Vec<String>), toml::de::Error> {
         let mut merged = TomlValue::Table(toml::map::Map::new());
         let mut warnings = Vec::new();
 
@@ -339,13 +337,13 @@ impl ConfigLayerStack {
             let mut normalized_layer = TomlValue::Table(toml::map::Map::new());
             merge_toml_values(&mut normalized_layer, &layer.config);
             let (sanitized_layer, _typed_layer, layer_warnings) =
-                deserialize_with_enum_warnings::<T>(normalized_layer)?;
+                deserialize_with_enum_warnings(normalized_layer)?;
             warnings.extend(layer_warnings);
             merge_toml_values(&mut merged, &sanitized_layer);
         }
 
         let (sanitized_effective, typed_effective, effective_warnings) =
-            deserialize_with_enum_warnings::<T>(merged)?;
+            deserialize_with_enum_warnings(merged)?;
         warnings.extend(effective_warnings);
         Ok((sanitized_effective, typed_effective, warnings))
     }

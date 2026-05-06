@@ -150,7 +150,7 @@ context_size = "galactic"
 
     // The invalid enum leaves are removed before ConfigToml is produced, but
     // unrelated valid settings still survive in the effective config.
-    let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+    let (effective_config, _config_toml, enum_warnings) =
         layers.deserialize_effective_config_with_warnings()?;
     let expected_config = toml::from_str::<TomlValue>(
         r#"
@@ -165,8 +165,8 @@ theme = "loudly"
     .expect("expected config should parse");
     let expected_startup_warnings = vec![
         "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
-        "Ignoring invalid config value at tools.web_search.context_size: \"galactic\"".to_string(),
         "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
+        "Ignoring invalid config value at tools.web_search.context_size: \"galactic\"".to_string(),
     ];
 
     assert_eq!(
@@ -203,7 +203,7 @@ async fn invalid_higher_precedence_enum_falls_back_to_lower_layer() -> anyhow::R
     )
     .await?;
 
-    let (effective_config, config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+    let (effective_config, config_toml, enum_warnings) =
         layers.deserialize_effective_config_with_warnings()?;
 
     assert_eq!(
@@ -277,7 +277,7 @@ theme = "sometimes"
     )
     .await?;
 
-    let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+    let (effective_config, _config_toml, enum_warnings) =
         layers.deserialize_effective_config_with_warnings()?;
     let expected = (
         toml::from_str::<TomlValue>(
@@ -317,7 +317,7 @@ sandbox_mode = "hold-my-coffee"
     )
     .await?;
 
-    let (effective_config, _config_toml, enum_warnings): (TomlValue, ConfigToml, Vec<String>) =
+    let (effective_config, _config_toml, enum_warnings) =
         layers.deserialize_effective_config_with_warnings()?;
     let expected = (
         toml::from_str::<TomlValue>(

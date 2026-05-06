@@ -10,6 +10,8 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::de::Error as SerdeError;
+use serde_with::DefaultOnError;
+use serde_with::serde_as;
 
 use crate::RequirementSource;
 
@@ -48,11 +50,13 @@ impl fmt::Display for McpServerDisabledReason {
 }
 
 /// Per-tool approval settings for a single MCP server tool.
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct McpServerToolConfig {
     /// Approval mode for this tool.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub approval_mode: Option<AppToolApproval>,
 }
 
@@ -185,6 +189,7 @@ pub struct McpServerConfig {
 /// Keep `TryFrom<RawMcpServerConfig> for McpServerConfig` exhaustively
 /// destructuring this struct so new TOML fields cannot be added here without
 /// updating the validation/mapping logic that produces [`McpServerConfig`].
+#[serde_as]
 #[derive(Deserialize, Clone, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct RawMcpServerConfig {
@@ -225,6 +230,7 @@ pub struct RawMcpServerConfig {
     #[serde(default)]
     pub supports_parallel_tool_calls: Option<bool>,
     #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub default_tools_approval_mode: Option<AppToolApproval>,
     #[serde(default)]
     pub enabled_tools: Option<Vec<String>>,

@@ -877,7 +877,7 @@ pub fn resolve_relative_paths_in_config_toml(
     // the final config load can still surface the startup warning.
     let _guard = AbsolutePathBufGuard::new(base_dir);
     let Ok((_sanitized, resolved, _enum_warnings)) =
-        deserialize_with_enum_warnings::<ConfigToml>(value_from_config_toml.clone())
+        deserialize_with_enum_warnings(value_from_config_toml.clone())
     else {
         return Ok(value_from_config_toml);
     };

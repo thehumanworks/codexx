@@ -336,10 +336,20 @@
           "$ref": "#/definitions/AnalyticsConfigToml"
         },
         "approval_policy": {
-          "$ref": "#/definitions/AskForApproval"
+          "allOf": [
+            {
+              "$ref": "#/definitions/AskForApproval"
+            }
+          ],
+          "default": null
         },
         "approvals_reviewer": {
-          "$ref": "#/definitions/ApprovalsReviewer"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ApprovalsReviewer"
+            }
+          ],
+          "default": null
         },
         "chatgpt_base_url": {
           "type": "string"
@@ -646,25 +656,55 @@
           "type": "string"
         },
         "model_reasoning_effort": {
-          "$ref": "#/definitions/ReasoningEffort"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            }
+          ],
+          "default": null
         },
         "model_reasoning_summary": {
-          "$ref": "#/definitions/ReasoningSummary"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningSummary"
+            }
+          ],
+          "default": null
         },
         "model_verbosity": {
-          "$ref": "#/definitions/Verbosity"
+          "allOf": [
+            {
+              "$ref": "#/definitions/Verbosity"
+            }
+          ],
+          "default": null
         },
         "oss_provider": {
           "type": "string"
         },
         "personality": {
-          "$ref": "#/definitions/Personality"
+          "allOf": [
+            {
+              "$ref": "#/definitions/Personality"
+            }
+          ],
+          "default": null
         },
         "plan_mode_reasoning_effort": {
-          "$ref": "#/definitions/ReasoningEffort"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ReasoningEffort"
+            }
+          ],
+          "default": null
         },
         "sandbox_mode": {
-          "$ref": "#/definitions/SandboxMode"
+          "allOf": [
+            {
+              "$ref": "#/definitions/SandboxMode"
+            }
+          ],
+          "default": null
         },
         "service_tier": {
           "allOf": [
@@ -672,6 +712,7 @@
               "$ref": "#/definitions/ServiceTier"
             }
           ],
+          "default": null,
           "description": "Optional explicit service tier preference for new turns (`fast` or `flex`)."
         },
         "tools": {
@@ -690,7 +731,12 @@
           "description": "TUI settings scoped to this profile."
         },
         "web_search": {
-          "$ref": "#/definitions/WebSearchMode"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WebSearchMode"
+            }
+          ],
+          "default": null
         },
         "windows": {
           "allOf": [
@@ -2070,16 +2116,36 @@
       "additionalProperties": false,
       "properties": {
         "transport": {
-          "$ref": "#/definitions/RealtimeTransport"
+          "allOf": [
+            {
+              "$ref": "#/definitions/RealtimeTransport"
+            }
+          ],
+          "default": null
         },
         "type": {
-          "$ref": "#/definitions/RealtimeWsMode"
+          "allOf": [
+            {
+              "$ref": "#/definitions/RealtimeWsMode"
+            }
+          ],
+          "default": null
         },
         "version": {
-          "$ref": "#/definitions/RealtimeConversationVersion"
+          "allOf": [
+            {
+              "$ref": "#/definitions/RealtimeConversationVersion"
+            }
+          ],
+          "default": null
         },
         "voice": {
-          "$ref": "#/definitions/RealtimeVoice"
+          "allOf": [
+            {
+              "$ref": "#/definitions/RealtimeVoice"
+            }
+          ],
+          "default": null
         }
       },
       "type": "object"
@@ -2252,7 +2318,12 @@
           "type": "array"
         },
         "inherit": {
-          "$ref": "#/definitions/ShellEnvironmentPolicyInherit"
+          "allOf": [
+            {
+              "$ref": "#/definitions/ShellEnvironmentPolicyInherit"
+            }
+          ],
+          "default": null
         },
         "set": {
           "additionalProperties": {
@@ -3723,7 +3794,12 @@
       "additionalProperties": false,
       "properties": {
         "sandbox": {
-          "$ref": "#/definitions/WindowsSandboxModeToml"
+          "allOf": [
+            {
+              "$ref": "#/definitions/WindowsSandboxModeToml"
+            }
+          ],
+          "default": null
         },
         "sandbox_private_desktop": {
           "description": "Defaults to `true`. Set to `false` to launch the final sandboxed child process on `Winsta0\\\\Default` instead of a private desktop.",
@@ -3774,6 +3850,7 @@
           "$ref": "#/definitions/AskForApproval"
         }
       ],
+      "default": null,
       "description": "Default approval policy for executing commands."
     },
     "approvals_reviewer": {
@@ -3782,6 +3859,7 @@
           "$ref": "#/definitions/ApprovalsReviewer"
         }
       ],
+      "default": null,
       "description": "Configures who approval requests are routed to for review once they have been escalated. This does not disable separate safety checks such as ARC."
     },
     "apps": {
@@ -3896,6 +3974,7 @@
           "$ref": "#/definitions/ThreadStoreToml"
         }
       ],
+      "default": null,
       "description": "Experimental / do not use. Selects the thread store implementation."
     },
     "experimental_thread_store_endpoint": {
@@ -4179,6 +4258,7 @@
           "$ref": "#/definitions/UriBasedFileOpener"
         }
       ],
+      "default": null,
       "description": "Optional URI-based file opener. If set, citations to files in the model output will be hyperlinked using the specified URI scheme."
     },
     "forced_chatgpt_workspace_id": {
@@ -4339,10 +4419,20 @@
       "type": "object"
     },
     "model_reasoning_effort": {
-      "$ref": "#/definitions/ReasoningEffort"
+      "allOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        }
+      ],
+      "default": null
     },
     "model_reasoning_summary": {
-      "$ref": "#/definitions/ReasoningSummary"
+      "allOf": [
+        {
+          "$ref": "#/definitions/ReasoningSummary"
+        }
+      ],
+      "default": null
     },
     "model_supports_reasoning_summaries": {
       "description": "Override to force-enable reasoning summaries for the configured model.",
@@ -4354,6 +4444,7 @@
           "$ref": "#/definitions/Verbosity"
         }
       ],
+      "default": null,
       "description": "Optional verbosity control for GPT-5 models (Responses API `text.verbosity`)."
     },
     "notice": {
@@ -4403,10 +4494,16 @@
           "$ref": "#/definitions/Personality"
         }
       ],
+      "default": null,
       "description": "Optionally specify a personality for the model"
     },
     "plan_mode_reasoning_effort": {
-      "$ref": "#/definitions/ReasoningEffort"
+      "allOf": [
+        {
+          "$ref": "#/definitions/ReasoningEffort"
+        }
+      ],
+      "default": null
     },
     "plugins": {
       "additionalProperties": {
@@ -4476,6 +4573,7 @@
           "$ref": "#/definitions/SandboxMode"
         }
       ],
+      "default": null,
       "description": "Sandbox mode to use."
     },
     "sandbox_workspace_write": {
@@ -4492,6 +4590,7 @@
           "$ref": "#/definitions/ServiceTier"
         }
       ],
+      "default": null,
       "description": "Optional explicit service tier preference for new turns (`fast` or `flex`)."
     },
     "shell_environment_policy": {
@@ -4569,6 +4668,7 @@
           "$ref": "#/definitions/WebSearchMode"
         }
       ],
+      "default": null,
       "description": "Controls the web search tool mode: disabled, cached, or live."
     },
     "windows": {

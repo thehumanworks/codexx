@@ -44,6 +44,7 @@ use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::Verbosity;
+use codex_protocol::config_types::WebSearchContextSize;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::config_types::WebSearchToolConfig;
 use codex_protocol::config_types::WindowsSandboxLevel;
@@ -57,6 +58,10 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
+use serde::de::Error as SerdeError;
+use serde_with::DefaultOnError;
+use serde_with::serde_as;
+use toml::Value as TomlValue;
 
 const RESERVED_MODEL_PROVIDER_IDS: [&str; 4] = [
     AMAZON_BEDROCK_PROVIDER_ID,
@@ -88,6 +93,7 @@ const fn default_hide_agent_reasoning() -> Option<bool> {
 }
 
 /// Base config deserialized from ~/.codex/config.toml.
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ConfigToml {
@@ -106,11 +112,15 @@ pub struct ConfigToml {
     pub model_auto_compact_token_limit: Option<i64>,
 
     /// Default approval policy for executing commands.
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub approval_policy: Option<AskForApproval>,
 
     /// Configures who approval requests are routed to for review once they have
     /// been escalated. This does not disable separate safety checks such as
     /// ARC.
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
 
     /// Optional policy instructions for the guardian auto-reviewer.
@@ -132,6 +142,8 @@ pub struct ConfigToml {
     pub allow_login_shell: Option<bool>,
 
     /// Sandbox mode to use.
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub sandbox_mode: Option<SandboxMode>,
 
     /// Sandbox configuration to apply if `sandbox` is `WorkspaceWrite`.
@@ -186,6 +198,7 @@ pub struct ConfigToml {
 
     /// When set, restricts the login mechanism users may use.
     #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub forced_login_method: Option<ForcedLoginMethod>,
 
     /// Preferred backend for storing CLI auth credentials.
@@ -193,6 +206,7 @@ pub struct ConfigToml {
     /// keyring: Use an OS-specific keyring service.
     /// auto: Use the keyring if available, otherwise use a file.
     #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub cli_auth_credentials_store: Option<AuthCredentialsStoreMode>,
 
     /// Definition for MCP servers that Codex can reach out to for tool calls.
@@ -207,6 +221,7 @@ pub struct ConfigToml {
     /// file: Use a file in the Codex home directory.
     /// auto (default): Use the OS-specific keyring service if available, otherwise use a file.
     #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub mcp_oauth_credentials_store: Option<OAuthCredentialsStoreMode>,
 
     /// Optional fixed port for the local HTTP callback server used during MCP OAuth login.
@@ -274,6 +289,8 @@ pub struct ConfigToml {
 
     /// Optional URI-based file opener. If set, citations to files in the model
     /// output will be hyperlinked using the specified URI scheme.
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub file_opener: Option<UriBasedFileOpener>,
 
     /// Collection of settings that are specific to the TUI.
@@ -288,10 +305,18 @@ pub struct ConfigToml {
     /// Defaults to `false`.
     pub show_raw_agent_reasoning: Option<bool>,
 
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub model_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub plan_mode_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub model_reasoning_summary: Option<ReasoningSummary>,
     /// Optional verbosity control for GPT-5 models (Responses API `text.verbosity`).
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub model_verbosity: Option<Verbosity>,
 
     /// Override to force-enable reasoning summaries for the configured model.
@@ -302,9 +327,13 @@ pub struct ConfigToml {
     pub model_catalog_json: Option<AbsolutePathBuf>,
 
     /// Optionally specify a personality for the model
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub personality: Option<Personality>,
 
     /// Optional explicit service tier preference for new turns (`fast` or `flex`).
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub service_tier: Option<ServiceTier>,
 
     /// Base URL for requests to ChatGPT (as opposed to the OpenAI API).
@@ -351,10 +380,14 @@ pub struct ConfigToml {
     pub experimental_thread_config_endpoint: Option<String>,
 
     /// Experimental / do not use. Selects the thread store implementation.
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub experimental_thread_store: Option<ThreadStoreToml>,
     pub projects: Option<HashMap<String, ProjectConfig>>,
 
     /// Controls the web search tool mode: disabled, cached, or live.
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub web_search: Option<WebSearchMode>,
 
     /// Nested tools section for feature toggles
@@ -577,13 +610,22 @@ pub struct RealtimeConfig {
     pub voice: Option<RealtimeVoice>,
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct RealtimeToml {
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub version: Option<RealtimeWsVersion>,
     #[serde(rename = "type")]
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub session_type: Option<RealtimeWsMode>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub transport: Option<RealtimeTransport>,
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub voice: Option<RealtimeVoice>,
 }
 
@@ -621,15 +663,35 @@ fn deserialize_optional_web_search_tool_config<'de, D>(
 where
     D: Deserializer<'de>,
 {
-    let value = Option::<WebSearchToolConfigInput>::deserialize(deserializer)?;
+    let Some(value) = Option::<TomlValue>::deserialize(deserializer)? else {
+        return Ok(None);
+    };
+
+    let value = match value.clone().try_into::<WebSearchToolConfigInput>() {
+        Ok(value) => value,
+        Err(err) => {
+            let mut without_context_size = value.clone();
+            let removed_context_size = without_context_size
+                .as_table_mut()
+                .and_then(|table| table.remove("context_size"))
+                .is_some_and(|context_size| {
+                    context_size.try_into::<WebSearchContextSize>().is_err()
+                });
+            if !removed_context_size {
+                return Err(SerdeError::custom(err.to_string()));
+            }
+            without_context_size
+                .try_into::<WebSearchToolConfigInput>()
+                .map_err(SerdeError::custom)?
+        }
+    };
 
     Ok(match value {
-        None => None,
-        Some(WebSearchToolConfigInput::Enabled(enabled)) => {
+        WebSearchToolConfigInput::Enabled(enabled) => {
             let _ = enabled;
             None
         }
-        Some(WebSearchToolConfigInput::Config(config)) => Some(config),
+        WebSearchToolConfigInput::Config(config) => Some(config),
     })
 }
 
