@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::marker::PhantomData;
 
 use crate::config_toml::RealtimeTransport;
 use crate::config_toml::RealtimeWsMode;
@@ -66,16 +65,19 @@ where
 /// values. This wrapper only records the raw TOML value when the enum parse
 /// fails so the loader can warn and remove that leaf.
 #[derive(Debug, Clone, PartialEq)]
-struct Lenient<T> {
-    invalid_value: Option<TomlValue>,
-    _marker: PhantomData<T>,
+enum Lenient<T> {
+    Valid(T),
+    Invalid(TomlValue),
 }
 
 impl<T> Lenient<T> {
     /// Returns the original TOML value only when this enum field failed to
     /// parse; callers use this as the single warning signal.
     fn invalid_value(&self) -> Option<&TomlValue> {
-        self.invalid_value.as_ref()
+        match self {
+            Self::Valid(_) => None,
+            Self::Invalid(value) => Some(value),
+        }
     }
 }
 
@@ -89,10 +91,9 @@ where
     {
         let value = TomlValue::deserialize(deserializer)?;
         let parsed: Result<T, toml::de::Error> = value.clone().try_into();
-        let invalid_value = if parsed.is_ok() { None } else { Some(value) };
-        Ok(Self {
-            invalid_value,
-            _marker: PhantomData,
+        Ok(match parsed {
+            Ok(parsed) => Self::Valid(parsed),
+            Err(_) => Self::Invalid(value),
         })
     }
 }
