@@ -10,12 +10,13 @@ mod migrations;
 mod model;
 mod paths;
 mod runtime;
+mod telemetry;
 
 pub use model::LogEntry;
 pub use model::LogQuery;
 pub use model::LogRow;
 pub use model::Phase2JobClaimOutcome;
-/// Preferred entrypoint: owns configuration and metrics.
+/// Preferred entrypoint: owns SQLite configuration and optional metrics injection.
 pub use runtime::StateRuntime;
 
 /// Low-level storage engine: useful for focused tests.
@@ -56,6 +57,8 @@ pub use runtime::logs_db_filename;
 pub use runtime::logs_db_path;
 pub use runtime::state_db_filename;
 pub use runtime::state_db_path;
+pub use telemetry::DbMetricsRecorder;
+pub use telemetry::DbMetricsRecorderHandle;
 
 /// Environment variable for overriding the SQLite state database home directory.
 pub const SQLITE_HOME_ENV: &str = "CODEX_SQLITE_HOME";
@@ -71,3 +74,31 @@ pub const DB_ERROR_METRIC: &str = "codex.db.error";
 pub const DB_METRIC_BACKFILL: &str = "codex.db.backfill";
 /// Metrics on backfill duration. Tags: [status]
 pub const DB_METRIC_BACKFILL_DURATION_MS: &str = "codex.db.backfill.duration_ms";
+/// SQLite startup initialization attempts. Tags: [status, phase, db, error_class, sqlite_code]
+pub const DB_INIT_METRIC: &str = "codex.db.init";
+/// SQLite startup initialization duration. Tags: [status, phase, db, error_class, sqlite_code]
+pub const DB_INIT_DURATION_METRIC: &str = "codex.db.init.duration_ms";
+/// SQLite operation attempts. Tags: [status, db, operation, access, error_class, sqlite_code]
+pub const DB_OPERATION_METRIC: &str = "codex.db.operation";
+/// SQLite operation duration. Tags: [status, db, operation, access, error_class, sqlite_code]
+pub const DB_OPERATION_DURATION_METRIC: &str = "codex.db.operation.duration_ms";
+/// Filesystem fallback after SQLite could not serve a request. Tags: [caller, reason]
+pub const DB_FALLBACK_METRIC: &str = "codex.db.fallback";
+/// SQLite log queue loss or flush failure. Tags: [event, reason]
+pub const DB_LOG_QUEUE_METRIC: &str = "codex.db.log_queue";
+
+pub fn record_db_fallback_metric(
+    metrics: Option<&dyn DbMetricsRecorder>,
+    caller: &'static str,
+    reason: &'static str,
+) {
+    telemetry::record_fallback(metrics, caller, reason);
+}
+
+pub fn record_db_init_backfill_gate_metric(
+    metrics: Option<&dyn DbMetricsRecorder>,
+    duration: std::time::Duration,
+    result: &anyhow::Result<()>,
+) {
+    telemetry::record_init_backfill_gate(metrics, duration, result);
+}

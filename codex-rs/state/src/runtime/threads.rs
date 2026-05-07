@@ -5,8 +5,9 @@ use std::sync::atomic::Ordering;
 
 impl StateRuntime {
     pub async fn get_thread(&self, id: ThreadId) -> anyhow::Result<Option<crate::ThreadMetadata>> {
-        let row = sqlx::query(
-            r#"
+        self.record_db_operation(DbKind::State, "get_thread", DbAccess::Read, async {
+            let row = sqlx::query(
+                r#"
 SELECT
     threads.id,
     threads.rollout_path,
@@ -34,12 +35,14 @@ SELECT
 FROM threads
 WHERE threads.id = ?
             "#,
-        )
-        .bind(id.to_string())
-        .fetch_optional(self.pool.as_ref())
-        .await?;
-        row.map(|row| ThreadRow::try_from_row(&row).and_then(ThreadMetadata::try_from))
-            .transpose()
+            )
+            .bind(id.to_string())
+            .fetch_optional(self.pool.as_ref())
+            .await?;
+            row.map(|row| ThreadRow::try_from_row(&row).and_then(ThreadMetadata::try_from))
+                .transpose()
+        })
+        .await
     }
 
     pub async fn get_thread_memory_mode(&self, id: ThreadId) -> anyhow::Result<Option<String>> {
@@ -55,33 +58,36 @@ WHERE threads.id = ?
         &self,
         thread_id: ThreadId,
     ) -> anyhow::Result<Option<Vec<DynamicToolSpec>>> {
-        let rows = sqlx::query(
-            r#"
+        self.record_db_operation(DbKind::State, "get_dynamic_tools", DbAccess::Read, async {
+            let rows = sqlx::query(
+                r#"
 SELECT namespace, name, description, input_schema, defer_loading
 FROM thread_dynamic_tools
 WHERE thread_id = ?
 ORDER BY position ASC
             "#,
-        )
-        .bind(thread_id.to_string())
-        .fetch_all(self.pool.as_ref())
-        .await?;
-        if rows.is_empty() {
-            return Ok(None);
-        }
-        let mut tools = Vec::with_capacity(rows.len());
-        for row in rows {
-            let input_schema: String = row.try_get("input_schema")?;
-            let input_schema = serde_json::from_str::<Value>(input_schema.as_str())?;
-            tools.push(DynamicToolSpec {
-                namespace: row.try_get("namespace")?,
-                name: row.try_get("name")?,
-                description: row.try_get("description")?,
-                input_schema,
-                defer_loading: row.try_get("defer_loading")?,
-            });
-        }
-        Ok(Some(tools))
+            )
+            .bind(thread_id.to_string())
+            .fetch_all(self.pool.as_ref())
+            .await?;
+            if rows.is_empty() {
+                return Ok(None);
+            }
+            let mut tools = Vec::with_capacity(rows.len());
+            for row in rows {
+                let input_schema: String = row.try_get("input_schema")?;
+                let input_schema = serde_json::from_str::<Value>(input_schema.as_str())?;
+                tools.push(DynamicToolSpec {
+                    namespace: row.try_get("namespace")?,
+                    name: row.try_get("name")?,
+                    description: row.try_get("description")?,
+                    input_schema,
+                    defer_loading: row.try_get("defer_loading")?,
+                });
+            }
+            Ok(Some(tools))
+        })
+        .await
     }
 
     /// Persist or replace the directional parent-child edge for a spawned thread.
@@ -332,22 +338,30 @@ ON CONFLICT(child_thread_id) DO NOTHING
         id: ThreadId,
         archived_only: Option<bool>,
     ) -> anyhow::Result<Option<PathBuf>> {
-        let mut builder =
-            QueryBuilder::<Sqlite>::new("SELECT rollout_path FROM threads WHERE id = ");
-        builder.push_bind(id.to_string());
-        match archived_only {
-            Some(true) => {
-                builder.push(" AND archived = 1");
-            }
-            Some(false) => {
-                builder.push(" AND archived = 0");
-            }
-            None => {}
-        }
-        let row = builder.build().fetch_optional(self.pool.as_ref()).await?;
-        Ok(row
-            .and_then(|r| r.try_get::<String, _>("rollout_path").ok())
-            .map(PathBuf::from))
+        self.record_db_operation(
+            DbKind::State,
+            "find_rollout_path_by_id",
+            DbAccess::Read,
+            async {
+                let mut builder =
+                    QueryBuilder::<Sqlite>::new("SELECT rollout_path FROM threads WHERE id = ");
+                builder.push_bind(id.to_string());
+                match archived_only {
+                    Some(true) => {
+                        builder.push(" AND archived = 1");
+                    }
+                    Some(false) => {
+                        builder.push(" AND archived = 0");
+                    }
+                    None => {}
+                }
+                let row = builder.build().fetch_optional(self.pool.as_ref()).await?;
+                Ok(row
+                    .and_then(|r| r.try_get::<String, _>("rollout_path").ok())
+                    .map(PathBuf::from))
+            },
+        )
+        .await
     }
 
     /// Find the newest thread whose user-facing title exactly matches `title`.
@@ -400,35 +414,38 @@ ON CONFLICT(child_thread_id) DO NOTHING
         page_size: usize,
         filters: ThreadFilterOptions<'_>,
     ) -> anyhow::Result<crate::ThreadsPage> {
-        let limit = page_size.saturating_add(1);
-        let sort_key = filters.sort_key;
-        let sort_direction = filters.sort_direction;
+        self.record_db_operation(DbKind::State, "list_threads", DbAccess::Read, async {
+            let limit = page_size.saturating_add(1);
+            let sort_key = filters.sort_key;
+            let sort_direction = filters.sort_direction;
 
-        let mut builder = QueryBuilder::<Sqlite>::new("");
-        push_thread_select_columns(&mut builder);
-        builder.push(" FROM threads");
-        push_thread_filters(&mut builder, filters);
-        push_thread_order_and_limit(&mut builder, sort_key, sort_direction, limit);
+            let mut builder = QueryBuilder::<Sqlite>::new("");
+            push_thread_select_columns(&mut builder);
+            builder.push(" FROM threads");
+            push_thread_filters(&mut builder, filters);
+            push_thread_order_and_limit(&mut builder, sort_key, sort_direction, limit);
 
-        let rows = builder.build().fetch_all(self.pool.as_ref()).await?;
-        let mut items = rows
-            .into_iter()
-            .map(|row| ThreadRow::try_from_row(&row).and_then(ThreadMetadata::try_from))
-            .collect::<Result<Vec<_>, _>>()?;
-        let num_scanned_rows = items.len();
-        let next_anchor = if items.len() > page_size {
-            items.pop();
-            items
-                .last()
-                .and_then(|item| anchor_from_item(item, sort_key))
-        } else {
-            None
-        };
-        Ok(ThreadsPage {
-            items,
-            next_anchor,
-            num_scanned_rows,
+            let rows = builder.build().fetch_all(self.pool.as_ref()).await?;
+            let mut items = rows
+                .into_iter()
+                .map(|row| ThreadRow::try_from_row(&row).and_then(ThreadMetadata::try_from))
+                .collect::<Result<Vec<_>, _>>()?;
+            let num_scanned_rows = items.len();
+            let next_anchor = if items.len() > page_size {
+                items.pop();
+                items
+                    .last()
+                    .and_then(|item| anchor_from_item(item, sort_key))
+            } else {
+                None
+            };
+            Ok(ThreadsPage {
+                items,
+                next_anchor,
+                num_scanned_rows,
+            })
         })
+        .await
     }
 
     /// List thread ids using the underlying database (no rollout scanning).
@@ -585,15 +602,24 @@ ON CONFLICT(id) DO NOTHING
         thread_id: ThreadId,
         updated_at: DateTime<Utc>,
     ) -> anyhow::Result<bool> {
-        let updated_at = self.allocate_thread_updated_at(updated_at)?;
-        let result =
-            sqlx::query("UPDATE threads SET updated_at = ?, updated_at_ms = ? WHERE id = ?")
+        self.record_db_operation(
+            DbKind::State,
+            "touch_thread_updated_at",
+            DbAccess::Write,
+            async {
+                let updated_at = self.allocate_thread_updated_at(updated_at)?;
+                let result = sqlx::query(
+                    "UPDATE threads SET updated_at = ?, updated_at_ms = ? WHERE id = ?",
+                )
                 .bind(datetime_to_epoch_seconds(updated_at))
                 .bind(datetime_to_epoch_millis(updated_at))
                 .bind(thread_id.to_string())
                 .execute(self.pool.as_ref())
                 .await?;
-        Ok(result.rows_affected() > 0)
+                Ok(result.rows_affected() > 0)
+            },
+        )
+        .await
     }
 
     /// Allocate a persisted `updated_at` value for thread-list cursor ordering.
@@ -676,12 +702,13 @@ WHERE id = ?
         metadata: &crate::ThreadMetadata,
         creation_memory_mode: Option<&str>,
     ) -> anyhow::Result<()> {
-        let updated_at = self.allocate_thread_updated_at(metadata.updated_at)?;
-        // Backfill/reconcile callers merge existing git info before upserting, but that
-        // read/modify/write is not atomic. Preserve non-null SQLite git fields here so
-        // an explicit metadata update cannot be lost if a stale rollout upsert lands later.
-        sqlx::query(
-            r#"
+        self.record_db_operation(DbKind::State, "upsert_thread", DbAccess::Write, async {
+            let updated_at = self.allocate_thread_updated_at(metadata.updated_at)?;
+            // Backfill/reconcile callers merge existing git info before upserting, but that
+            // read/modify/write is not atomic. Preserve non-null SQLite git fields here so
+            // an explicit metadata update cannot be lost if a stale rollout upsert lands later.
+            sqlx::query(
+                r#"
 INSERT INTO threads (
     id,
     rollout_path,
@@ -738,48 +765,53 @@ ON CONFLICT(id) DO UPDATE SET
     git_branch = COALESCE(threads.git_branch, excluded.git_branch),
     git_origin_url = COALESCE(threads.git_origin_url, excluded.git_origin_url)
             "#,
-        )
-        .bind(metadata.id.to_string())
-        .bind(metadata.rollout_path.display().to_string())
-        .bind(datetime_to_epoch_seconds(metadata.created_at))
-        .bind(datetime_to_epoch_seconds(updated_at))
-        .bind(datetime_to_epoch_millis(metadata.created_at))
-        .bind(datetime_to_epoch_millis(updated_at))
-        .bind(metadata.source.as_str())
-        .bind(
-            metadata
-                .thread_source
-                .map(codex_protocol::protocol::ThreadSource::as_str),
-        )
-        .bind(metadata.agent_nickname.as_deref())
-        .bind(metadata.agent_role.as_deref())
-        .bind(metadata.agent_path.as_deref())
-        .bind(metadata.model_provider.as_str())
-        .bind(metadata.model.as_deref())
-        .bind(
-            metadata
-                .reasoning_effort
-                .as_ref()
-                .map(crate::extract::enum_to_string),
-        )
-        .bind(metadata.cwd.display().to_string())
-        .bind(metadata.cli_version.as_str())
-        .bind(metadata.title.as_str())
-        .bind(metadata.sandbox_policy.as_str())
-        .bind(metadata.approval_mode.as_str())
-        .bind(metadata.tokens_used)
-        .bind(metadata.first_user_message.as_deref().unwrap_or_default())
-        .bind(metadata.archived_at.is_some())
-        .bind(metadata.archived_at.map(datetime_to_epoch_seconds))
-        .bind(metadata.git_sha.as_deref())
-        .bind(metadata.git_branch.as_deref())
-        .bind(metadata.git_origin_url.as_deref())
-        .bind(creation_memory_mode.unwrap_or("enabled"))
-        .execute(self.pool.as_ref())
-        .await?;
-        self.insert_thread_spawn_edge_from_source_if_absent(metadata.id, metadata.source.as_str())
+            )
+            .bind(metadata.id.to_string())
+            .bind(metadata.rollout_path.display().to_string())
+            .bind(datetime_to_epoch_seconds(metadata.created_at))
+            .bind(datetime_to_epoch_seconds(updated_at))
+            .bind(datetime_to_epoch_millis(metadata.created_at))
+            .bind(datetime_to_epoch_millis(updated_at))
+            .bind(metadata.source.as_str())
+            .bind(
+                metadata
+                    .thread_source
+                    .map(codex_protocol::protocol::ThreadSource::as_str),
+            )
+            .bind(metadata.agent_nickname.as_deref())
+            .bind(metadata.agent_role.as_deref())
+            .bind(metadata.agent_path.as_deref())
+            .bind(metadata.model_provider.as_str())
+            .bind(metadata.model.as_deref())
+            .bind(
+                metadata
+                    .reasoning_effort
+                    .as_ref()
+                    .map(crate::extract::enum_to_string),
+            )
+            .bind(metadata.cwd.display().to_string())
+            .bind(metadata.cli_version.as_str())
+            .bind(metadata.title.as_str())
+            .bind(metadata.sandbox_policy.as_str())
+            .bind(metadata.approval_mode.as_str())
+            .bind(metadata.tokens_used)
+            .bind(metadata.first_user_message.as_deref().unwrap_or_default())
+            .bind(metadata.archived_at.is_some())
+            .bind(metadata.archived_at.map(datetime_to_epoch_seconds))
+            .bind(metadata.git_sha.as_deref())
+            .bind(metadata.git_branch.as_deref())
+            .bind(metadata.git_origin_url.as_deref())
+            .bind(creation_memory_mode.unwrap_or("enabled"))
+            .execute(self.pool.as_ref())
             .await?;
-        Ok(())
+            self.insert_thread_spawn_edge_from_source_if_absent(
+                metadata.id,
+                metadata.source.as_str(),
+            )
+            .await?;
+            Ok(())
+        })
+        .await
     }
 
     /// Persist dynamic tools for a thread if none have been stored yet.
@@ -791,19 +823,24 @@ ON CONFLICT(id) DO UPDATE SET
         thread_id: ThreadId,
         tools: Option<&[DynamicToolSpec]>,
     ) -> anyhow::Result<()> {
-        let Some(tools) = tools else {
-            return Ok(());
-        };
-        if tools.is_empty() {
-            return Ok(());
-        }
-        let thread_id = thread_id.to_string();
-        let mut tx = self.pool.begin().await?;
-        for (idx, tool) in tools.iter().enumerate() {
-            let position = i64::try_from(idx).unwrap_or(i64::MAX);
-            let input_schema = serde_json::to_string(&tool.input_schema)?;
-            sqlx::query(
-                r#"
+        self.record_db_operation(
+            DbKind::State,
+            "persist_dynamic_tools",
+            DbAccess::Transaction,
+            async {
+                let Some(tools) = tools else {
+                    return Ok(());
+                };
+                if tools.is_empty() {
+                    return Ok(());
+                }
+                let thread_id = thread_id.to_string();
+                let mut tx = self.pool.begin().await?;
+                for (idx, tool) in tools.iter().enumerate() {
+                    let position = i64::try_from(idx).unwrap_or(i64::MAX);
+                    let input_schema = serde_json::to_string(&tool.input_schema)?;
+                    sqlx::query(
+                        r#"
 INSERT INTO thread_dynamic_tools (
     thread_id,
     position,
@@ -815,19 +852,22 @@ INSERT INTO thread_dynamic_tools (
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(thread_id, position) DO NOTHING
                 "#,
-            )
-            .bind(thread_id.as_str())
-            .bind(position)
-            .bind(tool.namespace.as_deref())
-            .bind(tool.name.as_str())
-            .bind(tool.description.as_str())
-            .bind(input_schema)
-            .bind(tool.defer_loading)
-            .execute(&mut *tx)
-            .await?;
-        }
-        tx.commit().await?;
-        Ok(())
+                    )
+                    .bind(thread_id.as_str())
+                    .bind(position)
+                    .bind(tool.namespace.as_deref())
+                    .bind(tool.name.as_str())
+                    .bind(tool.description.as_str())
+                    .bind(input_schema)
+                    .bind(tool.defer_loading)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                tx.commit().await?;
+                Ok(())
+            },
+        )
+        .await
     }
 
     /// Apply rollout items incrementally using the underlying database.
