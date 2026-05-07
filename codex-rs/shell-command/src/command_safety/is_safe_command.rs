@@ -4,6 +4,7 @@ use crate::command_safety::is_dangerous_command::executable_name_lookup_key;
 // may appear before it (e.g., `-C`, `-c`, `--git-dir`).
 // Implemented in `is_dangerous_command` and shared here.
 use crate::command_safety::is_dangerous_command::find_git_subcommand;
+use crate::command_safety::ripgrep::RipgrepArgCase;
 use crate::command_safety::ripgrep::is_safe_ripgrep_command;
 use crate::command_safety::windows_safe_commands::is_safe_command_windows;
 #[cfg(windows)]
@@ -128,7 +129,7 @@ fn is_safe_to_call_with_exec(command: &[String]) -> bool {
         }
 
         // Ripgrep
-        Some("rg") => is_safe_ripgrep_command(command),
+        Some("rg") => is_safe_ripgrep_command(command, RipgrepArgCase::Sensitive),
 
         // Git
         Some("git") => is_safe_git_command(command),
