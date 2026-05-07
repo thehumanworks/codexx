@@ -794,7 +794,7 @@ client_request_definitions! {
     },
     ExperimentalFeatureList => "experimentalFeature/list" {
         params: v2::ExperimentalFeatureListParams,
-        serialization: global("config"),
+        serialization: global_shared_read("config"),
         response: v2::ExperimentalFeatureListResponse,
     },
     ExperimentalFeatureEnablementSet => "experimentalFeature/enablement/set" {
@@ -1682,6 +1682,26 @@ mod tests {
         assert_eq!(
             plugin_list.serialization_scope(),
             Some(ClientRequestSerializationScope::GlobalSharedRead("config"))
+        );
+
+        let experimental_feature_list = ClientRequest::ExperimentalFeatureList {
+            request_id: request_id(),
+            params: v2::ExperimentalFeatureListParams::default(),
+        };
+        assert_eq!(
+            experimental_feature_list.serialization_scope(),
+            Some(ClientRequestSerializationScope::GlobalSharedRead("config"))
+        );
+
+        let experimental_feature_enablement_set = ClientRequest::ExperimentalFeatureEnablementSet {
+            request_id: request_id(),
+            params: v2::ExperimentalFeatureEnablementSetParams {
+                enablement: Default::default(),
+            },
+        };
+        assert_eq!(
+            experimental_feature_enablement_set.serialization_scope(),
+            Some(ClientRequestSerializationScope::Global("config"))
         );
 
         let plugin_uninstall = ClientRequest::PluginUninstall {
