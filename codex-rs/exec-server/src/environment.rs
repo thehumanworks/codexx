@@ -13,6 +13,7 @@ use crate::environment_provider::EnvironmentDefault;
 use crate::environment_provider::EnvironmentProvider;
 use crate::environment_provider::EnvironmentProviderSnapshot;
 use crate::environment_provider::normalize_exec_server_url;
+use crate::environment_resolver::EnvironmentResolver;
 use crate::environment_toml::environment_provider_from_codex_home;
 use crate::local_file_system::LocalFileSystem;
 use crate::local_process::LocalProcess;
@@ -43,10 +44,36 @@ pub struct EnvironmentManager {
     default_environment: Option<String>,
     environments: HashMap<String, Arc<Environment>>,
     local_environment: Arc<Environment>,
+    environment_resolver: Option<Arc<dyn EnvironmentResolver>>,
 }
 
 pub const LOCAL_ENVIRONMENT_ID: &str = "local";
 pub const REMOTE_ENVIRONMENT_ID: &str = "remote";
+
+#[derive(Clone, Debug)]
+pub struct EnvironmentManagerArgs {
+    pub local_runtime_paths: ExecServerRuntimePaths,
+    /// Optional resolver supplied by embedding runtimes. It is stored only;
+    /// environment lookup remains strict until policy is wired explicitly.
+    environment_resolver: Option<Arc<dyn EnvironmentResolver>>,
+}
+
+impl EnvironmentManagerArgs {
+    pub fn new(local_runtime_paths: ExecServerRuntimePaths) -> Self {
+        Self {
+            local_runtime_paths,
+            environment_resolver: None,
+        }
+    }
+
+    pub fn with_environment_resolver(
+        mut self,
+        environment_resolver: Arc<dyn EnvironmentResolver>,
+    ) -> Self {
+        self.environment_resolver = Some(environment_resolver);
+        self
+    }
+}
 
 impl EnvironmentManager {
     /// Builds a test-only manager without configured sandbox helper paths.
@@ -58,6 +85,7 @@ impl EnvironmentManager {
                 Arc::new(Environment::default_for_tests()),
             )]),
             local_environment: Arc::new(Environment::default_for_tests()),
+            environment_resolver: None,
         }
     }
 
@@ -67,6 +95,7 @@ impl EnvironmentManager {
             default_environment: None,
             environments: HashMap::new(),
             local_environment: Arc::new(Environment::local(local_runtime_paths)),
+            environment_resolver: None,
         }
     }
 
@@ -75,7 +104,19 @@ impl EnvironmentManager {
         exec_server_url: Option<String>,
         local_runtime_paths: ExecServerRuntimePaths,
     ) -> Self {
-        Self::from_default_provider_url(exec_server_url, local_runtime_paths).await
+        Self::from_default_provider_url(exec_server_url, local_runtime_paths, None).await
+    }
+
+    /// Builds a manager from `CODEX_EXEC_SERVER_URL` and local runtime paths
+    /// used when creating local filesystem helpers.
+    pub async fn new(args: EnvironmentManagerArgs) -> Self {
+        let EnvironmentManagerArgs {
+            local_runtime_paths,
+            environment_resolver,
+        } = args;
+        let exec_server_url = std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok();
+        Self::from_default_provider_url(exec_server_url, local_runtime_paths, environment_resolver)
+            .await
     }
 
     /// Builds a manager from `CODEX_HOME` and local runtime paths used when
@@ -105,10 +146,14 @@ impl EnvironmentManager {
     async fn from_default_provider_url(
         exec_server_url: Option<String>,
         local_runtime_paths: ExecServerRuntimePaths,
+        environment_resolver: Option<Arc<dyn EnvironmentResolver>>,
     ) -> Self {
         let provider = DefaultEnvironmentProvider::new(exec_server_url);
         match Self::from_provider(&provider, local_runtime_paths).await {
-            Ok(manager) => manager,
+            Ok(mut manager) => {
+                manager.environment_resolver = environment_resolver;
+                manager
+            }
             Err(err) => panic!("default provider should create valid environments: {err}"),
         }
     }
@@ -164,6 +209,7 @@ impl EnvironmentManager {
             default_environment,
             environments,
             local_environment,
+            environment_resolver: None,
         })
     }
 
