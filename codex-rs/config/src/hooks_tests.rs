@@ -129,6 +129,62 @@ command = "python3 /tmp/pre.py"
 }
 
 #[test]
+fn hooks_toml_drops_unknown_handler_type() {
+    let parsed: HooksToml = toml::from_str(
+        r#"
+[[UserPromptSubmit]]
+matcher = "^UserPromptSubmit$"
+
+[[UserPromptSubmit.hooks]]
+type = "python"
+command = "python3 /tmp/ignored.py"
+
+[[UserPromptSubmit.hooks]]
+type = 7
+command = "python3 /tmp/also-ignored.py"
+
+[[UserPromptSubmit.hooks]]
+type = "command"
+command = "python3 /tmp/kept.py"
+"#,
+    )
+    .expect("unknown hook handler type should be dropped");
+
+    assert_eq!(
+        parsed,
+        HooksToml {
+            events: HookEventsToml {
+                user_prompt_submit: vec![MatcherGroup {
+                    matcher: Some("^UserPromptSubmit$".to_string()),
+                    hooks: vec![HookHandlerConfig::Command {
+                        command: "python3 /tmp/kept.py".to_string(),
+                        timeout_sec: None,
+                        r#async: false,
+                        status_message: None,
+                    }],
+                }],
+                ..Default::default()
+            },
+            state: BTreeMap::new(),
+        }
+    );
+}
+
+#[test]
+fn hooks_toml_keeps_non_enum_handler_errors_strict() {
+    let result = toml::from_str::<HooksToml>(
+        r#"
+[[UserPromptSubmit]]
+
+[[UserPromptSubmit.hooks]]
+type = "command"
+"#,
+    );
+
+    assert!(result.is_err());
+}
+
+#[test]
 fn managed_hooks_requirements_flatten_hook_events() {
     let parsed: ManagedHooksRequirementsToml = toml::from_str(
         r#"

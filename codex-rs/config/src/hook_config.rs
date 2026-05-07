@@ -5,7 +5,10 @@ use std::path::PathBuf;
 use codex_protocol::protocol::HookEventName;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Deserializer;
 use serde::Serialize;
+use serde::de::Error as SerdeError;
+use serde_json::Value as JsonValue;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HooksFile {
@@ -102,8 +105,34 @@ impl HookEventsToml {
 pub struct MatcherGroup {
     #[serde(default)]
     pub matcher: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_hook_handlers")]
     pub hooks: Vec<HookHandlerConfig>,
+}
+
+/// Deserialize hook handlers while dropping entries with unknown tagged variants.
+///
+/// The schema warning pass reports invalid `type` values before typed config
+/// deserialization. Dropping only those entries keeps startup warnings
+/// non-blocking without making unrelated hook shape errors silent.
+fn deserialize_hook_handlers<'de, D>(deserializer: D) -> Result<Vec<HookHandlerConfig>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values = Vec::<JsonValue>::deserialize(deserializer)?;
+    let mut handlers = Vec::new();
+
+    for value in values {
+        let invalid_type = value.get("type").is_some_and(|handler_type| {
+            !matches!(handler_type.as_str(), Some("command" | "prompt" | "agent"))
+        });
+        match serde_json::from_value(value) {
+            Ok(handler) => handlers.push(handler),
+            Err(_) if invalid_type => {}
+            Err(err) => return Err(SerdeError::custom(err)),
+        }
+    }
+
+    Ok(handlers)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
