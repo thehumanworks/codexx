@@ -6,11 +6,23 @@
 //! supporting types nearby.
 
 mod prompt;
+mod tool;
 
 pub use prompt::PromptFragment;
 pub use prompt::PromptSlot;
+pub use tool::ToolCallError;
+pub use tool::ToolContribution;
+pub use tool::ToolHandler;
 
-use rmcp::model::Tool;
+/// Extension contribution that can claim approval requests for a runtime context.
+///
+/// Implementations should make only the routing decision here. The host keeps
+/// ownership of executing the chosen review flow and translating its result
+/// back into the surrounding runtime.
+pub trait ApprovalInterceptorContributor<C>: Send + Sync {
+    /// Returns whether this contributor should intercept approvals in `context`.
+    fn intercepts_approvals(&self, context: &C) -> bool;
+}
 
 /// Extension contribution that adds prompt fragments during prompt assembly.
 ///
@@ -22,15 +34,13 @@ pub trait PromptContributor<C>: Send + Sync {
     fn contribute(&self, context: &C) -> Vec<PromptFragment>;
 }
 
-/// Extension contribution that exposes MCP tool definitions owned by a feature.
+/// Extension contribution that exposes native tools owned by a feature.
 ///
 /// Implementations should inspect only their feature-owned slice of the
 /// current runtime context and return the tools exposed for that invocation.
-/// The host remains responsible for mounting those tools and routing
-/// execution.
-///
-/// This is intentionally MCP-shaped for now because the more general tool
-/// abstraction has not been extracted yet.
-pub trait McpToolContributor<C>: Send + Sync {
-    fn tools(&self, context: &C) -> Vec<Tool>;
+/// The host remains responsible for mounting those tools and adapting calls
+/// into its runtime.
+pub trait ToolContributor<C>: Send + Sync {
+    /// Returns the native tools visible for the supplied runtime context.
+    fn tools(&self, context: &C) -> Vec<ToolContribution<C>>;
 }

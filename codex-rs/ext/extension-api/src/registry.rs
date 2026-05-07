@@ -1,20 +1,23 @@
 use std::sync::Arc;
 
+use crate::ApprovalInterceptorContributor;
 use crate::CodexExtension;
-use crate::McpToolContributor;
 use crate::PromptContributor;
+use crate::ToolContributor;
 
 /// Mutable registry used while extensions install their typed contributions.
 pub struct ExtensionRegistryBuilder<C> {
-    mcp_tool_contributors: Vec<Arc<dyn McpToolContributor<C>>>,
+    approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
     prompt_contributors: Vec<Arc<dyn PromptContributor<C>>>,
+    tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
 }
 
 impl<C> Default for ExtensionRegistryBuilder<C> {
     fn default() -> Self {
         Self {
-            mcp_tool_contributors: Vec::new(),
+            approval_interceptor_contributors: Vec::new(),
             prompt_contributors: Vec::new(),
+            tool_contributors: Vec::new(),
         }
     }
 }
@@ -43,9 +46,12 @@ impl<C> ExtensionRegistryBuilder<C> {
         extension.install(self);
     }
 
-    /// Registers one MCP tool contributor.
-    pub fn mcp_tool_contributor(&mut self, contributor: Arc<dyn McpToolContributor<C>>) {
-        self.mcp_tool_contributors.push(contributor);
+    /// Registers one approval interceptor contributor.
+    pub fn approval_interceptor_contributor(
+        &mut self,
+        contributor: Arc<dyn ApprovalInterceptorContributor<C>>,
+    ) {
+        self.approval_interceptor_contributors.push(contributor);
     }
 
     /// Registers one prompt contributor.
@@ -53,29 +59,43 @@ impl<C> ExtensionRegistryBuilder<C> {
         self.prompt_contributors.push(contributor);
     }
 
+    /// Registers one native tool contributor.
+    pub fn tool_contributor(&mut self, contributor: Arc<dyn ToolContributor<C>>) {
+        self.tool_contributors.push(contributor);
+    }
+
     /// Finishes construction and returns the immutable registry.
     pub fn build(self) -> ExtensionRegistry<C> {
         ExtensionRegistry {
-            mcp_tool_contributors: self.mcp_tool_contributors,
+            approval_interceptor_contributors: self.approval_interceptor_contributors,
             prompt_contributors: self.prompt_contributors,
+            tool_contributors: self.tool_contributors,
         }
     }
 }
 
 /// Immutable typed registry produced after extensions are installed.
 pub struct ExtensionRegistry<C> {
-    mcp_tool_contributors: Vec<Arc<dyn McpToolContributor<C>>>,
+    approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
     prompt_contributors: Vec<Arc<dyn PromptContributor<C>>>,
+    tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
 }
 
 impl<C> ExtensionRegistry<C> {
-    /// Returns the registered MCP tool contributors.
-    pub fn mcp_tool_contributors(&self) -> &[Arc<dyn McpToolContributor<C>>] {
-        &self.mcp_tool_contributors
+    /// Returns the registered approval interceptor contributors.
+    pub fn approval_interceptor_contributors(
+        &self,
+    ) -> &[Arc<dyn ApprovalInterceptorContributor<C>>] {
+        &self.approval_interceptor_contributors
     }
 
     /// Returns the registered prompt contributors.
     pub fn prompt_contributors(&self) -> &[Arc<dyn PromptContributor<C>>] {
         &self.prompt_contributors
+    }
+
+    /// Returns the registered native tool contributors.
+    pub fn tool_contributors(&self) -> &[Arc<dyn ToolContributor<C>>] {
+        &self.tool_contributors
     }
 }

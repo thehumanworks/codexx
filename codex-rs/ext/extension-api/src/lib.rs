@@ -11,10 +11,14 @@ mod contributors;
 mod extension;
 mod registry;
 
-pub use contributors::McpToolContributor;
+pub use contributors::ApprovalInterceptorContributor;
 pub use contributors::PromptContributor;
 pub use contributors::PromptFragment;
 pub use contributors::PromptSlot;
+pub use contributors::ToolCallError;
+pub use contributors::ToolContribution;
+pub use contributors::ToolContributor;
+pub use contributors::ToolHandler;
 pub use extension::CodexExtension;
 pub use registry::ExtensionRegistry;
 pub use registry::ExtensionRegistryBuilder;
