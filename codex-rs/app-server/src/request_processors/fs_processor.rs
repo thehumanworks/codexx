@@ -145,7 +145,7 @@ impl FsRequestProcessor {
         } else {
             let lane = UploadSftpLane::start(
                 self.upload_paths_for_connection(connection_id).await,
-                binary_writer,
+                binary_writer.clone(),
             )
             .await;
             self.upload_sftp_lanes
@@ -155,7 +155,21 @@ impl FsRequestProcessor {
                 .or_insert_with(|| lane.clone())
                 .clone()
         };
-        lane.send(bytes).await
+        match lane.send(bytes.clone()).await {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                let lane = UploadSftpLane::start(
+                    self.upload_paths_for_connection(connection_id).await,
+                    binary_writer,
+                )
+                .await;
+                self.upload_sftp_lanes
+                    .lock()
+                    .await
+                    .insert(connection_id, lane.clone());
+                lane.send(bytes).await
+            }
+        }
     }
 
     async fn upload_paths_for_connection(&self, connection_id: ConnectionId) -> UploadPaths {

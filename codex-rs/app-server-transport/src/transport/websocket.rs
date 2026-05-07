@@ -183,6 +183,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
         mpsc::channel::<QueuedOutgoingMessage>(WEBSOCKET_OUTBOUND_CHANNEL_CAPACITY);
     let writer_tx_for_reader = writer_tx.clone();
     let (binary_writer_tx, binary_writer_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
+    let (binary_reader_tx, binary_reader_rx) = mpsc::channel::<Vec<u8>>(CHANNEL_CAPACITY);
     let disconnect_token = CancellationToken::new();
     if transport_event_tx
         .send(TransportEvent::ConnectionOpened {
@@ -190,6 +191,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
             origin: ConnectionOrigin::WebSocket,
             writer: writer_tx,
             binary_writer: Some(binary_writer_tx.clone()),
+            binary_reader: Some(binary_reader_rx),
             disconnect_sender: Some(disconnect_token.clone()),
         })
         .await
@@ -211,6 +213,7 @@ pub(crate) async fn run_websocket_connection<M, SinkError, StreamError>(
         transport_event_tx.clone(),
         writer_tx_for_reader,
         writer_control_tx,
+        binary_reader_tx,
         connection_id,
         disconnect_token.clone(),
     ));
@@ -353,6 +356,7 @@ async fn run_websocket_inbound_loop<M, StreamError>(
     transport_event_tx: mpsc::Sender<TransportEvent>,
     writer_tx_for_reader: mpsc::Sender<QueuedOutgoingMessage>,
     writer_control_tx: mpsc::Sender<M>,
+    binary_reader_tx: mpsc::Sender<Vec<u8>>,
     connection_id: ConnectionId,
     disconnect_token: CancellationToken,
 ) where
@@ -393,14 +397,7 @@ async fn run_websocket_inbound_loop<M, StreamError>(
                         Some(IncomingWebSocketMessage::Pong) => {}
                         Some(IncomingWebSocketMessage::Close) => break,
                         Some(IncomingWebSocketMessage::Binary(bytes)) => {
-                            if transport_event_tx
-                                .send(TransportEvent::IncomingBinary {
-                                    connection_id,
-                                    bytes,
-                                })
-                                .await
-                                .is_err()
-                            {
+                            if binary_reader_tx.send(bytes).await.is_err() {
                                 break;
                             }
                         }

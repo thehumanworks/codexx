@@ -153,6 +153,7 @@ pub enum TransportEvent {
         origin: ConnectionOrigin,
         writer: mpsc::Sender<QueuedOutgoingMessage>,
         binary_writer: Option<mpsc::Sender<Vec<u8>>>,
+        binary_reader: Option<mpsc::Receiver<Vec<u8>>>,
         disconnect_sender: Option<CancellationToken>,
     },
     ConnectionClosed {

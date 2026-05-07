@@ -79,8 +79,12 @@ async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_binary_mes
         .await
         .expect("connection opened event should arrive")
         .expect("connection opened event");
-    let connection_id = match opened {
-        TransportEvent::ConnectionOpened { connection_id, .. } => connection_id,
+    let (connection_id, mut binary_reader) = match opened {
+        TransportEvent::ConnectionOpened {
+            connection_id,
+            binary_reader: Some(binary_reader),
+            ..
+        } => (connection_id, binary_reader),
         _ => panic!("expected connection opened event"),
     };
 
@@ -116,20 +120,11 @@ async fn control_socket_acceptor_upgrades_and_forwards_websocket_text_binary_mes
         .send(WebSocketMessage::Binary(Bytes::from_static(b"sftp")))
         .await
         .expect("binary payload should send");
-    let incoming_binary = timeout(Duration::from_secs(1), transport_event_rx.recv())
+    let incoming_binary = timeout(Duration::from_secs(1), binary_reader.recv())
         .await
-        .expect("incoming binary event should arrive")
-        .expect("incoming binary event");
-    assert_eq!(
-        match incoming_binary {
-            TransportEvent::IncomingBinary {
-                connection_id: incoming_connection_id,
-                bytes,
-            } => (incoming_connection_id, bytes),
-            _ => panic!("expected incoming binary event"),
-        },
-        (connection_id, b"sftp".to_vec())
-    );
+        .expect("incoming binary payload should arrive")
+        .expect("incoming binary payload");
+    assert_eq!(incoming_binary, b"sftp".to_vec());
 
     websocket
         .send(WebSocketMessage::Ping(Bytes::from_static(b"check")))

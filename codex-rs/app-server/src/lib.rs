@@ -829,6 +829,7 @@ pub async fn run_main_with_transport_options(
                                 origin,
                                 writer,
                                 binary_writer,
+                                binary_reader,
                                 disconnect_sender,
                             } => {
                                 let outbound_initialized = Arc::new(AtomicBool::new(false));
@@ -853,6 +854,28 @@ pub async fn run_main_with_transport_options(
                                     .is_err()
                                 {
                                     break;
+                                }
+                                if let (Some(binary_writer), Some(mut binary_reader)) =
+                                    (binary_writer.clone(), binary_reader)
+                                {
+                                    let processor = Arc::clone(&processor);
+                                    tokio::spawn(async move {
+                                        while let Some(bytes) = binary_reader.recv().await {
+                                            if let Err(err) = processor
+                                                .process_upload_binary(
+                                                    connection_id,
+                                                    binary_writer.clone(),
+                                                    bytes,
+                                                )
+                                                .await
+                                            {
+                                                warn!(
+                                                    "failed to process upload binary payload: {}",
+                                                    err.message
+                                                );
+                                            }
+                                        }
+                                    });
                                 }
                                 connections.insert(
                                     connection_id,

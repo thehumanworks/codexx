@@ -35,6 +35,7 @@ pub async fn start_stdio_connection(
             origin: ConnectionOrigin::Stdio,
             writer: writer_tx,
             binary_writer: None,
+            binary_reader: None,
             disconnect_sender: None,
         })
         .await
