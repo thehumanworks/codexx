@@ -105,6 +105,11 @@ pub struct ThreadStartParams {
     pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional workspace roots for this thread. Omitted uses the server's
+    /// configured roots, usually seeded from `cwd`.
+    #[experimental("thread/start.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -114,9 +119,8 @@ pub struct ThreadStartParams {
     pub approvals_reviewer: Option<ApprovalsReviewer>,
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
-    /// Named profile selection for this thread. Cannot be combined with
-    /// `sandbox`. Use bounded `modifications` for supported turn/thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// Named profile selection for this new thread's initial permissions.
+    /// Cannot be combined with `sandbox`.
     #[experimental("thread/start.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -193,6 +197,11 @@ pub struct ThreadStartResponse {
     pub model_provider: String,
     pub service_tier: Option<String>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/start.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -262,6 +271,11 @@ pub struct ThreadResumeParams {
     pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional replacement workspace roots for the resumed thread. Omitted
+    /// preserves the persisted or configured roots.
+    #[experimental("thread/resume.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -269,11 +283,13 @@ pub struct ThreadResumeParams {
     /// and subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// Deprecated for resume. The server rejects this field because the
+    /// persisted permission profile value is preserved across resume.
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
     /// Named profile selection for the resumed thread. Cannot be combined
-    /// with `sandbox`. Use bounded `modifications` for supported thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// with `sandbox`. This updates profile identity metadata without
+    /// replacing the effective permissions profile.
     #[experimental("thread/resume.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -308,6 +324,11 @@ pub struct ThreadResumeResponse {
     pub model_provider: String,
     pub service_tier: Option<String>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/resume.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,
@@ -368,6 +389,11 @@ pub struct ThreadForkParams {
     pub service_tier: Option<Option<String>>,
     #[ts(optional = nullable)]
     pub cwd: Option<String>,
+    /// Optional replacement workspace roots for the forked thread. Omitted
+    /// preserves the source thread roots when available.
+    #[experimental("thread/fork.workspaceRoots")]
+    #[ts(optional = nullable)]
+    pub workspace_roots: Option<Vec<AbsolutePathBuf>>,
     #[experimental(nested)]
     #[ts(optional = nullable)]
     pub approval_policy: Option<AskForApproval>,
@@ -375,11 +401,13 @@ pub struct ThreadForkParams {
     /// and subsequent turns.
     #[ts(optional = nullable)]
     pub approvals_reviewer: Option<ApprovalsReviewer>,
+    /// Deprecated for fork. The server rejects this field because the source
+    /// permission profile value is preserved across fork.
     #[ts(optional = nullable)]
     pub sandbox: Option<SandboxMode>,
     /// Named profile selection for the forked thread. Cannot be combined with
-    /// `sandbox`. Use bounded `modifications` for supported thread
-    /// adjustments instead of replacing the full permissions profile.
+    /// `sandbox`. This updates profile identity metadata without replacing the
+    /// effective permissions profile.
     #[experimental("thread/fork.permissions")]
     #[ts(optional = nullable)]
     pub permissions: Option<PermissionProfileSelectionParams>,
@@ -417,6 +445,11 @@ pub struct ThreadForkResponse {
     pub model_provider: String,
     pub service_tier: Option<String>,
     pub cwd: AbsolutePathBuf,
+    /// Workspace roots used to realize symbolic `:project_roots` permission
+    /// entries for this thread.
+    #[experimental("thread/fork.workspaceRoots")]
+    #[serde(default)]
+    pub workspace_roots: Vec<AbsolutePathBuf>,
     /// Instruction source files currently loaded for this thread.
     #[serde(default)]
     pub instruction_sources: Vec<AbsolutePathBuf>,

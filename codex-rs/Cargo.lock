@@ -3434,6 +3434,7 @@ dependencies = [
  "codex-otel",
  "codex-protocol",
  "codex-state",
+ "codex-utils-absolute-path",
  "codex-utils-path",
  "codex-utils-string",
  "pretty_assertions",
@@ -3625,6 +3626,7 @@ dependencies = [
  "codex-protocol",
  "codex-rollout",
  "codex-state",
+ "codex-utils-absolute-path",
  "pretty_assertions",
  "prost 0.14.3",
  "serde",
@@ -3948,7 +3950,6 @@ dependencies = [
  "codex-core",
  "codex-model-provider-info",
  "codex-protocol",
- "codex-utils-absolute-path",
  "pretty_assertions",
 ]
 
