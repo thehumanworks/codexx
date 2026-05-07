@@ -1832,7 +1832,7 @@ async fn service_tier_slash_command_updates_and_persists_local_service_tier_id()
         events.iter().any(|event| matches!(
             event,
             AppEvent::PersistServiceTierSelection {
-                service_tier: None,
+                service_tier: Some(ServiceTier::Fast),
                 service_tier_id: Some(service_tier_id),
             }
             if service_tier_id == SPEED_TIER_FAST
@@ -2061,7 +2061,6 @@ async fn service_tier_slash_command_clears_effective_session_tier() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
-    chat.config.service_tier_id = None;
     chat.config.service_tier = None;
     chat.effective_service_tier = Some(ServiceTier::Fast);
 

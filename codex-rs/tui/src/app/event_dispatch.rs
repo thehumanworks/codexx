@@ -1306,12 +1306,11 @@ impl App {
                 }
                 match edits.apply().await {
                     Ok(()) => {
-                        let mut message =
-                            if let Some(service_tier_id) = &self.config.service_tier {
-                                format!("Service tier set to {service_tier_id}")
-                            } else {
-                                "Service tier cleared".to_string()
-                            };
+                        let mut message = if let Some(service_tier_id) = &self.config.service_tier {
+                            format!("Service tier set to {service_tier_id}")
+                        } else {
+                            "Service tier cleared".to_string()
+                        };
                         if let Some(profile) = profile {
                             message.push_str(" for ");
                             message.push_str(profile);
