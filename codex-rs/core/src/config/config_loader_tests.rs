@@ -165,8 +165,8 @@ theme = "loudly"
     .expect("expected config should parse");
     let expected_startup_warnings = vec![
         "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
-        "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
         "Ignoring invalid config value at tools.web_search.context_size: \"galactic\"".to_string(),
+        "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
     ];
 
     assert_eq!(
@@ -255,7 +255,7 @@ sandbox_mode = "make-it-so"
 }
 
 #[tokio::test]
-async fn invalid_untagged_notification_value_does_not_delete_tui_table() -> anyhow::Result<()> {
+async fn invalid_non_enum_union_value_does_not_delete_tui_table() -> anyhow::Result<()> {
     let tmp = tempdir().expect("tempdir");
     let contents = r#"
 [tui]
@@ -283,11 +283,12 @@ theme = "sometimes"
         toml::from_str::<TomlValue>(
             r#"
 [tui]
+notifications = "sometimes"
 theme = "sometimes"
 "#,
         )
         .expect("expected config should parse"),
-        vec!["Ignoring invalid config value at tui.notifications: \"sometimes\"".to_string()],
+        Vec::<String>::new(),
     );
 
     assert_eq!((effective_config, enum_warnings), expected);

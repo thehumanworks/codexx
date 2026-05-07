@@ -1,295 +1,226 @@
 use crate::config_toml::ConfigToml;
-use crate::config_toml::RealtimeTransport;
-use crate::config_toml::RealtimeVoice;
-use crate::config_toml::RealtimeWsMode;
-use crate::config_toml::RealtimeWsVersion;
-use crate::config_toml::ThreadStoreToml;
-use crate::mcp_types::AppToolApproval;
-use crate::types::AltScreenMode;
-use crate::types::ApprovalsReviewer;
-use crate::types::AuthCredentialsStoreMode;
-use crate::types::HistoryPersistence;
-use crate::types::MarketplaceSourceType;
-use crate::types::NotificationCondition;
-use crate::types::NotificationMethod;
-use crate::types::Notifications;
-use crate::types::OAuthCredentialsStoreMode;
-use crate::types::SessionPickerViewMode;
-use crate::types::UriBasedFileOpener;
-use crate::types::WindowsSandboxModeToml;
-use codex_protocol::config_types::ForcedLoginMethod;
-use codex_protocol::config_types::Personality;
-use codex_protocol::config_types::ReasoningSummary;
-use codex_protocol::config_types::SandboxMode;
-use codex_protocol::config_types::ServiceTier;
-use codex_protocol::config_types::ShellEnvironmentPolicyInherit;
-use codex_protocol::config_types::Verbosity;
-use codex_protocol::config_types::WebSearchContextSize;
-use codex_protocol::config_types::WebSearchMode;
-use codex_protocol::openai_models::ReasoningEffort;
-use codex_protocol::protocol::AskForApproval;
-use serde::de::DeserializeOwned;
+use serde_json::Map as JsonMap;
+use serde_json::Value as JsonValue;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+use std::sync::OnceLock;
 use toml::Value as TomlValue;
 
-use self::PathSegment::AnyTable;
-use self::PathSegment::Key;
+static ENUM_FIELD_SPECS: OnceLock<Vec<EnumFieldSpec>> = OnceLock::new();
 
-type FieldParser = fn(&TomlValue) -> bool;
-type EnumFieldSpec = (&'static [PathSegment], FieldParser);
+#[derive(Clone, Debug)]
+struct EnumFieldSpec {
+    path: Vec<PathSegment>,
+    allowed_values: BTreeSet<String>,
+    allows_non_string: bool,
+}
 
-/// One segment in a known enum-valued config path.
+/// One segment in a known enum-valued config path discovered from JSON Schema.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum PathSegment {
     /// Match this literal table key.
-    Key(&'static str),
+    Key(String),
     /// Expand across every table child at this point, such as `profiles.*`.
     AnyTable,
 }
 
-static ENUM_FIELD_SPECS: &[EnumFieldSpec] = &[
-    (&[Key("approval_policy")], parses_as::<AskForApproval>),
-    (&[Key("approvals_reviewer")], parses_as::<ApprovalsReviewer>),
-    (&[Key("sandbox_mode")], parses_as::<SandboxMode>),
-    (
-        &[Key("forced_login_method")],
-        parses_as::<ForcedLoginMethod>,
-    ),
-    (
-        &[Key("cli_auth_credentials_store")],
-        parses_as::<AuthCredentialsStoreMode>,
-    ),
-    (
-        &[Key("mcp_oauth_credentials_store")],
-        parses_as::<OAuthCredentialsStoreMode>,
-    ),
-    (&[Key("file_opener")], parses_as::<UriBasedFileOpener>),
-    (
-        &[Key("model_reasoning_effort")],
-        parses_as::<ReasoningEffort>,
-    ),
-    (
-        &[Key("plan_mode_reasoning_effort")],
-        parses_as::<ReasoningEffort>,
-    ),
-    (
-        &[Key("model_reasoning_summary")],
-        parses_as::<ReasoningSummary>,
-    ),
-    (&[Key("model_verbosity")], parses_as::<Verbosity>),
-    (&[Key("personality")], parses_as::<Personality>),
-    (&[Key("service_tier")], parses_as::<ServiceTier>),
-    (
-        &[Key("experimental_thread_store")],
-        parses_as::<ThreadStoreToml>,
-    ),
-    (&[Key("web_search")], parses_as::<WebSearchMode>),
-    (
-        &[Key("shell_environment_policy"), Key("inherit")],
-        parses_as::<ShellEnvironmentPolicyInherit>,
-    ),
-    (
-        &[Key("history"), Key("persistence")],
-        parses_as::<HistoryPersistence>,
-    ),
-    (
-        &[Key("tui"), Key("notifications")],
-        parses_as::<Notifications>,
-    ),
-    (
-        &[Key("tui"), Key("notification_method")],
-        parses_as::<NotificationMethod>,
-    ),
-    (
-        &[Key("tui"), Key("notification_condition")],
-        parses_as::<NotificationCondition>,
-    ),
-    (
-        &[Key("tui"), Key("alternate_screen")],
-        parses_as::<AltScreenMode>,
-    ),
-    (
-        &[Key("tui"), Key("session_picker_view")],
-        parses_as::<SessionPickerViewMode>,
-    ),
-    (
-        &[Key("realtime"), Key("version")],
-        parses_as::<RealtimeWsVersion>,
-    ),
-    (&[Key("realtime"), Key("type")], parses_as::<RealtimeWsMode>),
-    (
-        &[Key("realtime"), Key("transport")],
-        parses_as::<RealtimeTransport>,
-    ),
-    (&[Key("realtime"), Key("voice")], parses_as::<RealtimeVoice>),
-    (
-        &[Key("tools"), Key("web_search"), Key("context_size")],
-        parses_as::<WebSearchContextSize>,
-    ),
-    (
-        &[Key("windows"), Key("sandbox")],
-        parses_as::<WindowsSandboxModeToml>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("service_tier")],
-        parses_as::<ServiceTier>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("approval_policy")],
-        parses_as::<AskForApproval>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("approvals_reviewer")],
-        parses_as::<ApprovalsReviewer>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("sandbox_mode")],
-        parses_as::<SandboxMode>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("model_reasoning_effort")],
-        parses_as::<ReasoningEffort>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("plan_mode_reasoning_effort")],
-        parses_as::<ReasoningEffort>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("model_reasoning_summary")],
-        parses_as::<ReasoningSummary>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("model_verbosity")],
-        parses_as::<Verbosity>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("personality")],
-        parses_as::<Personality>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("web_search")],
-        parses_as::<WebSearchMode>,
-    ),
-    (
-        &[
-            Key("profiles"),
-            AnyTable,
-            Key("tools"),
-            Key("web_search"),
-            Key("context_size"),
-        ],
-        parses_as::<WebSearchContextSize>,
-    ),
-    (
-        &[Key("profiles"), AnyTable, Key("windows"), Key("sandbox")],
-        parses_as::<WindowsSandboxModeToml>,
-    ),
-    (
-        &[
-            Key("profiles"),
-            AnyTable,
-            Key("tui"),
-            Key("session_picker_view"),
-        ],
-        parses_as::<SessionPickerViewMode>,
-    ),
-    (
-        &[
-            Key("mcp_servers"),
-            AnyTable,
-            Key("default_tools_approval_mode"),
-        ],
-        parses_as::<AppToolApproval>,
-    ),
-    (
-        &[
-            Key("mcp_servers"),
-            AnyTable,
-            Key("tools"),
-            AnyTable,
-            Key("approval_mode"),
-        ],
-        parses_as::<AppToolApproval>,
-    ),
-    (
-        &[Key("apps"), AnyTable, Key("default_tools_approval_mode")],
-        parses_as::<AppToolApproval>,
-    ),
-    (
-        &[
-            Key("apps"),
-            AnyTable,
-            Key("tools"),
-            AnyTable,
-            Key("approval_mode"),
-        ],
-        parses_as::<AppToolApproval>,
-    ),
-    (
-        &[
-            Key("plugins"),
-            AnyTable,
-            Key("mcp_servers"),
-            AnyTable,
-            Key("default_tools_approval_mode"),
-        ],
-        parses_as::<AppToolApproval>,
-    ),
-    (
-        &[
-            Key("plugins"),
-            AnyTable,
-            Key("mcp_servers"),
-            AnyTable,
-            Key("tools"),
-            AnyTable,
-            Key("approval_mode"),
-        ],
-        parses_as::<AppToolApproval>,
-    ),
-    (
-        &[Key("marketplaces"), AnyTable, Key("source_type")],
-        parses_as::<MarketplaceSourceType>,
-    ),
-];
+#[derive(Default)]
+struct ScalarChoices {
+    allowed_strings: BTreeSet<String>,
+    allows_non_string: bool,
+}
 
 /// Deserializes config while turning known invalid enum-valued settings into warnings.
 ///
 /// The config structs use `serde_with::DefaultOnError` on their enum fields so
 /// an invalid field can default instead of rejecting the whole file. This helper
-/// runs the companion best-effort scan over the raw TOML first. When a known
-/// enum-bearing leaf fails to parse as its real type, the leaf is removed from
-/// the sanitized TOML and a startup warning is recorded.
+/// uses the same generated JSON Schema that backs `config.schema.json` to find
+/// string enum-valued leaves. It then does a best-effort pass over the raw TOML:
+/// invalid enum leaves are deleted from the sanitized TOML and reported as
+/// startup warnings, while full shape/type validation stays with Serde.
 pub(crate) fn deserialize_with_enum_warnings(
     value: TomlValue,
 ) -> Result<(TomlValue, ConfigToml, Vec<String>), toml::de::Error> {
     let mut sanitized = value;
     let mut warnings = Vec::new();
-    for (spec_path, parser) in ENUM_FIELD_SPECS {
-        for path in matching_paths(&sanitized, spec_path) {
-            remove_if_invalid(&mut sanitized, &path, *parser, &mut warnings);
+    for spec in enum_field_specs() {
+        for path in matching_paths(&sanitized, &spec.path) {
+            remove_if_invalid(&mut sanitized, &path, spec, &mut warnings);
         }
     }
     let parsed = sanitized.clone().try_into::<ConfigToml>()?;
     Ok((sanitized, parsed, warnings))
 }
 
-fn parses_as<T>(value: &TomlValue) -> bool
-where
-    T: DeserializeOwned,
-{
-    value.clone().try_into::<T>().is_ok()
+fn enum_field_specs() -> &'static [EnumFieldSpec] {
+    ENUM_FIELD_SPECS.get_or_init(build_enum_field_specs)
 }
 
-/// Removes one known enum leaf when its raw TOML value does not parse as its real type.
+fn build_enum_field_specs() -> Vec<EnumFieldSpec> {
+    let schema = serde_json::to_value(crate::schema::config_schema())
+        .expect("generated config schema should serialize");
+    let definitions = schema.get("definitions").and_then(JsonValue::as_object);
+    let mut choices_by_path = BTreeMap::<Vec<PathSegment>, ScalarChoices>::new();
+    let mut path = Vec::new();
+    let mut ref_stack = Vec::new();
+
+    collect_enum_fields(
+        &schema,
+        definitions,
+        &mut path,
+        &mut choices_by_path,
+        &mut ref_stack,
+    );
+
+    choices_by_path
+        .into_iter()
+        .filter_map(|(path, choices)| {
+            if choices.allowed_strings.is_empty() {
+                return None;
+            }
+            Some(EnumFieldSpec {
+                path,
+                allowed_values: choices.allowed_strings,
+                allows_non_string: choices.allows_non_string,
+            })
+        })
+        .collect()
+}
+
+fn collect_enum_fields(
+    schema: &JsonValue,
+    definitions: Option<&JsonMap<String, JsonValue>>,
+    path: &mut Vec<PathSegment>,
+    choices_by_path: &mut BTreeMap<Vec<PathSegment>, ScalarChoices>,
+    ref_stack: &mut Vec<String>,
+) {
+    let mut choices = ScalarChoices::default();
+    collect_scalar_choices(schema, definitions, &mut choices, ref_stack);
+    if !choices.allowed_strings.is_empty() {
+        choices_by_path
+            .entry(path.clone())
+            .or_default()
+            .merge(choices);
+    }
+
+    if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
+        collect_enum_fields(definition, definitions, path, choices_by_path, ref_stack);
+        ref_stack.pop();
+    }
+
+    for child in schema_composition_children(schema) {
+        collect_enum_fields(child, definitions, path, choices_by_path, ref_stack);
+    }
+
+    if let Some(properties) = schema.get("properties").and_then(JsonValue::as_object) {
+        for (key, child) in properties {
+            path.push(PathSegment::Key(key.clone()));
+            collect_enum_fields(child, definitions, path, choices_by_path, ref_stack);
+            path.pop();
+        }
+    }
+
+    let Some(additional_properties) = schema.get("additionalProperties") else {
+        return;
+    };
+    if !additional_properties.is_object() {
+        return;
+    }
+    path.push(PathSegment::AnyTable);
+    collect_enum_fields(
+        additional_properties,
+        definitions,
+        path,
+        choices_by_path,
+        ref_stack,
+    );
+    path.pop();
+}
+
+fn collect_scalar_choices(
+    schema: &JsonValue,
+    definitions: Option<&JsonMap<String, JsonValue>>,
+    choices: &mut ScalarChoices,
+    ref_stack: &mut Vec<String>,
+) {
+    choices
+        .allowed_strings
+        .extend(string_enum_values(schema).map(str::to_string));
+    choices.allows_non_string |= schema_allows_non_string(schema);
+
+    if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
+        collect_scalar_choices(definition, definitions, choices, ref_stack);
+        ref_stack.pop();
+    }
+
+    for child in schema_composition_children(schema) {
+        collect_scalar_choices(child, definitions, choices, ref_stack);
+    }
+}
+
+fn string_enum_values(schema: &JsonValue) -> impl Iterator<Item = &str> {
+    schema
+        .get("enum")
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(JsonValue::as_str)
+}
+
+fn schema_allows_non_string(schema: &JsonValue) -> bool {
+    match schema.get("type") {
+        Some(JsonValue::String(value)) => value != "string" && value != "null",
+        Some(JsonValue::Array(values)) => values
+            .iter()
+            .filter_map(JsonValue::as_str)
+            .any(|value| value != "string" && value != "null"),
+        _ => {
+            schema.get("properties").is_some()
+                || schema.get("additionalProperties").is_some()
+                || schema.get("items").is_some()
+        }
+    }
+}
+
+fn resolve_definition<'a>(
+    schema: &JsonValue,
+    definitions: Option<&'a JsonMap<String, JsonValue>>,
+    ref_stack: &mut Vec<String>,
+) -> Option<&'a JsonValue> {
+    let name = schema
+        .get("$ref")?
+        .as_str()?
+        .strip_prefix("#/definitions/")?;
+    if ref_stack.iter().any(|entry| entry == name) {
+        return None;
+    }
+    let definition = definitions?.get(name)?;
+    ref_stack.push(name.to_string());
+    Some(definition)
+}
+
+fn schema_composition_children(schema: &JsonValue) -> impl Iterator<Item = &JsonValue> {
+    ["allOf", "anyOf", "oneOf"]
+        .into_iter()
+        .filter_map(|key| schema.get(key).and_then(JsonValue::as_array))
+        .flatten()
+}
+
+/// Removes one known enum leaf when its raw TOML value does not match schema choices.
 fn remove_if_invalid(
     value: &mut TomlValue,
     path: &[String],
-    parser: FieldParser,
+    spec: &EnumFieldSpec,
     warnings: &mut Vec<String>,
 ) {
     let Some(raw_value) = value_at_path(value, path) else {
         return;
     };
-    if parser(raw_value) {
+    if let Some(raw_value) = raw_value.as_str() {
+        if spec.allowed_values.contains(raw_value) {
+            return;
+        }
+    } else if spec.allows_non_string {
         return;
     }
     let Some(invalid_value) = remove_value_at_path(value, path) else {
@@ -306,12 +237,12 @@ fn matching_paths(value: &TomlValue, spec_path: &[PathSegment]) -> Vec<Vec<Strin
     let mut paths = vec![Vec::new()];
     for segment in spec_path {
         match segment {
-            Key(key) => {
+            PathSegment::Key(key) => {
                 for path in &mut paths {
-                    path.push((*key).to_string());
+                    path.push(key.clone());
                 }
             }
-            AnyTable => {
+            PathSegment::AnyTable => {
                 let mut expanded = Vec::new();
                 for path in paths {
                     let Some(table) = value_at_path(value, &path).and_then(TomlValue::as_table)
@@ -368,4 +299,11 @@ fn display_key(key: &str) -> String {
     }
     let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
+}
+
+impl ScalarChoices {
+    fn merge(&mut self, other: ScalarChoices) {
+        self.allowed_strings.extend(other.allowed_strings);
+        self.allows_non_string |= other.allows_non_string;
+    }
 }
