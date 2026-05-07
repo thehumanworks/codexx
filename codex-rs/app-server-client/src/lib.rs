@@ -951,7 +951,7 @@ mod tests {
     use codex_app_server_protocol::ToolRequestUserInputParams;
     use codex_app_server_protocol::ToolRequestUserInputQuestion;
     use codex_core::config::ConfigBuilder;
-    use codex_core::init_state_db_from_config;
+    use codex_core::init_state_db;
     use futures::SinkExt;
     use futures::StreamExt;
     use pretty_assertions::assert_eq;
@@ -1017,7 +1017,7 @@ mod tests {
     ) -> TestClient {
         let codex_home = TempDir::new().expect("temp dir");
         let config = Arc::new(build_test_config_for_codex_home(codex_home.path()).await);
-        let state_db = init_state_db_from_config(config.as_ref())
+        let state_db = init_state_db(config.as_ref())
             .await
             .expect("state db should initialize for in-process test");
         let client = InProcessAppServerClient::start(InProcessClientStartArgs {

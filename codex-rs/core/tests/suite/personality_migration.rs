@@ -46,7 +46,7 @@ async fn run_migration(
     config_toml: &ConfigToml,
 ) -> io::Result<PersonalityMigrationStatus> {
     let state_db = state_db_for_test(codex_home).await?;
-    maybe_migrate_personality(codex_home, config_toml, state_db).await
+    maybe_migrate_personality(codex_home, config_toml, Some(state_db)).await
 }
 
 async fn write_session_with_user_event(codex_home: &Path) -> io::Result<()> {

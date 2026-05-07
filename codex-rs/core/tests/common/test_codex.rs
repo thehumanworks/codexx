@@ -15,9 +15,8 @@ use anyhow::anyhow;
 use codex_config::CloudRequirementsLoader;
 use codex_core::CodexThread;
 use codex_core::ThreadManager;
-use codex_core::agent_graph_store_from_state_db;
 use codex_core::config::Config;
-use codex_core::init_state_db_from_config;
+use codex_core::init_state_db;
 use codex_core::resolve_installation_id;
 use codex_core::shell::Shell;
 use codex_core::shell::get_shell_by_model_provided_path;
@@ -426,12 +425,14 @@ impl TestCodexBuilder {
         environment_manager: Arc<codex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
-        let thread_manager = if config.model_catalog.is_some() {
-            let state_db = init_state_db_from_config(&config)
+        let needs_state_db = config.model_catalog.is_some()
+            || config.features.enabled(Feature::Goals)
+            || config.features.enabled(Feature::Sqlite);
+        let thread_manager = if needs_state_db {
+            let state_db = init_state_db(&config)
                 .await
                 .expect("test codex requires state db");
-            let thread_store = thread_store_from_config(&config, state_db.clone());
-            let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
+            let thread_store = thread_store_from_config(&config, Some(state_db.clone()));
             let installation_id = resolve_installation_id(&config.codex_home).await?;
             ThreadManager::new(
                 &config,
@@ -439,10 +440,9 @@ impl TestCodexBuilder {
                 SessionSource::Exec,
                 Arc::clone(&environment_manager),
                 /*analytics_events_client*/ None,
-                state_db,
                 thread_store,
-                agent_graph_store,
                 installation_id,
+                Some(state_db),
             )
         } else {
             codex_core::test_support::thread_manager_with_models_provider_and_home(

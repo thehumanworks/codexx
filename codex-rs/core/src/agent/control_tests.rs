@@ -107,6 +107,32 @@ impl AgentControlHarness {
         }
     }
 
+    async fn new_with_state_db() -> Self {
+        let (home, mut config) = test_config().await;
+        config
+            .features
+            .enable(Feature::Sqlite)
+            .expect("test config should allow sqlite");
+        let state_db = crate::init_state_db(&config)
+            .await
+            .expect("test config should initialize state db");
+        let manager = ThreadManager::with_models_provider_home_and_state_for_tests(
+            CodexAuth::from_api_key("dummy"),
+            config.model_provider.clone(),
+            config.codex_home.to_path_buf(),
+            std::sync::Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
+            Some(state_db),
+        )
+        .await;
+        let control = manager.agent_control();
+        Self {
+            _home: home,
+            config,
+            manager,
+            control,
+        }
+    }
+
     async fn start_thread(&self) -> (ThreadId, Arc<CodexThread>) {
         let new_thread = self
             .manager
@@ -1538,25 +1564,7 @@ async fn spawn_thread_subagent_uses_role_specific_nickname_candidates() {
 
 #[tokio::test]
 async fn resume_thread_subagent_restores_stored_nickname_and_role() {
-    let (home, mut config) = test_config().await;
-    config
-        .features
-        .enable(Feature::Sqlite)
-        .expect("test config should allow sqlite");
-    let manager = ThreadManager::with_models_provider_and_home_for_tests(
-        CodexAuth::from_api_key("dummy"),
-        config.model_provider.clone(),
-        config.codex_home.to_path_buf(),
-        std::sync::Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
-    )
-    .await;
-    let control = manager.agent_control();
-    let harness = AgentControlHarness {
-        _home: home,
-        config,
-        manager,
-        control,
-    };
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
     let agent_path = AgentPath::from_string("/root/explorer".to_string())
         .expect("test agent path should be valid");
@@ -1704,12 +1712,14 @@ async fn resume_agent_from_rollout_reads_archived_rollout_path() {
         .expect("child shutdown should succeed");
     let store = LocalThreadStore::new(
         LocalThreadStoreConfig::from_config(&harness.config),
-        codex_state::StateRuntime::init(
-            harness.config.sqlite_home.clone(),
-            harness.config.model_provider_id.clone(),
-        )
-        .await
-        .expect("state db should initialize"),
+        Some(
+            codex_state::StateRuntime::init(
+                harness.config.sqlite_home.clone(),
+                harness.config.model_provider_id.clone(),
+            )
+            .await
+            .expect("state db should initialize"),
+        ),
     );
     store
         .archive_thread(ArchiveThreadParams {
@@ -1734,7 +1744,7 @@ async fn resume_agent_from_rollout_reads_archived_rollout_path() {
 
 #[tokio::test]
 async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
     let worker_path = AgentPath::root().join("worker").expect("worker path");
     let reviewer_path = AgentPath::root().join("reviewer").expect("reviewer path");
@@ -1860,7 +1870,7 @@ async fn list_agent_subtree_thread_ids_includes_anonymous_and_closed_descendants
 
 #[tokio::test]
 async fn shutdown_agent_tree_closes_live_descendants() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness
@@ -1945,7 +1955,7 @@ async fn shutdown_agent_tree_closes_live_descendants() {
 
 #[tokio::test]
 async fn shutdown_agent_tree_closes_descendants_when_started_at_child() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, _parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness
@@ -2036,7 +2046,7 @@ async fn shutdown_agent_tree_closes_descendants_when_started_at_child() {
 
 #[tokio::test]
 async fn resume_agent_from_rollout_does_not_reopen_closed_descendants() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness
@@ -2131,7 +2141,7 @@ async fn resume_agent_from_rollout_does_not_reopen_closed_descendants() {
 
 #[tokio::test]
 async fn resume_closed_child_reopens_open_descendants() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness
@@ -2228,7 +2238,7 @@ async fn resume_closed_child_reopens_open_descendants() {
 
 #[tokio::test]
 async fn resume_agent_from_rollout_reopens_open_descendants_after_manager_shutdown() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness
@@ -2319,7 +2329,7 @@ async fn resume_agent_from_rollout_reopens_open_descendants_after_manager_shutdo
 
 #[tokio::test]
 async fn resume_agent_from_rollout_uses_edge_data_when_descendant_metadata_source_is_stale() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness
@@ -2450,7 +2460,7 @@ async fn resume_agent_from_rollout_uses_edge_data_when_descendant_metadata_sourc
 
 #[tokio::test]
 async fn resume_agent_from_rollout_skips_descendants_when_parent_resume_fails() {
-    let harness = AgentControlHarness::new().await;
+    let harness = AgentControlHarness::new_with_state_db().await;
     let (parent_thread_id, parent_thread) = harness.start_thread().await;
 
     let child_thread_id = harness

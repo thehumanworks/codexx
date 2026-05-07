@@ -6,7 +6,6 @@ use crate::function_tool::FunctionCallError;
 use crate::init_state_db;
 use crate::session::tests::make_session_and_context;
 use crate::session_prefix::format_subagent_notification_message;
-use crate::thread_manager::agent_graph_store_from_state_db;
 use crate::thread_manager::thread_store_from_config;
 use crate::tools::context::ToolOutput;
 use crate::tools::handlers::multi_agents_v2::CloseAgentHandler as CloseAgentHandlerV2;
@@ -3150,8 +3149,28 @@ async fn close_agent_submits_shutdown_and_returns_previous_status() {
     assert_eq!(status_after, AgentStatus::NotFound);
 }
 
-#[tokio::test]
-async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtrees_closed() {
+#[test]
+fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtrees_closed() {
+    let handle = std::thread::Builder::new()
+        .name("multi-agent-cascade-test".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("tokio runtime should build");
+            runtime.block_on(
+                tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtrees_closed_impl(),
+            );
+        })
+        .expect("multi-agent cascade test thread should spawn");
+    if let Err(payload) = handle.join() {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtrees_closed_impl() {
     let (_session, turn) = make_session_and_context().await;
     let mut config = turn.config.as_ref().clone();
     config.agent_max_depth = 3;
@@ -3168,10 +3187,9 @@ async fn tool_handlers_cascade_close_and_resume_and_keep_explicitly_closed_subtr
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        state_db.clone(),
-        thread_store_from_config(&config, state_db.clone()),
-        agent_graph_store_from_state_db(state_db.clone()),
+        thread_store_from_config(&config, Some(state_db.clone())),
         "11111111-1111-4111-8111-111111111111".to_string(),
+        Some(state_db),
     );
 
     let parent = manager
