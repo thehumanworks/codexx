@@ -426,6 +426,8 @@ fn realtime_sideband_connection(
     WebSocketConnectionConfig {
         requests: realtime_server_events,
         response_headers: Vec::new(),
+        accept_started: None,
+        accept_release: None,
         accept_delay: None,
         close_after_requests: true,
     }
@@ -1044,6 +1046,8 @@ async fn realtime_webrtc_start_emits_sdp_notification() -> Result<()> {
             "session": { "id": "sess_webrtc", "instructions": "backend prompt" }
         })]],
         response_headers: Vec::new(),
+        accept_started: None,
+        accept_release: None,
         accept_delay: None,
         close_after_requests: false,
     }])

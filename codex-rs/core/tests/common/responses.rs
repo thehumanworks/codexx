@@ -446,6 +446,11 @@ impl WebSocketHandshake {
 pub struct WebSocketConnectionConfig {
     pub requests: Vec<Vec<Value>>,
     pub response_headers: Vec<(String, String)>,
+    /// Optional notification fired after the TCP connection is accepted and before the websocket
+    /// handshake is accepted.
+    pub accept_started: Option<Arc<Notify>>,
+    /// Optional gate that blocks websocket handshake acceptance until the notifier is signalled.
+    pub accept_release: Option<Arc<Notify>>,
     /// Optional delay inserted before accepting the websocket handshake.
     ///
     /// Tests use this to force websocket setup into an in-flight state so first-turn warmup paths
@@ -1254,6 +1259,8 @@ pub async fn start_websocket_server(connections: Vec<Vec<Vec<Value>>>) -> WebSoc
         .map(|requests| WebSocketConnectionConfig {
             requests,
             response_headers: Vec::new(),
+            accept_started: None,
+            accept_release: None,
             accept_delay: None,
             close_after_requests: true,
         })
@@ -1298,12 +1305,27 @@ pub async fn start_websocket_server_with_headers(
                 continue;
             };
 
+            if let Some(accept_started) = &connection.accept_started {
+                accept_started.notify_one();
+            }
+
+            if let Some(accept_release) = &connection.accept_release {
+                tokio::select! {
+                    _ = accept_release.notified() => {}
+                    _ = &mut shutdown_rx => return,
+                }
+            }
+
             if let Some(delay) = connection.accept_delay {
-                tokio::time::sleep(delay).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = &mut shutdown_rx => return,
+                }
             }
 
             let response_headers = connection.response_headers.clone();
-            let handshake_log = Arc::clone(&handshakes);
+            let pending_handshake = Arc::new(Mutex::new(None));
+            let callback_handshake = Arc::clone(&pending_handshake);
             let callback = move |req: &Request, mut response: Response| {
                 let headers = req
                     .headers()
@@ -1315,7 +1337,7 @@ pub async fn start_websocket_server_with_headers(
                             .map(|value| (name.as_str().to_string(), value.to_string()))
                     })
                     .collect();
-                handshake_log.lock().unwrap().push(WebSocketHandshake {
+                *callback_handshake.lock().unwrap() = Some(WebSocketHandshake {
                     uri: req.uri().to_string(),
                     headers,
                 });
@@ -1343,6 +1365,10 @@ pub async fn start_websocket_server_with_headers(
                 Ok(ws) => ws,
                 Err(_) => continue,
             };
+
+            if let Some(handshake) = pending_handshake.lock().unwrap().take() {
+                handshakes.lock().unwrap().push(handshake);
+            }
 
             let connection_index = {
                 let mut log = requests.lock().unwrap();

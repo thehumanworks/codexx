@@ -48,6 +48,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+use tokio::sync::Notify;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
 use wiremock::Match;
@@ -492,6 +493,8 @@ async fn conversation_webrtc_start_posts_generated_session() -> Result<()> {
             vec![],
         ],
         response_headers: Vec::new(),
+        accept_started: None,
+        accept_release: None,
         accept_delay: Some(sideband_accept_delay),
         close_after_requests: false,
     }])
@@ -659,10 +662,14 @@ async fn conversation_webrtc_close_while_sideband_connecting_drops_pending_join(
         )
         .mount(&server)
         .await;
+    let accept_started = Arc::new(Notify::new());
+    let accept_release = Arc::new(Notify::new());
     let realtime_server = start_websocket_server_with_headers(vec![WebSocketConnectionConfig {
         requests: vec![vec![]],
         response_headers: Vec::new(),
-        accept_delay: Some(Duration::from_millis(500)),
+        accept_started: Some(Arc::clone(&accept_started)),
+        accept_release: Some(Arc::clone(&accept_release)),
+        accept_delay: None,
         close_after_requests: false,
     }])
     .await;
@@ -699,6 +706,9 @@ async fn conversation_webrtc_close_while_sideband_connecting_drops_pending_join(
         realtime_server.handshakes().is_empty(),
         "sideband websocket should still be pending when SDP is emitted"
     );
+    timeout(Duration::from_secs(5), accept_started.notified())
+        .await
+        .context("sideband websocket should connect before close")?;
 
     test.codex.submit(Op::RealtimeConversationClose).await?;
     let closed = wait_for_event_match(&test.codex, |msg| match msg {
@@ -726,9 +736,17 @@ async fn conversation_webrtc_close_while_sideband_connecting_drops_pending_join(
         "pending sideband task leaked after close: {:?}",
         stale_event.ok()
     );
+    accept_release.notify_one();
+    let stale_request = timeout(Duration::from_millis(250), async {
+        realtime_server
+            .wait_for_request(/*connection_index*/ 0, /*request_index*/ 0)
+            .await
+    })
+    .await;
     assert!(
-        realtime_server.handshakes().is_empty(),
-        "pending sideband task should abort before websocket handshake completes"
+        stale_request.is_err(),
+        "pending sideband task sent websocket request after close: {:?}",
+        stale_request.ok().map(|request| request.body_json())
     );
 
     realtime_server.shutdown().await;
