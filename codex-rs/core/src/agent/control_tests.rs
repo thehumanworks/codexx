@@ -1629,6 +1629,22 @@ async fn resume_thread_subagent_restores_stored_nickname_and_role() {
         .shutdown_live_agent(child_thread_id)
         .await
         .expect("child shutdown should submit");
+    if !matches!(status_rx.borrow().clone(), AgentStatus::Shutdown) {
+        timeout(Duration::from_secs(5), async {
+            loop {
+                status_rx
+                    .changed()
+                    .await
+                    .expect("child status should reach shutdown");
+                if matches!(status_rx.borrow().clone(), AgentStatus::Shutdown) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("child should shut down before resume");
+    }
+    drop(child_thread);
 
     let resumed_thread_id = harness
         .control
