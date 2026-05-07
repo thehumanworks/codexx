@@ -1277,30 +1277,15 @@ impl App {
             } => {
                 self.refresh_status_line();
                 let profile = self.active_profile.as_deref();
-                self.config.service_tier = service_tier_id.or_else(|| {
+                self.config.service_tier = service_tier_id.clone().or_else(|| {
                     service_tier.map(|service_tier| service_tier.request_value().to_string())
                 });
-                let service_tier_segments = if let Some(profile) = profile {
-                    vec![
-                        "profiles".to_string(),
-                        profile.to_string(),
-                        "service_tier".to_string(),
-                    ]
-                } else {
-                    vec!["service_tier".to_string()]
-                };
-                let service_tier_edit = match &self.config.service_tier {
-                    Some(service_tier) => ConfigEdit::SetPath {
-                        segments: service_tier_segments,
-                        value: service_tier.clone().into(),
-                    },
-                    None => ConfigEdit::ClearPath {
-                        segments: service_tier_segments,
-                    },
-                };
-                let mut edits = ConfigEditsBuilder::new(&self.config.codex_home)
-                    .with_edits([service_tier_edit]);
-                if self.config.service_tier.is_none() {
+                let mut edits =
+                    ConfigEditsBuilder::new(&self.config.codex_home).with_profile(profile);
+                if let Some(service_tier) = service_tier {
+                    edits = edits.set_service_tier(Some(service_tier));
+                } else if service_tier_id.is_none() {
+                    edits = edits.set_service_tier(None);
                     self.config.notices.fast_default_opt_out = Some(true);
                     edits = edits.set_fast_default_opt_out(/*opted_out*/ true);
                 }
