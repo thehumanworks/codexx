@@ -670,7 +670,7 @@ where
     let value = match value.clone().try_into::<WebSearchToolConfigInput>() {
         Ok(value) => value,
         Err(err) => {
-            let mut without_context_size = value.clone();
+            let mut without_context_size = value;
             let removed_context_size = without_context_size
                 .as_table_mut()
                 .and_then(|table| table.remove("context_size"))
