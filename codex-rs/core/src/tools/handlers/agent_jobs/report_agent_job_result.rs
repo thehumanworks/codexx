@@ -55,27 +55,31 @@ pub async fn handle(
     }
     let db = required_state_db(&session)?;
     let reporting_thread_id = session.conversation_id.to_string();
-    let accepted = db
-        .report_agent_job_item_result(
+    let accepted = if args.stop.unwrap_or(false) {
+        db.report_agent_job_item_result_and_cancel_job(
+            args.job_id.as_str(),
+            args.item_id.as_str(),
+            reporting_thread_id.as_str(),
+            &args.result,
+            "cancelled by worker request",
+        )
+        .await
+    } else {
+        db.report_agent_job_item_result(
             args.job_id.as_str(),
             args.item_id.as_str(),
             reporting_thread_id.as_str(),
             &args.result,
         )
         .await
-        .map_err(|err| {
-            let job_id = args.job_id.as_str();
-            let item_id = args.item_id.as_str();
-            FunctionCallError::RespondToModel(format!(
-                "failed to record agent job result for {job_id} / {item_id}: {err}"
-            ))
-        })?;
-    if accepted && args.stop.unwrap_or(false) {
-        let message = "cancelled by worker request";
-        let _ = db
-            .mark_agent_job_cancelled(args.job_id.as_str(), message)
-            .await;
     }
+    .map_err(|err| {
+        let job_id = args.job_id.as_str();
+        let item_id = args.item_id.as_str();
+        FunctionCallError::RespondToModel(format!(
+            "failed to record agent job result for {job_id} / {item_id}: {err}"
+        ))
+    })?;
     let content =
         serde_json::to_string(&ReportAgentJobResultToolResult { accepted }).map_err(|err| {
             FunctionCallError::Fatal(format!(
