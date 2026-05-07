@@ -3,6 +3,8 @@ use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::panic::AssertUnwindSafe;
+use std::panic::catch_unwind;
 use std::sync::OnceLock;
 use toml::Value as TomlValue;
 
@@ -37,28 +39,40 @@ struct ScalarChoices {
 /// uses the same generated JSON Schema that backs `config.schema.json` to find
 /// string enum-valued leaves. It then does a best-effort pass over the raw TOML:
 /// invalid enum leaves are deleted from the sanitized TOML and reported as
-/// startup warnings, while full shape/type validation stays with Serde.
+/// startup warnings, while full shape/type validation stays with Serde. If the
+/// warning pass itself cannot run, config loading continues with the original
+/// TOML and no warnings.
 pub(crate) fn deserialize_with_enum_warnings(
     value: TomlValue,
 ) -> Result<(TomlValue, ConfigToml, Vec<String>), toml::de::Error> {
-    let mut sanitized = value;
-    let mut warnings = Vec::new();
-    for spec in enum_field_specs() {
-        for path in matching_paths(&sanitized, &spec.path) {
-            remove_if_invalid(&mut sanitized, &path, spec, &mut warnings);
-        }
-    }
+    let (sanitized, warnings) = sanitize_for_enum_warnings(value);
     let parsed = sanitized.clone().try_into::<ConfigToml>()?;
     Ok((sanitized, parsed, warnings))
 }
 
+fn sanitize_for_enum_warnings(value: TomlValue) -> (TomlValue, Vec<String>) {
+    let original = value.clone();
+    catch_unwind(AssertUnwindSafe(|| {
+        let mut sanitized = value;
+        let mut warnings = Vec::new();
+        for spec in enum_field_specs() {
+            for path in matching_paths(&sanitized, &spec.path) {
+                remove_if_invalid(&mut sanitized, &path, spec, &mut warnings);
+            }
+        }
+        (sanitized, warnings)
+    }))
+    .unwrap_or((original, Vec::new()))
+}
+
 fn enum_field_specs() -> &'static [EnumFieldSpec] {
-    ENUM_FIELD_SPECS.get_or_init(build_enum_field_specs)
+    ENUM_FIELD_SPECS.get_or_init(|| catch_unwind(build_enum_field_specs).unwrap_or_default())
 }
 
 fn build_enum_field_specs() -> Vec<EnumFieldSpec> {
-    let schema = serde_json::to_value(crate::schema::config_schema())
-        .expect("generated config schema should serialize");
+    let Ok(schema) = serde_json::to_value(crate::schema::config_schema()) else {
+        return Vec::new();
+    };
     let definitions = schema.get("definitions").and_then(JsonValue::as_object);
     let mut choices_by_path = BTreeMap::<Vec<PathSegment>, ScalarChoices>::new();
     let mut path = Vec::new();
