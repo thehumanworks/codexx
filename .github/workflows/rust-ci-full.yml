@@ -237,7 +237,7 @@ jobs:
       - name: Configure Dev Drive (Windows)
         if: ${{ runner.os == 'Windows' }}
         shell: pwsh
-        run: ./.github/scripts/setup-dev-drive.ps1
+        run: ../.github/scripts/setup-dev-drive.ps1
       - name: Install Linux build dependencies
         if: ${{ runner.os == 'Linux' }}
         shell: bash
@@ -571,7 +571,7 @@ jobs:
       - name: Configure Dev Drive (Windows)
         if: ${{ runner.os == 'Windows' }}
         shell: pwsh
-        run: ./.github/scripts/setup-dev-drive.ps1
+        run: ../.github/scripts/setup-dev-drive.ps1
       - name: Install Linux build dependencies
         if: ${{ runner.os == 'Linux' }}
         shell: bash
