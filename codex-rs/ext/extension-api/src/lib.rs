@@ -12,7 +12,7 @@ mod extension;
 mod registry;
 
 pub use contributors::ApprovalInterceptorContributor;
-pub use contributors::PromptContributor;
+pub use contributors::ContextContributor;
 pub use contributors::PromptFragment;
 pub use contributors::PromptSlot;
 pub use contributors::ToolCallError;

@@ -7,6 +7,7 @@
 
 mod prompt;
 mod tool;
+mod session_lifecycle;
 
 pub use prompt::PromptFragment;
 pub use prompt::PromptSlot;
@@ -14,33 +15,41 @@ pub use tool::ToolCallError;
 pub use tool::ToolContribution;
 pub use tool::ToolHandler;
 
+/// Extension contribution that adds prompt fragments during prompt assembly.
+/// Arguably, can become async
+pub trait ContextContributor<C>: Send + Sync {
+    fn contribute(&self, context: &C) -> Vec<PromptFragment>; // TODO use existing fragments ofc
+}
+
+/// Extension contribution that exposes native tools owned by a feature.
+pub trait ToolContributor<C>: Send + Sync {
+    /// Returns the native tools visible for the supplied runtime context.
+    fn tools(&self, context: &C) -> Vec<ToolContribution<C>>;
+}
+
+/// Analyze or perform computation on the output. Works only if the post-processing pipeline is ordered
+pub type OutputContributionFuture<'a> = std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+pub trait OutputContributor<C, O>: Send + Sync {
+    fn contribute<'a>(
+        &'a self,
+        context: &'a C,
+        output: &'a mut O,
+    ) -> OutputContributionFuture<'a>;
+}
+
+
+
+// TODO: WIP
 /// Extension contribution that can claim approval requests for a runtime context.
-///
-/// Implementations should make only the routing decision here. The host keeps
-/// ownership of executing the chosen review flow and translating its result
-/// back into the surrounding runtime.
+/// (ideally we can replace it by a session lifecycle thing or a request contributor?)
 pub trait ApprovalInterceptorContributor<C>: Send + Sync {
     /// Returns whether this contributor should intercept approvals in `context`.
     fn intercepts_approvals(&self, context: &C) -> bool;
 }
 
-/// Extension contribution that adds prompt fragments during prompt assembly.
-///
-/// Implementations should inspect only their feature-owned slice of the
-/// current runtime context and describe the prompt content exposed for that
-/// invocation. The host remains responsible for ordering fragments and
-/// assembling prompt items.
-pub trait PromptContributor<C>: Send + Sync {
-    fn contribute(&self, context: &C) -> Vec<PromptFragment>;
-}
-
-/// Extension contribution that exposes native tools owned by a feature.
-///
-/// Implementations should inspect only their feature-owned slice of the
-/// current runtime context and return the tools exposed for that invocation.
-/// The host remains responsible for mounting those tools and adapting calls
-/// into its runtime.
-pub trait ToolContributor<C>: Send + Sync {
-    /// Returns the native tools visible for the supplied runtime context.
-    fn tools(&self, context: &C) -> Vec<ToolContribution<C>>;
+pub trait SessionLifecycleContributor<S, T>: Send + Sync {
+    fn on_lifecycle_event(
+        &self,
+        event: session_lifecycle::Event<'_, S, T>,
+    ) -> impl Future<Output = ()> + Send;
 }

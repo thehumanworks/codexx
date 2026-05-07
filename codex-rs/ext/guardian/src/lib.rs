@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use codex_extension_api::ApprovalInterceptorContributor;
 use codex_extension_api::CodexExtension;
+use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionRegistryBuilder;
-use codex_extension_api::PromptContributor;
 use codex_extension_api::PromptFragment;
 
 /// Runtime facts needed to expose Guardian surfaces.
@@ -53,7 +53,7 @@ impl<C: GuardianContext> ApprovalInterceptorContributor<C> for GuardianExtension
     }
 }
 
-impl<C: GuardianContext> PromptContributor<C> for GuardianExtension {
+impl<C: GuardianContext> ContextContributor<C> for GuardianExtension {
     fn contribute(&self, context: &C) -> Vec<PromptFragment> {
         self.policy_prompt(context)
             .map(PromptFragment::separate_developer)

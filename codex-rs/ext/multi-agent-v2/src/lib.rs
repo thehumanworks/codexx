@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use codex_extension_api::CodexExtension;
+use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionRegistryBuilder;
-use codex_extension_api::PromptContributor;
 use codex_extension_api::PromptFragment;
 
 /// Which kind of agent should receive a MultiAgentV2 usage hint.
@@ -53,7 +53,7 @@ impl MultiAgentV2Extension {
     }
 }
 
-impl<C: MultiAgentV2Context> PromptContributor<C> for MultiAgentV2Extension {
+impl<C: MultiAgentV2Context> ContextContributor<C> for MultiAgentV2Extension {
     fn contribute(&self, context: &C) -> Vec<PromptFragment> {
         self.usage_hint_text(context)
             .map(PromptFragment::separate_developer)

@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use codex_extension_api::CodexExtension;
+use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionRegistryBuilder;
-use codex_extension_api::PromptContributor;
 use codex_extension_api::PromptFragment;
 
 const DEFAULT_ATTRIBUTION_VALUE: &str = "Codex <noreply@openai.com>";
@@ -39,7 +39,7 @@ impl GitAttributionExtension {
     }
 }
 
-impl<C: GitAttributionContext> PromptContributor<C> for GitAttributionExtension {
+impl<C: GitAttributionContext> ContextContributor<C> for GitAttributionExtension {
     fn contribute(&self, context: &C) -> Vec<PromptFragment> {
         self.instruction(context)
             .map(PromptFragment::developer_capability)

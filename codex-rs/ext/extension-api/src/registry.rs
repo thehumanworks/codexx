@@ -2,21 +2,21 @@ use std::sync::Arc;
 
 use crate::ApprovalInterceptorContributor;
 use crate::CodexExtension;
-use crate::PromptContributor;
+use crate::ContextContributor;
 use crate::ToolContributor;
 
 /// Mutable registry used while extensions install their typed contributions.
 pub struct ExtensionRegistryBuilder<C> {
-    approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
-    prompt_contributors: Vec<Arc<dyn PromptContributor<C>>>,
+    context_contributors: Vec<Arc<dyn ContextContributor<C>>>,
     tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
+    approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
 }
 
 impl<C> Default for ExtensionRegistryBuilder<C> {
     fn default() -> Self {
         Self {
             approval_interceptor_contributors: Vec::new(),
-            prompt_contributors: Vec::new(),
+            context_contributors: Vec::new(),
             tool_contributors: Vec::new(),
         }
     }
@@ -55,8 +55,8 @@ impl<C> ExtensionRegistryBuilder<C> {
     }
 
     /// Registers one prompt contributor.
-    pub fn prompt_contributor(&mut self, contributor: Arc<dyn PromptContributor<C>>) {
-        self.prompt_contributors.push(contributor);
+    pub fn prompt_contributor(&mut self, contributor: Arc<dyn ContextContributor<C>>) {
+        self.context_contributors.push(contributor);
     }
 
     /// Registers one native tool contributor.
@@ -68,7 +68,7 @@ impl<C> ExtensionRegistryBuilder<C> {
     pub fn build(self) -> ExtensionRegistry<C> {
         ExtensionRegistry {
             approval_interceptor_contributors: self.approval_interceptor_contributors,
-            prompt_contributors: self.prompt_contributors,
+            prompt_contributors: self.context_contributors,
             tool_contributors: self.tool_contributors,
         }
     }
@@ -77,7 +77,7 @@ impl<C> ExtensionRegistryBuilder<C> {
 /// Immutable typed registry produced after extensions are installed.
 pub struct ExtensionRegistry<C> {
     approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
-    prompt_contributors: Vec<Arc<dyn PromptContributor<C>>>,
+    prompt_contributors: Vec<Arc<dyn ContextContributor<C>>>,
     tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
 }
 
@@ -90,7 +90,7 @@ impl<C> ExtensionRegistry<C> {
     }
 
     /// Returns the registered prompt contributors.
-    pub fn prompt_contributors(&self) -> &[Arc<dyn PromptContributor<C>>] {
+    pub fn prompt_contributors(&self) -> &[Arc<dyn ContextContributor<C>>] {
         &self.prompt_contributors
     }
 
