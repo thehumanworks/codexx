@@ -42,8 +42,6 @@ impl<C> ToolContribution<C> {
     }
 }
 
-
-
 //////// Just to make it compile ////////////////////////////////
 pub trait ToolHandler<C>: Send + Sync {
     /// Handles one JSON-encoded invocation for this tool.
