@@ -68,11 +68,6 @@ impl MemoriesExtension {
         }
     }
 
-    /// Creates an extension that contributes native tools but no prompt fragment.
-    pub fn tools_only(memories_root: impl Into<PathBuf>) -> Self {
-        Self::new(None, memories_root)
-    }
-
     /// Creates an extension with one pre-rendered read prompt and native tools.
     pub fn with_read_prompt(read_prompt: String, memories_root: impl Into<PathBuf>) -> Self {
         Self::new(Some(read_prompt), memories_root)
