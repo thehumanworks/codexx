@@ -10,7 +10,9 @@ use codex_config::HookEventsToml;
 use codex_config::HookHandlerConfig;
 use codex_config::HookStateToml;
 use codex_config::HooksFile;
+use codex_config::ManagedHookEventsToml;
 use codex_config::ManagedHooksRequirementsToml;
+use codex_config::ManagedMatcherGroup;
 use codex_config::MatcherGroup;
 use codex_config::RequirementSource;
 use codex_config::TomlValue;
@@ -36,12 +38,15 @@ pub(crate) struct DiscoveryResult {
     pub warnings: Vec<String>,
 }
 
+type HookHandlerPosition = (codex_protocol::protocol::HookEventName, usize, usize);
+
 struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
     key_source: String,
     source: HookSource,
     is_managed: bool,
     hook_states: &'a HashMap<String, HookStateToml>,
+    suppressed_handler_positions: Vec<HookHandlerPosition>,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
 }
@@ -99,6 +104,7 @@ pub(crate) fn discover_handlers(
                         source: hook_source,
                         is_managed,
                         hook_states: &hook_states,
+                        suppressed_handler_positions: Vec::new(),
                         env: HashMap::new(),
                         plugin_id: None,
                     },
@@ -140,6 +146,8 @@ fn append_managed_requirement_handlers(
     else {
         return;
     };
+    let (hook_events, suppressed_handler_positions) =
+        normalize_managed_hook_events(managed_hooks.get().hooks.clone());
     append_hook_events(
         handlers,
         hook_entries,
@@ -151,10 +159,11 @@ fn append_managed_requirement_handlers(
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             is_managed: true,
             hook_states,
+            suppressed_handler_positions,
             env: HashMap::new(),
             plugin_id: None,
         },
-        managed_hooks.get().hooks.clone(),
+        hook_events,
     );
 }
 
@@ -199,6 +208,7 @@ fn append_plugin_hook_sources(
                 source: HookSource::Plugin,
                 is_managed: false,
                 hook_states,
+                suppressed_handler_positions: Vec::new(),
                 env,
                 plugin_id: Some(plugin_id),
             },
@@ -272,7 +282,23 @@ fn load_hooks_json(
         }
     };
 
-    let parsed: HooksFile = match serde_json::from_str(&contents) {
+    let raw_json: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            warnings.push(format!(
+                "failed to parse hooks config {}: {err}",
+                source_path.display()
+            ));
+            return None;
+        }
+    };
+    if raw_json
+        .get("hooks")
+        .is_some_and(json_value_contains_suppress)
+    {
+        warnings.push(unsupported_suppress_warning(source_path.as_path()));
+    }
+    let parsed: HooksFile = match serde_json::from_value(raw_json) {
         Ok(parsed) => parsed,
         Err(err) => {
             warnings.push(format!(
@@ -301,6 +327,9 @@ fn load_toml_hooks_from_layer(
 ) -> Option<(AbsolutePathBuf, HookEventsToml)> {
     let source_path = config_toml_source_path(layer);
     let hook_value = layer.config.get("hooks")?.clone();
+    if toml_value_contains_suppress(&hook_value) {
+        warnings.push(unsupported_suppress_warning(source_path.as_path()));
+    }
     let parsed = match HookEventsToml::deserialize(hook_value) {
         Ok(parsed) => parsed,
         Err(err) => {
@@ -313,6 +342,33 @@ fn load_toml_hooks_from_layer(
     };
 
     (!parsed.is_empty()).then_some((source_path, parsed))
+}
+
+fn unsupported_suppress_warning(source_path: &Path) -> String {
+    format!(
+        "ignoring unsupported `suppress` in hook config {}; `suppress` is only supported for managed hooks in requirements",
+        source_path.display()
+    )
+}
+
+fn json_value_contains_suppress(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values.iter().any(json_value_contains_suppress),
+        serde_json::Value::Object(values) => {
+            values.contains_key("suppress") || values.values().any(json_value_contains_suppress)
+        }
+        _ => false,
+    }
+}
+
+fn toml_value_contains_suppress(value: &TomlValue) -> bool {
+    match value {
+        TomlValue::Array(values) => values.iter().any(toml_value_contains_suppress),
+        TomlValue::Table(values) => {
+            values.contains_key("suppress") || values.values().any(toml_value_contains_suppress)
+        }
+        _ => false,
+    }
 }
 
 fn config_toml_source_path(layer: &ConfigLayerEntry) -> AbsolutePathBuf {
@@ -362,6 +418,65 @@ fn append_hook_events(
             groups,
         );
     }
+}
+
+fn normalize_managed_hook_events(
+    hook_events: ManagedHookEventsToml,
+) -> (HookEventsToml, Vec<HookHandlerPosition>) {
+    let mut normalized = HookEventsToml::default();
+    let mut suppressed_handler_positions = Vec::new();
+
+    for (event_name, groups) in hook_events.into_matcher_groups() {
+        let groups =
+            normalize_managed_matcher_groups(event_name, groups, &mut suppressed_handler_positions);
+        match event_name {
+            codex_protocol::protocol::HookEventName::PreToolUse => normalized.pre_tool_use = groups,
+            codex_protocol::protocol::HookEventName::PermissionRequest => {
+                normalized.permission_request = groups
+            }
+            codex_protocol::protocol::HookEventName::PostToolUse => {
+                normalized.post_tool_use = groups
+            }
+            codex_protocol::protocol::HookEventName::PreCompact => normalized.pre_compact = groups,
+            codex_protocol::protocol::HookEventName::PostCompact => {
+                normalized.post_compact = groups
+            }
+            codex_protocol::protocol::HookEventName::SessionStart => {
+                normalized.session_start = groups
+            }
+            codex_protocol::protocol::HookEventName::UserPromptSubmit => {
+                normalized.user_prompt_submit = groups
+            }
+            codex_protocol::protocol::HookEventName::Stop => normalized.stop = groups,
+        }
+    }
+
+    (normalized, suppressed_handler_positions)
+}
+
+fn normalize_managed_matcher_groups(
+    event_name: codex_protocol::protocol::HookEventName,
+    groups: Vec<ManagedMatcherGroup>,
+    suppressed_handler_positions: &mut Vec<HookHandlerPosition>,
+) -> Vec<MatcherGroup> {
+    groups
+        .into_iter()
+        .enumerate()
+        .map(|(group_index, group)| MatcherGroup {
+            matcher: group.matcher,
+            hooks: group
+                .hooks
+                .into_iter()
+                .enumerate()
+                .map(|(handler_index, handler)| {
+                    if handler.suppress {
+                        suppressed_handler_positions.push((event_name, group_index, handler_index));
+                    }
+                    handler.handler
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 fn append_matcher_groups(
@@ -421,6 +536,11 @@ fn append_matcher_groups(
                     // TODO(abhinav): replace this positional suffix with a durable hook id.
                     let key =
                         crate::hook_key(&source.key_source, event_name, group_index, handler_index);
+                    let suppress_notifications = source.suppressed_handler_positions.contains(&(
+                        event_name,
+                        group_index,
+                        handler_index,
+                    ));
                     let state = source.hook_states.get(&key);
                     let enabled = hook_enabled(source.is_managed, state);
                     let trusted_hash = hook_trusted_hash(source.is_managed, state);
@@ -459,6 +579,7 @@ fn append_matcher_groups(
                             source: source.source,
                             display_order: *display_order,
                             env: source.env.clone(),
+                            suppress_notifications,
                         });
                     }
                     *display_order += 1;
@@ -572,6 +693,8 @@ mod tests {
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use std::fs;
+    use tempfile::tempdir;
 
     use super::ConfiguredHandler;
     use super::append_matcher_groups;
@@ -598,6 +721,7 @@ mod tests {
             source: hook_source(),
             is_managed: true,
             hook_states,
+            suppressed_handler_positions: Vec::new(),
             env: std::collections::HashMap::new(),
             plugin_id: None,
         }
@@ -646,6 +770,7 @@ mod tests {
                 source: hook_source(),
                 display_order: 0,
                 env: std::collections::HashMap::new(),
+                suppress_notifications: false,
             }]
         );
     }
@@ -681,6 +806,7 @@ mod tests {
                 source: hook_source(),
                 display_order: 0,
                 env: std::collections::HashMap::new(),
+                suppress_notifications: false,
             }]
         );
     }
@@ -746,6 +872,102 @@ mod tests {
             .expect("valid hook events should still load");
 
         assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(
+            hooks,
+            HookEventsToml {
+                session_start: vec![MatcherGroup {
+                    matcher: None,
+                    hooks: vec![HookHandlerConfig::Command {
+                        command: "echo hello".to_string(),
+                        timeout_sec: None,
+                        r#async: false,
+                        status_message: None,
+                    }],
+                }],
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn toml_hook_discovery_warns_and_ignores_suppress_outside_requirements() {
+        let layer = ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: test_path_buf("/tmp/config.toml").abs(),
+            },
+            serde_json::from_value(serde_json::json!({
+                "hooks": {
+                    "SessionStart": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": "echo hello",
+                            "suppress": true,
+                        }],
+                    }],
+                },
+            }))
+            .expect("config TOML should deserialize"),
+        );
+        let mut warnings = Vec::new();
+
+        let (_, hooks) = super::load_toml_hooks_from_layer(&layer, &mut warnings)
+            .expect("valid hook events should still load");
+
+        assert_eq!(
+            warnings,
+            vec![
+                "ignoring unsupported `suppress` in hook config /tmp/config.toml; `suppress` is only supported for managed hooks in requirements".to_string()
+            ]
+        );
+        assert_eq!(
+            hooks,
+            HookEventsToml {
+                session_start: vec![MatcherGroup {
+                    matcher: None,
+                    hooks: vec![HookHandlerConfig::Command {
+                        command: "echo hello".to_string(),
+                        timeout_sec: None,
+                        r#async: false,
+                        status_message: None,
+                    }],
+                }],
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn json_hook_discovery_warns_and_ignores_suppress_outside_requirements() {
+        let temp = tempdir().expect("create temp dir");
+        let hooks_path = temp.path().join("hooks.json");
+        fs::write(
+            &hooks_path,
+            serde_json::json!({
+                "hooks": {
+                    "SessionStart": [{
+                        "hooks": [{
+                            "type": "command",
+                            "command": "echo hello",
+                            "suppress": true,
+                        }],
+                    }],
+                },
+            })
+            .to_string(),
+        )
+        .expect("write hooks.json");
+        let mut warnings = Vec::new();
+
+        let (_, hooks) = super::load_hooks_json(Some(temp.path()), &mut warnings)
+            .expect("valid hook events should still load");
+
+        assert_eq!(
+            warnings,
+            vec![format!(
+                "ignoring unsupported `suppress` in hook config {}; `suppress` is only supported for managed hooks in requirements",
+                hooks_path.display()
+            )]
+        );
         assert_eq!(
             hooks,
             HookEventsToml {
