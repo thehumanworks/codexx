@@ -111,6 +111,10 @@ async fn profile_permissions_selection_popup_with_custom_profiles_snapshot() {
 #[tokio::test]
 async fn profile_permissions_selection_emits_named_profile_event_only() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    #[cfg(target_os = "windows")]
+    {
+        chat.set_windows_sandbox_mode(Some(WindowsSandboxModeToml::Unelevated));
+    }
     chat.config.explicit_permission_profile_mode = true;
     chat.config
         .permissions
@@ -168,6 +172,10 @@ async fn profile_permissions_selection_emits_active_custom_profile() {
 #[tokio::test]
 async fn profile_permissions_selection_emits_auto_review_mode_event() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    #[cfg(target_os = "windows")]
+    {
+        chat.set_windows_sandbox_mode(Some(WindowsSandboxModeToml::Unelevated));
+    }
     chat.config.explicit_permission_profile_mode = true;
     chat.config
         .permissions
