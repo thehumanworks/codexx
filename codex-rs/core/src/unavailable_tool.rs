@@ -35,7 +35,7 @@ pub(crate) fn collect_unavailable_called_tools(
         }
 
         unavailable_tools
-            .entry(display_name)
+            .entry(tool_name.clone())
             .or_insert_with(|| tool_name);
     }
 
