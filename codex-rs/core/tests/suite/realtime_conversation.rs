@@ -749,11 +749,13 @@ async fn conversation_webrtc_sideband_connect_failure_closes_with_error() -> Res
         )
         .mount(&server)
         .await;
-    let mut builder = test_codex().with_config(|config| {
+    let realtime_base_url = server.uri();
+    let mut builder = test_codex().with_config(move |config| {
         config.experimental_realtime_ws_backend_prompt = Some("backend prompt".to_string());
         config.experimental_realtime_ws_model = Some("realtime-test-model".to_string());
         config.experimental_realtime_ws_startup_context = Some(String::new());
-        config.experimental_realtime_ws_base_url = Some("http://127.0.0.1:1".to_string());
+        config.experimental_realtime_ws_base_url = Some(realtime_base_url);
+        config.model_provider.request_max_retries = Some(0);
         config.realtime.version = RealtimeWsVersion::V1;
     });
     let test = builder.build(&server).await?;
