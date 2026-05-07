@@ -22,12 +22,15 @@ pub(crate) struct ToolDispatchTrace {
 }
 
 impl ToolDispatchTrace {
-    pub(crate) fn start(invocation: &ToolInvocation) -> Self {
+    pub(crate) fn start(
+        invocation: &ToolInvocation,
+        payload: impl FnOnce() -> ToolDispatchPayload,
+    ) -> Self {
         let context = invocation
             .session
             .services
             .rollout_thread_trace
-            .start_tool_dispatch_trace(|| tool_dispatch_invocation(invocation));
+            .start_tool_dispatch_trace(|| tool_dispatch_invocation(invocation, payload()));
         Self { context }
     }
 
@@ -59,7 +62,10 @@ impl ToolDispatchTrace {
     }
 }
 
-fn tool_dispatch_invocation(invocation: &ToolInvocation) -> Option<ToolDispatchInvocation> {
+fn tool_dispatch_invocation(
+    invocation: &ToolInvocation,
+    payload: ToolDispatchPayload,
+) -> Option<ToolDispatchInvocation> {
     let requester = match &invocation.source {
         ToolCallSource::Direct => ToolDispatchRequester::Model {
             model_visible_call_id: invocation.call_id.clone(),
@@ -80,7 +86,7 @@ fn tool_dispatch_invocation(invocation: &ToolInvocation) -> Option<ToolDispatchI
         tool_name: invocation.tool_name.name.clone(),
         tool_namespace: invocation.tool_name.namespace.clone(),
         requester,
-        payload: tool_dispatch_payload(&invocation.payload),
+        payload,
     })
 }
 
@@ -97,38 +103,6 @@ fn tool_dispatch_result(
         ToolCallSource::CodeMode { .. } => Some(ToolDispatchResult::CodeModeResponse {
             value: result.code_mode_result(payload),
         }),
-    }
-}
-
-fn tool_dispatch_payload(payload: &ToolPayload) -> ToolDispatchPayload {
-    match payload {
-        ToolPayload::Function { arguments } => ToolDispatchPayload::Function {
-            arguments: arguments.clone(),
-        },
-        ToolPayload::ToolSearch { arguments } => ToolDispatchPayload::ToolSearch {
-            arguments: arguments.clone(),
-        },
-        ToolPayload::Custom { input } => ToolDispatchPayload::Custom {
-            input: input.clone(),
-        },
-        ToolPayload::LocalShell { params } => ToolDispatchPayload::LocalShell {
-            command: params.command.clone(),
-            workdir: params.workdir.clone(),
-            timeout_ms: params.timeout_ms,
-            sandbox_permissions: params.sandbox_permissions,
-            prefix_rule: params.prefix_rule.clone(),
-            additional_permissions: params.additional_permissions.clone(),
-            justification: params.justification.clone(),
-        },
-        ToolPayload::Mcp {
-            server,
-            tool,
-            raw_arguments,
-        } => ToolDispatchPayload::Mcp {
-            server: server.clone(),
-            tool: tool.clone(),
-            raw_arguments: raw_arguments.clone(),
-        },
     }
 }
 

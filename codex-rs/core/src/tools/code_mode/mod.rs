@@ -275,7 +275,6 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
     let nested_tools_config = exec.turn.tools_config.for_code_mode_nested_tools();
     let mcp_connection_manager = exec.session.services.mcp_connection_manager.read().await;
     let listed_mcp_tools = mcp_connection_manager.list_all_tools().await;
-    let parallel_mcp_server_names = mcp_connection_manager.parallel_tool_call_server_names();
 
     ToolRouter::from_config(
         &nested_tools_config,
@@ -283,7 +282,6 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
             deferred_mcp_tools: None,
             mcp_tools: Some(listed_mcp_tools),
             unavailable_called_tools: Vec::new(),
-            parallel_mcp_server_names,
             discoverable_tools: None,
             dynamic_tools: exec.turn.dynamic_tools.as_slice(),
         },
@@ -291,7 +289,7 @@ async fn build_nested_router(exec: &ExecContext) -> ToolRouter {
 }
 
 async fn call_nested_tool(
-    exec: ExecContext,
+    _exec: ExecContext,
     tool_runtime: ToolCallRuntime,
     invocation: CodeModeNestedToolCall,
     cancellation_token: CancellationToken,
@@ -308,29 +306,14 @@ async fn call_nested_tool(
         )));
     }
 
-    let (tool_call_name, payload) =
-        if let Some(tool_info) = exec.session.resolve_mcp_tool_info(&tool_name).await {
-            let raw_arguments = match serialize_function_tool_arguments(&tool_name, input) {
-                Ok(raw_arguments) => raw_arguments,
-                Err(error) => return Err(FunctionCallError::RespondToModel(error)),
-            };
-            (
-                tool_info.canonical_tool_name(),
-                ToolPayload::Mcp {
-                    server: tool_info.server_name,
-                    tool: tool_info.tool.name.to_string(),
-                    raw_arguments,
-                },
-            )
-        } else {
-            match build_nested_tool_payload(tool_runtime.find_spec(&tool_name), &tool_name, input) {
-                Ok(payload) => (tool_name, payload),
-                Err(error) => return Err(FunctionCallError::RespondToModel(error)),
-            }
+    let payload =
+        match build_nested_tool_payload(tool_runtime.find_spec(&tool_name), &tool_name, input) {
+            Ok(payload) => payload,
+            Err(error) => return Err(FunctionCallError::RespondToModel(error)),
         };
 
     let call = ToolCall {
-        tool_name: tool_call_name,
+        tool_name,
         call_id: format!("{PUBLIC_TOOL_NAME}-{}", uuid::Uuid::new_v4()),
         payload,
     };

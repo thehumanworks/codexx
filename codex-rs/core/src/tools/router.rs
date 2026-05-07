@@ -39,14 +39,12 @@ pub struct ToolRouter {
     registry: ToolRegistry,
     specs: Vec<ConfiguredToolSpec>,
     model_visible_specs: Vec<ToolSpec>,
-    parallel_mcp_server_names: HashSet<String>,
 }
 
 pub(crate) struct ToolRouterParams<'a> {
     pub(crate) mcp_tools: Option<Vec<ToolInfo>>,
     pub(crate) deferred_mcp_tools: Option<Vec<ToolInfo>>,
     pub(crate) unavailable_called_tools: Vec<ToolName>,
-    pub(crate) parallel_mcp_server_names: HashSet<String>,
     pub(crate) discoverable_tools: Option<Vec<DiscoverableTool>>,
     pub(crate) dynamic_tools: &'a [DynamicToolSpec],
 }
@@ -57,7 +55,6 @@ impl ToolRouter {
             mcp_tools,
             deferred_mcp_tools,
             unavailable_called_tools,
-            parallel_mcp_server_names,
             discoverable_tools,
             dynamic_tools,
         } = params;
@@ -95,7 +92,6 @@ impl ToolRouter {
             registry,
             specs,
             model_visible_specs,
-            parallel_mcp_server_names,
         }
     }
 
@@ -162,20 +158,13 @@ impl ToolRouter {
     }
 
     pub fn tool_supports_parallel(&self, call: &ToolCall) -> bool {
-        match &call.payload {
-            // MCP parallel support is configured per server, including for deferred
-            // tools that may not have a matching spec entry. Use the parsed payload
-            // server so similarly named servers/tools cannot collide.
-            ToolPayload::Mcp { server, .. } => self.parallel_mcp_server_names.contains(server),
-            _ => self.configured_tool_supports_parallel(&call.tool_name),
-        }
+        self.registry
+            .supports_parallel_tool_calls(&call.tool_name)
+            .unwrap_or_else(|| self.configured_tool_supports_parallel(&call.tool_name))
     }
 
     #[instrument(level = "trace", skip_all, err)]
-    pub async fn build_tool_call(
-        session: &Session,
-        item: ResponseItem,
-    ) -> Result<Option<ToolCall>, FunctionCallError> {
+    pub fn build_tool_call(item: ResponseItem) -> Result<Option<ToolCall>, FunctionCallError> {
         match item {
             ResponseItem::FunctionCall {
                 name,
@@ -185,23 +174,11 @@ impl ToolRouter {
                 ..
             } => {
                 let tool_name = ToolName::new(namespace, name);
-                if let Some(tool_info) = session.resolve_mcp_tool_info(&tool_name).await {
-                    Ok(Some(ToolCall {
-                        tool_name: tool_info.canonical_tool_name(),
-                        call_id,
-                        payload: ToolPayload::Mcp {
-                            server: tool_info.server_name,
-                            tool: tool_info.tool.name.to_string(),
-                            raw_arguments: arguments,
-                        },
-                    }))
-                } else {
-                    Ok(Some(ToolCall {
-                        tool_name,
-                        call_id,
-                        payload: ToolPayload::Function { arguments },
-                    }))
-                }
+                Ok(Some(ToolCall {
+                    tool_name,
+                    call_id,
+                    payload: ToolPayload::Function { arguments },
+                }))
             }
             ResponseItem::ToolSearchCall {
                 call_id: Some(call_id),
