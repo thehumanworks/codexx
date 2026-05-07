@@ -158,6 +158,9 @@ pub enum MarketplaceError {
     #[error("plugins feature is disabled")]
     PluginsDisabled,
 
+    #[error("marketplace `{marketplace_name}` is not allowed by managed requirements")]
+    MarketplaceBlocked { marketplace_name: String },
+
     #[error("{0}")]
     InvalidPlugin(String),
 }

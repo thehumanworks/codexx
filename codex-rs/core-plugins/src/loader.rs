@@ -1,4 +1,5 @@
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
+use crate::manager::configured_plugins_for_stack;
 use crate::manifest::PluginManifestHooks;
 use crate::manifest::PluginManifestPaths;
 use crate::manifest::load_plugin_manifest;
@@ -378,10 +379,7 @@ fn refresh_non_curated_plugin_cache_with_mode(
 fn configured_plugins_from_stack(
     config_layer_stack: &ConfigLayerStack,
 ) -> HashMap<String, PluginConfig> {
-    let Some(user_layer) = config_layer_stack.get_user_layer() else {
-        return HashMap::new();
-    };
-    configured_plugins_from_user_config_value(&user_layer.config)
+    configured_plugins_for_stack(config_layer_stack)
 }
 
 fn is_full_git_sha(value: &str) -> bool {
