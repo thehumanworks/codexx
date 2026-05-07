@@ -31,6 +31,7 @@ use codex_protocol::ThreadId;
 use codex_protocol::openai_models::ModelPreset;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_approval_presets::ApprovalPreset;
+use codex_worktree::DirtyPolicy;
 
 use crate::app_command::AppCommand;
 use crate::bottom_pane::ApprovalRequest;
@@ -190,6 +191,40 @@ pub(crate) enum AppEvent {
 
     /// Fork the current session into a new thread.
     ForkCurrentSession,
+
+    /// Open the managed worktree picker.
+    OpenWorktreePicker,
+
+    /// Result of loading worktrees for the managed worktree picker.
+    WorktreesLoaded {
+        cwd: PathBuf,
+        result: Result<Vec<codex_worktree::WorktreeInfo>, String>,
+    },
+
+    /// Create or reuse a managed worktree and switch the TUI into it.
+    CreateWorktreeAndSwitch {
+        branch: String,
+        base_ref: Option<String>,
+        dirty_policy: Option<DirtyPolicy>,
+    },
+
+    /// Switch the TUI into an existing worktree.
+    SwitchToWorktree {
+        target: String,
+    },
+
+    /// Show the filesystem path for an existing worktree.
+    ShowWorktreePath {
+        target: String,
+    },
+
+    /// Remove a Codex-managed worktree.
+    RemoveWorktree {
+        target: String,
+        force: bool,
+        delete_branch: bool,
+        confirmed: bool,
+    },
 
     /// Request to exit the application.
     ///

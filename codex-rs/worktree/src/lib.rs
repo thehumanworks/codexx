@@ -11,6 +11,7 @@ use serde::Serialize;
 
 pub use dirty::DirtyPolicy;
 pub use dirty::DirtyState;
+pub use dirty::dirty_state;
 pub use manager::ensure_worktree;
 pub use manager::list_worktrees;
 pub use manager::remove_worktree;

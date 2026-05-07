@@ -1,0 +1,14 @@
+---
+source: tui/src/worktree.rs
+expression: "render_selection(params, 86)"
+---
+
+  Worktrees
+  Select a worktree to fork this chat into that workspace.
+
+  Search worktrees
+› fcoury/demo (current)  Fork this chat into /repo/codex.fcoury-demo
+  codex                  clean · app · /repo/codex.codex
+  main                   dirty · git · /repo/codex.main
+
+  Press enter to confirm or esc to go back

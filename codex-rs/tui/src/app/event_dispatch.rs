@@ -187,6 +187,41 @@ impl App {
 
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::OpenWorktreePicker => {
+                self.open_worktree_picker(tui);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::WorktreesLoaded { cwd, result } => {
+                self.on_worktrees_loaded(cwd, result);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::CreateWorktreeAndSwitch {
+                branch,
+                base_ref,
+                dirty_policy,
+            } => {
+                self.create_worktree_and_switch(tui, app_server, branch, base_ref, dirty_policy)
+                    .await;
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::SwitchToWorktree { target } => {
+                self.switch_to_worktree_target(tui, app_server, target)
+                    .await;
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::ShowWorktreePath { target } => {
+                self.show_worktree_path(target);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::RemoveWorktree {
+                target,
+                force,
+                delete_branch,
+                confirmed,
+            } => {
+                self.remove_worktree(target, force, delete_branch, confirmed);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::BeginInitialHistoryReplayBuffer => {
                 self.begin_initial_history_replay_buffer();
             }

@@ -1,0 +1,14 @@
+---
+source: tui/src/worktree.rs
+expression: "render_selection(dirty_policy_prompt_params(\"fcoury/demo\".to_string(), None),\n82)"
+---
+
+  Source checkout has uncommitted changes
+  Choose what to carry into the new worktree.
+
+› 1. Fail          Cancel creation and leave the source checkout unchanged.
+  2. Ignore        Create from the requested base without copying local changes.
+  3. Copy tracked  Copy staged and unstaged tracked changes.
+  4. Copy all      Copy tracked changes and untracked files.
+
+  Press enter to confirm or esc to go back

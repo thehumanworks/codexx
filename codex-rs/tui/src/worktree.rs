@@ -1,0 +1,708 @@
+use std::path::Path;
+use std::time::Duration;
+use std::time::Instant;
+
+use codex_worktree::DirtyPolicy;
+use codex_worktree::WorktreeInfo;
+use codex_worktree::WorktreeSource;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::style::Stylize;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::WidgetRef;
+
+use crate::app_event::AppEvent;
+use crate::app_event_sender::AppEventSender;
+use crate::bottom_pane::ColumnWidthMode;
+use crate::bottom_pane::SelectionItem;
+use crate::bottom_pane::SelectionRowDisplay;
+use crate::bottom_pane::SelectionViewParams;
+use crate::bottom_pane::popup_consts::standard_popup_hint_line;
+use crate::motion::MotionMode;
+use crate::motion::ReducedMotionIndicator;
+use crate::motion::activity_indicator;
+use crate::render::renderable::ColumnRenderable;
+use crate::render::renderable::Renderable;
+use crate::tui::FrameRequester;
+
+const WORKTREE_USAGE: &str =
+    "Usage: /worktree [list|new <branch>|switch <branch>|path <branch>|remove <branch>]";
+pub(crate) const WORKTREE_SELECTION_VIEW_ID: &str = "worktree-selection";
+const LOADING_ANIMATION_INTERVAL: Duration = Duration::from_millis(100);
+
+struct WorktreeLoadingHeader {
+    started_at: Instant,
+    frame_requester: FrameRequester,
+    animations_enabled: bool,
+    status: String,
+    note: String,
+}
+
+impl WorktreeLoadingHeader {
+    fn new(
+        frame_requester: FrameRequester,
+        animations_enabled: bool,
+        status: String,
+        note: String,
+    ) -> Self {
+        Self {
+            started_at: Instant::now(),
+            frame_requester,
+            animations_enabled,
+            status,
+            note,
+        }
+    }
+}
+
+impl Renderable for WorktreeLoadingHeader {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if area.is_empty() {
+            return;
+        }
+
+        let motion_mode = MotionMode::from_animations_enabled(self.animations_enabled);
+        if self.animations_enabled {
+            self.frame_requester
+                .schedule_frame_in(LOADING_ANIMATION_INTERVAL);
+        }
+
+        let mut loading_spans = Vec::new();
+        if let Some(indicator) = activity_indicator(
+            Some(self.started_at),
+            motion_mode,
+            ReducedMotionIndicator::StaticBullet,
+        ) {
+            loading_spans.push(indicator);
+            loading_spans.push(" ".into());
+        }
+        loading_spans.push(self.status.clone().dim());
+
+        Paragraph::new(vec![
+            Line::from("Worktrees".bold()),
+            Line::from(loading_spans),
+            Line::from(self.note.clone().dim()),
+        ])
+        .render_ref(area, buf);
+    }
+
+    fn desired_height(&self, _width: u16) -> u16 {
+        3
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WorktreeSlashAction {
+    OpenPicker,
+    Create {
+        branch: String,
+        base_ref: Option<String>,
+        dirty_policy: Option<DirtyPolicy>,
+    },
+    Switch {
+        target: String,
+    },
+    ShowPath {
+        target: String,
+    },
+    Remove {
+        target: String,
+        force: bool,
+        delete_branch: bool,
+    },
+}
+
+impl WorktreeSlashAction {
+    pub(crate) fn dispatch(self, tx: &AppEventSender) {
+        match self {
+            WorktreeSlashAction::OpenPicker => tx.send(AppEvent::OpenWorktreePicker),
+            WorktreeSlashAction::Create {
+                branch,
+                base_ref,
+                dirty_policy,
+            } => tx.send(AppEvent::CreateWorktreeAndSwitch {
+                branch,
+                base_ref,
+                dirty_policy,
+            }),
+            WorktreeSlashAction::Switch { target } => {
+                tx.send(AppEvent::SwitchToWorktree { target });
+            }
+            WorktreeSlashAction::ShowPath { target } => {
+                tx.send(AppEvent::ShowWorktreePath { target });
+            }
+            WorktreeSlashAction::Remove {
+                target,
+                force,
+                delete_branch,
+            } => tx.send(AppEvent::RemoveWorktree {
+                target,
+                force,
+                delete_branch,
+                confirmed: force,
+            }),
+        }
+    }
+}
+
+pub(crate) fn parse_worktree_slash_args(args: &str) -> Result<WorktreeSlashAction, String> {
+    let mut parts = args.split_whitespace();
+    let Some(command) = parts.next() else {
+        return Ok(WorktreeSlashAction::OpenPicker);
+    };
+    match command {
+        "list" => Ok(WorktreeSlashAction::OpenPicker),
+        "new" => parse_new(parts),
+        "switch" | "move" => {
+            let target = required_target(parts, command)?;
+            Ok(WorktreeSlashAction::Switch { target })
+        }
+        "path" => {
+            let target = required_target(parts, command)?;
+            Ok(WorktreeSlashAction::ShowPath { target })
+        }
+        "remove" => parse_remove(parts),
+        _ => Err(WORKTREE_USAGE.to_string()),
+    }
+}
+
+fn parse_new<'a>(mut parts: impl Iterator<Item = &'a str>) -> Result<WorktreeSlashAction, String> {
+    let Some(branch) = parts.next() else {
+        return Err("Usage: /worktree new <branch> [--base <ref>] [--dirty <mode>]".to_string());
+    };
+    let mut base_ref = None;
+    let mut dirty_policy = None;
+    while let Some(flag) = parts.next() {
+        match flag {
+            "--base" => {
+                let Some(value) = parts.next() else {
+                    return Err("Usage: /worktree new <branch> --base <ref>".to_string());
+                };
+                base_ref = Some(value.to_string());
+            }
+            "--dirty" => {
+                let Some(value) = parts.next() else {
+                    return Err("Usage: /worktree new <branch> --dirty <mode>".to_string());
+                };
+                dirty_policy = Some(parse_dirty_policy(value)?);
+            }
+            _ => return Err(format!("Unknown /worktree new option '{flag}'.")),
+        }
+    }
+    Ok(WorktreeSlashAction::Create {
+        branch: branch.to_string(),
+        base_ref,
+        dirty_policy,
+    })
+}
+
+fn parse_remove<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<WorktreeSlashAction, String> {
+    let Some(target) = parts.next() else {
+        return Err(
+            "Usage: /worktree remove <branch-or-name> [--force] [--delete-branch]".to_string(),
+        );
+    };
+    let mut force = false;
+    let mut delete_branch = false;
+    for flag in parts {
+        match flag {
+            "--force" => force = true,
+            "--delete-branch" => delete_branch = true,
+            _ => return Err(format!("Unknown /worktree remove option '{flag}'.")),
+        }
+    }
+    Ok(WorktreeSlashAction::Remove {
+        target: target.to_string(),
+        force,
+        delete_branch,
+    })
+}
+
+fn required_target<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+    command: &str,
+) -> Result<String, String> {
+    let Some(target) = parts.next() else {
+        return Err(format!("Usage: /worktree {command} <branch-or-name>"));
+    };
+    if parts.next().is_some() {
+        return Err(format!("Usage: /worktree {command} <branch-or-name>"));
+    }
+    Ok(target.to_string())
+}
+
+fn parse_dirty_policy(value: &str) -> Result<DirtyPolicy, String> {
+    match value {
+        "fail" => Ok(DirtyPolicy::Fail),
+        "ignore" => Ok(DirtyPolicy::Ignore),
+        "copy-tracked" => Ok(DirtyPolicy::CopyTracked),
+        "copy-all" => Ok(DirtyPolicy::CopyAll),
+        _ => Err("Dirty mode must be one of: fail, ignore, copy-tracked, copy-all.".to_string()),
+    }
+}
+
+pub(crate) fn dispatch_worktree_slash_args(args: &str, tx: &AppEventSender) -> Result<(), String> {
+    parse_worktree_slash_args(args)?.dispatch(tx);
+    Ok(())
+}
+
+pub(crate) fn loading_params(
+    frame_requester: FrameRequester,
+    animations_enabled: bool,
+) -> SelectionViewParams {
+    let status = "Loading worktrees...".to_string();
+    let note =
+        "This can take a moment when Codex is checking app, CLI, and Git worktrees.".to_string();
+    SelectionViewParams {
+        view_id: Some(WORKTREE_SELECTION_VIEW_ID),
+        header: Box::new(WorktreeLoadingHeader::new(
+            frame_requester,
+            animations_enabled,
+            status.clone(),
+            note.clone(),
+        )),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![SelectionItem {
+            name: status,
+            description: Some(note),
+            is_disabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+pub(crate) fn switching_params(
+    target: String,
+    frame_requester: FrameRequester,
+    animations_enabled: bool,
+) -> SelectionViewParams {
+    let status = format!("Switching to {target}...");
+    let note =
+        "Codex is rebuilding configuration and starting the chat in that workspace.".to_string();
+    SelectionViewParams {
+        view_id: Some(WORKTREE_SELECTION_VIEW_ID),
+        header: Box::new(WorktreeLoadingHeader::new(
+            frame_requester,
+            animations_enabled,
+            status,
+            note.clone(),
+        )),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![SelectionItem {
+            name: "Preparing worktree session...".to_string(),
+            description: Some(note),
+            is_disabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+pub(crate) fn empty_params() -> SelectionViewParams {
+    let mut header = ColumnRenderable::new();
+    header.push(Line::from("Worktrees".bold()));
+
+    SelectionViewParams {
+        view_id: Some(WORKTREE_SELECTION_VIEW_ID),
+        header: Box::new(header),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![SelectionItem {
+            name: "No worktrees found for this repository.".to_string(),
+            description: Some("Use /worktree new <branch> to create one.".to_string()),
+            is_disabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+pub(crate) fn error_params(error: String) -> SelectionViewParams {
+    error_with_summary_params("Failed to list worktrees.".to_string(), error)
+}
+
+pub(crate) fn error_with_summary_params(summary: String, error: String) -> SelectionViewParams {
+    let mut header = ColumnRenderable::new();
+    header.push(Line::from("Worktrees".bold()));
+
+    SelectionViewParams {
+        view_id: Some(WORKTREE_SELECTION_VIEW_ID),
+        header: Box::new(header),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![SelectionItem {
+            name: summary,
+            description: Some(error),
+            is_disabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> SelectionViewParams {
+    let items = entries
+        .into_iter()
+        .map(|entry| {
+            let target = entry.branch.clone().unwrap_or_else(|| entry.name.clone());
+            let source = source_label(entry.source);
+            let status = if entry.dirty.is_dirty() {
+                "dirty"
+            } else {
+                "clean"
+            };
+            let description = format!("{status} · {source} · {}", entry.workspace_cwd.display());
+            let search_value = Some(format!(
+                "{} {} {} {}",
+                target,
+                entry.name,
+                source,
+                entry.workspace_cwd.display()
+            ));
+            SelectionItem {
+                name: target.clone(),
+                description: Some(description),
+                selected_description: Some(format!(
+                    "Fork this chat into {}",
+                    entry.workspace_cwd.display()
+                )),
+                is_current: paths_match(current_cwd, &entry.workspace_cwd),
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::SwitchToWorktree {
+                        target: target.clone(),
+                    });
+                })],
+                dismiss_on_select: true,
+                search_value,
+                ..Default::default()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut header = ColumnRenderable::new();
+    header.push(Line::from("Worktrees".bold()));
+    header.push(Line::from(
+        "Select a worktree to fork this chat into that workspace.".dim(),
+    ));
+
+    SelectionViewParams {
+        view_id: Some(WORKTREE_SELECTION_VIEW_ID),
+        header: Box::new(header),
+        footer_hint: Some(standard_popup_hint_line()),
+        items,
+        is_searchable: true,
+        search_placeholder: Some("Search worktrees".to_string()),
+        col_width_mode: ColumnWidthMode::AutoAllRows,
+        row_display: SelectionRowDisplay::SingleLine,
+        ..Default::default()
+    }
+}
+
+pub(crate) fn dirty_policy_prompt_params(
+    branch: String,
+    base_ref: Option<String>,
+) -> SelectionViewParams {
+    let mut header = ColumnRenderable::new();
+    header.push(Line::from("Source checkout has uncommitted changes".bold()));
+    header.push(Line::from(
+        "Choose what to carry into the new worktree.".dim(),
+    ));
+    let item = |name: &str, description: &str, dirty_policy: DirtyPolicy| SelectionItem {
+        name: name.to_string(),
+        description: Some(description.to_string()),
+        actions: vec![Box::new({
+            let branch = branch.clone();
+            let base_ref = base_ref.clone();
+            move |tx| {
+                tx.send(AppEvent::CreateWorktreeAndSwitch {
+                    branch: branch.clone(),
+                    base_ref: base_ref.clone(),
+                    dirty_policy: Some(dirty_policy),
+                });
+            }
+        })],
+        dismiss_on_select: true,
+        ..Default::default()
+    };
+    SelectionViewParams {
+        header: Box::new(header),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![
+            item(
+                "Fail",
+                "Cancel creation and leave the source checkout unchanged.",
+                DirtyPolicy::Fail,
+            ),
+            item(
+                "Ignore",
+                "Create from the requested base without copying local changes.",
+                DirtyPolicy::Ignore,
+            ),
+            item(
+                "Copy tracked",
+                "Copy staged and unstaged tracked changes.",
+                DirtyPolicy::CopyTracked,
+            ),
+            item(
+                "Copy all",
+                "Copy tracked changes and untracked files.",
+                DirtyPolicy::CopyAll,
+            ),
+        ],
+        ..Default::default()
+    }
+}
+
+pub(crate) fn remove_confirmation_params(
+    target: String,
+    force: bool,
+    delete_branch: bool,
+) -> SelectionViewParams {
+    let mut header = ColumnRenderable::new();
+    header.push(Line::from(format!("Remove worktree {target}?").bold()));
+    header.push(Line::from(
+        "Only Codex-managed worktrees can be removed.".dim(),
+    ));
+
+    SelectionViewParams {
+        header: Box::new(header),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![
+            SelectionItem {
+                name: "Remove".to_string(),
+                description: Some("Remove the selected worktree.".to_string()),
+                actions: vec![Box::new({
+                    move |tx| {
+                        tx.send(AppEvent::RemoveWorktree {
+                            target: target.clone(),
+                            force,
+                            delete_branch,
+                            confirmed: true,
+                        });
+                    }
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "Cancel".to_string(),
+                description: Some("Keep the worktree.".to_string()),
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    }
+}
+
+pub(crate) fn find_worktree<'a>(
+    entries: &'a [WorktreeInfo],
+    target: &str,
+) -> Result<&'a WorktreeInfo, String> {
+    let matches = entries
+        .iter()
+        .filter(|entry| {
+            entry.branch.as_deref() == Some(target) || entry.name == target || entry.slug == target
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [entry] => Ok(entry),
+        [] => Err(format!("No worktree found matching '{target}'.")),
+        _ => Err(format!(
+            "Multiple worktrees match '{target}'; use a more specific name."
+        )),
+    }
+}
+
+pub(crate) fn source_label(source: WorktreeSource) -> &'static str {
+    match source {
+        WorktreeSource::Cli => "cli",
+        WorktreeSource::App => "app",
+        WorktreeSource::Legacy => "legacy",
+        WorktreeSource::Git => "git",
+    }
+}
+
+fn paths_match(a: &Path, b: &Path) -> bool {
+    let a = a.canonicalize().unwrap_or_else(|_| a.to_path_buf());
+    let b = b.canonicalize().unwrap_or_else(|_| b.to_path_buf());
+    a == b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    use crate::app_event_sender::AppEventSender;
+    use crate::bottom_pane::ListSelectionView;
+    use crate::keymap::RuntimeKeymap;
+    use crate::render::renderable::Renderable;
+    use crate::tui::FrameRequester;
+    use codex_worktree::DirtyState;
+    use codex_worktree::WorktreeLocation;
+    use pretty_assertions::assert_eq;
+    use ratatui::buffer::Buffer;
+    use ratatui::layout::Rect;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    #[test]
+    fn parse_new_with_flags() {
+        assert_eq!(
+            parse_worktree_slash_args("new fcoury/demo --base origin/main --dirty copy-tracked"),
+            Ok(WorktreeSlashAction::Create {
+                branch: "fcoury/demo".to_string(),
+                base_ref: Some("origin/main".to_string()),
+                dirty_policy: Some(DirtyPolicy::CopyTracked),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_switch_aliases_move() {
+        assert_eq!(
+            parse_worktree_slash_args("move fcoury/demo"),
+            Ok(WorktreeSlashAction::Switch {
+                target: "fcoury/demo".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_remove_with_flags() {
+        assert_eq!(
+            parse_worktree_slash_args("remove fcoury/demo --force --delete-branch"),
+            Ok(WorktreeSlashAction::Remove {
+                target: "fcoury/demo".to_string(),
+                force: true,
+                delete_branch: true,
+            })
+        );
+    }
+
+    #[test]
+    fn worktree_picker_snapshot() {
+        let params = picker_params(
+            vec![
+                sample_info("fcoury/demo", WorktreeSource::Cli, /*dirty*/ false),
+                sample_info("codex", WorktreeSource::App, /*dirty*/ false),
+                sample_info("main", WorktreeSource::Git, /*dirty*/ true),
+            ],
+            Path::new("/repo/codex.fcoury-demo"),
+        );
+        insta::assert_snapshot!("worktree_picker", render_selection(params, /*width*/ 86));
+    }
+
+    #[test]
+    fn worktree_loading_snapshot() {
+        insta::assert_snapshot!(
+            "worktree_loading",
+            render_selection(
+                loading_params(
+                    FrameRequester::test_dummy(),
+                    /*animations_enabled*/ false
+                ),
+                /*width*/ 92
+            )
+        );
+    }
+
+    #[test]
+    fn worktree_switching_snapshot() {
+        insta::assert_snapshot!(
+            "worktree_switching",
+            render_selection(
+                switching_params(
+                    "fcoury/demo".to_string(),
+                    FrameRequester::test_dummy(),
+                    /*animations_enabled*/ false
+                ),
+                /*width*/ 92
+            )
+        );
+    }
+
+    #[test]
+    fn worktree_dirty_policy_prompt_snapshot() {
+        insta::assert_snapshot!(
+            "worktree_dirty_policy_prompt",
+            render_selection(
+                dirty_policy_prompt_params("fcoury/demo".to_string(), /*base_ref*/ None),
+                /*width*/ 82
+            )
+        );
+    }
+
+    #[test]
+    fn worktree_remove_confirmation_snapshot() {
+        insta::assert_snapshot!(
+            "worktree_remove_confirmation",
+            render_selection(
+                remove_confirmation_params(
+                    "fcoury/demo".to_string(),
+                    /*force*/ false,
+                    /*delete_branch*/ false
+                ),
+                /*width*/ 80
+            )
+        );
+    }
+
+    fn sample_info(branch: &str, source: WorktreeSource, dirty: bool) -> WorktreeInfo {
+        let path = PathBuf::from(format!("/repo/codex.{}", branch.replace('/', "-")));
+        WorktreeInfo {
+            id: "repo-id".to_string(),
+            name: branch.to_string(),
+            slug: branch.replace('/', "-"),
+            source,
+            location: match source {
+                WorktreeSource::Cli => WorktreeLocation::Sibling,
+                WorktreeSource::App | WorktreeSource::Legacy => WorktreeLocation::CodexHome,
+                WorktreeSource::Git => WorktreeLocation::External,
+            },
+            repo_name: "codex".to_string(),
+            repo_root: path.clone(),
+            common_git_dir: PathBuf::from("/repo/codex/.git"),
+            worktree_git_root: path.clone(),
+            workspace_cwd: path,
+            original_relative_cwd: PathBuf::new(),
+            branch: Some(branch.to_string()),
+            head: Some("abcdef".to_string()),
+            owner_thread_id: None,
+            metadata_path: PathBuf::from("/repo/codex/.git/codex-worktree.json"),
+            dirty: DirtyState {
+                has_staged_changes: false,
+                has_unstaged_changes: dirty,
+                has_untracked_files: false,
+            },
+        }
+    }
+
+    fn render_selection(params: SelectionViewParams, width: u16) -> String {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let view = ListSelectionView::new(params, tx, RuntimeKeymap::defaults().list);
+        let height = view.desired_height(width);
+        let area = Rect::new(/*x*/ 0, /*y*/ 0, width, height);
+        let mut buf = Buffer::empty(area);
+        view.render(area, &mut buf);
+
+        let lines: Vec<String> = (0..area.height)
+            .map(|row| {
+                let mut line = String::new();
+                for col in 0..area.width {
+                    let symbol = buf[(area.x + col, area.y + row)].symbol();
+                    if symbol.is_empty() {
+                        line.push(' ');
+                    } else {
+                        line.push_str(symbol);
+                    }
+                }
+                line.trim_end().to_string()
+            })
+            .collect();
+        lines.join("\n")
+    }
+}
