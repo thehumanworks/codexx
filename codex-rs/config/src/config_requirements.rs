@@ -702,6 +702,8 @@ pub struct ConfigRequirementsToml {
     pub hooks: Option<ManagedHooksRequirementsToml>,
     pub mcp_servers: Option<BTreeMap<String, McpServerRequirement>>,
     pub plugins: Option<BTreeMap<String, PluginRequirementsToml>>,
+    pub skills: Option<SkillsRequirementsToml>,
+    pub plugin_marketplaces: Option<PluginMarketplaceRequirementsToml>,
     pub apps: Option<AppsRequirementsToml>,
     pub rules: Option<RequirementsExecPolicyToml>,
     pub enforce_residency: Option<ResidencyRequirement>,
@@ -787,6 +789,8 @@ impl ConfigRequirementsWithSources {
             hooks: _,
             mcp_servers: _,
             plugins: _,
+            skills: _,
+            plugin_marketplaces: _,
             apps: _,
             rules: _,
             enforce_residency: _,
@@ -816,6 +820,8 @@ impl ConfigRequirementsWithSources {
                 hooks,
                 mcp_servers,
                 plugins,
+                skills,
+                plugin_marketplaces,
                 rules,
                 enforce_residency,
                 network,
@@ -843,8 +849,8 @@ impl ConfigRequirementsWithSources {
             hooks,
             mcp_servers,
             plugins,
-            skills: _,
-            plugin_marketplaces: _,
+            skills,
+            plugin_marketplaces,
             apps,
             rules,
             enforce_residency,
@@ -862,6 +868,8 @@ impl ConfigRequirementsWithSources {
             hooks: hooks.map(|sourced| sourced.value),
             mcp_servers: mcp_servers.map(|sourced| sourced.value),
             plugins: plugins.map(|sourced| sourced.value),
+            skills: skills.map(|sourced| sourced.value),
+            plugin_marketplaces: plugin_marketplaces.map(|sourced| sourced.value),
             apps: apps.map(|sourced| sourced.value),
             rules: rules.map(|sourced| sourced.value),
             enforce_residency: enforce_residency.map(|sourced| sourced.value),
@@ -954,6 +962,14 @@ impl ConfigRequirementsToml {
                 .plugins
                 .as_ref()
                 .is_none_or(|plugins| plugins.values().all(PluginRequirementsToml::is_empty))
+            && self
+                .skills
+                .as_ref()
+                .is_none_or(SkillsRequirementsToml::is_empty)
+            && self
+                .plugin_marketplaces
+                .as_ref()
+                .is_none_or(PluginMarketplaceRequirementsToml::is_empty)
             && self
                 .apps
                 .as_ref()
@@ -1293,6 +1309,8 @@ mod tests {
             hooks,
             mcp_servers,
             plugins,
+            skills,
+            plugin_marketplaces,
             apps,
             rules,
             enforce_residency,
@@ -1314,8 +1332,9 @@ mod tests {
             hooks: hooks.map(|value| Sourced::new(value, RequirementSource::Unknown)),
             mcp_servers: mcp_servers.map(|value| Sourced::new(value, RequirementSource::Unknown)),
             plugins: plugins.map(|value| Sourced::new(value, RequirementSource::Unknown)),
-            skills: None,
-            plugin_marketplaces: None,
+            skills: skills.map(|value| Sourced::new(value, RequirementSource::Unknown)),
+            plugin_marketplaces: plugin_marketplaces
+                .map(|value| Sourced::new(value, RequirementSource::Unknown)),
             apps: apps.map(|value| Sourced::new(value, RequirementSource::Unknown)),
             rules: rules.map(|value| Sourced::new(value, RequirementSource::Unknown)),
             enforce_residency: enforce_residency
@@ -1346,6 +1365,20 @@ mod tests {
         let feature_requirements = FeatureRequirementsToml {
             entries: BTreeMap::from([("personality".to_string(), true)]),
         };
+        let skills = SkillsRequirementsToml {
+            allowed_sources: Some(vec![
+                SkillSourceRequirement::System,
+                SkillSourceRequirement::Admin,
+                SkillSourceRequirement::Plugin,
+            ]),
+        };
+        let plugin_marketplaces = PluginMarketplaceRequirementsToml {
+            allowed_names: Some(vec![
+                "openai-curated".to_string(),
+                "arm-internal".to_string(),
+            ]),
+            allow_user_additions: Some(false),
+        };
         let enforce_residency = ResidencyRequirement::Us;
         let enforce_source = source.clone();
         let guardian_policy_config = "Use the company-managed guardian policy.".to_string();
@@ -1362,6 +1395,8 @@ mod tests {
             hooks: None,
             mcp_servers: None,
             plugins: None,
+            skills: Some(skills.clone()),
+            plugin_marketplaces: Some(plugin_marketplaces.clone()),
             apps: None,
             rules: None,
             enforce_residency: Some(enforce_residency),
@@ -1395,8 +1430,11 @@ mod tests {
                 hooks: None,
                 mcp_servers: None,
                 plugins: None,
-                skills: None,
-                plugin_marketplaces: None,
+                skills: Some(Sourced::new(skills, enforce_source.clone())),
+                plugin_marketplaces: Some(Sourced::new(
+                    plugin_marketplaces,
+                    enforce_source.clone(),
+                )),
                 apps: None,
                 rules: None,
                 enforce_residency: Some(Sourced::new(enforce_residency, enforce_source)),
@@ -2845,6 +2883,48 @@ command = "python3 /enterprise/hooks/pre.py"
                         },
                     ),
                 ]),
+                RequirementSource::Unknown,
+            ))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn deserialize_skill_and_plugin_marketplace_requirements() -> Result<()> {
+        let toml_str = r#"
+            [skills]
+            allowed_sources = ["system", "admin", "plugin"]
+
+            [plugin_marketplaces]
+            allowed_names = ["openai-curated", "arm-internal"]
+            allow_user_additions = false
+        "#;
+        let requirements: ConfigRequirements =
+            with_unknown_source(from_str(toml_str)?).try_into()?;
+
+        assert_eq!(
+            requirements.skills,
+            Some(Sourced::new(
+                SkillsRequirementsToml {
+                    allowed_sources: Some(vec![
+                        SkillSourceRequirement::System,
+                        SkillSourceRequirement::Admin,
+                        SkillSourceRequirement::Plugin,
+                    ]),
+                },
+                RequirementSource::Unknown,
+            ))
+        );
+        assert_eq!(
+            requirements.plugin_marketplaces,
+            Some(Sourced::new(
+                PluginMarketplaceRequirementsToml {
+                    allowed_names: Some(vec![
+                        "openai-curated".to_string(),
+                        "arm-internal".to_string(),
+                    ]),
+                    allow_user_additions: Some(false),
+                },
                 RequirementSource::Unknown,
             ))
         );
