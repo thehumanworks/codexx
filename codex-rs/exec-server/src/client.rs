@@ -894,6 +894,7 @@ mod tests {
     use super::ExecServerClient;
     use super::ExecServerClientConnectOptions;
     use crate::ProcessId;
+    #[cfg(not(windows))]
     use crate::client_api::ExecServerTransportParams;
     use crate::client_api::StdioExecServerCommand;
     use crate::client_api::StdioExecServerConnectArgs;
