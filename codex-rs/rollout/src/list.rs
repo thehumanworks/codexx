@@ -1130,8 +1130,8 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
             RolloutItem::Compacted(_) => {
                 // Not included in `head`; skip.
             }
-            RolloutItem::EventMsg(ev) => {
-                if let EventMsg::UserMessage(user) = ev {
+            RolloutItem::EventMsg(ev) => match ev {
+                EventMsg::UserMessage(user) => {
                     summary.saw_user_event = true;
                     if summary.first_user_message.is_none() {
                         let message = strip_user_message_prefix(user.message.as_str()).to_string();
@@ -1140,7 +1140,17 @@ async fn read_head_summary(path: &Path, head_limit: usize) -> io::Result<HeadTai
                         }
                     }
                 }
-            }
+                EventMsg::ThreadGoalUpdated(event) => {
+                    let objective = event.goal.objective.trim();
+                    if !objective.is_empty() {
+                        summary.saw_user_event = true;
+                        if summary.first_user_message.is_none() {
+                            summary.first_user_message = Some(objective.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            },
         }
 
         if summary.saw_session_meta && summary.saw_user_event {

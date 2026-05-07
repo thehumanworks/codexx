@@ -33,7 +33,9 @@ pub fn apply_rollout_item(
 pub fn rollout_item_affects_thread_metadata(item: &RolloutItem) -> bool {
     match item {
         RolloutItem::SessionMeta(_) | RolloutItem::TurnContext(_) => true,
-        RolloutItem::EventMsg(EventMsg::TokenCount(_) | EventMsg::UserMessage(_)) => true,
+        RolloutItem::EventMsg(
+            EventMsg::TokenCount(_) | EventMsg::UserMessage(_) | EventMsg::ThreadGoalUpdated(_),
+        ) => true,
         RolloutItem::EventMsg(_) | RolloutItem::ResponseItem(_) | RolloutItem::Compacted(_) => {
             false
         }
@@ -96,6 +98,14 @@ fn apply_event_msg(metadata: &mut ThreadMetadata, event: &EventMsg) {
                 }
             }
         }
+        EventMsg::ThreadGoalUpdated(event) => {
+            if metadata.first_user_message.is_none() {
+                let objective = event.goal.objective.trim();
+                if !objective.is_empty() {
+                    metadata.first_user_message = Some(objective.to_string());
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -136,6 +146,7 @@ pub(crate) fn enum_to_string<T: Serialize>(value: &T) -> String {
 #[cfg(test)]
 mod tests {
     use super::apply_rollout_item;
+    use super::rollout_item_affects_thread_metadata;
     use crate::model::ThreadMetadata;
     use chrono::DateTime;
     use chrono::Utc;
@@ -151,6 +162,9 @@ mod tests {
     use codex_protocol::protocol::SessionMeta;
     use codex_protocol::protocol::SessionMetaLine;
     use codex_protocol::protocol::SessionSource;
+    use codex_protocol::protocol::ThreadGoal;
+    use codex_protocol::protocol::ThreadGoalStatus;
+    use codex_protocol::protocol::ThreadGoalUpdatedEvent;
     use codex_protocol::protocol::TurnContextItem;
     use codex_protocol::protocol::USER_MESSAGE_BEGIN;
     use codex_protocol::protocol::UserMessageEvent;
@@ -228,6 +242,34 @@ mod tests {
         apply_rollout_item(&mut metadata, &item, "test-provider");
 
         assert_eq!(metadata.first_user_message, None);
+        assert_eq!(metadata.title, "");
+    }
+
+    #[test]
+    fn event_msg_thread_goal_sets_first_user_message_preview() {
+        let mut metadata = metadata_for_test();
+        let item = RolloutItem::EventMsg(EventMsg::ThreadGoalUpdated(ThreadGoalUpdatedEvent {
+            thread_id: metadata.id,
+            turn_id: None,
+            goal: ThreadGoal {
+                thread_id: metadata.id,
+                objective: "optimize the benchmark".to_string(),
+                status: ThreadGoalStatus::Active,
+                token_budget: None,
+                tokens_used: 0,
+                time_used_seconds: 0,
+                created_at: 1,
+                updated_at: 1,
+            },
+        }));
+
+        assert!(rollout_item_affects_thread_metadata(&item));
+        apply_rollout_item(&mut metadata, &item, "test-provider");
+
+        assert_eq!(
+            metadata.first_user_message.as_deref(),
+            Some("optimize the benchmark")
+        );
         assert_eq!(metadata.title, "");
     }
 
