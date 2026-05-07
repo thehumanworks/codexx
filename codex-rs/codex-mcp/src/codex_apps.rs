@@ -20,7 +20,7 @@ use serde::Serialize;
 use sha1::Digest;
 use sha1::Sha1;
 
-pub(crate) const CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION: u8 = 2;
+pub(crate) const CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION: u8 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodexAppsToolsCacheKey {
