@@ -1275,6 +1275,7 @@ impl PluginRequestProcessor {
             | MarketplaceError::PluginNotFound { .. }
             | MarketplaceError::PluginNotAvailable { .. }
             | MarketplaceError::PluginsDisabled
+            | MarketplaceError::MarketplaceBlocked { .. }
             | MarketplaceError::InvalidPlugin(_) => invalid_request(err.to_string()),
             MarketplaceError::Io { .. } => internal_error(format!("failed to {action}: {err}")),
         }
