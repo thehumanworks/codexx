@@ -48,13 +48,13 @@ enum CurrentNodeWarning {
 
 /// Return best-effort warnings for raw TOML values that look like invalid enums.
 ///
-/// `DefaultOnError` is responsible for keeping config deserialization lenient.
 /// This pass is intentionally advisory: it walks the final merged TOML value
 /// against the generated config schema and reports enum-looking mismatches
-/// without changing the TOML that will be deserialized. Startup loading keeps
-/// these warnings non-blocking; config write paths may use the same signal to
-/// reject newly provided invalid enum values.
-pub fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
+/// without changing the TOML that will be deserialized. Narrow typed-config
+/// fallbacks keep the reported enum leaves non-blocking for startup loading;
+/// config write paths may use the same signal to reject newly provided invalid
+/// enum values.
+pub fn invalid_enum_warnings(value: &TomlValue) -> Vec<String> {
     // Startup warnings should never make config loading fail. If schema
     // generation or traversal panics, the typed config load still proceeds.
     catch_unwind(AssertUnwindSafe(|| {
@@ -413,7 +413,7 @@ mod tests {
 
     fn warning_set(contents: &str) -> BTreeSet<String> {
         let value = toml::from_str::<TomlValue>(contents).expect("config should parse");
-        enum_value_warnings(&value).into_iter().collect()
+        invalid_enum_warnings(&value).into_iter().collect()
     }
 
     #[test]
@@ -437,7 +437,7 @@ approval_mode = "yolo"
 "#;
         let value = toml::from_str::<TomlValue>(contents).expect("config should parse");
         let original = value.clone();
-        let warnings = enum_value_warnings(&value).into_iter().collect();
+        let warnings = invalid_enum_warnings(&value).into_iter().collect();
         let expected_warnings = BTreeSet::from([
             "Ignoring invalid config value at mcp_servers.local.default_tools_approval_mode: \
              \"ship-it\""

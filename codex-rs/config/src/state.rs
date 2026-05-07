@@ -1,10 +1,10 @@
 use crate::config_requirements::ConfigRequirements;
 use crate::config_requirements::ConfigRequirementsToml;
 
+use super::enum_warnings::invalid_enum_warnings;
 use super::fingerprint::record_origins;
 use super::fingerprint::version_for_toml;
 use super::key_aliases::normalized_with_key_aliases;
-use super::lenient::enum_value_warnings;
 use super::merge::merge_toml_values;
 use crate::config_toml::ConfigToml;
 use codex_app_server_protocol::ConfigLayer;
@@ -320,14 +320,14 @@ impl ConfigLayerStack {
 
     /// Deserializes the merged config-layer view and returns any soft warnings.
     ///
-    /// Invalid enum-valued settings are handled by `DefaultOnError` during
-    /// deserialization. Warnings are collected from the final raw TOML view so
-    /// warning discovery remains advisory and cannot change config semantics.
+    /// Invalid enum-valued settings are reported from the final raw TOML view.
+    /// Narrow typed-config fallbacks keep those warnings advisory without
+    /// changing unrelated config semantics.
     pub fn deserialize_effective_config_with_warnings(
         &self,
     ) -> Result<(TomlValue, ConfigToml, Vec<String>), toml::de::Error> {
         let merged = self.effective_config();
-        let warnings = enum_value_warnings(&merged);
+        let warnings = invalid_enum_warnings(&merged);
         let typed = merged.clone().try_into::<ConfigToml>()?;
         Ok((merged, typed, warnings))
     }

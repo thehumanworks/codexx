@@ -894,7 +894,7 @@ pub fn resolve_relative_paths_in_config_toml(
 
 /// Ensure that every field in `original` is present in the returned
 /// `toml::Value`, copying only the absolute path strings produced by the typed
-/// round-trip. Other leaves stay raw so lenient enum defaults do not overwrite
+/// round-trip. Other leaves stay raw so enum fallback defaults do not overwrite
 /// the value that should produce a startup warning.
 fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlValue {
     match (original, resolved) {
@@ -919,7 +919,7 @@ fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlV
         }
         (TomlValue::String(original), TomlValue::String(resolved)) => {
             // Relative path normalization turns a string into a different
-            // absolute path string. Lenient enum defaults can also change a
+            // absolute path string. Enum fallback defaults can also change a
             // string, but those default strings are not absolute paths and must
             // not replace the user's raw value before warning collection.
             if original != resolved && Path::new(resolved).is_absolute() {

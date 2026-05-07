@@ -17,7 +17,7 @@ use codex_config::ConfigLayerStack;
 use codex_config::ConfigLayerStackOrdering;
 use codex_config::ConfigRequirementsToml;
 use codex_config::config_toml::ConfigToml;
-use codex_config::enum_value_warnings;
+use codex_config::invalid_enum_warnings;
 use codex_config::merge_toml_values;
 use codex_core::config::deserialize_config_toml_with_base;
 use codex_core::config::edit::ConfigEdit;
@@ -537,7 +537,7 @@ fn toml_value_to_value(value: &TomlValue) -> anyhow::Result<toml_edit::Value> {
 }
 
 fn validate_config(value: &TomlValue) -> Result<(), toml::de::Error> {
-    if let Some(warning) = enum_value_warnings(value).into_iter().next() {
+    if let Some(warning) = invalid_enum_warnings(value).into_iter().next() {
         return Err(SerdeError::custom(warning));
     }
     let _: ConfigToml = value.clone().try_into()?;

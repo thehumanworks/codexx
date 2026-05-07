@@ -150,7 +150,7 @@ context_size = "galactic"
     .await?;
 
     // The warning pass reads the final TOML value without mutating it, while
-    // DefaultOnError lets unrelated valid settings still deserialize.
+    // field-level fallbacks let unrelated valid settings still deserialize.
     let (effective_config, _config_toml, enum_warnings) =
         layers.deserialize_effective_config_with_warnings()?;
     let expected_config = toml::from_str::<TomlValue>(
