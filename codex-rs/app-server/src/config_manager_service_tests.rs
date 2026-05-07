@@ -490,6 +490,75 @@ async fn invalid_user_value_rejected_even_if_overridden_by_managed() {
 }
 
 #[tokio::test]
+async fn write_value_allows_unrelated_edit_when_existing_enum_is_invalid() -> Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let original = "sandbox_mode = \"make-it-so\"\n";
+    std::fs::write(tmp.path().join(CONFIG_TOML_FILE), original)?;
+
+    let service = ConfigManager::without_managed_config_for_tests(tmp.path().to_path_buf());
+    let response = service
+        .write_value(ConfigValueWriteParams {
+            file_path: Some(tmp.path().join(CONFIG_TOML_FILE).display().to_string()),
+            key_path: "model".to_string(),
+            value: serde_json::json!("gpt-5-codex"),
+            merge_strategy: MergeStrategy::Replace,
+            expected_version: None,
+        })
+        .await
+        .expect("unrelated write should not be blocked by stale enum value");
+
+    assert_eq!(
+        (
+            response.status,
+            std::fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE))?,
+        ),
+        (
+            WriteStatus::Ok,
+            "sandbox_mode = \"make-it-so\"\nmodel = \"gpt-5-codex\"\n".to_string(),
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn write_value_rejects_new_nested_invalid_enum() -> Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let original = r#"[model_providers.custom]
+name = "Custom"
+base_url = "https://example.invalid/v1"
+"#;
+    std::fs::write(tmp.path().join(CONFIG_TOML_FILE), original)?;
+
+    let service = ConfigManager::without_managed_config_for_tests(tmp.path().to_path_buf());
+    let error = service
+        .write_value(ConfigValueWriteParams {
+            file_path: Some(tmp.path().join(CONFIG_TOML_FILE).display().to_string()),
+            key_path: "model_providers.custom.wire_api".to_string(),
+            value: serde_json::json!("telegraph"),
+            merge_strategy: MergeStrategy::Replace,
+            expected_version: None,
+        })
+        .await
+        .expect_err("new invalid enum should fail validation");
+
+    assert_eq!(
+        (
+            error.write_error_code(),
+            error
+                .to_string()
+                .contains("model_providers.custom.wire_api"),
+            std::fs::read_to_string(tmp.path().join(CONFIG_TOML_FILE))?,
+        ),
+        (
+            Some(ConfigWriteErrorCode::ConfigValidationError),
+            true,
+            original.to_string(),
+        )
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn reserved_builtin_provider_override_rejected() {
     let tmp = tempdir().expect("tempdir");
     std::fs::write(tmp.path().join(CONFIG_TOML_FILE), "model = \"user\"\n").unwrap();

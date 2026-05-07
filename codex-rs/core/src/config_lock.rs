@@ -4,10 +4,12 @@ use codex_config::ConfigLayerEntry;
 use codex_config::ConfigLayerSource;
 use codex_config::config_toml::ConfigLockfileToml;
 use codex_config::config_toml::ConfigToml;
+use codex_config::invalid_enum_warnings;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use similar::TextDiff;
+use toml::Value as TomlValue;
 
 pub(crate) const CONFIG_LOCK_VERSION: u32 = 1;
 
@@ -16,23 +18,37 @@ pub(crate) struct ConfigLockReplayOptions {
     pub allow_codex_version_mismatch: bool,
 }
 
+/// Read a config lock and collect warnings from its raw replay config.
 pub(crate) async fn read_config_lock_from_path(
     path: &AbsolutePathBuf,
-) -> io::Result<ConfigLockfileToml> {
+) -> io::Result<(ConfigLockfileToml, Vec<String>)> {
     let contents = tokio::fs::read_to_string(path).await.map_err(|err| {
         config_lock_error(format!(
             "failed to read config lock file {}: {err}",
             path.display()
         ))
     })?;
-    let lockfile: ConfigLockfileToml = toml::from_str(&contents).map_err(|err| {
+    let raw_lockfile: TomlValue = toml::from_str(&contents).map_err(|err| {
+        config_lock_error(format!(
+            "failed to parse config lock file {}: {err}",
+            path.display()
+        ))
+    })?;
+    // Lockfiles store an effective `ConfigToml` under `[config]`. Scan that raw
+    // subtree before typed deserialization applies field-level enum fallbacks,
+    // then keep the warning paths relative to ordinary config keys.
+    let enum_warnings = raw_lockfile
+        .get("config")
+        .map(invalid_enum_warnings)
+        .unwrap_or_default();
+    let lockfile: ConfigLockfileToml = raw_lockfile.try_into().map_err(|err| {
         config_lock_error(format!(
             "failed to parse config lock file {}: {err}",
             path.display()
         ))
     })?;
     validate_config_lock_metadata_shape(&lockfile)?;
-    Ok(lockfile)
+    Ok((lockfile, enum_warnings))
 }
 
 pub(crate) fn config_lockfile(config: ConfigToml) -> ConfigLockfileToml {

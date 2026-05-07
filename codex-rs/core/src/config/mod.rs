@@ -1012,7 +1012,8 @@ impl ConfigBuilder {
             let save_fields_resolved_from_model_catalog = config_lock_settings
                 .and_then(|config_lock| config_lock.save_fields_resolved_from_model_catalog)
                 .unwrap_or(true);
-            let lockfile_toml = read_config_lock_from_path(config_lock_load_path).await?;
+            let (lockfile_toml, lock_enum_warnings) =
+                read_config_lock_from_path(config_lock_load_path).await?;
             let expected_lock_config = lockfile_toml.clone();
             let lock_layer = lock_layer_from_config(config_lock_load_path, &lockfile_toml)?;
             let lock_config_toml = config_without_lock_controls(&lockfile_toml.config);
@@ -1020,7 +1021,8 @@ impl ConfigBuilder {
                 vec![lock_layer],
                 config_layer_stack.requirements().clone(),
                 config_layer_stack.requirements_toml().clone(),
-            )?;
+            )?
+            .with_additional_startup_warnings(lock_enum_warnings);
             let mut config = Config::load_config_with_layer_stack(
                 LOCAL_FS.as_ref(),
                 lock_config_toml,

@@ -28,7 +28,6 @@ use codex_core::path_utils::SymlinkWritePaths;
 use codex_core::path_utils::resolve_symlink_write_paths;
 use codex_core::path_utils::write_atomically;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use serde::de::Error as SerdeError;
 use serde_json::Value as JsonValue;
 use std::borrow::Cow;
 use std::path::Path;
@@ -243,6 +242,30 @@ impl ConfigManager {
             let parsed_value = parse_value(value).map_err(|message| {
                 ConfigManagerError::write(ConfigWriteErrorCode::ConfigValidationError, message)
             })?;
+            if let Some(value) = parsed_value.as_ref() {
+                // Reject enum mistakes introduced by this edit only. The full
+                // config parse below still checks the resulting shape, while
+                // stale enum values elsewhere remain startup warnings.
+                let mut edited_config = TomlValue::Table(toml::map::Map::new());
+                apply_merge(
+                    &mut edited_config,
+                    &segments,
+                    Some(value),
+                    MergeStrategy::Replace,
+                )
+                .map_err(|err| match err {
+                    MergeError::Validation(message) => ConfigManagerError::write(
+                        ConfigWriteErrorCode::ConfigValidationError,
+                        message,
+                    ),
+                })?;
+                if let Some(warning) = invalid_enum_warnings(&edited_config).into_iter().next() {
+                    return Err(ConfigManagerError::write(
+                        ConfigWriteErrorCode::ConfigValidationError,
+                        format!("Invalid configuration: {warning}"),
+                    ));
+                }
+            }
 
             apply_merge(&mut user_config, &segments, parsed_value.as_ref(), strategy).map_err(
                 |err| match err {
@@ -537,9 +560,6 @@ fn toml_value_to_value(value: &TomlValue) -> anyhow::Result<toml_edit::Value> {
 }
 
 fn validate_config(value: &TomlValue) -> Result<(), toml::de::Error> {
-    if let Some(warning) = invalid_enum_warnings(value).into_iter().next() {
-        return Err(SerdeError::custom(warning));
-    }
     let _: ConfigToml = value.clone().try_into()?;
     Ok(())
 }
