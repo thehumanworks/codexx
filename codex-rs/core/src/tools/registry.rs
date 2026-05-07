@@ -627,8 +627,10 @@ async fn dispatch_after_tool_use_hook(
     let session = invocation.session.as_ref();
     let turn = invocation.turn.as_ref();
     let tool_input = HookToolInput::from(&invocation.payload);
-    let tool_name = &invocation.tool_name;
-    let hook_tool_name = flat_tool_name(tool_name);
+    let hook_tool_name = match &invocation.payload {
+        ToolPayload::Mcp { tool, .. } => tool.clone(),
+        _ => flat_tool_name(&invocation.tool_name).into_owned(),
+    };
     let hook_outcomes = session
         .hooks()
         .dispatch(HookPayload {
@@ -640,7 +642,7 @@ async fn dispatch_after_tool_use_hook(
                 event: HookEventAfterToolUse {
                     turn_id: turn.sub_id.clone(),
                     call_id: invocation.call_id.clone(),
-                    tool_name: hook_tool_name.into_owned(),
+                    tool_name: hook_tool_name,
                     tool_kind: hook_tool_kind(&tool_input),
                     tool_input,
                     executed: dispatch.executed,

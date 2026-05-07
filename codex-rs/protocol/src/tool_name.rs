@@ -36,10 +36,7 @@ impl ToolName {
 
 impl fmt::Display for ToolName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match &self.namespace {
-            Some(namespace) => write!(f, "{namespace}{}", self.name),
-            None => f.write_str(&self.name),
-        }
+        f.write_str(&self.name)
     }
 }
 
@@ -72,5 +69,19 @@ impl From<String> for ToolName {
 impl From<&str> for ToolName {
     fn from(name: &str) -> Self {
         Self::plain(name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn display_omits_namespace_prefix() {
+        assert_eq!(
+            ToolName::namespaced("mcp__server__", "lookup").to_string(),
+            "lookup"
+        );
     }
 }

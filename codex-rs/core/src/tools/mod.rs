@@ -33,9 +33,9 @@ pub(crate) const TELEMETRY_PREVIEW_MAX_LINES: usize = 64; // lines
 pub(crate) const TELEMETRY_PREVIEW_TRUNCATION_NOTICE: &str =
     "[... telemetry preview truncated ...]";
 
-/// Legacy boundaries such as hook payloads, telemetry tags, and Responses tool
-/// names still require a single flattened string. Keep comparisons and sorting
-/// on `ToolName` itself; use this only when crossing those boundaries.
+/// Legacy boundaries such as telemetry tags and Responses tool names still
+/// require a single flattened string. Keep comparisons and sorting on
+/// `ToolName` itself; use this only when crossing those boundaries.
 pub(crate) fn flat_tool_name(tool_name: &ToolName) -> Cow<'_, str> {
     match tool_name.namespace.as_deref() {
         Some(namespace) => {

@@ -27,7 +27,7 @@ use serde_json::json;
 
 const RMCP_SERVER: &str = "rmcp";
 const RMCP_NAMESPACE: &str = "mcp__rmcp__";
-const RMCP_ECHO_TOOL_NAME: &str = "mcp__rmcp__echo";
+const RMCP_ECHO_TOOL_NAME: &str = "echo";
 const RMCP_HOOK_MATCHER: &str = "mcp__rmcp__.*";
 const RMCP_ECHO_MESSAGE: &str = "hook e2e ping";
 

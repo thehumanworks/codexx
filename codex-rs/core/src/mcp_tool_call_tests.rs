@@ -55,6 +55,14 @@ fn annotations(
     }
 }
 
+fn hook_tool_name(name: &str) -> HookToolName {
+    HookToolName::new(name)
+}
+
+fn hook_tool_name_with_legacy_alias(name: &str, legacy_name: &str) -> HookToolName {
+    HookToolName::new_with_aliases(name, vec![legacy_name.to_string()])
+}
+
 fn approval_metadata(
     connector_id: Option<&str>,
     connector_name: Option<&str>,
@@ -2186,7 +2194,7 @@ async fn approve_mode_skips_when_annotations_do_not_require_approval() {
         &turn_context,
         "call-1",
         &invocation,
-        "mcp__test__tool",
+        hook_tool_name("read_only_tool"),
         Some(&metadata),
         AppToolApproval::Approve,
     )
@@ -2259,7 +2267,7 @@ async fn guardian_mode_skips_auto_when_annotations_do_not_require_approval() {
         &turn_context,
         "call-guardian",
         &invocation,
-        "mcp__test__tool",
+        hook_tool_name("read_only_tool"),
         Some(&metadata),
         AppToolApproval::Auto,
     )
@@ -2315,7 +2323,7 @@ async fn permission_request_hook_allows_mcp_tool_call() {
         &turn_context,
         "call-mcp-hook",
         &invocation,
-        "mcp__memory__create_entities",
+        hook_tool_name_with_legacy_alias("create_entities", "mcp__memory__create_entities"),
         Some(&metadata),
         AppToolApproval::Auto,
     )
@@ -2336,7 +2344,7 @@ async fn permission_request_hook_allows_mcp_tool_call() {
             "transcript_path": null,
             "model": turn_context.model_info.slug,
             "permission_mode": "default",
-            "tool_name": "mcp__memory__create_entities",
+            "tool_name": "create_entities",
             "hook_event_name": "PermissionRequest",
             "tool_input": {
                 "entities": [{
@@ -2375,7 +2383,7 @@ async fn permission_request_hook_uses_hook_tool_name_without_metadata() {
         &turn_context,
         "call-mcp-hook-no-metadata",
         &invocation,
-        "mcp__memory__create_entities",
+        hook_tool_name_with_legacy_alias("create_entities", "mcp__memory__create_entities"),
         /*metadata*/ None,
         AppToolApproval::Auto,
     )
@@ -2396,7 +2404,7 @@ async fn permission_request_hook_uses_hook_tool_name_without_metadata() {
             "transcript_path": null,
             "model": turn_context.model_info.slug,
             "permission_mode": "default",
-            "tool_name": "mcp__memory__create_entities",
+            "tool_name": "create_entities",
             "hook_event_name": "PermissionRequest",
             "tool_input": { "entities": [] }
         })]
@@ -2452,7 +2460,7 @@ async fn permission_request_hook_runs_after_remembered_mcp_approval() {
         &turn_context,
         "call-mcp-remembered",
         &invocation,
-        "mcp__memory__create_entities",
+        hook_tool_name_with_legacy_alias("create_entities", "mcp__memory__create_entities"),
         Some(&metadata),
         AppToolApproval::Auto,
     )
@@ -2532,7 +2540,7 @@ async fn guardian_mode_mcp_denial_returns_rationale_message() {
         &turn_context,
         "call-guardian-deny",
         &invocation,
-        "mcp__test__tool",
+        hook_tool_name("dangerous_tool"),
         Some(&metadata),
         AppToolApproval::Auto,
     )
@@ -2589,7 +2597,7 @@ async fn prompt_mode_waits_for_approval_when_annotations_do_not_require_approval
                 &turn_context,
                 "call-prompt",
                 &invocation,
-                "mcp__test__tool",
+                hook_tool_name("read_only_tool"),
                 Some(&metadata),
                 AppToolApproval::Prompt,
             )
@@ -2664,7 +2672,7 @@ async fn approve_mode_skips_arc_interrupt_for_model() {
         &turn_context,
         "call-2",
         &invocation,
-        "mcp__test__tool",
+        hook_tool_name("dangerous_tool"),
         Some(&metadata),
         AppToolApproval::Approve,
     )
@@ -2731,7 +2739,7 @@ async fn custom_approve_mode_skips_arc_interrupt_for_model() {
         &turn_context,
         "call-2-custom",
         &invocation,
-        "mcp__test__tool",
+        hook_tool_name("dangerous_tool"),
         Some(&metadata),
         AppToolApproval::Approve,
     )
@@ -2798,7 +2806,7 @@ async fn approve_mode_skips_arc_interrupt_without_annotations() {
         &turn_context,
         "call-3",
         &invocation,
-        "mcp__test__tool",
+        hook_tool_name("dangerous_tool"),
         Some(&metadata),
         AppToolApproval::Approve,
     )
@@ -2875,7 +2883,7 @@ async fn full_access_mode_skips_arc_monitor_for_all_approval_modes() {
             &turn_context,
             "call-2",
             &invocation,
-            "mcp__test__tool",
+            hook_tool_name("dangerous_tool"),
             Some(&metadata),
             approval_mode,
         )
@@ -2978,7 +2986,7 @@ async fn approve_mode_skips_arc_and_guardian_in_every_permission_mode() {
             &turn_context,
             "call-3",
             &invocation,
-            "mcp__test__tool",
+            hook_tool_name("dangerous_tool"),
             Some(&metadata),
             AppToolApproval::Approve,
         )

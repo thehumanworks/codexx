@@ -39,13 +39,16 @@ impl ToolHandler for McpHandler {
     }
 
     fn pre_tool_use_payload(&self, invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
-        let ToolPayload::Mcp { raw_arguments, .. } = &invocation.payload else {
+        let ToolPayload::Mcp {
+            tool,
+            raw_arguments,
+            ..
+        } = &invocation.payload
+        else {
             return None;
         };
-
-        let tool_name = &self.tool_name;
         Some(PreToolUsePayload {
-            tool_name: HookToolName::new(flat_tool_name(tool_name).into_owned()),
+            tool_name: mcp_hook_tool_name(tool, &self.tool_name),
             tool_input: mcp_hook_tool_input(raw_arguments),
         })
     }
@@ -55,15 +58,14 @@ impl ToolHandler for McpHandler {
         invocation: &ToolInvocation,
         result: &Self::Output,
     ) -> Option<PostToolUsePayload> {
-        let ToolPayload::Mcp { .. } = &invocation.payload else {
+        let ToolPayload::Mcp { tool, .. } = &invocation.payload else {
             return None;
         };
 
         let tool_response =
             result.post_tool_use_response(&invocation.call_id, &invocation.payload)?;
-        let tool_name = &self.tool_name;
         Some(PostToolUsePayload {
-            tool_name: HookToolName::new(flat_tool_name(tool_name).into_owned()),
+            tool_name: mcp_hook_tool_name(tool, &self.tool_name),
             tool_use_id: invocation.call_id.clone(),
             tool_input: result.tool_input.clone(),
             tool_response,
@@ -96,14 +98,14 @@ impl ToolHandler for McpHandler {
         let arguments_str = raw_arguments;
 
         let started = Instant::now();
-        let hook_tool_name = flat_tool_name(&self.tool_name);
+        let hook_tool_name = mcp_hook_tool_name(&tool, &self.tool_name);
         let result = handle_mcp_tool_call(
             Arc::clone(&session),
             &turn,
             call_id.clone(),
             server,
             tool,
-            hook_tool_name.into_owned(),
+            hook_tool_name,
             arguments_str,
         )
         .await;
@@ -115,6 +117,15 @@ impl ToolHandler for McpHandler {
             original_image_detail_supported: can_request_original_image_detail(&turn.model_info),
             truncation_policy: turn.truncation_policy,
         })
+    }
+}
+
+fn mcp_hook_tool_name(raw_tool_name: &str, canonical_tool_name: &ToolName) -> HookToolName {
+    let legacy_name = flat_tool_name(canonical_tool_name);
+    if legacy_name.as_ref() == raw_tool_name {
+        HookToolName::new(raw_tool_name.to_string())
+    } else {
+        HookToolName::new_with_aliases(raw_tool_name.to_string(), vec![legacy_name.into_owned()])
     }
 }
 
@@ -138,7 +149,7 @@ mod tests {
     use tokio::sync::Mutex;
 
     #[tokio::test]
-    async fn mcp_pre_tool_use_payload_uses_model_tool_name_and_raw_args() {
+    async fn mcp_pre_tool_use_payload_uses_raw_mcp_tool_name_and_args() {
         let payload = ToolPayload::Mcp {
             server: "memory".to_string(),
             tool: "create_entities".to_string(),
@@ -168,7 +179,10 @@ mod tests {
                 payload,
             }),
             Some(PreToolUsePayload {
-                tool_name: HookToolName::new("mcp__memory__create_entities"),
+                tool_name: HookToolName::new_with_aliases(
+                    "create_entities",
+                    vec!["mcp__memory__create_entities".to_string()],
+                ),
                 tool_input: json!({
                     "entities": [{
                         "name": "Ada",
@@ -180,7 +194,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn mcp_post_tool_use_payload_uses_model_tool_name_args_and_result() {
+    async fn mcp_post_tool_use_payload_uses_raw_mcp_tool_name_args_and_result() {
         let payload = ToolPayload::Mcp {
             server: "filesystem".to_string(),
             tool: "read_file".to_string(),
@@ -223,7 +237,10 @@ mod tests {
         assert_eq!(
             handler.post_tool_use_payload(&invocation, &output),
             Some(PostToolUsePayload {
-                tool_name: HookToolName::new("mcp__filesystem__read_file"),
+                tool_name: HookToolName::new_with_aliases(
+                    "read_file",
+                    vec!["mcp__filesystem__read_file".to_string()],
+                ),
                 tool_use_id: "call-mcp-post".to_string(),
                 tool_input: json!({
                     "path": {
