@@ -151,11 +151,8 @@ impl Handler for UploadSftpHandler {
         id: u32,
         filename: String,
         pflags: OpenFlags,
-        attrs: FileAttributes,
+        _attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
-        if has_attributes(&attrs) {
-            return Err(UploadSftpError::Unsupported);
-        }
         if !self.is_allowed_path(&filename).await {
             return Err(UploadSftpError::PermissionDenied);
         }
@@ -205,17 +202,6 @@ impl Handler for UploadSftpHandler {
         attrs.size = Some(metadata.len());
         Ok(Attrs { id, attrs })
     }
-}
-
-fn has_attributes(attrs: &FileAttributes) -> bool {
-    attrs.size.is_some()
-        || attrs.uid.is_some()
-        || attrs.user.is_some()
-        || attrs.gid.is_some()
-        || attrs.group.is_some()
-        || attrs.permissions.is_some()
-        || attrs.atime.is_some()
-        || attrs.mtime.is_some()
 }
 
 fn ok_status(id: u32) -> Status {
@@ -282,5 +268,37 @@ mod tests {
         };
         assert!(err.to_string().contains("Permission denied"));
         assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn accepts_create_attributes_for_allocated_paths() {
+        let tempdir = TempDir::new().expect("create temp dir");
+        let path = tempdir.path().join("uploads").join("note.txt");
+        tokio::fs::create_dir_all(path.parent().expect("path parent"))
+            .await
+            .expect("create upload parent");
+        let allowed_paths = Arc::new(Mutex::new(HashSet::from([path.clone()])));
+        let (client_stream, server_stream) = tokio::io::duplex(UPLOAD_SFTP_STREAM_BUFFER_BYTES);
+        russh_sftp::server::run(server_stream, UploadSftpHandler::new(allowed_paths)).await;
+
+        let session = SftpSession::new(client_stream)
+            .await
+            .expect("initialize sftp");
+        let mut attrs = FileAttributes::empty();
+        attrs.size = Some(0);
+        let mut file = session
+            .open_with_flags_and_attributes(
+                path.to_string_lossy(),
+                OpenFlags::CREATE | OpenFlags::TRUNCATE | OpenFlags::WRITE,
+                attrs,
+            )
+            .await
+            .expect("open staged upload with attrs");
+        file.write_all(b"hello").await.expect("write staged upload");
+        file.shutdown().await.expect("close staged upload");
+        assert_eq!(
+            tokio::fs::read_to_string(path).await.expect("read upload"),
+            "hello"
+        );
     }
 }
