@@ -2,6 +2,7 @@ use anyhow::Result;
 use app_test_support::McpProcess;
 use app_test_support::create_fake_rollout;
 use app_test_support::rollout_path;
+use app_test_support::test_path_buf;
 use app_test_support::to_response;
 use codex_app_server::in_process;
 use codex_app_server::in_process::InProcessStartArgs;
@@ -56,7 +57,7 @@ fn expected_summary(conversation_id: ThreadId, path: PathBuf) -> ConversationSum
         timestamp: Some(CREATED_AT_RFC3339.to_string()),
         updated_at: Some(UPDATED_AT_RFC3339.to_string()),
         model_provider: MODEL_PROVIDER.to_string(),
-        cwd: PathBuf::from("/"),
+        cwd: test_path_buf("/"),
         cli_version: "0.0.0".to_string(),
         source: SessionSource::Cli,
         git_info: None,
