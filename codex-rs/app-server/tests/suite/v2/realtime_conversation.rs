@@ -1836,7 +1836,10 @@ async fn webrtc_v2_tool_call_delegated_turn_can_execute_shell_tool() -> Result<(
     };
     assert_eq!(id.as_str(), "shell_call");
     assert_eq!(status, CommandExecutionStatus::Completed);
-    assert_eq!(aggregated_output.as_deref(), Some("realtime-tool-ok"));
+    assert_eq!(
+        aggregated_output.as_deref().map(str::trim),
+        Some("realtime-tool-ok")
+    );
 
     // Phase 3: verify the shell output reached Responses and the final delegated answer returned
     // to realtime as a single function-call-output item.
@@ -2157,7 +2160,7 @@ fn realtime_tool_ok_command() -> Vec<String> {
             "cmd.exe".to_string(),
             "/D".to_string(),
             "/C".to_string(),
-            "echo(|set /p dummy=realtime-tool-ok".to_string(),
+            "echo realtime-tool-ok".to_string(),
         ]
     }
 
