@@ -63,7 +63,7 @@ pub struct TurnStartParams {
     pub environments: Option<Vec<TurnEnvironmentParams>>,
     /// Override the working directory for this turn and subsequent turns.
     #[ts(optional = nullable)]
-    pub cwd: Option<PathBuf>,
+    pub cwd: Option<String>,
     /// Override the approval policy for this turn and subsequent turns.
     #[experimental(nested)]
     #[ts(optional = nullable)]

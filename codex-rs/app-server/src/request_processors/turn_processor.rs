@@ -374,7 +374,7 @@ impl TurnRequestProcessor {
             ));
         }
 
-        let cwd = params.cwd;
+        let cwd = params.cwd.map(PathBuf::from);
         let approval_policy = params.approval_policy.map(AskForApproval::to_core);
         let approvals_reviewer = params
             .approvals_reviewer
