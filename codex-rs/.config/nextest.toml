@@ -14,6 +14,9 @@ max-threads = 1
 [test-groups.windows_sandbox_legacy_sessions]
 max-threads = 1
 
+[test-groups.windows_process_heavy]
+max-threads = 1
+
 [[profile.default.overrides]]
 # Do not add new tests here
 filter = 'test(rmcp_client) | test(humanlike_typing_1000_chars_appears_live_no_placeholder)'
@@ -26,6 +29,41 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 [[profile.default.overrides]]
 filter = 'package(codex-app-server-protocol) & (test(typescript_schema_fixtures_match_generated) | test(json_schema_fixtures_match_generated) | test(generate_ts_with_experimental_api_retains_experimental_entries) | test(generated_ts_optional_nullable_fields_only_in_params) | test(generate_json_filters_experimental_fields_and_methods))'
 test-group = 'app_server_protocol_codegen'
+
+[[profile.default.overrides]]
+# These Windows CI tests launch full Codex/app-server process trees. They have
+# repeatedly timed out when nextest schedules them alongside similar tests.
+platform = 'cfg(windows)'
+filter = 'package(codex-core) & kind(test) & (test(cli_stream) | test(realtime_conversation))'
+test-group = 'windows_process_heavy'
+threads-required = "num-test-threads"
+slow-timeout = { period = "1m", terminate-after = 4 }
+
+[[profile.default.overrides]]
+# The exec resume tests spawn the CLI and touch shared session state on disk.
+platform = 'cfg(windows)'
+filter = 'package(codex-exec) & kind(test) & test(exec_resume)'
+test-group = 'windows_process_heavy'
+threads-required = "num-test-threads"
+slow-timeout = { period = "1m", terminate-after = 4 }
+
+[[profile.default.overrides]]
+# Keep the specific app-server subprocess-heavy cases isolated on Windows. This
+# must stay before the broader codex-app-server override below.
+platform = 'cfg(windows)'
+filter = 'package(codex-app-server) & kind(test) & (test(thread_fork_can_exclude_turns_and_skip_restored_token_usage) | test(turn_start_resolves_sticky_thread_environments_and_turn_overrides) | test(message_processor_tracing_tests))'
+test-group = 'windows_process_heavy'
+threads-required = "num-test-threads"
+slow-timeout = { period = "1m", terminate-after = 4 }
+
+[[profile.default.overrides]]
+# These tests create restricted-token Windows child processes and private
+# desktops. Running them alone avoids contention with other subprocess tests.
+platform = 'cfg(windows)'
+filter = 'package(codex-windows-sandbox) & kind(test) & test(legacy_)'
+test-group = 'windows_process_heavy'
+threads-required = "num-test-threads"
+slow-timeout = { period = "1m", terminate-after = 4 }
 
 [[profile.default.overrides]]
 # These integration tests spawn a fresh app-server subprocess per case.
