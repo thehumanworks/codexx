@@ -1,0 +1,23 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-extension-api"
+version.workspace = true
+
+[lib]
+name = "codex_extension_api"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+rmcp = { workspace = true, default-features = false, features = [
+    "schemars",
+    "server",
+] }
+
+[dev-dependencies]
+codex-git-attribution = { workspace = true }
+codex-memories = { workspace = true }
+codex-multi-agent-v2 = { workspace = true }

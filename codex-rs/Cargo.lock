@@ -2781,6 +2781,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-extension-api"
+version = "0.0.0"
+dependencies = [
+ "codex-git-attribution",
+ "codex-memories",
+ "codex-multi-agent-v2",
+ "rmcp",
+]
+
+[[package]]
 name = "codex-external-agent-migration"
 version = "0.0.0"
 dependencies = [
@@ -2856,6 +2866,13 @@ dependencies = [
  "codex-protocol",
  "codex-utils-absolute-path",
  "serde",
+]
+
+[[package]]
+name = "codex-git-attribution"
+version = "0.0.0"
+dependencies = [
+ "codex-extension-api",
 ]
 
 [[package]]
@@ -3066,6 +3083,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-memories"
+version = "0.0.0"
+dependencies = [
+ "codex-extension-api",
+ "codex-memories-read",
+ "codex-utils-absolute-path",
+ "rmcp",
+ "serde_json",
+]
+
+[[package]]
 name = "codex-memories-mcp"
 version = "0.0.0"
 dependencies = [
@@ -3204,6 +3232,13 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "codex-multi-agent-v2"
+version = "0.0.0"
+dependencies = [
+ "codex-extension-api",
 ]
 
 [[package]]

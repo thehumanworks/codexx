@@ -1,0 +1,22 @@
+[package]
+edition.workspace = true
+license.workspace = true
+name = "codex-memories"
+version.workspace = true
+
+[lib]
+name = "codex_memories"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+codex-extension-api = { workspace = true }
+codex-memories-read = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
+rmcp = { workspace = true, default-features = false, features = [
+    "schemars",
+    "server",
+] }
+serde_json = { workspace = true }

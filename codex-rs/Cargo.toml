@@ -45,6 +45,10 @@ members = [
     "exec-server",
     "execpolicy",
     "execpolicy-legacy",
+    "ext/extension-api",
+    "ext/git-attribution",
+    "ext/memories",
+    "ext/multi-agent-v2",
     "external-agent-migration",
     "external-agent-sessions",
     "keyring-store",
@@ -159,10 +163,14 @@ codex-exec = { path = "exec" }
 codex-file-system = { path = "file-system" }
 codex-exec-server = { path = "exec-server" }
 codex-execpolicy = { path = "execpolicy" }
+codex-extension-api = { path = "ext/extension-api" }
 codex-external-agent-migration = { path = "external-agent-migration" }
 codex-external-agent-sessions = { path = "external-agent-sessions" }
 codex-experimental-api-macros = { path = "codex-experimental-api-macros" }
 codex-features = { path = "features" }
+codex-git-attribution = { path = "ext/git-attribution" }
+codex-memories = { path = "ext/memories" }
+codex-multi-agent-v2 = { path = "ext/multi-agent-v2" }
 codex-feedback = { path = "feedback" }
 codex-install-context = { path = "install-context" }
 codex-file-search = { path = "file-search" }
