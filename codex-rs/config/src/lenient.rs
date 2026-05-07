@@ -19,6 +19,20 @@ struct EnumChoices {
     allows_non_string: bool,
 }
 
+impl EnumChoices {
+    fn has_string_enum(&self) -> bool {
+        !self.allowed_strings.is_empty()
+    }
+
+    fn accepts(&self, value: &TomlValue) -> bool {
+        if let Some(value) = value.as_str() {
+            self.allowed_strings.contains(value)
+        } else {
+            self.allows_non_string
+        }
+    }
+}
+
 /// One concrete location in the TOML value being compared with the schema.
 enum PathElement {
     /// A table key, including keys from `additionalProperties` maps.
@@ -89,20 +103,16 @@ fn collect_warnings(
 
     // Warn only when this schema node has string enum choices. Non-enum shape
     // mismatches are left alone so this pass stays small and advisory.
-    if matches!(current_node_warning, CurrentNodeWarning::Check) {
-        let invalid_enum_value = if let Some(value) = value.as_str() {
-            !choices.allowed_strings.contains(value)
-        } else {
-            !choices.allows_non_string
-        };
-        if !choices.allowed_strings.is_empty() && invalid_enum_value {
-            let warning = format!(
-                "Ignoring invalid config value at {}: {value}",
-                display_path(path)
-            );
-            if !warnings.contains(&warning) {
-                warnings.push(warning);
-            }
+    if matches!(current_node_warning, CurrentNodeWarning::Check)
+        && choices.has_string_enum()
+        && !choices.accepts(value)
+    {
+        let warning = format!(
+            "Ignoring invalid config value at {}: {value}",
+            display_path(path)
+        );
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
         }
     }
 
@@ -128,7 +138,89 @@ fn collect_warnings(
         let Some(child_schemas) = schema.get(key).and_then(JsonValue::as_array) else {
             continue;
         };
+
+        // Tagged object unions put the enum on a child property such as
+        // `type`. First find enum properties accepted by at least one sibling
+        // branch; invalid values match no branch here, so the fallback below
+        // still walks every branch and reports the bad leaf.
+        let mut matched_enum_properties: BTreeSet<&str> = BTreeSet::new();
+        if key != "allOf"
+            && let Some(table) = value.as_table()
+        {
+            for child_schema in child_schemas {
+                let Some(properties) = child_schema
+                    .get("properties")
+                    .and_then(JsonValue::as_object)
+                else {
+                    continue;
+                };
+                for (property_name, property_schema) in properties {
+                    let Some(child_value) = table.get(property_name) else {
+                        continue;
+                    };
+
+                    let mut property_choices = EnumChoices::default();
+                    let mut choice_ref_stack = ref_stack.clone();
+                    collect_enum_choices(
+                        property_schema,
+                        definitions,
+                        &mut choice_ref_stack,
+                        &mut property_choices,
+                    );
+                    if property_choices.has_string_enum() && property_choices.accepts(child_value) {
+                        matched_enum_properties.insert(property_name.as_str());
+                    }
+                }
+            }
+        }
+
+        let mut matching_child_schemas = Vec::new();
         for child_schema in child_schemas {
+            let mut child_matches_value = true;
+
+            if !matched_enum_properties.is_empty()
+                && let (Some(table), Some(properties)) = (
+                    value.as_table(),
+                    child_schema
+                        .get("properties")
+                        .and_then(JsonValue::as_object),
+                )
+            {
+                for property_name in &matched_enum_properties {
+                    let (Some(child_value), Some(property_schema)) =
+                        (table.get(*property_name), properties.get(*property_name))
+                    else {
+                        continue;
+                    };
+
+                    let mut property_choices = EnumChoices::default();
+                    let mut choice_ref_stack = ref_stack.clone();
+                    collect_enum_choices(
+                        property_schema,
+                        definitions,
+                        &mut choice_ref_stack,
+                        &mut property_choices,
+                    );
+                    if property_choices.has_string_enum() && !property_choices.accepts(child_value)
+                    {
+                        child_matches_value = false;
+                        break;
+                    }
+                }
+            }
+
+            if child_matches_value {
+                matching_child_schemas.push(child_schema);
+            }
+        }
+
+        let child_schemas_to_walk = if matching_child_schemas.is_empty() {
+            child_schemas.iter().collect()
+        } else {
+            matching_child_schemas
+        };
+
+        for child_schema in child_schemas_to_walk {
             collect_warnings(
                 value,
                 child_schema,
@@ -373,6 +465,43 @@ notification_condition = "always"
         );
 
         assert_eq!(warnings, BTreeSet::new());
+    }
+
+    #[test]
+    fn tagged_union_sibling_variants_do_not_warn() {
+        let warnings = warning_set(
+            r#"
+[hooks]
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "python3 /tmp/user-prompt.py"
+"#,
+        );
+
+        assert_eq!(warnings, BTreeSet::new());
+    }
+
+    #[test]
+    fn invalid_tagged_union_variant_warns_at_tag_property() {
+        let warnings = warning_set(
+            r#"
+[hooks]
+
+[[hooks.UserPromptSubmit]]
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "python"
+command = "python3 /tmp/user-prompt.py"
+"#,
+        );
+        let expected_warnings = BTreeSet::from([String::from(
+            "Ignoring invalid config value at hooks.UserPromptSubmit[0].hooks[0].type: \"python\"",
+        )]);
+
+        assert_eq!(warnings, expected_warnings);
     }
 
     #[test]
