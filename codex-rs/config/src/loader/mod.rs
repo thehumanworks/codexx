@@ -15,7 +15,6 @@ use crate::diagnostics::ConfigError;
 use crate::diagnostics::config_error_from_toml;
 use crate::diagnostics::first_layer_config_error_from_entries as typed_first_layer_config_error_from_entries;
 use crate::diagnostics::io_error_from_config_error;
-use crate::lenient::deserialize_with_enum_warnings;
 use crate::merge::merge_toml_values;
 use crate::overrides::build_cli_overrides_layer;
 use crate::project_root_markers::default_project_root_markers;
@@ -870,15 +869,12 @@ pub fn resolve_relative_paths_in_config_toml(
     value_from_config_toml: TomlValue,
     base_dir: &Path,
 ) -> io::Result<TomlValue> {
-    // Use the serialize/deserialize round-trip to convert the
-    // `toml::Value` into a `ConfigToml` with `AbsolutePathBuf` fields resolved
-    // by the guard. Invalid enum values are ignored only for this typed
-    // projection; copy_shape_from_original preserves them in the raw layer so
-    // the final config load can still surface the startup warning.
+    // Use the serialize/deserialize round-trip to convert the `toml::Value`
+    // into a `ConfigToml` with `AbsolutePathBuf` fields resolved by the guard.
+    // copy_shape_from_original preserves raw non-path leaves so invalid enum
+    // values can still be reported from the final merged TOML.
     let _guard = AbsolutePathBufGuard::new(base_dir);
-    let Ok((_sanitized, resolved, _enum_warnings)) =
-        deserialize_with_enum_warnings(value_from_config_toml.clone())
-    else {
+    let Ok(resolved) = value_from_config_toml.clone().try_into::<ConfigToml>() else {
         return Ok(value_from_config_toml);
     };
     drop(_guard);
@@ -897,9 +893,9 @@ pub fn resolve_relative_paths_in_config_toml(
 }
 
 /// Ensure that every field in `original` is present in the returned
-/// `toml::Value`, taking the value from `resolved` where possible. This ensures
-/// the fields that we "removed" during the serialize/deserialize round-trip in
-/// `resolve_config_paths` are preserved, out of an abundance of caution.
+/// `toml::Value`, copying only the absolute path strings produced by the typed
+/// round-trip. Other leaves stay raw so lenient enum defaults do not overwrite
+/// the value that should produce a startup warning.
 fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlValue {
     match (original, resolved) {
         (TomlValue::Table(original_table), TomlValue::Table(resolved_table)) => {
@@ -921,7 +917,14 @@ fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlV
             }
             TomlValue::Array(items)
         }
-        (_, resolved_value) => resolved_value.clone(),
+        (TomlValue::String(original), TomlValue::String(resolved)) => {
+            if original != resolved && Path::new(resolved).is_absolute() {
+                TomlValue::String(resolved.clone())
+            } else {
+                TomlValue::String(original.clone())
+            }
+        }
+        (original_value, _) => original_value.clone(),
     }
 }
 

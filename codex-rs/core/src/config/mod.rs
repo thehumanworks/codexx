@@ -976,9 +976,8 @@ impl ConfigBuilder {
         // respective config file, so we should be safe to deserialize without
         // AbsolutePathBufGuard here.
         //
-        // Invalid enum-valued settings default at the typed field boundary and
-        // are removed from the merged TOML view when the best-effort scan can
-        // identify the offending leaf.
+        // Invalid enum-valued settings default at the typed field boundary.
+        // The warning scan reads the final merged TOML view without mutating it.
         let (_merged_toml, config_toml, enum_warnings) = match config_layer_stack
             .deserialize_effective_config_with_warnings()
         {

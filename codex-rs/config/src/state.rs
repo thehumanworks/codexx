@@ -4,7 +4,7 @@ use crate::config_requirements::ConfigRequirementsToml;
 use super::fingerprint::record_origins;
 use super::fingerprint::version_for_toml;
 use super::key_aliases::normalized_with_key_aliases;
-use super::lenient::deserialize_with_enum_warnings;
+use super::lenient::enum_value_warnings;
 use super::merge::merge_toml_values;
 use crate::config_toml::ConfigToml;
 use codex_app_server_protocol::ConfigLayer;
@@ -320,32 +320,16 @@ impl ConfigLayerStack {
 
     /// Deserializes the merged config-layer view and returns any soft warnings.
     ///
-    /// This is the boundary where user-editable config stays lenient for
-    /// invalid enum values while consumers still receive a fully typed config.
-    /// Each layer is sanitized before it is merged so a higher-precedence
-    /// invalid enum value falls back to a valid lower-precedence value.
+    /// Invalid enum-valued settings are handled by `DefaultOnError` during
+    /// deserialization. Warnings are collected from the final raw TOML view so
+    /// warning discovery remains advisory and cannot change config semantics.
     pub fn deserialize_effective_config_with_warnings(
         &self,
     ) -> Result<(TomlValue, ConfigToml, Vec<String>), toml::de::Error> {
-        let mut merged = TomlValue::Table(toml::map::Map::new());
-        let mut warnings = Vec::new();
-
-        for layer in self.get_layers(
-            ConfigLayerStackOrdering::LowestPrecedenceFirst,
-            /*include_disabled*/ false,
-        ) {
-            let mut normalized_layer = TomlValue::Table(toml::map::Map::new());
-            merge_toml_values(&mut normalized_layer, &layer.config);
-            let (sanitized_layer, _typed_layer, layer_warnings) =
-                deserialize_with_enum_warnings(normalized_layer)?;
-            warnings.extend(layer_warnings);
-            merge_toml_values(&mut merged, &sanitized_layer);
-        }
-
-        let (sanitized_effective, typed_effective, effective_warnings) =
-            deserialize_with_enum_warnings(merged)?;
-        warnings.extend(effective_warnings);
-        Ok((sanitized_effective, typed_effective, warnings))
+        let merged = self.effective_config();
+        let warnings = enum_value_warnings(&merged);
+        let typed = merged.clone().try_into::<ConfigToml>()?;
+        Ok((merged, typed, warnings))
     }
 
     /// Returns field origins for the merged config-layer view.

@@ -25,7 +25,6 @@ use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_requirements_toml;
 use codex_config::version_for_toml;
 use codex_exec_server::LOCAL_FS;
-use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::PermissionProfile;
@@ -148,18 +147,21 @@ context_size = "galactic"
     )
     .await?;
 
-    // The invalid enum leaves are removed before ConfigToml is produced, but
-    // unrelated valid settings still survive in the effective config.
+    // The warning pass reads the final TOML value without mutating it, while
+    // DefaultOnError lets unrelated valid settings still deserialize.
     let (effective_config, _config_toml, enum_warnings) =
         layers.deserialize_effective_config_with_warnings()?;
     let expected_config = toml::from_str::<TomlValue>(
         r#"
 model = "gpt-5-codex"
+sandbox_mode = "make-it-so"
 
 [tui]
+notification_method = "loudly"
 theme = "loudly"
 
 [tools.web_search]
+context_size = "galactic"
 "#,
     )
     .expect("expected config should parse");
@@ -177,7 +179,7 @@ theme = "loudly"
 }
 
 #[tokio::test]
-async fn invalid_higher_precedence_enum_falls_back_to_lower_layer() -> anyhow::Result<()> {
+async fn invalid_higher_precedence_enum_warns_without_mutating_merge() -> anyhow::Result<()> {
     let tmp = tempdir().expect("tempdir");
     let system_config_path = tmp.path().join("system_config.toml");
     std::fs::write(&system_config_path, r#"sandbox_mode = "workspace-write""#)
@@ -213,8 +215,8 @@ async fn invalid_higher_precedence_enum_falls_back_to_lower_layer() -> anyhow::R
             enum_warnings,
         ),
         (
-            Some(&TomlValue::String("workspace-write".to_string())),
-            Some(SandboxMode::WorkspaceWrite),
+            Some(&TomlValue::String("make-it-so".to_string())),
+            None,
             vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()],
         )
     );
@@ -325,6 +327,7 @@ sandbox_mode = "hold-my-coffee"
             r#"
 [profiles."alpha.beta"]
 model = "gpt-5-codex"
+sandbox_mode = "hold-my-coffee"
 "#,
         )
         .expect("expected config should parse"),

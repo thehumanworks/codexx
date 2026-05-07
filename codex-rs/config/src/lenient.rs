@@ -1,161 +1,141 @@
-use crate::config_toml::ConfigToml;
+use crate::schema::config_schema;
 use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::panic::AssertUnwindSafe;
 use std::panic::catch_unwind;
-use std::sync::OnceLock;
 use toml::Value as TomlValue;
 
-static ENUM_FIELD_SPECS: OnceLock<Vec<EnumFieldSpec>> = OnceLock::new();
-
-#[derive(Clone, Debug)]
-struct EnumFieldSpec {
-    path: Vec<PathSegment>,
-    allowed_values: BTreeSet<String>,
-    allows_non_string: bool,
-}
-
-/// One segment in a known enum-valued config path discovered from JSON Schema.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
-enum PathSegment {
-    /// Match this literal table key.
-    Key(String),
-    /// Expand across every table child at this point, such as `profiles.*`.
-    AnyTable,
-}
-
 #[derive(Default)]
-struct ScalarChoices {
+struct EnumChoices {
     allowed_strings: BTreeSet<String>,
     allows_non_string: bool,
 }
 
-/// Deserializes config while turning known invalid enum-valued settings into warnings.
+enum PathElement {
+    Key(String),
+    Index(usize),
+}
+
+/// Return best-effort startup warnings for raw TOML values that look like invalid enums.
 ///
-/// The config structs use `serde_with::DefaultOnError` on their enum fields so
-/// an invalid field can default instead of rejecting the whole file. This helper
-/// uses the same generated JSON Schema that backs `config.schema.json` to find
-/// string enum-valued leaves. It then does a best-effort pass over the raw TOML:
-/// invalid enum leaves are deleted from the sanitized TOML and reported as
-/// startup warnings, while full shape/type validation stays with Serde. If the
-/// warning pass itself cannot run, config loading continues with the original
-/// TOML and no warnings.
-pub(crate) fn deserialize_with_enum_warnings(
-    value: TomlValue,
-) -> Result<(TomlValue, ConfigToml, Vec<String>), toml::de::Error> {
-    let (sanitized, warnings) = sanitize_for_enum_warnings(value);
-    let parsed = sanitized.clone().try_into::<ConfigToml>()?;
-    Ok((sanitized, parsed, warnings))
-}
-
-fn sanitize_for_enum_warnings(value: TomlValue) -> (TomlValue, Vec<String>) {
-    let original = value.clone();
+/// `DefaultOnError` is responsible for keeping config deserialization lenient.
+/// This pass is intentionally advisory: it walks the final merged TOML value
+/// against the generated config schema and reports enum-looking mismatches
+/// without changing the TOML that will be deserialized.
+pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
     catch_unwind(AssertUnwindSafe(|| {
-        let mut sanitized = value;
+        let Ok(schema) = serde_json::to_value(config_schema()) else {
+            return Vec::new();
+        };
+        let definitions = schema.get("definitions").and_then(JsonValue::as_object);
+        let mut path = Vec::new();
+        let mut ref_stack = Vec::new();
         let mut warnings = Vec::new();
-        for spec in enum_field_specs() {
-            for path in matching_paths(&sanitized, &spec.path) {
-                remove_if_invalid(&mut sanitized, &path, spec, &mut warnings);
-            }
-        }
-        (sanitized, warnings)
+
+        collect_warnings(
+            value,
+            &schema,
+            definitions,
+            &mut path,
+            &mut ref_stack,
+            &mut warnings,
+        );
+
+        warnings
     }))
-    .unwrap_or((original, Vec::new()))
+    .unwrap_or_default()
 }
 
-fn enum_field_specs() -> &'static [EnumFieldSpec] {
-    ENUM_FIELD_SPECS.get_or_init(|| catch_unwind(build_enum_field_specs).unwrap_or_default())
-}
-
-fn build_enum_field_specs() -> Vec<EnumFieldSpec> {
-    let Ok(schema) = serde_json::to_value(crate::schema::config_schema()) else {
-        return Vec::new();
-    };
-    let definitions = schema.get("definitions").and_then(JsonValue::as_object);
-    let mut choices_by_path = BTreeMap::<Vec<PathSegment>, ScalarChoices>::new();
-    let mut path = Vec::new();
-    let mut ref_stack = Vec::new();
-
-    collect_enum_fields(
-        &schema,
-        definitions,
-        &mut path,
-        &mut choices_by_path,
-        &mut ref_stack,
-    );
-
-    choices_by_path
-        .into_iter()
-        .filter_map(|(path, choices)| {
-            if choices.allowed_strings.is_empty() {
-                return None;
-            }
-            Some(EnumFieldSpec {
-                path,
-                allowed_values: choices.allowed_strings,
-                allows_non_string: choices.allows_non_string,
-            })
-        })
-        .collect()
-}
-
-fn collect_enum_fields(
+fn collect_warnings(
+    value: &TomlValue,
     schema: &JsonValue,
     definitions: Option<&JsonMap<String, JsonValue>>,
-    path: &mut Vec<PathSegment>,
-    choices_by_path: &mut BTreeMap<Vec<PathSegment>, ScalarChoices>,
+    path: &mut Vec<PathElement>,
     ref_stack: &mut Vec<String>,
+    warnings: &mut Vec<String>,
 ) {
-    let mut choices = ScalarChoices::default();
-    collect_scalar_choices(schema, definitions, &mut choices, ref_stack);
-    if !choices.allowed_strings.is_empty() {
-        choices_by_path
-            .entry(path.clone())
-            .or_default()
-            .merge(choices);
+    let mut choices = EnumChoices::default();
+    collect_enum_choices(schema, definitions, ref_stack, &mut choices);
+    let invalid_enum_value = if let Some(value) = value.as_str() {
+        !choices.allowed_strings.contains(value)
+    } else {
+        !choices.allows_non_string
+    };
+    if !choices.allowed_strings.is_empty() && invalid_enum_value {
+        let warning = format!(
+            "Ignoring invalid config value at {}: {value}",
+            display_path(path)
+        );
+        if !warnings.contains(&warning) {
+            warnings.push(warning);
+        }
     }
 
     if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
-        collect_enum_fields(definition, definitions, path, choices_by_path, ref_stack);
+        collect_warnings(value, definition, definitions, path, ref_stack, warnings);
         ref_stack.pop();
     }
 
-    for child in schema_composition_children(schema) {
-        collect_enum_fields(child, definitions, path, choices_by_path, ref_stack);
+    for child_schema in schema_composition_children(schema) {
+        collect_warnings(value, child_schema, definitions, path, ref_stack, warnings);
     }
 
-    if let Some(properties) = schema.get("properties").and_then(JsonValue::as_object) {
-        for (key, child) in properties {
-            path.push(PathSegment::Key(key.clone()));
-            collect_enum_fields(child, definitions, path, choices_by_path, ref_stack);
+    let properties = schema.get("properties").and_then(JsonValue::as_object);
+    if let (Some(table), Some(properties)) = (value.as_table(), properties) {
+        for (key, child_schema) in properties {
+            let Some(child_value) = table.get(key) else {
+                continue;
+            };
+            path.push(PathElement::Key(key.clone()));
+            collect_warnings(
+                child_value,
+                child_schema,
+                definitions,
+                path,
+                ref_stack,
+                warnings,
+            );
             path.pop();
         }
     }
 
-    let Some(additional_properties) = schema.get("additionalProperties") else {
-        return;
-    };
-    if !additional_properties.is_object() {
-        return;
+    let additional_properties = schema
+        .get("additionalProperties")
+        .filter(|additional_properties| additional_properties.is_object());
+    if let (Some(table), Some(additional_properties)) = (value.as_table(), additional_properties) {
+        for (key, child_value) in table {
+            if properties.is_some_and(|properties| properties.contains_key(key)) {
+                continue;
+            }
+            path.push(PathElement::Key(key.clone()));
+            collect_warnings(
+                child_value,
+                additional_properties,
+                definitions,
+                path,
+                ref_stack,
+                warnings,
+            );
+            path.pop();
+        }
     }
-    path.push(PathSegment::AnyTable);
-    collect_enum_fields(
-        additional_properties,
-        definitions,
-        path,
-        choices_by_path,
-        ref_stack,
-    );
-    path.pop();
+
+    let items = schema.get("items");
+    if let (Some(array), Some(items)) = (value.as_array(), items) {
+        for (index, child_value) in array.iter().enumerate() {
+            path.push(PathElement::Index(index));
+            collect_warnings(child_value, items, definitions, path, ref_stack, warnings);
+            path.pop();
+        }
+    }
 }
 
-fn collect_scalar_choices(
+fn collect_enum_choices(
     schema: &JsonValue,
     definitions: Option<&JsonMap<String, JsonValue>>,
-    choices: &mut ScalarChoices,
     ref_stack: &mut Vec<String>,
+    choices: &mut EnumChoices,
 ) {
     choices
         .allowed_strings
@@ -163,12 +143,12 @@ fn collect_scalar_choices(
     choices.allows_non_string |= schema_allows_non_string(schema);
 
     if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
-        collect_scalar_choices(definition, definitions, choices, ref_stack);
+        collect_enum_choices(definition, definitions, ref_stack, choices);
         ref_stack.pop();
     }
 
-    for child in schema_composition_children(schema) {
-        collect_scalar_choices(child, definitions, choices, ref_stack);
+    for child_schema in schema_composition_children(schema) {
+        collect_enum_choices(child_schema, definitions, ref_stack, choices);
     }
 }
 
@@ -220,87 +200,26 @@ fn schema_composition_children(schema: &JsonValue) -> impl Iterator<Item = &Json
         .flatten()
 }
 
-/// Removes one known enum leaf when its raw TOML value does not match schema choices.
-fn remove_if_invalid(
-    value: &mut TomlValue,
-    path: &[String],
-    spec: &EnumFieldSpec,
-    warnings: &mut Vec<String>,
-) {
-    let Some(raw_value) = value_at_path(value, path) else {
-        return;
-    };
-    if let Some(raw_value) = raw_value.as_str() {
-        if spec.allowed_values.contains(raw_value) {
-            return;
-        }
-    } else if spec.allows_non_string {
-        return;
+fn display_path(path: &[PathElement]) -> String {
+    if path.is_empty() {
+        return "<root>".to_string();
     }
-    let Some(invalid_value) = remove_value_at_path(value, path) else {
-        return;
-    };
-    warnings.push(format!(
-        "Ignoring invalid config value at {}: {invalid_value}",
-        display_path(path)
-    ));
-}
 
-/// Expands a spec path into concrete TOML paths without holding borrows across mutation.
-fn matching_paths(value: &TomlValue, spec_path: &[PathSegment]) -> Vec<Vec<String>> {
-    let mut paths = vec![Vec::new()];
-    for segment in spec_path {
-        match segment {
-            PathSegment::Key(key) => {
-                for path in &mut paths {
-                    path.push(key.clone());
+    let mut output = String::new();
+    for element in path {
+        match element {
+            PathElement::Key(key) => {
+                if !output.is_empty() {
+                    output.push('.');
                 }
+                output.push_str(&display_key(key));
             }
-            PathSegment::AnyTable => {
-                let mut expanded = Vec::new();
-                for path in paths {
-                    let Some(table) = value_at_path(value, &path).and_then(TomlValue::as_table)
-                    else {
-                        continue;
-                    };
-                    expanded.extend(table.iter().filter_map(|(key, value)| {
-                        if !value.is_table() {
-                            return None;
-                        }
-                        let mut child = path.clone();
-                        child.push(key.clone());
-                        Some(child)
-                    }));
-                }
-                paths = expanded;
+            PathElement::Index(index) => {
+                output.push_str(&format!("[{index}]"));
             }
         }
     }
-    paths
-}
-
-fn value_at_path<'a>(value: &'a TomlValue, path: &[String]) -> Option<&'a TomlValue> {
-    let mut current = value;
-    for key in path {
-        current = current.as_table()?.get(key)?;
-    }
-    Some(current)
-}
-
-fn remove_value_at_path(value: &mut TomlValue, path: &[String]) -> Option<TomlValue> {
-    let (last, parents) = path.split_last()?;
-    let mut current = value;
-    for key in parents {
-        current = current.as_table_mut()?.get_mut(key)?;
-    }
-    current.as_table_mut()?.remove(last)
-}
-
-fn display_path(path: &[String]) -> String {
-    path.iter()
-        .map(|key| display_key(key))
-        .collect::<Vec<_>>()
-        .join(".")
+    output
 }
 
 fn display_key(key: &str) -> String {
@@ -313,11 +232,4 @@ fn display_key(key: &str) -> String {
     }
     let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
     format!("\"{escaped}\"")
-}
-
-impl ScalarChoices {
-    fn merge(&mut self, other: ScalarChoices) {
-        self.allowed_strings.extend(other.allowed_strings);
-        self.allows_non_string |= other.allows_non_string;
-    }
 }
