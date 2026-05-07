@@ -1119,6 +1119,102 @@
             },
             "method": {
               "enum": [
+                "thread/queue/add"
+              ],
+              "title": "Thread/queue/addRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadQueueAddParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/queue/addRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/queue/list"
+              ],
+              "title": "Thread/queue/listRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadQueueListParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/queue/listRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/queue/delete"
+              ],
+              "title": "Thread/queue/deleteRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadQueueDeleteParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/queue/deleteRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
+                "thread/queue/reorder"
+              ],
+              "title": "Thread/queue/reorderRequestMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadQueueReorderParams"
+            }
+          },
+          "required": [
+            "id",
+            "method",
+            "params"
+          ],
+          "title": "Thread/queue/reorderRequest",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "id": {
+              "$ref": "#/definitions/RequestId"
+            },
+            "method": {
+              "enum": [
                 "thread/metadata/update"
               ],
               "title": "Thread/metadata/updateRequestMethod",
@@ -9463,6 +9559,21 @@
       },
       "type": "object"
     },
+    "QueuedTurn": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "turnStartParams": {
+          "$ref": "#/definitions/TurnStartParams"
+        }
+      },
+      "required": [
+        "id",
+        "turnStartParams"
+      ],
+      "type": "object"
+    },
     "RateLimitReachedType": {
       "enum": [
         "rate_limit_reached",
@@ -11138,6 +11249,26 @@
             "params"
           ],
           "title": "Thread/goal/clearedNotification",
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "enum": [
+                "thread/queue/changed"
+              ],
+              "title": "Thread/queue/changedNotificationMethod",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/definitions/ThreadQueueChangedNotification"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "title": "Thread/queue/changedNotification",
           "type": "object"
         },
         {
@@ -14315,6 +14446,151 @@
         "threadId"
       ],
       "title": "ThreadNameUpdatedNotification",
+      "type": "object"
+    },
+    "ThreadQueueAddParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "turnStartParams": {
+          "$ref": "#/definitions/TurnStartParams"
+        }
+      },
+      "required": [
+        "threadId",
+        "turnStartParams"
+      ],
+      "title": "ThreadQueueAddParams",
+      "type": "object"
+    },
+    "ThreadQueueAddResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "queuedTurn": {
+          "$ref": "#/definitions/QueuedTurn"
+        }
+      },
+      "required": [
+        "queuedTurn"
+      ],
+      "title": "ThreadQueueAddResponse",
+      "type": "object"
+    },
+    "ThreadQueueChangedNotification": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "queuedTurns": {
+          "items": {
+            "$ref": "#/definitions/QueuedTurn"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "queuedTurns",
+        "threadId"
+      ],
+      "title": "ThreadQueueChangedNotification",
+      "type": "object"
+    },
+    "ThreadQueueDeleteParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "queuedTurnId": {
+          "type": "string"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "queuedTurnId",
+        "threadId"
+      ],
+      "title": "ThreadQueueDeleteParams",
+      "type": "object"
+    },
+    "ThreadQueueDeleteResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "deleted": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "deleted"
+      ],
+      "title": "ThreadQueueDeleteResponse",
+      "type": "object"
+    },
+    "ThreadQueueListParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId"
+      ],
+      "title": "ThreadQueueListParams",
+      "type": "object"
+    },
+    "ThreadQueueListResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "queuedTurns": {
+          "items": {
+            "$ref": "#/definitions/QueuedTurn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "queuedTurns"
+      ],
+      "title": "ThreadQueueListResponse",
+      "type": "object"
+    },
+    "ThreadQueueReorderParams": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "queuedTurnIds": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "threadId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "queuedTurnIds",
+        "threadId"
+      ],
+      "title": "ThreadQueueReorderParams",
+      "type": "object"
+    },
+    "ThreadQueueReorderResponse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "queuedTurns": {
+          "items": {
+            "$ref": "#/definitions/QueuedTurn"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "queuedTurns"
+      ],
+      "title": "ThreadQueueReorderResponse",
       "type": "object"
     },
     "ThreadReadParams": {

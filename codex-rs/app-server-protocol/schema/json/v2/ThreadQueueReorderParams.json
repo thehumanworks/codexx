@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "queuedTurnIds": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "threadId": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "queuedTurnIds",
+    "threadId"
+  ],
+  "title": "ThreadQueueReorderParams",
+  "type": "object"
+}

@@ -1291,6 +1291,12 @@ fn insert_definition(
         if existing == &schema {
             return Ok(());
         }
+        if schemas_match_ignoring_root_metadata(existing, &schema) {
+            if existing.get("title").is_none() && schema.get("title").is_some() {
+                definitions.insert(name, schema);
+            }
+            return Ok(());
+        }
 
         let existing_title = existing
             .get("title")
@@ -1307,6 +1313,19 @@ fn insert_definition(
 
     definitions.insert(name, schema);
     Ok(())
+}
+
+fn schemas_match_ignoring_root_metadata(left: &Value, right: &Value) -> bool {
+    let (Value::Object(left), Value::Object(right)) = (left, right) else {
+        return false;
+    };
+    let mut left = left.clone();
+    let mut right = right.clone();
+    left.remove("title");
+    right.remove("title");
+    left.remove("$schema");
+    right.remove("$schema");
+    left == right
 }
 
 fn write_json_schema_with_return<T>(out_dir: &Path, name: &str) -> Result<GeneratedSchema>
@@ -2098,6 +2117,26 @@ mod tests {
     use std::path::Path;
     use std::path::PathBuf;
     use uuid::Uuid;
+
+    #[test]
+    fn schema_match_ignores_top_level_metadata() {
+        let nested = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "threadId": { "type": "string" },
+            },
+        });
+        let root = serde_json::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "title": "TurnStartParams",
+            "type": "object",
+            "properties": {
+                "threadId": { "type": "string" },
+            },
+        });
+
+        assert!(schemas_match_ignoring_root_metadata(&nested, &root));
+    }
 
     #[test]
     fn generated_ts_optional_nullable_fields_only_in_params() -> Result<()> {

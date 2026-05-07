@@ -301,6 +301,7 @@ export type { ProcessOutputDeltaNotification } from "./ProcessOutputDeltaNotific
 export type { ProcessOutputStream } from "./ProcessOutputStream";
 export type { ProcessTerminalSize } from "./ProcessTerminalSize";
 export type { ProfileV2 } from "./ProfileV2";
+export type { QueuedTurn } from "./QueuedTurn";
 export type { RateLimitReachedType } from "./RateLimitReachedType";
 export type { RateLimitSnapshot } from "./RateLimitSnapshot";
 export type { RateLimitWindow } from "./RateLimitWindow";
@@ -372,6 +373,15 @@ export type { ThreadMetadataGitInfoUpdateParams } from "./ThreadMetadataGitInfoU
 export type { ThreadMetadataUpdateParams } from "./ThreadMetadataUpdateParams";
 export type { ThreadMetadataUpdateResponse } from "./ThreadMetadataUpdateResponse";
 export type { ThreadNameUpdatedNotification } from "./ThreadNameUpdatedNotification";
+export type { ThreadQueueAddParams } from "./ThreadQueueAddParams";
+export type { ThreadQueueAddResponse } from "./ThreadQueueAddResponse";
+export type { ThreadQueueChangedNotification } from "./ThreadQueueChangedNotification";
+export type { ThreadQueueDeleteParams } from "./ThreadQueueDeleteParams";
+export type { ThreadQueueDeleteResponse } from "./ThreadQueueDeleteResponse";
+export type { ThreadQueueListParams } from "./ThreadQueueListParams";
+export type { ThreadQueueListResponse } from "./ThreadQueueListResponse";
+export type { ThreadQueueReorderParams } from "./ThreadQueueReorderParams";
+export type { ThreadQueueReorderResponse } from "./ThreadQueueReorderResponse";
 export type { ThreadReadParams } from "./ThreadReadParams";
 export type { ThreadReadResponse } from "./ThreadReadResponse";
 export type { ThreadRealtimeAudioChunk } from "./ThreadRealtimeAudioChunk";

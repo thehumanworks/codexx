@@ -28,6 +28,7 @@ use crate::request_processors::PluginRequestProcessor;
 use crate::request_processors::ProcessExecRequestProcessor;
 use crate::request_processors::SearchRequestProcessor;
 use crate::request_processors::ThreadGoalRequestProcessor;
+use crate::request_processors::ThreadQueueRequestProcessor;
 use crate::request_processors::ThreadRequestProcessor;
 use crate::request_processors::TurnRequestProcessor;
 use crate::request_processors::WindowsSandboxRequestProcessor;
@@ -168,6 +169,7 @@ pub(crate) struct MessageProcessor {
     plugin_processor: PluginRequestProcessor,
     search_processor: SearchRequestProcessor,
     thread_goal_processor: ThreadGoalRequestProcessor,
+    thread_queue_processor: ThreadQueueRequestProcessor,
     thread_processor: ThreadRequestProcessor,
     turn_processor: TurnRequestProcessor,
     windows_sandbox_processor: WindowsSandboxRequestProcessor,
@@ -375,6 +377,27 @@ impl MessageProcessor {
             thread_state_manager.clone(),
             state_db.clone(),
         );
+        let turn_processor = TurnRequestProcessor::new(
+            auth_manager.clone(),
+            Arc::clone(&thread_manager),
+            outgoing.clone(),
+            analytics_events_client.clone(),
+            arg0_paths.clone(),
+            Arc::clone(&config),
+            config_manager.clone(),
+            Arc::clone(&pending_thread_unloads),
+            thread_state_manager.clone(),
+            thread_watch_manager.clone(),
+            Arc::clone(&thread_list_state_permit),
+        );
+        let thread_queue_processor = ThreadQueueRequestProcessor::new(
+            Arc::clone(&thread_manager),
+            outgoing.clone(),
+            Arc::clone(&config),
+            thread_state_manager.clone(),
+            state_db.clone(),
+            turn_processor.clone(),
+        );
         let thread_processor = ThreadRequestProcessor::new(
             auth_manager.clone(),
             Arc::clone(&thread_manager),
@@ -384,24 +407,12 @@ impl MessageProcessor {
             config_manager.clone(),
             Arc::clone(&thread_store),
             Arc::clone(&pending_thread_unloads),
-            thread_state_manager.clone(),
-            thread_watch_manager.clone(),
-            Arc::clone(&thread_list_state_permit),
-            thread_goal_processor.clone(),
-            state_db,
-        );
-        let turn_processor = TurnRequestProcessor::new(
-            auth_manager.clone(),
-            Arc::clone(&thread_manager),
-            outgoing.clone(),
-            analytics_events_client.clone(),
-            arg0_paths.clone(),
-            Arc::clone(&config),
-            config_manager.clone(),
-            pending_thread_unloads,
             thread_state_manager,
             thread_watch_manager,
-            thread_list_state_permit,
+            Arc::clone(&thread_list_state_permit),
+            thread_goal_processor.clone(),
+            thread_queue_processor.clone(),
+            state_db.clone(),
         );
         if matches!(plugin_startup_tasks, crate::PluginStartupTasks::Start) {
             // Keep plugin startup warmups aligned at app-server startup.
@@ -463,6 +474,7 @@ impl MessageProcessor {
             plugin_processor,
             search_processor,
             thread_goal_processor,
+            thread_queue_processor,
             thread_processor,
             turn_processor,
             windows_sandbox_processor,
@@ -967,6 +979,22 @@ impl MessageProcessor {
             ClientRequest::ThreadGoalClear { params, .. } => {
                 self.thread_goal_processor
                     .thread_goal_clear(request_id.clone(), params)
+                    .await
+            }
+            ClientRequest::ThreadQueueAdd { params, .. } => {
+                self.thread_queue_processor.thread_queue_add(params).await
+            }
+            ClientRequest::ThreadQueueList { params, .. } => {
+                self.thread_queue_processor.thread_queue_list(params).await
+            }
+            ClientRequest::ThreadQueueDelete { params, .. } => {
+                self.thread_queue_processor
+                    .thread_queue_delete(params)
+                    .await
+            }
+            ClientRequest::ThreadQueueReorder { params, .. } => {
+                self.thread_queue_processor
+                    .thread_queue_reorder(params)
                     .await
             }
             ClientRequest::ThreadMetadataUpdate { params, .. } => {
