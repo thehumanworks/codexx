@@ -371,8 +371,8 @@ mod tests {
     use crate::ExecServerError;
     use crate::ExecServerRuntimePaths;
     use crate::ProcessId;
-    use crate::environment_provider::EnvironmentProvider;
     use crate::environment_provider::EnvironmentDefault;
+    use crate::environment_provider::EnvironmentProvider;
     use crate::environment_provider::EnvironmentProviderSnapshot;
     use pretty_assertions::assert_eq;
 
