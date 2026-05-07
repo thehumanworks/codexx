@@ -689,11 +689,10 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
                 match path_mask_allows(root, &[psid], write_mask, /*require_all_bits*/ true) {
                     Ok(h) => h,
                     Err(e) => {
-                        refresh_errors.push(format!(
-                            "write mask check failed on {} for {label}: {}",
-                            root.display(),
-                            e
-                        ));
+                        // Some Windows ACL layouts can make the preflight mask probe fail even
+                        // though we can still normalize the path by adding the needed allow ACEs.
+                        // Treat probe failures as best-effort diagnostics and fall back to the
+                        // repair path below instead of aborting refresh early.
                         log_line(
                             log,
                             &format!(
