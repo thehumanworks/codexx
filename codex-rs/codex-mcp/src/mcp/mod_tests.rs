@@ -1,5 +1,6 @@
 use super::*;
 use codex_config::Constrained;
+use codex_config::McpServerProvenance;
 use codex_config::types::AppToolApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_login::CodexAuth;
@@ -14,7 +15,7 @@ use pretty_assertions::assert_eq;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
+pub(super) fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
     McpConfig {
         chatgpt_base_url: "https://chatgpt.com".to_string(),
         apps_mcp_path_override: None,
@@ -162,72 +163,14 @@ fn tool_plugin_provenance_collects_app_and_mcp_sources() {
 }
 
 #[test]
-fn codex_apps_mcp_url_for_base_url_keeps_existing_paths() {
-    assert_eq!(
-        codex_apps_mcp_url_for_base_url(
-            "https://chatgpt.com/backend-api",
-            /*apps_mcp_path_override*/ None,
-        )
-        .expect("trusted ChatGPT URL should build"),
-        TrustedCodexAppsMcpUrl("https://chatgpt.com/backend-api/wham/apps".to_string())
-    );
-    assert_eq!(
-        codex_apps_mcp_url_for_base_url(
-            "https://chat.openai.com",
-            /*apps_mcp_path_override*/ None,
-        )
-        .expect("trusted legacy ChatGPT URL should build"),
-        TrustedCodexAppsMcpUrl("https://chat.openai.com/backend-api/wham/apps".to_string())
-    );
-    assert_eq!(
-        codex_apps_mcp_url_for_base_url(
-            "http://localhost:8080/api/codex",
-            /*apps_mcp_path_override*/ None,
-        )
-        .expect("local debug URL should build"),
-        TrustedCodexAppsMcpUrl("http://localhost:8080/api/codex/apps".to_string())
-    );
-    assert_eq!(
-        codex_apps_mcp_url_for_base_url(
-            "http://localhost:8080",
-            /*apps_mcp_path_override*/ None,
-        )
-        .expect("local debug URL should build"),
-        TrustedCodexAppsMcpUrl("http://localhost:8080/api/codex/apps".to_string())
-    );
-}
-
-#[test]
-fn codex_apps_mcp_url_for_base_url_rejects_untrusted_urls() {
-    for base_url in [
-        "http://chatgpt.com/backend-api",
-        "https://example.com/backend-api",
-        "https://chatgpt.com.evil.example/backend-api",
-        "https://evilchatgpt.com/backend-api",
-        "https://foo.chat.openai.com/backend-api",
-        "https://chatgpt.com:4443/backend-api",
-        "https://user:pass@chatgpt.com/backend-api",
-        "https://chatgpt.com/backend-api?token=secret",
-    ] {
-        let err = codex_apps_mcp_url_for_base_url(base_url, /*apps_mcp_path_override*/ None)
-            .expect_err("untrusted URL should be rejected");
-
-        assert!(
-            err.starts_with("invalid Codex Apps MCP base URL"),
-            "unexpected error: {err}"
-        );
-    }
-}
-
-#[test]
 fn codex_apps_mcp_url_uses_legacy_codex_apps_path() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let config = test_mcp_config(codex_home.path().to_path_buf());
 
-    assert_eq!(
-        codex_apps_mcp_url(&config).expect("trusted ChatGPT URL should build"),
-        "https://chatgpt.com/backend-api/wham/apps"
-    );
+    let endpoint =
+        host_owned_codex_apps_mcp_endpoint(&config).expect("trusted ChatGPT URL should build");
+
+    assert_eq!(endpoint.url(), "https://chatgpt.com/backend-api/wham/apps");
 }
 
 #[test]
@@ -267,20 +210,6 @@ fn codex_apps_server_config_is_marked_host_owned() {
 }
 
 #[test]
-fn host_owned_codex_apps_endpoint_pairs_trusted_url_with_provenance() {
-    let codex_home = tempfile::tempdir().expect("tempdir");
-    let config = test_mcp_config(codex_home.path().to_path_buf());
-
-    assert_eq!(
-        host_owned_codex_apps_mcp_endpoint(&config).expect("trusted ChatGPT URL should build"),
-        HostOwnedCodexAppsMcpEndpoint {
-            url: TrustedCodexAppsMcpUrl("https://chatgpt.com/backend-api/wham/apps".to_string(),),
-            provenance: McpServerProvenance::HostOwnedCodexApps,
-        }
-    );
-}
-
-#[test]
 fn codex_apps_server_config_uses_configured_apps_mcp_path_override() {
     let codex_home = tempfile::tempdir().expect("tempdir");
     let mut config = test_mcp_config(codex_home.path().to_path_buf());
@@ -311,6 +240,39 @@ fn with_codex_apps_mcp_does_not_trust_untrusted_base_url() {
     let servers = with_codex_apps_mcp(HashMap::new(), Some(&auth), &config);
 
     assert!(!servers.contains_key(CODEX_APPS_MCP_SERVER_NAME));
+}
+
+#[test]
+fn configured_mcp_servers_ignore_reserved_codex_apps_name() {
+    let codex_home = tempfile::tempdir().expect("tempdir");
+    let mut config = test_mcp_config(codex_home.path().to_path_buf());
+    config.configured_mcp_servers.insert(
+        CODEX_APPS_MCP_SERVER_NAME.to_string(),
+        McpServerConfig {
+            transport: McpServerTransportConfig::StreamableHttp {
+                url: "https://user.example/mcp".to_string(),
+                bearer_token_env_var: None,
+                http_headers: None,
+                env_http_headers: None,
+            },
+            experimental_environment: None,
+            enabled: true,
+            required: false,
+            supports_parallel_tool_calls: false,
+            disabled_reason: None,
+            provenance: Default::default(),
+            startup_timeout_sec: None,
+            tool_timeout_sec: None,
+            default_tools_approval_mode: None,
+            enabled_tools: None,
+            disabled_tools: None,
+            scopes: None,
+            oauth_resource: None,
+            tools: HashMap::new(),
+        },
+    );
+
+    assert!(!configured_mcp_servers(&config).contains_key(CODEX_APPS_MCP_SERVER_NAME));
 }
 
 #[tokio::test]
