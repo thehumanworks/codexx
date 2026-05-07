@@ -570,7 +570,10 @@ mod tests {
         // Unsafe flags that do not take an argument (present verbatim).
         for args in [
             vec_str(&["rg", "--search-zip", "files"]),
+            vec_str(&["rg", "--search-zip=true", "files"]),
             vec_str(&["rg", "-z", "files"]),
+            vec_str(&["rg", "-zn", "files"]),
+            vec_str(&["rg", "-nz", "files"]),
         ] {
             assert!(
                 !is_safe_to_call_with_exec(&args),
@@ -599,6 +602,9 @@ mod tests {
             r"rg --\pre=./pre.sh files",
             r"rg --hostname\-bin=hostname files",
             r"rg -\z files",
+            r"rg -\zn needle .",
+            "rg --pr\\\ne=./pre.sh files",
+            "rg \"--pr\\\ne=./pre.sh\" files",
         ] {
             assert!(
                 !is_known_safe_command(&vec_str(&["bash", "-lc", script])),

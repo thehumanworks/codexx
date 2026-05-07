@@ -35,7 +35,10 @@ fn is_unsafe_ripgrep_arg(arg: &str, arg_case: RipgrepArgCase) -> bool {
         // out of an abundance of caution.
         "--search-zip" => true,
         "-z" => true,
-        _ => false,
+        _ => {
+            normalized.starts_with("--search-zip=")
+                || ripgrep_short_options_contain_search_zip(arg, arg_case)
+        }
     }
 }
 
@@ -57,6 +60,33 @@ fn normalize_arg(arg: &str, arg_case: RipgrepArgCase) -> Cow<'_, str> {
     }
 }
 
+fn ripgrep_short_options_contain_search_zip(arg: &str, arg_case: RipgrepArgCase) -> bool {
+    let Some(short_options) = arg.strip_prefix('-') else {
+        return false;
+    };
+    if short_options.is_empty() || short_options.starts_with('-') {
+        return false;
+    }
+
+    for option in short_options.chars() {
+        if option == 'z' || (arg_case == RipgrepArgCase::AsciiInsensitive && option == 'Z') {
+            return true;
+        }
+        if ripgrep_short_option_takes_value(option) {
+            return false;
+        }
+    }
+
+    false
+}
+
+fn ripgrep_short_option_takes_value(option: char) -> bool {
+    matches!(
+        option,
+        'A' | 'B' | 'C' | 'E' | 'M' | 'T' | 'd' | 'e' | 'f' | 'g' | 'j' | 'm' | 'r' | 't'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,7 +103,10 @@ mod tests {
             vec_str(&["rg", "--hostname-bin", "pwned", "files"]),
             vec_str(&["rg", "--hostname-bin=pwned", "files"]),
             vec_str(&["rg", "--search-zip", "files"]),
+            vec_str(&["rg", "--search-zip=true", "files"]),
             vec_str(&["rg", "-z", "files"]),
+            vec_str(&["rg", "-zn", "files"]),
+            vec_str(&["rg", "-nz", "files"]),
         ] {
             assert!(
                 !is_safe_ripgrep_command(&args, RipgrepArgCase::Sensitive),
@@ -88,12 +121,21 @@ mod tests {
             vec_str(&["rg", "--PRE", "pwned", "files"]),
             vec_str(&["rg", "--HOSTNAME-BIN=pwned", "files"]),
             vec_str(&["rg", "--SEARCH-ZIP", "files"]),
+            vec_str(&["rg", "--SEARCH-ZIP=true", "files"]),
             vec_str(&["rg", "-Z", "files"]),
+            vec_str(&["rg", "-ZN", "files"]),
+            vec_str(&["rg", "-Fz", "needle", "."]),
         ] {
             assert!(
                 !is_safe_ripgrep_command(&args, RipgrepArgCase::AsciiInsensitive),
                 "expected {args:?} to be unsafe with case insensitive matching",
             );
         }
+
+        let args = vec_str(&["rg", "-fz", "needle", "."]);
+        assert!(
+            is_safe_ripgrep_command(&args, RipgrepArgCase::AsciiInsensitive),
+            "expected lowercase -f to consume z as its pattern-file value",
+        );
     }
 }
