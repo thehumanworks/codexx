@@ -5377,6 +5377,15 @@ impl ChatWidget {
         self.request_redraw();
     }
 
+    pub(crate) fn show_bottom_pane_view(
+        &mut self,
+        view: Box<dyn crate::bottom_pane::BottomPaneView>,
+    ) {
+        self.bottom_pane.show_view(view);
+        self.refresh_plan_mode_nudge();
+        self.request_redraw();
+    }
+
     pub(crate) fn replace_selection_view_if_active(
         &mut self,
         view_id: &'static str,

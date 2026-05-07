@@ -6,12 +6,14 @@ use codex_worktree::WorktreeInfo;
 use codex_worktree::WorktreeListQuery;
 use codex_worktree::WorktreeRemoveRequest;
 use codex_worktree::WorktreeRequest;
+use codex_worktree::WorktreeResolution;
 use codex_worktree::WorktreeSource;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use super::*;
+use crate::bottom_pane::custom_prompt_view::CustomPromptView;
 
 const WORKTREE_SWITCH_RENDER_DELAY: Duration = Duration::from_millis(20);
 
@@ -52,6 +54,32 @@ impl App {
         self.fetch_worktrees_for_picker();
     }
 
+    pub(super) fn open_worktree_create_prompt(&mut self) {
+        if self.remote_app_server_url.is_some() {
+            self.chat_widget.add_error_message(
+                "/worktree is not supported for remote sessions yet.".to_string(),
+            );
+            return;
+        }
+
+        let tx = self.app_event_tx.clone();
+        let view = CustomPromptView::new(
+            "New worktree".to_string(),
+            "Type a branch name and press Enter".to_string(),
+            /*initial_text*/ String::new(),
+            /*context_label*/
+            Some("Creates a sibling worktree and starts this chat there.".to_string()),
+            Box::new(move |branch: String| {
+                tx.send(AppEvent::CreateWorktreeAndSwitch {
+                    branch: branch.trim().to_string(),
+                    base_ref: None,
+                    dirty_policy: None,
+                });
+            }),
+        );
+        self.chat_widget.show_bottom_pane_view(Box::new(view));
+    }
+
     pub(super) fn on_worktrees_loaded(
         &mut self,
         cwd: PathBuf,
@@ -68,10 +96,9 @@ impl App {
         self.replace_worktree_view(params);
     }
 
-    pub(super) async fn create_worktree_and_switch(
+    pub(super) fn create_worktree_and_switch(
         &mut self,
         tui: &mut tui::Tui,
-        app_server: &mut AppServerSession,
         branch: String,
         base_ref: Option<String>,
         dirty_policy: Option<DirtyPolicy>,
@@ -99,36 +126,50 @@ impl App {
             },
         };
 
-        let resolution = match codex_worktree::ensure_worktree(WorktreeRequest {
+        self.show_worktree_creating_view(tui, branch.clone());
+        self.spawn_worktree_create_request(WorktreeRequest {
             codex_home: self.config.codex_home.to_path_buf(),
             source_cwd: self.config.cwd.to_path_buf(),
             branch,
             base_ref,
             dirty_policy,
-        }) {
+        });
+    }
+
+    pub(super) async fn on_worktree_created(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        cwd: PathBuf,
+        result: Result<WorktreeResolution, String>,
+    ) {
+        if cwd.as_path() != self.config.cwd.as_path() {
+            return;
+        }
+        let resolution = match result {
             Ok(resolution) => resolution,
             Err(err) => {
-                self.chat_widget
-                    .add_error_message(format!("Failed to create worktree: {err}"));
+                self.show_worktree_error("Failed to create worktree.".to_string(), err);
                 return;
             }
         };
-        let warnings = resolution
-            .warnings
-            .iter()
-            .map(|warning| warning.message.clone())
-            .collect::<Vec<_>>();
         let target = resolution
             .info
             .branch
             .clone()
             .unwrap_or_else(|| resolution.info.name.clone());
         self.show_worktree_switching_view(tui, target);
-        self.switch_to_worktree_info(tui, app_server, resolution.info)
-            .await;
-        for warning in warnings {
-            self.chat_widget.add_info_message(warning, /*hint*/ None);
-        }
+        self.switch_to_worktree_info(
+            tui,
+            app_server,
+            resolution.info,
+            resolution
+                .warnings
+                .into_iter()
+                .map(|warning| warning.message)
+                .collect(),
+        )
+        .await;
     }
 
     pub(super) fn begin_switch_to_worktree_target(&mut self, tui: &mut tui::Tui, target: String) {
@@ -168,7 +209,8 @@ impl App {
                 return;
             }
         };
-        self.switch_to_worktree_info(tui, app_server, info).await;
+        self.switch_to_worktree_info(tui, app_server, info, Vec::new())
+            .await;
     }
 
     pub(super) fn show_worktree_path(&mut self, target: String) {
@@ -279,11 +321,21 @@ impl App {
         });
     }
 
+    fn spawn_worktree_create_request(&self, request: WorktreeRequest) {
+        let cwd = request.source_cwd.clone();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = codex_worktree::ensure_worktree(request).map_err(|err| err.to_string());
+            app_event_tx.send(AppEvent::WorktreeCreated { cwd, result });
+        });
+    }
+
     async fn switch_to_worktree_info(
         &mut self,
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
         info: WorktreeInfo,
+        warnings: Vec<String>,
     ) {
         let mut config = match self
             .rebuild_config_for_cwd(info.workspace_cwd.clone())
@@ -301,7 +353,7 @@ impl App {
         self.apply_runtime_policy_overrides(&mut config);
 
         let mode = self.worktree_switch_mode().await;
-        self.spawn_worktree_session_request(app_server, info, config, mode);
+        self.spawn_worktree_session_request(app_server, info, config, mode, warnings);
         tui.frame_requester().schedule_frame();
     }
 
@@ -312,6 +364,7 @@ impl App {
         info: WorktreeInfo,
         config: Config,
         forked: bool,
+        warnings: Vec<String>,
         result: Result<AppServerStartedThread, String>,
     ) {
         match result {
@@ -335,6 +388,9 @@ impl App {
                         WorktreeSessionTransition::Started
                     };
                     self.add_worktree_session_message(&info, transition);
+                    for warning in warnings {
+                        self.chat_widget.add_info_message(warning, /*hint*/ None);
+                    }
                 }
             }
             Err(err) => {
@@ -355,6 +411,7 @@ impl App {
         info: WorktreeInfo,
         config: Config,
         mode: WorktreeSwitchMode,
+        warnings: Vec<String>,
     ) {
         let request_handle = app_server.request_handle();
         let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
@@ -385,6 +442,7 @@ impl App {
                 info,
                 config,
                 forked,
+                warnings,
                 result,
             });
         });
@@ -436,9 +494,26 @@ impl App {
     }
 
     fn show_worktree_switching_view(&mut self, tui: &mut tui::Tui, target: String) {
+        let params = crate::worktree::switching_params(
+            target.clone(),
+            tui.frame_requester(),
+            self.config.animations,
+        );
+        if !self.replace_worktree_view(params) {
+            self.chat_widget
+                .show_selection_view(crate::worktree::switching_params(
+                    target,
+                    tui.frame_requester(),
+                    self.config.animations,
+                ));
+        }
+        tui.frame_requester().schedule_frame();
+    }
+
+    fn show_worktree_creating_view(&mut self, tui: &mut tui::Tui, branch: String) {
         self.chat_widget
-            .show_selection_view(crate::worktree::switching_params(
-                target,
+            .show_selection_view(crate::worktree::creating_params(
+                branch,
                 tui.frame_requester(),
                 self.config.animations,
             ));

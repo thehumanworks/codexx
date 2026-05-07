@@ -297,6 +297,33 @@ pub(crate) fn switching_params(
     }
 }
 
+pub(crate) fn creating_params(
+    branch: String,
+    frame_requester: FrameRequester,
+    animations_enabled: bool,
+) -> SelectionViewParams {
+    let status = format!("Creating {branch}...");
+    let note =
+        "Codex is creating the worktree before starting the chat in that workspace.".to_string();
+    SelectionViewParams {
+        view_id: Some(WORKTREE_SELECTION_VIEW_ID),
+        header: Box::new(WorktreeLoadingHeader::new(
+            frame_requester,
+            animations_enabled,
+            status,
+            note.clone(),
+        )),
+        footer_hint: Some(standard_popup_hint_line()),
+        items: vec![SelectionItem {
+            name: "Preparing worktree...".to_string(),
+            description: Some(note),
+            is_disabled: true,
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
 pub(crate) fn empty_params() -> SelectionViewParams {
     let mut header = ColumnRenderable::new();
     header.push(Line::from("Worktrees".bold()));
@@ -305,12 +332,7 @@ pub(crate) fn empty_params() -> SelectionViewParams {
         view_id: Some(WORKTREE_SELECTION_VIEW_ID),
         header: Box::new(header),
         footer_hint: Some(standard_popup_hint_line()),
-        items: vec![SelectionItem {
-            name: "No worktrees found for this repository.".to_string(),
-            description: Some("Use /worktree new <branch> to create one.".to_string()),
-            is_disabled: true,
-            ..Default::default()
-        }],
+        items: vec![new_worktree_item()],
         ..Default::default()
     }
 }
@@ -338,48 +360,46 @@ pub(crate) fn error_with_summary_params(summary: String, error: String) -> Selec
 }
 
 pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> SelectionViewParams {
-    let items = entries
-        .into_iter()
-        .map(|entry| {
-            let target = entry.branch.clone().unwrap_or_else(|| entry.name.clone());
-            let source = source_label(entry.source);
-            let status = if entry.dirty.is_dirty() {
-                "dirty"
-            } else {
-                "clean"
-            };
-            let description = format!("{status} · {source} · {}", entry.workspace_cwd.display());
-            let search_value = Some(format!(
-                "{} {} {} {}",
-                target,
-                entry.name,
-                source,
+    let mut items = vec![new_worktree_item()];
+    items.extend(entries.into_iter().map(|entry| {
+        let target = entry.branch.clone().unwrap_or_else(|| entry.name.clone());
+        let source = source_label(entry.source);
+        let status = if entry.dirty.is_dirty() {
+            "dirty"
+        } else {
+            "clean"
+        };
+        let description = format!("{status} · {source} · {}", entry.workspace_cwd.display());
+        let search_value = Some(format!(
+            "{} {} {} {}",
+            target,
+            entry.name,
+            source,
+            entry.workspace_cwd.display()
+        ));
+        SelectionItem {
+            name: target.clone(),
+            description: Some(description),
+            selected_description: Some(format!(
+                "Fork this chat into {}",
                 entry.workspace_cwd.display()
-            ));
-            SelectionItem {
-                name: target.clone(),
-                description: Some(description),
-                selected_description: Some(format!(
-                    "Fork this chat into {}",
-                    entry.workspace_cwd.display()
-                )),
-                is_current: paths_match(current_cwd, &entry.workspace_cwd),
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::SwitchToWorktree {
-                        target: target.clone(),
-                    });
-                })],
-                dismiss_on_select: true,
-                search_value,
-                ..Default::default()
-            }
-        })
-        .collect::<Vec<_>>();
+            )),
+            is_current: paths_match(current_cwd, &entry.workspace_cwd),
+            actions: vec![Box::new(move |tx| {
+                tx.send(AppEvent::SwitchToWorktree {
+                    target: target.clone(),
+                });
+            })],
+            dismiss_on_select: true,
+            search_value,
+            ..Default::default()
+        }
+    }));
 
     let mut header = ColumnRenderable::new();
     header.push(Line::from("Worktrees".bold()));
     header.push(Line::from(
-        "Select a worktree to fork this chat into that workspace.".dim(),
+        "Create a worktree or fork this chat into an existing workspace.".dim(),
     ));
 
     SelectionViewParams {
@@ -391,6 +411,20 @@ pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> S
         search_placeholder: Some("Search worktrees".to_string()),
         col_width_mode: ColumnWidthMode::AutoAllRows,
         row_display: SelectionRowDisplay::SingleLine,
+        ..Default::default()
+    }
+}
+
+fn new_worktree_item() -> SelectionItem {
+    SelectionItem {
+        name: "New worktree...".to_string(),
+        description: Some("Create a sibling worktree and start this chat there.".to_string()),
+        selected_description: Some("Type the branch name for the new worktree.".to_string()),
+        actions: vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenWorktreeCreatePrompt);
+        })],
+        dismiss_on_select: false,
+        search_value: Some("new worktree create branch".to_string()),
         ..Default::default()
     }
 }
@@ -617,6 +651,47 @@ mod tests {
                 /*width*/ 92
             )
         );
+    }
+
+    #[test]
+    fn worktree_creating_snapshot() {
+        insta::assert_snapshot!(
+            "worktree_creating",
+            render_selection(
+                creating_params(
+                    "fcoury/demo".to_string(),
+                    FrameRequester::test_dummy(),
+                    /*animations_enabled*/ false
+                ),
+                /*width*/ 92
+            )
+        );
+    }
+
+    #[test]
+    fn worktree_empty_snapshot() {
+        insta::assert_snapshot!(
+            "worktree_empty",
+            render_selection(empty_params(), /*width*/ 84)
+        );
+    }
+
+    #[test]
+    fn new_worktree_item_dispatches_create_prompt_event() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let item = new_worktree_item();
+
+        assert!(
+            !item.dismiss_on_select,
+            "picker should stay behind the branch-name prompt"
+        );
+        (item.actions[0])(&tx);
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::OpenWorktreeCreatePrompt)
+        ));
     }
 
     #[test]

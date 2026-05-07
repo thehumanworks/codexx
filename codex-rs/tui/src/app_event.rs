@@ -197,6 +197,9 @@ pub(crate) enum AppEvent {
     /// Open the managed worktree picker.
     OpenWorktreePicker,
 
+    /// Open the prompt for creating a managed worktree.
+    OpenWorktreeCreatePrompt,
+
     /// Result of loading worktrees for the managed worktree picker.
     WorktreesLoaded {
         cwd: PathBuf,
@@ -208,6 +211,12 @@ pub(crate) enum AppEvent {
         branch: String,
         base_ref: Option<String>,
         dirty_policy: Option<DirtyPolicy>,
+    },
+
+    /// Result of creating or reusing a managed worktree.
+    WorktreeCreated {
+        cwd: PathBuf,
+        result: Result<codex_worktree::WorktreeResolution, String>,
     },
 
     /// Switch the TUI into an existing worktree.
@@ -225,6 +234,7 @@ pub(crate) enum AppEvent {
         info: codex_worktree::WorktreeInfo,
         config: Config,
         forked: bool,
+        warnings: Vec<String>,
         result: Result<AppServerStartedThread, String>,
     },
 

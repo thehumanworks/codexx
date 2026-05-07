@@ -191,6 +191,10 @@ impl App {
                 self.open_worktree_picker(tui);
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::OpenWorktreeCreatePrompt => {
+                self.open_worktree_create_prompt();
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::WorktreesLoaded { cwd, result } => {
                 self.on_worktrees_loaded(cwd, result);
                 tui.frame_requester().schedule_frame();
@@ -200,8 +204,11 @@ impl App {
                 base_ref,
                 dirty_policy,
             } => {
-                self.create_worktree_and_switch(tui, app_server, branch, base_ref, dirty_policy)
-                    .await;
+                self.create_worktree_and_switch(tui, branch, base_ref, dirty_policy);
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::WorktreeCreated { cwd, result } => {
+                self.on_worktree_created(tui, app_server, cwd, result).await;
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::SwitchToWorktree { target } => {
@@ -217,10 +224,13 @@ impl App {
                 info,
                 config,
                 forked,
+                warnings,
                 result,
             } => {
-                self.on_worktree_session_ready(tui, app_server, info, config, forked, result)
-                    .await;
+                self.on_worktree_session_ready(
+                    tui, app_server, info, config, forked, warnings, result,
+                )
+                .await;
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::ShowWorktreePath { target } => {
