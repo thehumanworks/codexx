@@ -771,6 +771,8 @@ impl MessageProcessor {
         );
 
         let serialization_scope = codex_request.serialization_scope();
+        let serialization_method = codex_request.method();
+        let serialization_request_id = connection_request_id.request_id.to_string();
         let app_server_client_name = session.app_server_client_name().map(str::to_string);
         let client_version = session.client_version().map(str::to_string);
         let device_key_requests_allowed = session.allows_device_key_requests();
@@ -797,7 +799,8 @@ impl MessageProcessor {
                 }
             }
             .instrument(span),
-        );
+        )
+        .with_log_metadata(serialization_method, serialization_request_id);
 
         if let Some(scope) = serialization_scope {
             let (key, access) = RequestSerializationQueueKey::from_scope(connection_id, scope);
