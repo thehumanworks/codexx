@@ -28,6 +28,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_with::DefaultOnError;
+use serde_with::VecSkipError;
 use serde_with::serde_as;
 
 pub use crate::tui_keymap::KeybindingSpec;
@@ -252,12 +253,15 @@ impl ToolSuggestDisabledTool {
     }
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ToolSuggestConfig {
     #[serde(default)]
+    #[serde_as(deserialize_as = "VecSkipError<_>")]
     pub discoverables: Vec<ToolSuggestDiscoverable>,
     #[serde(default)]
+    #[serde_as(deserialize_as = "VecSkipError<_>")]
     pub disabled_tools: Vec<ToolSuggestDisabledTool>,
 }
 

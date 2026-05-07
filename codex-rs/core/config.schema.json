@@ -1960,7 +1960,12 @@
       "additionalProperties": false,
       "properties": {
         "trust_level": {
-          "$ref": "#/definitions/TrustLevel"
+          "allOf": [
+            {
+              "$ref": "#/definitions/TrustLevel"
+            }
+          ],
+          "default": null
         }
       },
       "type": "object"

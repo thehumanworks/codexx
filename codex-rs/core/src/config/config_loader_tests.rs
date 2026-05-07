@@ -23,6 +23,9 @@ use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ProjectConfig;
 use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_requirements_toml;
+use codex_config::types::ToolSuggestDisabledTool;
+use codex_config::types::ToolSuggestDiscoverable;
+use codex_config::types::ToolSuggestDiscoverableType;
 use codex_config::version_for_toml;
 use codex_exec_server::LOCAL_FS;
 use codex_model_provider_info::WireApi;
@@ -234,6 +237,80 @@ protocol = "yaml"
             enum_warnings.into_iter().collect::<BTreeSet<_>>(),
         ),
         (Some(WireApi::Responses), None, None, expected_warnings)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_project_and_tool_suggest_enums_warn_without_poisoning_config() -> anyhow::Result<()>
+{
+    let tmp = tempdir().expect("tempdir");
+    let project_key = "/tmp/codex-invalid-enum-project";
+    let contents = format!(
+        r#"
+[projects."{project_key}"]
+trust_level = "semi-trusted"
+
+[tool_suggest]
+discoverables = [
+  {{ type = "plugin", id = "plugin_alpha@openai-curated" }},
+  {{ type = "spaceship", id = "bad_plugin" }},
+]
+disabled_tools = [
+  {{ type = "connector", id = "connector_calendar" }},
+  {{ type = "spaceship", id = "bad_connector" }},
+]
+"#
+    );
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        tmp.path(),
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides::default(),
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+    )
+    .await?;
+
+    let (_effective_config, config_toml, enum_warnings) =
+        layers.deserialize_effective_config_with_warnings()?;
+    let projects = config_toml.projects.expect("projects should deserialize");
+    let tool_suggest = config_toml
+        .tool_suggest
+        .expect("tool_suggest should deserialize");
+    let expected_warnings = BTreeSet::from([
+        format!(
+            "Ignoring invalid config value at projects.\"{project_key}\".trust_level: \"semi-trusted\""
+        ),
+        "Ignoring invalid config value at tool_suggest.disabled_tools[1].type: \"spaceship\""
+            .to_string(),
+        "Ignoring invalid config value at tool_suggest.discoverables[1].type: \"spaceship\""
+            .to_string(),
+    ]);
+
+    assert_eq!(
+        (
+            projects
+                .get(project_key)
+                .and_then(|project| project.trust_level),
+            tool_suggest.discoverables,
+            tool_suggest.disabled_tools,
+            enum_warnings.into_iter().collect::<BTreeSet<_>>(),
+        ),
+        (
+            None,
+            vec![ToolSuggestDiscoverable {
+                kind: ToolSuggestDiscoverableType::Plugin,
+                id: "plugin_alpha@openai-curated".to_string(),
+            }],
+            vec![ToolSuggestDisabledTool::connector("connector_calendar")],
+            expected_warnings,
+        )
     );
     Ok(())
 }

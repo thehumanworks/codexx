@@ -559,9 +559,12 @@ impl From<ConfigToml> for UserSavedConfig {
     }
 }
 
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ProjectConfig {
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub trust_level: Option<TrustLevel>,
 }
 
