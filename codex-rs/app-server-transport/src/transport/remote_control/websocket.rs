@@ -1,4 +1,5 @@
 use crate::transport::TransportEvent;
+use crate::transport::remote_control::client_tracker::ClientMessageOutcome;
 use crate::transport::remote_control::client_tracker::ClientTracker;
 use crate::transport::remote_control::client_tracker::REMOTE_CONTROL_IDLE_SWEEP_INTERVAL;
 use crate::transport::remote_control::enroll::RemoteControlConnectionAuth;
@@ -140,12 +141,16 @@ impl WebsocketState {
     ) -> ClientSegmentObservation {
         let client_message_key = Self::client_message_key(&client_envelope);
         if let Some((key, seq_id)) = client_message_key.as_ref()
-            && self
-                .last_completed_client_chunk_seq_id_by_stream
-                .get(key)
-                .is_some_and(|last_seq_id| last_seq_id >= seq_id)
+            && let Some(last_seq_id) = self.last_completed_client_chunk_seq_id_by_stream.get(key)
         {
-            return ClientSegmentObservation::Dropped;
+            if last_seq_id >= seq_id {
+                return ClientSegmentObservation::Dropped;
+            }
+            if *seq_id > last_seq_id.saturating_add(1)
+                && let Some(stream_id) = client_envelope.stream_id.clone()
+            {
+                return ClientSegmentObservation::ResetStream(client_envelope.client_id, stream_id);
+            }
         }
         if let (
             Some((_, seq_id)),
@@ -190,11 +195,6 @@ impl WebsocketState {
             .remove(&(client_id.clone(), Some(stream_id.clone())));
     }
 
-    fn invalidate_client_message_client(&mut self, client_id: &ClientId) {
-        self.last_completed_client_chunk_seq_id_by_stream
-            .retain(|(cursor_client_id, _), _| cursor_client_id != client_id);
-    }
-
     fn client_message_key(
         client_envelope: &ClientEnvelope,
     ) -> Option<((ClientId, Option<StreamId>), u64)> {
@@ -209,6 +209,32 @@ impl WebsocketState {
             ),
             seq_id,
         ))
+    }
+
+    fn stage_server_envelopes(
+        &mut self,
+        seq_key: (ClientId, StreamId),
+        seq_id: u64,
+        server_envelopes: Vec<ServerEnvelope>,
+    ) -> Option<Vec<String>> {
+        let payloads = match server_envelopes
+            .iter()
+            .map(serde_json::to_string)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(payloads) if !payloads.is_empty() => payloads,
+            Ok(_) => return None,
+            Err(err) => {
+                error!("failed to serialize remote-control server event: {err}");
+                return None;
+            }
+        };
+        for server_envelope in &server_envelopes {
+            self.outbound_buffer.insert(server_envelope);
+        }
+        self.next_seq_id_by_stream
+            .insert(seq_key, seq_id.saturating_add(1));
+        Some(payloads)
     }
 }
 
@@ -680,21 +706,11 @@ impl RemoteControlWebsocket {
                         continue;
                     }
                 };
-                let mut payloads = Vec::with_capacity(server_envelopes.len());
-                for server_envelope in server_envelopes {
-                    let payload = match serde_json::to_string(&server_envelope) {
-                        Ok(payload) => payload,
-                        Err(err) => {
-                            error!("failed to serialize remote-control server event: {err}");
-                            continue;
-                        }
-                    };
-                    state.outbound_buffer.insert(&server_envelope);
-                    payloads.push(payload);
-                }
-                state
-                    .next_seq_id_by_stream
-                    .insert(seq_key, seq_id.saturating_add(1));
+                let Some(payloads) =
+                    state.stage_server_envelopes(seq_key, seq_id, server_envelopes)
+                else {
+                    continue;
+                };
 
                 (payloads, queued_server_envelope.write_complete_tx)
             };
@@ -847,6 +863,21 @@ impl RemoteControlWebsocket {
             let client_envelope = match observation {
                 ClientSegmentObservation::Forward(client_envelope) => *client_envelope,
                 ClientSegmentObservation::Pending | ClientSegmentObservation::Dropped => continue,
+                ClientSegmentObservation::ResetStream(client_id, stream_id) => {
+                    if client_tracker
+                        .close_client(&(client_id.clone(), stream_id.clone()))
+                        .await
+                        .is_err()
+                    {
+                        return Ok(());
+                    }
+                    let mut websocket_state = state.lock().await;
+                    websocket_state
+                        .client_segment_reassembler
+                        .invalidate_stream(&client_id, &stream_id);
+                    websocket_state.invalidate_client_message_stream(&client_id, &stream_id);
+                    continue;
+                }
             };
 
             {
@@ -867,33 +898,16 @@ impl RemoteControlWebsocket {
                 }
             }
 
-            let closed_client =
-                matches!(&client_envelope.event, ClientEvent::ClientClosed).then(|| {
-                    (
-                        client_envelope.client_id.clone(),
-                        client_envelope.stream_id.clone(),
-                    )
-                });
-            if client_tracker
-                .handle_message(client_envelope)
-                .await
-                .is_err()
-            {
-                return Ok(());
-            }
-            if let Some((client_id, stream_id)) = closed_client {
+            let outcome = match client_tracker.handle_message(client_envelope).await {
+                Ok(outcome) => outcome,
+                Err(_) => return Ok(()),
+            };
+            if let ClientMessageOutcome::StreamClosed(client_id, stream_id) = outcome {
                 let mut websocket_state = state.lock().await;
-                if let Some(stream_id) = stream_id {
-                    websocket_state
-                        .client_segment_reassembler
-                        .invalidate_stream(&client_id, &stream_id);
-                    websocket_state.invalidate_client_message_stream(&client_id, &stream_id);
-                } else {
-                    websocket_state
-                        .client_segment_reassembler
-                        .invalidate_client(&client_id);
-                    websocket_state.invalidate_client_message_client(&client_id);
-                }
+                websocket_state
+                    .client_segment_reassembler
+                    .invalidate_stream(&client_id, &stream_id);
+                websocket_state.invalidate_client_message_stream(&client_id, &stream_id);
             }
         }
     }
@@ -1877,6 +1891,29 @@ mod tests {
             .expect("writer should stop cleanly");
     }
 
+    #[test]
+    fn websocket_state_does_not_consume_seq_id_without_wire_payloads() {
+        let (outbound_buffer, _used_rx) = BoundedOutboundBuffer::new();
+        let mut state = WebsocketState {
+            outbound_buffer,
+            subscribe_cursor: None,
+            next_seq_id_by_stream: HashMap::new(),
+            last_completed_client_chunk_seq_id_by_stream: HashMap::new(),
+            client_segment_reassembler: ClientSegmentReassembler::default(),
+        };
+        let seq_key = (
+            ClientId("client-1".to_string()),
+            StreamId("stream-1".to_string()),
+        );
+
+        assert_eq!(
+            state.stage_server_envelopes(seq_key.clone(), /*seq_id*/ 1, Vec::new()),
+            None
+        );
+        assert_eq!(state.next_seq_id_by_stream.get(&seq_key), None);
+        assert_eq!(state.outbound_buffer.server_envelopes().count(), 0);
+    }
+
     #[tokio::test]
     async fn run_websocket_reader_inner_times_out_without_pong_frames() {
         let (client_stream, _server_stream) = connected_websocket_pair().await;
@@ -2150,7 +2187,7 @@ mod tests {
     }
 
     #[test]
-    fn websocket_state_allows_replay_after_rejected_out_of_order_chunk() {
+    fn websocket_state_resets_stream_after_segment_gap() {
         let (outbound_buffer, _used_rx) = BoundedOutboundBuffer::new();
         let mut state = WebsocketState {
             outbound_buffer,
@@ -2159,10 +2196,6 @@ mod tests {
             last_completed_client_chunk_seq_id_by_stream: HashMap::new(),
             client_segment_reassembler: ClientSegmentReassembler::default(),
         };
-        let first_chunk = client_chunk_envelope(
-            "client-1", "stream-1", /*seq_id*/ 4, /*segment_id*/ 0,
-            /*segment_count*/ 2, /*message_size_bytes*/ 2, b"x",
-        );
         let second_chunk = client_chunk_envelope(
             "client-1", "stream-1", /*seq_id*/ 4, /*segment_id*/ 1,
             /*segment_count*/ 2, /*message_size_bytes*/ 2, b"y",
@@ -2170,11 +2203,36 @@ mod tests {
 
         assert!(matches!(
             observe_client_message(&mut state, second_chunk),
-            ClientSegmentObservation::Dropped
+            ClientSegmentObservation::ResetStream(_, _)
         ));
+    }
+
+    #[test]
+    fn websocket_state_resets_stream_after_client_chunk_seq_gap() {
+        let (outbound_buffer, _used_rx) = BoundedOutboundBuffer::new();
+        let mut state = WebsocketState {
+            outbound_buffer,
+            subscribe_cursor: None,
+            next_seq_id_by_stream: HashMap::new(),
+            last_completed_client_chunk_seq_id_by_stream: HashMap::from([(
+                (
+                    ClientId("client-1".to_string()),
+                    Some(StreamId("stream-1".to_string())),
+                ),
+                4,
+            )]),
+            client_segment_reassembler: ClientSegmentReassembler::default(),
+        };
+
         assert!(matches!(
-            observe_client_message(&mut state, first_chunk),
-            ClientSegmentObservation::Pending
+            observe_client_message(
+                &mut state,
+                client_chunk_envelope(
+                    "client-1", "stream-1", /*seq_id*/ 6, /*segment_id*/ 0,
+                    /*segment_count*/ 2, /*message_size_bytes*/ 2, b"x",
+                )
+            ),
+            ClientSegmentObservation::ResetStream(_, _)
         ));
     }
 

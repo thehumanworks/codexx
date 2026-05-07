@@ -50,7 +50,9 @@ fn reassembles_client_message_chunks() {
         &raw[split..],
     )) {
         ClientSegmentObservation::Forward(reassembled) => *reassembled,
-        ClientSegmentObservation::Pending | ClientSegmentObservation::Dropped => {
+        ClientSegmentObservation::Pending
+        | ClientSegmentObservation::Dropped
+        | ClientSegmentObservation::ResetStream(_, _) => {
             panic!("message should reassemble")
         }
     };
@@ -139,7 +141,46 @@ fn invalidates_incomplete_stream_assemblies() {
             raw.len(),
             &raw[split..],
         )),
-        ClientSegmentObservation::Dropped
+        ClientSegmentObservation::ResetStream(_, _)
+    ));
+}
+
+#[test]
+fn resets_stream_after_segment_gap() {
+    let message = JSONRPCMessage::Notification(JSONRPCNotification {
+        method: "initialized".to_string(),
+        params: None,
+    });
+    let raw = serde_json::to_vec(&message).expect("message should serialize");
+    let split = raw.len() / 2;
+    let client_id = ClientId("client-1".to_string());
+    let stream_id = StreamId("stream-1".to_string());
+    let mut reassembler = ClientSegmentReassembler::default();
+
+    assert!(matches!(
+        reassembler.observe(chunk_envelope(
+            client_id.clone(),
+            Some(stream_id.clone()),
+            /*seq_id*/ 7,
+            /*segment_id*/ 0,
+            /*segment_count*/ 3,
+            raw.len(),
+            &raw[..split],
+        )),
+        ClientSegmentObservation::Pending
+    ));
+    assert!(matches!(
+        reassembler.observe(chunk_envelope(
+            client_id.clone(),
+            Some(stream_id.clone()),
+            /*seq_id*/ 7,
+            /*segment_id*/ 2,
+            /*segment_count*/ 3,
+            raw.len(),
+            &raw[split..],
+        )),
+        ClientSegmentObservation::ResetStream(reset_client_id, reset_stream_id)
+            if reset_client_id == client_id && reset_stream_id == stream_id
     ));
 }
 
@@ -190,7 +231,9 @@ fn resets_incomplete_client_assembly_when_stream_changes() {
         &raw[split..],
     )) {
         ClientSegmentObservation::Forward(reassembled) => *reassembled,
-        ClientSegmentObservation::Pending | ClientSegmentObservation::Dropped => {
+        ClientSegmentObservation::Pending
+        | ClientSegmentObservation::Dropped
+        | ClientSegmentObservation::ResetStream(_, _) => {
             panic!("replacement stream should reassemble")
         }
     };
@@ -208,7 +251,7 @@ fn resets_incomplete_client_assembly_when_stream_changes() {
             raw.len(),
             &raw[split..],
         )),
-        ClientSegmentObservation::Dropped
+        ClientSegmentObservation::ResetStream(_, _)
     ));
 }
 

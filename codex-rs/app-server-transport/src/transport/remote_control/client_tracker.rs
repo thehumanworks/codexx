@@ -26,6 +26,11 @@ pub(crate) const REMOTE_CONTROL_IDLE_SWEEP_INTERVAL: Duration = Duration::from_s
 #[derive(Debug)]
 pub(crate) struct Stopped;
 
+pub(crate) enum ClientMessageOutcome {
+    Handled,
+    StreamClosed(ClientId, StreamId),
+}
+
 struct ClientState {
     connection_id: ConnectionId,
     disconnect_token: CancellationToken,
@@ -86,7 +91,7 @@ impl ClientTracker {
     pub(crate) async fn handle_message(
         &mut self,
         client_envelope: ClientEnvelope,
-    ) -> Result<(), Stopped> {
+    ) -> Result<ClientMessageOutcome, Stopped> {
         let ClientEnvelope {
             client_id,
             event,
@@ -117,19 +122,28 @@ impl ClientTracker {
                 }),
         };
         if stream_id.0.is_empty() {
-            return Ok(());
+            return Ok(ClientMessageOutcome::Handled);
         }
         let client_key = (client_id.clone(), stream_id.clone());
         match event {
             ClientEvent::ClientMessage { message } => {
                 if let Some(seq_id) = seq_id
                     && let Some(client) = self.clients.get(&client_key)
-                    && client
-                        .last_inbound_seq_id
-                        .is_some_and(|last_seq_id| last_seq_id >= seq_id)
                     && !is_initialize
                 {
-                    return Ok(());
+                    if client
+                        .last_inbound_seq_id
+                        .is_some_and(|last_seq_id| last_seq_id >= seq_id)
+                    {
+                        return Ok(ClientMessageOutcome::Handled);
+                    }
+                    if client
+                        .last_inbound_seq_id
+                        .is_some_and(|last_seq_id| seq_id > last_seq_id.saturating_add(1))
+                    {
+                        self.close_client(&client_key).await?;
+                        return Ok(ClientMessageOutcome::StreamClosed(client_id, stream_id));
+                    }
                 }
 
                 if is_initialize && self.clients.contains_key(&client_key) {
@@ -148,11 +162,11 @@ impl ClientTracker {
                         message,
                     })
                     .await?;
-                    return Ok(());
+                    return Ok(ClientMessageOutcome::Handled);
                 }
 
                 if !is_initialize {
-                    return Ok(());
+                    return Ok(ClientMessageOutcome::Handled);
                 }
 
                 let connection_id = next_connection_id();
@@ -193,14 +207,17 @@ impl ClientTracker {
                     connection_id,
                     message,
                 })
-                .await
+                .await?;
+                Ok(ClientMessageOutcome::Handled)
             }
-            ClientEvent::ClientMessageChunk { .. } | ClientEvent::Ack { .. } => Ok(()),
+            ClientEvent::ClientMessageChunk { .. } | ClientEvent::Ack { .. } => {
+                Ok(ClientMessageOutcome::Handled)
+            }
             ClientEvent::Ping => {
                 if let Some(client) = self.clients.get_mut(&client_key) {
                     client.last_activity_at = Instant::now();
                     let _ = client.status_tx.send(PongStatus::Active);
-                    return Ok(());
+                    return Ok(ClientMessageOutcome::Handled);
                 }
 
                 let server_event_tx = self.server_event_tx.clone();
@@ -215,9 +232,12 @@ impl ClientTracker {
                     };
                     let _ = server_event_tx.send(server_envelope).await;
                 });
-                Ok(())
+                Ok(ClientMessageOutcome::Handled)
             }
-            ClientEvent::ClientClosed => self.close_client(&client_key).await,
+            ClientEvent::ClientClosed => {
+                self.close_client(&client_key).await?;
+                Ok(ClientMessageOutcome::StreamClosed(client_id, stream_id))
+            }
         }
     }
 
@@ -521,6 +541,59 @@ mod tests {
         };
 
         assert_ne!(first_connection_id, second_connection_id);
+    }
+
+    #[tokio::test]
+    async fn client_message_seq_gap_closes_only_affected_stream() {
+        let (server_event_tx, _server_event_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let (transport_event_tx, mut transport_event_rx) = mpsc::channel(CHANNEL_CAPACITY);
+        let shutdown_token = CancellationToken::new();
+        let mut client_tracker =
+            ClientTracker::new(server_event_tx, transport_event_tx, &shutdown_token);
+
+        for stream_id in ["stream-1", "stream-2"] {
+            client_tracker
+                .handle_message(initialize_envelope_with_stream_id(
+                    "client-1",
+                    Some(stream_id),
+                ))
+                .await
+                .expect("initialize should open client");
+            let _ = transport_event_rx.recv().await.expect("open event");
+            let _ = transport_event_rx.recv().await.expect("initialize event");
+        }
+
+        let outcome = client_tracker
+            .handle_message(ClientEnvelope {
+                event: ClientEvent::ClientMessage {
+                    message: JSONRPCMessage::Notification(
+                        codex_app_server_protocol::JSONRPCNotification {
+                            method: "initialized".to_string(),
+                            params: None,
+                        },
+                    ),
+                },
+                client_id: ClientId("client-1".to_string()),
+                stream_id: Some(StreamId("stream-1".to_string())),
+                seq_id: Some(2),
+                cursor: None,
+            })
+            .await
+            .expect("gap should be handled");
+        assert!(matches!(
+            outcome,
+            ClientMessageOutcome::StreamClosed(client_id, stream_id)
+                if client_id == ClientId("client-1".to_string())
+                    && stream_id == StreamId("stream-1".to_string())
+        ));
+        assert!(client_tracker.clients.contains_key(&(
+            ClientId("client-1".to_string()),
+            StreamId("stream-2".to_string()),
+        )));
+        match transport_event_rx.recv().await.expect("close event") {
+            TransportEvent::ConnectionClosed { .. } => {}
+            other => panic!("expected connection closed, got {other:?}"),
+        }
     }
 
     #[tokio::test]

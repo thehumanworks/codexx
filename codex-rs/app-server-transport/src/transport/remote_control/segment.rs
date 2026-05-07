@@ -45,6 +45,7 @@ pub(super) enum ClientSegmentObservation {
     Forward(Box<ClientEnvelope>),
     Pending,
     Dropped,
+    ResetStream(ClientId, StreamId),
 }
 
 impl ClientSegmentReassembler {
@@ -148,9 +149,9 @@ impl ClientSegmentReassembler {
             } else if segment_id != assembly.next_segment_id {
                 warn!(
                     client_id = envelope.client_id.0.as_str(),
-                    "dropping out-of-order segmented remote-control client envelope"
+                    "resetting segmented remote-control client stream after segment gap"
                 );
-                AssemblyUpdate::Drop
+                AssemblyUpdate::ResetStream
             } else {
                 assembly.last_chunk_seen_at = now;
                 let chunk_start = assembly.raw.len();
@@ -213,6 +214,10 @@ impl ClientSegmentReassembler {
                 self.remove_assembly(&envelope.client_id, &stream_id);
                 ClientSegmentObservation::Dropped
             }
+            AssemblyUpdate::ResetStream => {
+                self.remove_assembly(&envelope.client_id, &stream_id);
+                ClientSegmentObservation::ResetStream(envelope.client_id, stream_id)
+            }
             AssemblyUpdate::Complete(message) => {
                 self.remove_assembly(&envelope.client_id, &stream_id);
                 ClientSegmentObservation::Forward(Box::new(ClientEnvelope {
@@ -225,10 +230,6 @@ impl ClientSegmentReassembler {
 
     pub(super) fn invalidate_stream(&mut self, client_id: &ClientId, stream_id: &StreamId) {
         self.remove_assembly(client_id, stream_id);
-    }
-
-    pub(super) fn invalidate_client(&mut self, client_id: &ClientId) {
-        self.assemblies.remove(client_id);
     }
 
     pub(super) fn should_ignore_chunk(
@@ -275,6 +276,7 @@ enum AssemblyUpdate {
     Pending,
     Ignore,
     Drop,
+    ResetStream,
     Complete(JSONRPCMessage),
 }
 

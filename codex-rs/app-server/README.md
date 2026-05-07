@@ -64,6 +64,11 @@ Backpressure behavior:
 - When request ingress is saturated, new requests are rejected with a JSON-RPC error code `-32001` and message `"Server overloaded; retry later."`.
 - Clients should treat this as retryable and use exponential backoff with jitter.
 
+Remote-control stream recovery:
+
+- Remote-control envelopes use contiguous `seq_id` values per `(client_id, stream_id)` on the wire.
+- An inbound `seq_id` gap or segmented-message `segment_id` gap closes the affected remote-control stream. Clients should reconnect and initialize a fresh stream after either gap.
+
 ## Message Schema
 
 Currently, you can dump a TypeScript version of the schema using `codex app-server generate-ts`, or a JSON Schema bundle via `codex app-server generate-json-schema`. Each output is specific to the version of Codex you used to run the command, so the generated artifacts are guaranteed to match that version.
