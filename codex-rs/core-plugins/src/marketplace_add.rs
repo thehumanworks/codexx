@@ -1,5 +1,6 @@
 use crate::OPENAI_CURATED_MARKETPLACE_NAME;
 use crate::installed_marketplaces::marketplace_install_root;
+use codex_config::ConfigLayerStack;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use std::fs;
 use std::path::Path;
@@ -54,6 +55,25 @@ pub async fn add_marketplace(
     tokio::task::spawn_blocking(move || add_marketplace_sync(codex_home.as_path(), request))
         .await
         .map_err(|err| MarketplaceAddError::Internal(format!("failed to add marketplace: {err}")))?
+}
+
+pub async fn add_marketplace_for_config(
+    config_layer_stack: &ConfigLayerStack,
+    codex_home: PathBuf,
+    request: MarketplaceAddRequest,
+) -> Result<MarketplaceAddOutcome, MarketplaceAddError> {
+    if !config_layer_stack
+        .requirements()
+        .plugin_marketplaces
+        .as_ref()
+        .is_none_or(|requirements| requirements.value.allows_user_additions())
+    {
+        return Err(MarketplaceAddError::InvalidRequest(
+            "marketplace additions are disabled by managed requirements".to_string(),
+        ));
+    }
+
+    add_marketplace(codex_home, request).await
 }
 
 pub fn is_local_marketplace_source(
@@ -213,6 +233,13 @@ where
 mod tests {
     use super::*;
     use anyhow::Result;
+    use codex_app_server_protocol::ConfigLayerSource;
+    use codex_config::ConfigLayerEntry;
+    use codex_config::ConfigRequirements;
+    use codex_config::ConfigRequirementsToml;
+    use codex_config::PluginMarketplaceRequirementsToml;
+    use codex_config::RequirementSource;
+    use codex_config::Sourced;
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
@@ -250,6 +277,48 @@ mod tests {
         assert!(config.contains("[marketplaces.debug]"));
         assert!(config.contains("source_type = \"git\""));
         assert!(config.contains("source = \"https://github.com/owner/repo.git\""));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn add_marketplace_for_config_rejects_managed_user_addition_block() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let config_path = AbsolutePathBuf::try_from(tmp.path().join("config.toml"))?;
+        let config_layer_stack = ConfigLayerStack::new(
+            vec![ConfigLayerEntry::new(
+                ConfigLayerSource::User { file: config_path },
+                toml::Value::Table(toml::map::Map::new()),
+            )],
+            ConfigRequirements {
+                plugin_marketplaces: Some(Sourced::new(
+                    PluginMarketplaceRequirementsToml {
+                        allowed_names: None,
+                        allow_user_additions: Some(false),
+                    },
+                    RequirementSource::Unknown,
+                )),
+                ..Default::default()
+            },
+            ConfigRequirementsToml::default(),
+        )?;
+
+        let err = add_marketplace_for_config(
+            &config_layer_stack,
+            tmp.path().to_path_buf(),
+            MarketplaceAddRequest {
+                source: "owner/repo".to_string(),
+                ref_name: None,
+                sparse_paths: Vec::new(),
+            },
+        )
+        .await
+        .expect_err("managed requirements should block user marketplace additions");
+
+        assert!(matches!(
+            err,
+            MarketplaceAddError::InvalidRequest(ref message)
+                if message == "marketplace additions are disabled by managed requirements"
+        ));
         Ok(())
     }
 

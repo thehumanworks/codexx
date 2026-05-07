@@ -6,7 +6,7 @@ use codex_core_plugins::PluginsManager;
 use codex_core_plugins::marketplace::MarketplacePluginInstallPolicy;
 use codex_core_plugins::marketplace::find_marketplace_manifest_path;
 use codex_core_plugins::marketplace_add::MarketplaceAddRequest;
-use codex_core_plugins::marketplace_add::add_marketplace;
+use codex_core_plugins::marketplace_add::add_marketplace_for_config;
 use codex_core_plugins::marketplace_add::is_local_marketplace_source;
 use codex_external_agent_migration::build_mcp_config_from_external;
 use codex_external_agent_migration::count_missing_commands;
@@ -701,6 +701,35 @@ impl ExternalAgentConfigService {
         };
         let mut outcome = PluginImportOutcome::default();
         let plugins_manager = PluginsManager::new(self.codex_home.clone());
+        let config = ConfigBuilder::default()
+            .codex_home(self.codex_home.clone())
+            .fallback_cwd(Some(self.codex_home.clone()))
+            .build()
+            .await
+            .map_err(|err| {
+                invalid_data_error(format!("failed to load config before plugin import: {err}"))
+            })?;
+        let plugin_marketplace_requirements = config
+            .config_layer_stack
+            .requirements()
+            .plugin_marketplaces
+            .as_ref();
+        if plugin_marketplace_requirements
+            .is_some_and(|requirements| !requirements.value.allows_user_additions())
+        {
+            for plugin_group in plugins {
+                let marketplace_name = plugin_group.marketplace_name;
+                outcome.failed_plugin_ids.extend(
+                    plugin_group
+                        .plugin_names
+                        .into_iter()
+                        .map(|plugin_name| format!("{plugin_name}@{marketplace_name}")),
+                );
+                outcome.failed_marketplaces.push(marketplace_name);
+            }
+            return Ok(outcome);
+        }
+        let plugins_input = config.plugins_config_input();
         for plugin_group in plugins {
             let marketplace_name = plugin_group.marketplace_name.clone();
             let plugin_names = plugin_group.plugin_names;
@@ -708,6 +737,13 @@ impl ExternalAgentConfigService {
                 .iter()
                 .map(|plugin_name| format!("{plugin_name}@{marketplace_name}"))
                 .collect::<Vec<_>>();
+            if plugin_marketplace_requirements.is_some_and(|requirements| {
+                !requirements.value.allows_marketplace(&marketplace_name)
+            }) {
+                outcome.failed_marketplaces.push(marketplace_name);
+                outcome.failed_plugin_ids.extend(plugin_ids);
+                continue;
+            }
             let source_settings = cwd.map_or_else(
                 || self.external_agent_home.join("settings.json"),
                 |cwd| cwd.join(EXTERNAL_AGENT_DIR).join("settings.json"),
@@ -728,7 +764,12 @@ impl ExternalAgentConfigService {
                 ref_name: import_source.ref_name,
                 sparse_paths: Vec::new(),
             };
-            let add_marketplace_outcome = add_marketplace(self.codex_home.clone(), request).await;
+            let add_marketplace_outcome = add_marketplace_for_config(
+                &config.config_layer_stack,
+                self.codex_home.clone(),
+                request,
+            )
+            .await;
             let marketplace_path = match add_marketplace_outcome {
                 Ok(add_marketplace_outcome) => {
                     let Some(marketplace_path) = find_marketplace_manifest_path(
@@ -751,10 +792,13 @@ impl ExternalAgentConfigService {
             };
             for plugin_name in plugin_names {
                 match plugins_manager
-                    .install_plugin(PluginInstallRequest {
-                        plugin_name: plugin_name.clone(),
-                        marketplace_path: marketplace_path.clone(),
-                    })
+                    .install_plugin_for_config(
+                        &plugins_input,
+                        PluginInstallRequest {
+                            plugin_name: plugin_name.clone(),
+                            marketplace_path: marketplace_path.clone(),
+                        },
+                    )
                     .await
                 {
                     Ok(_) => outcome

@@ -487,6 +487,46 @@ async fn plugin_skill_read_reads_remote_skill_contents_when_remote_plugin_enable
   "plugin_release_skill_id": "skill-1",
   "skill_md_contents": "# Plan Work\n\nUse Linear issues to create a plan."
 }"##;
+    let detail_body = r#"{
+  "id": "plugins~Plugin_00000000000000000000000000000000",
+  "name": "linear",
+  "scope": "GLOBAL",
+  "installation_policy": "AVAILABLE",
+  "authentication_policy": "ON_USE",
+  "release": {
+    "display_name": "Linear",
+    "description": "Track work in Linear",
+    "app_ids": [],
+    "keywords": [],
+    "interface": {},
+    "skills": []
+  }
+}"#;
+    let installed_body = r#"{
+  "plugins": [],
+  "pagination": {
+    "limit": 50,
+    "next_page_token": null
+  }
+}"#;
+
+    Mock::given(method("GET"))
+        .and(path(
+            "/backend-api/ps/plugins/plugins~Plugin_00000000000000000000000000000000",
+        ))
+        .and(header("authorization", "Bearer chatgpt-token"))
+        .and(header("chatgpt-account-id", "account-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(detail_body))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/backend-api/ps/plugins/installed"))
+        .and(query_param("scope", "GLOBAL"))
+        .and(header("authorization", "Bearer chatgpt-token"))
+        .and(header("chatgpt-account-id", "account-123"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(installed_body))
+        .mount(&server)
+        .await;
 
     Mock::given(method("GET"))
         .and(path(

@@ -299,7 +299,7 @@ use codex_core_plugins::marketplace::MarketplaceError;
 use codex_core_plugins::marketplace::MarketplacePluginSource;
 use codex_core_plugins::marketplace_add::MarketplaceAddError;
 use codex_core_plugins::marketplace_add::MarketplaceAddRequest;
-use codex_core_plugins::marketplace_add::add_marketplace as add_marketplace_to_codex_home;
+use codex_core_plugins::marketplace_add::add_marketplace_for_config as add_marketplace_to_codex_home;
 use codex_core_plugins::marketplace_remove::MarketplaceRemoveError;
 use codex_core_plugins::marketplace_remove::MarketplaceRemoveRequest as CoreMarketplaceRemoveRequest;
 use codex_core_plugins::marketplace_remove::remove_marketplace;

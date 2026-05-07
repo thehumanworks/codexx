@@ -175,6 +175,15 @@ fn plugin_share_principal_from_remote(
     }
 }
 
+fn remote_marketplace_is_allowed(config: &Config, marketplace_name: &str) -> bool {
+    config
+        .config_layer_stack
+        .requirements()
+        .plugin_marketplaces
+        .as_ref()
+        .is_none_or(|requirements| requirements.value.allows_marketplace(marketplace_name))
+}
+
 impl PluginRequestProcessor {
     pub(crate) fn new(
         auth_manager: Arc<AuthManager>,
@@ -485,6 +494,9 @@ impl PluginRequestProcessor {
                 Ok(remote_marketplaces) => {
                     for remote_marketplace in remote_marketplaces
                         .into_iter()
+                        .filter(|marketplace| {
+                            remote_marketplace_is_allowed(&config, &marketplace.name)
+                        })
                         .map(remote_marketplace_to_info)
                     {
                         if let Some(existing) = data
@@ -620,6 +632,11 @@ impl PluginRequestProcessor {
                 }
             }
             Err(remote_marketplace_name) => {
+                if !remote_marketplace_is_allowed(&config, &remote_marketplace_name) {
+                    return Err(invalid_request(format!(
+                        "remote marketplace {remote_marketplace_name} is not allowed by managed requirements"
+                    )));
+                }
                 if !config.features.enabled(Feature::Plugins) {
                     return Err(invalid_request(format!(
                         "remote plugin read is not enabled for marketplace {remote_marketplace_name}"
@@ -640,6 +657,12 @@ impl PluginRequestProcessor {
                 .map_err(|err| {
                     remote_plugin_catalog_error_to_jsonrpc(err, "read remote plugin details")
                 })?;
+                if !remote_marketplace_is_allowed(&config, &remote_detail.marketplace_name) {
+                    return Err(invalid_request(format!(
+                        "remote marketplace {} is not allowed by managed requirements",
+                        remote_detail.marketplace_name
+                    )));
+                }
                 let plugin_apps = remote_detail
                     .app_ids
                     .iter()
@@ -667,6 +690,11 @@ impl PluginRequestProcessor {
         } = params;
 
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        if !remote_marketplace_is_allowed(&config, &remote_marketplace_name) {
+            return Err(invalid_request(format!(
+                "remote marketplace {remote_marketplace_name} is not allowed by managed requirements"
+            )));
+        }
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request(format!(
                 "remote plugin skill read is not enabled for marketplace {remote_marketplace_name}"
@@ -683,6 +711,20 @@ impl PluginRequestProcessor {
         let remote_plugin_service_config = RemotePluginServiceConfig {
             chatgpt_base_url: config.chatgpt_base_url.clone(),
         };
+        let remote_detail = codex_core_plugins::remote::fetch_remote_plugin_detail(
+            &remote_plugin_service_config,
+            auth.as_ref(),
+            &remote_marketplace_name,
+            &remote_plugin_id,
+        )
+        .await
+        .map_err(|err| remote_plugin_catalog_error_to_jsonrpc(err, "read remote plugin details"))?;
+        if !remote_marketplace_is_allowed(&config, &remote_detail.marketplace_name) {
+            return Err(invalid_request(format!(
+                "remote marketplace {} is not allowed by managed requirements",
+                remote_detail.marketplace_name
+            )));
+        }
         let remote_skill_detail = codex_core_plugins::remote::fetch_remote_plugin_skill_detail(
             &remote_plugin_service_config,
             auth.as_ref(),
@@ -888,13 +930,14 @@ impl PluginRequestProcessor {
         }
 
         let plugins_manager = self.thread_manager.plugins_manager();
+        let plugins_input = config.plugins_config_input();
         let request = PluginInstallRequest {
             plugin_name,
             marketplace_path,
         };
 
         let result = plugins_manager
-            .install_plugin(request)
+            .install_plugin_for_config(&plugins_input, request)
             .await
             .map_err(Self::plugin_install_error)?;
         let config = match self.load_latest_config(config_cwd).await {
@@ -938,6 +981,11 @@ impl PluginRequestProcessor {
         remote_plugin_id: String,
     ) -> Result<PluginInstallResponse, JSONRPCErrorError> {
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        if !remote_marketplace_is_allowed(&config, &remote_marketplace_name) {
+            return Err(invalid_request(format!(
+                "remote marketplace {remote_marketplace_name} is not allowed by managed requirements"
+            )));
+        }
         if !config.features.enabled(Feature::Plugins) {
             return Err(invalid_request(format!(
                 "remote plugin install is not enabled for marketplace {remote_marketplace_name}"
@@ -963,6 +1011,12 @@ impl PluginRequestProcessor {
                     "read remote plugin details before install",
                 )
             })?;
+        if !remote_marketplace_is_allowed(&config, &remote_detail.marketplace_name) {
+            return Err(invalid_request(format!(
+                "remote marketplace {} is not allowed by managed requirements",
+                remote_detail.marketplace_name
+            )));
+        }
         if remote_detail.summary.availability == PluginAvailability::DisabledByAdmin {
             let remote_plugin_id = &remote_detail.summary.id;
             return Err(invalid_request(format!(
