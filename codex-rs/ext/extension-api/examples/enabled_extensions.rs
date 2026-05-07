@@ -38,7 +38,7 @@ fn main() {
 
     // Build the prompt
     let prompt_fragments = registry
-        .prompt_contributors()
+        .context_contributors()
         .iter()
         .flat_map(|contributor| contributor.contribute(&root_context))
         .collect::<Vec<_>>();

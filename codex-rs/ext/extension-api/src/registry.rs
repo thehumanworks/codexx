@@ -91,7 +91,7 @@ impl<C> ExtensionRegistryBuilder<C> {
     pub fn build(self) -> ExtensionRegistry<C> {
         ExtensionRegistry {
             approval_interceptor_contributors: self.approval_interceptor_contributors,
-            prompt_contributors: self.context_contributors,
+            context_contributors: self.context_contributors,
             tool_contributors: self.tool_contributors,
             output_contributors: self.output_contributors,
         }
@@ -100,10 +100,10 @@ impl<C> ExtensionRegistryBuilder<C> {
 
 /// Immutable typed registry produced after extensions are installed.
 pub struct ExtensionRegistry<C> {
-    approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
-    prompt_contributors: Vec<Arc<dyn ContextContributor<C>>>,
+    context_contributors: Vec<Arc<dyn ContextContributor<C>>>,
     tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
     output_contributors: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
 }
 
 impl<C> ExtensionRegistry<C> {
@@ -115,8 +115,8 @@ impl<C> ExtensionRegistry<C> {
     }
 
     /// Returns the registered prompt contributors.
-    pub fn prompt_contributors(&self) -> &[Arc<dyn ContextContributor<C>>] {
-        &self.prompt_contributors
+    pub fn context_contributors(&self) -> &[Arc<dyn ContextContributor<C>>] {
+        &self.context_contributors
     }
 
     /// Returns the registered native tool contributors.
