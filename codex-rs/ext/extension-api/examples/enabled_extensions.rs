@@ -1,13 +1,10 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
 
 use codex_extension_api::CodexExtension;
 use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionRegistryBuilder;
-use codex_extension_api::PromptFragment;
-use codex_extension_api::Stores;
 use codex_extension_api::scopes::Thread;
 use codex_extension_api::scopes::Turn;
 use codex_git_attribution as git_attribution;
