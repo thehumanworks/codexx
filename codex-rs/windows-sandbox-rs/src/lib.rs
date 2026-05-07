@@ -562,7 +562,7 @@ mod windows_impl {
             &current_dir,
             env_map,
             &[],
-            None,
+            /*readonly_sid*/ None,
             &write_root_sids,
             /*persist_aces*/ true,
         );

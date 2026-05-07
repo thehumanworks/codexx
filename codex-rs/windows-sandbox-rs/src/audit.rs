@@ -256,7 +256,14 @@ pub fn apply_capability_denies_for_world_writable(
     let (active_sids, workspace_roots): (Vec<LocalSid>, Vec<PathBuf>) = match sandbox_policy {
         SandboxPolicy::WorkspaceWrite { .. } => {
             let roots =
-                effective_write_roots_for_setup(sandbox_policy, cwd, cwd, env_map, codex_home, None);
+                effective_write_roots_for_setup(
+                    sandbox_policy,
+                    cwd,
+                    cwd,
+                    env_map,
+                    codex_home,
+                    /*write_roots_override*/ None,
+                );
             let active_sids = roots
                 .iter()
                 .map(|root| {
