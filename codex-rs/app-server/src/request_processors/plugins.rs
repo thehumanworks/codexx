@@ -348,6 +348,7 @@ impl PluginRequestProcessor {
         &self,
         params: PluginListParams,
     ) -> Result<PluginListResponse, JSONRPCErrorError> {
+        let request_started_at = Instant::now();
         let plugins_manager = self.thread_manager.plugins_manager();
         let PluginListParams {
             cwds,
@@ -358,35 +359,80 @@ impl PluginRequestProcessor {
         let marketplace_kinds =
             marketplace_kinds.unwrap_or_else(|| vec![PluginListMarketplaceKind::Local]);
         let include_local = marketplace_kinds.contains(&PluginListMarketplaceKind::Local);
+        info!(
+            roots_count = roots.len(),
+            explicit_marketplace_kinds,
+            marketplace_kinds_count = marketplace_kinds.len(),
+            include_local,
+            "plugin/list timing started"
+        );
 
+        let config_started_at = Instant::now();
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+        info!(
+            elapsed_ms = config_started_at.elapsed().as_millis(),
+            plugins_enabled = config.features.enabled(Feature::Plugins),
+            remote_plugins_enabled = config.features.enabled(Feature::RemotePlugin),
+            "plugin/list timing loaded config"
+        );
         let empty_response = || PluginListResponse {
             marketplaces: Vec::new(),
             marketplace_load_errors: Vec::new(),
             featured_plugin_ids: Vec::new(),
         };
         if !config.features.enabled(Feature::Plugins) {
+            info!(
+                elapsed_ms = request_started_at.elapsed().as_millis(),
+                "plugin/list timing completed with plugins disabled"
+            );
             return Ok(empty_response());
         }
+        let auth_started_at = Instant::now();
         let auth = self.auth_manager.auth().await;
-        if !self
+        info!(
+            elapsed_ms = auth_started_at.elapsed().as_millis(),
+            has_auth = auth.is_some(),
+            "plugin/list timing loaded auth"
+        );
+        let workspace_setting_started_at = Instant::now();
+        let workspace_plugins_enabled = self
             .workspace_codex_plugins_enabled(&config, auth.as_ref())
-            .await
-        {
+            .await;
+        info!(
+            elapsed_ms = workspace_setting_started_at.elapsed().as_millis(),
+            workspace_plugins_enabled, "plugin/list timing checked workspace setting"
+        );
+        if !workspace_plugins_enabled {
+            info!(
+                elapsed_ms = request_started_at.elapsed().as_millis(),
+                "plugin/list timing completed with workspace plugins disabled"
+            );
             return Ok(empty_response());
         }
         let plugins_input = config.plugins_config_input();
         let (mut data, marketplace_load_errors) = if include_local {
+            let background_tasks_started_at = Instant::now();
             plugins_manager.maybe_start_plugin_list_background_tasks_for_config(
                 &plugins_input,
                 auth.clone(),
                 &roots,
                 Some(self.effective_plugins_changed_callback()),
             );
+            info!(
+                elapsed_ms = background_tasks_started_at.elapsed().as_millis(),
+                "plugin/list timing started background tasks"
+            );
 
             let config_for_marketplace_listing = plugins_input.clone();
             let plugins_manager_for_marketplace_listing = plugins_manager.clone();
+            let shared_plugin_ids_started_at = Instant::now();
             let shared_plugin_ids_by_local_path = load_shared_plugin_ids_by_local_path(&config);
+            info!(
+                elapsed_ms = shared_plugin_ids_started_at.elapsed().as_millis(),
+                shared_plugin_ids_count = shared_plugin_ids_by_local_path.len(),
+                "plugin/list timing loaded shared plugin ids"
+            );
+            let local_listing_started_at = Instant::now();
             match tokio::task::spawn_blocking(move || {
                 let outcome = plugins_manager_for_marketplace_listing
                     .list_marketplaces_for_config(&config_for_marketplace_listing, &roots)?;
@@ -447,7 +493,21 @@ impl PluginRequestProcessor {
             })
             .await
             {
-                Ok(Ok(outcome)) => outcome,
+                Ok(Ok(outcome)) => {
+                    let plugin_count = outcome
+                        .0
+                        .iter()
+                        .map(|marketplace| marketplace.plugins.len())
+                        .sum::<usize>();
+                    info!(
+                        elapsed_ms = local_listing_started_at.elapsed().as_millis(),
+                        marketplace_count = outcome.0.len(),
+                        plugin_count,
+                        load_error_count = outcome.1.len(),
+                        "plugin/list timing listed local marketplaces"
+                    );
+                    outcome
+                }
                 Ok(Err(err)) => {
                     return Err(Self::marketplace_error(err, "list marketplace plugins"));
                 }
@@ -472,6 +532,7 @@ impl PluginRequestProcessor {
             remote_sources.push(RemoteMarketplaceSource::SharedWithMe);
         }
         if !remote_sources.is_empty() {
+            let remote_marketplaces_started_at = Instant::now();
             let remote_plugin_service_config = RemotePluginServiceConfig {
                 chatgpt_base_url: config.chatgpt_base_url.clone(),
             };
@@ -483,6 +544,7 @@ impl PluginRequestProcessor {
             .await
             {
                 Ok(remote_marketplaces) => {
+                    let fetched_remote_marketplace_count = remote_marketplaces.len();
                     for remote_marketplace in remote_marketplaces
                         .into_iter()
                         .map(remote_marketplace_to_info)
@@ -496,11 +558,25 @@ impl PluginRequestProcessor {
                             data.push(remote_marketplace);
                         }
                     }
+                    info!(
+                        elapsed_ms = remote_marketplaces_started_at.elapsed().as_millis(),
+                        remote_source_count = remote_sources.len(),
+                        fetched_remote_marketplace_count,
+                        merged_marketplace_count = data.len(),
+                        "plugin/list timing fetched remote marketplaces"
+                    );
                 }
                 Err(
-                    RemotePluginCatalogError::AuthRequired
-                    | RemotePluginCatalogError::UnsupportedAuthMode,
-                ) => {}
+                    err @ (RemotePluginCatalogError::AuthRequired
+                    | RemotePluginCatalogError::UnsupportedAuthMode),
+                ) => {
+                    info!(
+                        elapsed_ms = remote_marketplaces_started_at.elapsed().as_millis(),
+                        remote_source_count = remote_sources.len(),
+                        error = %err,
+                        "plugin/list timing skipped remote marketplaces"
+                    );
+                }
                 Err(err) => {
                     warn!(
                         error = %err,
@@ -508,12 +584,15 @@ impl PluginRequestProcessor {
                     );
                 }
             }
+        } else {
+            info!("plugin/list timing skipped remote marketplaces");
         }
 
-        let featured_plugin_ids = if data
+        let curated_marketplace_present = data
             .iter()
-            .any(|marketplace| marketplace.name == OPENAI_CURATED_MARKETPLACE_NAME)
-        {
+            .any(|marketplace| marketplace.name == OPENAI_CURATED_MARKETPLACE_NAME);
+        let featured_plugin_ids_started_at = Instant::now();
+        let featured_plugin_ids = if curated_marketplace_present {
             match plugins_manager
                 .featured_plugin_ids_for_config(&plugins_input, auth.as_ref())
                 .await
@@ -530,6 +609,24 @@ impl PluginRequestProcessor {
         } else {
             Vec::new()
         };
+        info!(
+            elapsed_ms = featured_plugin_ids_started_at.elapsed().as_millis(),
+            curated_marketplace_present,
+            featured_plugin_id_count = featured_plugin_ids.len(),
+            "plugin/list timing loaded featured ids"
+        );
+        let plugin_count = data
+            .iter()
+            .map(|marketplace| marketplace.plugins.len())
+            .sum::<usize>();
+        info!(
+            elapsed_ms = request_started_at.elapsed().as_millis(),
+            marketplace_count = data.len(),
+            plugin_count,
+            load_error_count = marketplace_load_errors.len(),
+            featured_plugin_id_count = featured_plugin_ids.len(),
+            "plugin/list timing completed"
+        );
 
         Ok(PluginListResponse {
             marketplaces: data,
