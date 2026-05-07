@@ -894,6 +894,7 @@ mod tests {
     use super::ExecServerClient;
     use super::ExecServerClientConnectOptions;
     use crate::ProcessId;
+    use crate::client_api::ExecServerTransportParams;
     use crate::client_api::StdioExecServerCommand;
     use crate::client_api::StdioExecServerConnectArgs;
     use crate::connection::JsonRpcConnection;
@@ -956,6 +957,26 @@ mod tests {
         assert_eq!(client.session_id().as_deref(), Some("stdio-test"));
     }
 
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn connect_for_transport_initializes_stdio_command() {
+        let client = ExecServerClient::connect_for_transport(
+            ExecServerTransportParams::StdioCommand(StdioExecServerCommand {
+                program: "sh".to_string(),
+                args: vec![
+                    "-c".to_string(),
+                    "read _line; printf '%s\\n' '{\"id\":1,\"result\":{\"sessionId\":\"stdio-test\"}}'; read _line; sleep 60".to_string(),
+                ],
+                env: HashMap::new(),
+                cwd: None,
+            }),
+        )
+        .await
+        .expect("stdio transport should connect");
+
+        assert_eq!(client.session_id().as_deref(), Some("stdio-test"));
+    }
+
     #[cfg(windows)]
     #[tokio::test]
     async fn connect_stdio_command_initializes_json_rpc_client_on_windows() {
@@ -985,13 +1006,16 @@ mod tests {
     async fn dropping_stdio_client_terminates_spawned_process() {
         let tempdir = tempfile::tempdir().expect("tempdir should be created");
         let pid_file = tempdir.path().join("server.pid");
+        let child_pid_file = tempdir.path().join("server-child.pid");
         let stdio_script = format!(
             "read _line; \
              echo \"$$\" > {}; \
+             sleep 60 >/dev/null 2>&1 & echo \"$!\" > {}; \
              printf '%s\\n' '{{\"id\":1,\"result\":{{\"sessionId\":\"stdio-test\"}}}}'; \
              read _line; \
-             sleep 60",
+             wait",
             shell_quote(pid_file.as_path()),
+            shell_quote(child_pid_file.as_path()),
         );
 
         let client = ExecServerClient::connect_stdio_command(StdioExecServerConnectArgs {
@@ -1008,14 +1032,20 @@ mod tests {
         .await
         .expect("stdio client should connect");
         let server_pid = read_pid_file(pid_file.as_path()).await;
+        let child_pid = read_pid_file(child_pid_file.as_path()).await;
         assert!(
             process_exists(server_pid),
             "spawned stdio process should be running before client drop"
+        );
+        assert!(
+            process_exists(child_pid),
+            "spawned stdio child process should be running before client drop"
         );
 
         drop(client);
 
         wait_for_process_exit(server_pid).await;
+        wait_for_process_exit(child_pid).await;
     }
 
     #[cfg(unix)]

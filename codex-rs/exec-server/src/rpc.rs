@@ -227,7 +227,7 @@ pub(crate) struct RpcClient {
     disconnected_rx: watch::Receiver<bool>,
     next_request_id: AtomicI64,
     transport_tasks: Vec<JoinHandle<()>>,
-    _transport: JsonRpcTransport,
+    transport: JsonRpcTransport,
     reader_task: JoinHandle<()>,
 }
 
@@ -244,33 +244,38 @@ impl RpcClient {
         let (event_tx, event_rx) = mpsc::channel(128);
 
         let pending_for_reader = Arc::clone(&pending);
+        let transport_for_reader = transport.clone();
         let reader_task = tokio::spawn(async move {
-            while let Some(event) = incoming_rx.recv().await {
+            let disconnect_reason = loop {
+                let Some(event) = incoming_rx.recv().await else {
+                    break None;
+                };
                 match event {
                     JsonRpcConnectionEvent::Message(message) => {
                         if let Err(err) =
                             handle_server_message(&pending_for_reader, &event_tx, message).await
                         {
                             let _ = err;
-                            break;
+                            break None;
                         }
                     }
                     JsonRpcConnectionEvent::MalformedMessage { reason } => {
                         let _ = reason;
-                        break;
+                        break None;
                     }
                     JsonRpcConnectionEvent::Disconnected { reason } => {
-                        let _ = event_tx.send(RpcClientEvent::Disconnected { reason }).await;
-                        drain_pending(&pending_for_reader).await;
-                        return;
+                        break reason;
                     }
                 }
-            }
+            };
 
             let _ = event_tx
-                .send(RpcClientEvent::Disconnected { reason: None })
+                .send(RpcClientEvent::Disconnected {
+                    reason: disconnect_reason,
+                })
                 .await;
             drain_pending(&pending_for_reader).await;
+            transport_for_reader.terminate();
         });
 
         (
@@ -280,7 +285,7 @@ impl RpcClient {
                 disconnected_rx,
                 next_request_id: AtomicI64::new(1),
                 transport_tasks,
-                _transport: transport,
+                transport,
                 reader_task,
             },
             event_rx,
@@ -370,6 +375,7 @@ impl RpcClient {
 
 impl Drop for RpcClient {
     fn drop(&mut self) {
+        self.transport.terminate();
         for task in &self.transport_tasks {
             task.abort();
         }

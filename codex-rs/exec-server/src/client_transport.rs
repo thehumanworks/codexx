@@ -121,5 +121,7 @@ fn stdio_command_process(stdio_command: &StdioExecServerCommand) -> Command {
     if let Some(cwd) = &stdio_command.cwd {
         command.current_dir(cwd);
     }
+    #[cfg(unix)]
+    command.process_group(0);
     command
 }
