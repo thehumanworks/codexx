@@ -1052,7 +1052,7 @@ mod tests {
             &mut pending_binary_waiters,
             &mut pending_binary_packets,
             vec![1, 2, 3],
-            1,
+            /*max_pending_binary_packets*/ 1,
         );
 
         assert!(pending_binary_packets.is_empty());
@@ -1074,7 +1074,7 @@ mod tests {
             &mut pending_binary_waiters,
             &mut pending_binary_packets,
             vec![4, 5, 6],
-            1,
+            /*max_pending_binary_packets*/ 1,
         ));
         assert_eq!(pending_binary_packets, VecDeque::from([vec![1, 2, 3]]));
     }
