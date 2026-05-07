@@ -5,9 +5,11 @@
 //! vocabulary from one place, while each contribution family keeps its own
 //! supporting types nearby.
 
+use std::future::Future;
+
 mod prompt;
-mod tool;
 mod session_lifecycle;
+mod tool;
 
 pub use prompt::PromptFragment;
 pub use prompt::PromptSlot;
@@ -27,17 +29,18 @@ pub trait ToolContributor<C>: Send + Sync {
     fn tools(&self, context: &C) -> Vec<ToolContribution<C>>;
 }
 
-/// Analyze or perform computation on the output. Works only if the post-processing pipeline is ordered
-pub type OutputContributionFuture<'a> = std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+/// Future returned by one ordered output contribution.
+pub type OutputContributionFuture<'a> =
+    std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
+/// Ordered post-processing contribution for one completed output value.
+///
+/// Implementations may inspect or mutate `output`; hosts are expected to run
+/// contributors sequentially so each contributor observes the result of the
+/// previous one.
 pub trait OutputContributor<C, O>: Send + Sync {
-    fn contribute<'a>(
-        &'a self,
-        context: &'a C,
-        output: &'a mut O,
-    ) -> OutputContributionFuture<'a>;
+    fn contribute<'a>(&'a self, context: &'a C, output: &'a mut O) -> OutputContributionFuture<'a>;
 }
-
-
 
 // TODO: WIP
 /// Extension contribution that can claim approval requests for a runtime context.

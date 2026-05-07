@@ -71,7 +71,7 @@ fn main() {
 mod ctx {
     use codex_git_attribution::GitAttributionContext;
     use codex_guardian::GuardianContext;
-    use codex_memories::MemoriesContext;
+    use codex_memories::ctx::MemoriesContext;
     use codex_multi_agent_v2::MultiAgentV2Context;
     use codex_multi_agent_v2::UsageHintAudience;
 

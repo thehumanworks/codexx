@@ -14,8 +14,10 @@ workspace = true
 [dependencies]
 codex-extension-api = { workspace = true }
 codex-memories-read = { workspace = true }
+codex-protocol = { workspace = true }
 codex-tools = { workspace = true }
 codex-utils-absolute-path = { workspace = true }
+codex-utils-stream-parser = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

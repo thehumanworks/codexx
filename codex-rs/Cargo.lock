@@ -2444,12 +2444,14 @@ dependencies = [
  "codex-core-skills",
  "codex-exec-server",
  "codex-execpolicy",
+ "codex-extension-api",
  "codex-features",
  "codex-feedback",
  "codex-git-utils",
  "codex-hooks",
  "codex-login",
  "codex-mcp",
+ "codex-memories",
  "codex-memories-read",
  "codex-model-provider",
  "codex-model-provider-info",
@@ -2785,9 +2787,12 @@ name = "codex-extension-api"
 version = "0.0.0"
 dependencies = [
  "codex-git-attribution",
+ "codex-guardian",
  "codex-memories",
  "codex-multi-agent-v2",
- "rmcp",
+ "codex-tools",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2897,6 +2902,13 @@ dependencies = [
  "tokio",
  "ts-rs",
  "walkdir",
+]
+
+[[package]]
+name = "codex-guardian"
+version = "0.0.0"
+dependencies = [
+ "codex-extension-api",
 ]
 
 [[package]]
@@ -3091,6 +3103,8 @@ dependencies = [
  "codex-utils-absolute-path",
  "rmcp",
  "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

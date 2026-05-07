@@ -46,6 +46,7 @@ members = [
     "execpolicy",
     "execpolicy-legacy",
     "ext/extension-api",
+    "ext/guardian",
     "ext/git-attribution",
     "ext/memories",
     "ext/multi-agent-v2",
@@ -168,6 +169,7 @@ codex-external-agent-migration = { path = "external-agent-migration" }
 codex-external-agent-sessions = { path = "external-agent-sessions" }
 codex-experimental-api-macros = { path = "codex-experimental-api-macros" }
 codex-features = { path = "features" }
+codex-guardian = { path = "ext/guardian" }
 codex-git-attribution = { path = "ext/git-attribution" }
 codex-memories = { path = "ext/memories" }
 codex-multi-agent-v2 = { path = "ext/multi-agent-v2" }

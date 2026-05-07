@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod citation_output;
 pub mod ctx;
 mod list_tool;
 
@@ -17,6 +18,7 @@ use codex_extension_api::ToolContribution;
 use codex_extension_api::ToolContributor;
 use codex_memories_read::build_memory_tool_developer_instructions;
 use codex_memories_read::memory_root;
+use codex_protocol::items::TurnItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use list_tool::ListMemoriesTool;
 
@@ -53,6 +55,7 @@ impl<C: MemoriesContext> ContextContributor<C> for MemoriesExtension {
 impl<C: MemoriesContext + Send + Sync + 'static> CodexExtension<C> for MemoriesExtension {
     fn install(self: Arc<Self>, registry: &mut ExtensionRegistryBuilder<C>) {
         registry.tool_contributor(self.clone());
+        registry.output_contributor::<TurnItem>(self.clone());
         registry.prompt_contributor(self);
     }
 }

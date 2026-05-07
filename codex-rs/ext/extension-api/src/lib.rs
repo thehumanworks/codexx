@@ -13,6 +13,8 @@ mod registry;
 
 pub use contributors::ApprovalInterceptorContributor;
 pub use contributors::ContextContributor;
+pub use contributors::OutputContributionFuture;
+pub use contributors::OutputContributor;
 pub use contributors::PromptFragment;
 pub use contributors::PromptSlot;
 pub use contributors::ToolCallError;
