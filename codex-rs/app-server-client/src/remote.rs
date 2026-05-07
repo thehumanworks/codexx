@@ -466,11 +466,24 @@ impl RemoteAppServerClient {
                                 break;
                             }
                             Some(Ok(Message::Binary(bytes))) => {
-                                deliver_binary_packet(
+                                if !deliver_binary_packet(
                                     &mut pending_binary_waiters,
                                     &mut pending_binary_packets,
                                     bytes.to_vec(),
-                                );
+                                    channel_capacity,
+                                ) {
+                                    let message = format!(
+                                        "remote app server at `{websocket_url}` sent too many pending binary frames"
+                                    );
+                                    let _ = deliver_event(
+                                        &event_tx,
+                                        AppServerEvent::Disconnected {
+                                            message: message.clone(),
+                                        },
+                                    );
+                                    worker_exit_error = Some((ErrorKind::InvalidData, message));
+                                    break;
+                                }
                             }
                             Some(Ok(Message::Ping(_)))
                             | Some(Ok(Message::Pong(_)))
@@ -928,15 +941,20 @@ fn deliver_binary_packet(
     pending_binary_waiters: &mut VecDeque<oneshot::Sender<IoResult<Vec<u8>>>>,
     pending_binary_packets: &mut VecDeque<Vec<u8>>,
     bytes: Vec<u8>,
-) {
+    max_pending_binary_packets: usize,
+) -> bool {
     while let Some(response_tx) = pending_binary_waiters.pop_front() {
         if response_tx.is_closed() {
             continue;
         }
         let _ = response_tx.send(Ok(bytes));
-        return;
+        return true;
+    }
+    if pending_binary_packets.len() >= max_pending_binary_packets {
+        return false;
     }
     pending_binary_packets.push_back(bytes);
+    true
 }
 
 fn request_id_from_client_request(request: &ClientRequest) -> RequestId {
@@ -1034,6 +1052,7 @@ mod tests {
             &mut pending_binary_waiters,
             &mut pending_binary_packets,
             vec![1, 2, 3],
+            1,
         );
 
         assert!(pending_binary_packets.is_empty());
@@ -1044,5 +1063,19 @@ mod tests {
                 .expect("binary packet should be delivered"),
             vec![1, 2, 3]
         );
+    }
+
+    #[test]
+    fn binary_packets_reject_queue_overflow() {
+        let mut pending_binary_waiters = VecDeque::new();
+        let mut pending_binary_packets = VecDeque::from([vec![1, 2, 3]]);
+
+        assert!(!deliver_binary_packet(
+            &mut pending_binary_waiters,
+            &mut pending_binary_packets,
+            vec![4, 5, 6],
+            1,
+        ));
+        assert_eq!(pending_binary_packets, VecDeque::from([vec![1, 2, 3]]));
     }
 }
