@@ -171,6 +171,7 @@ impl ConfigManager {
         &self,
         params: ConfigValueWriteParams,
     ) -> Result<ConfigWriteResponse, ConfigManagerError> {
+        let _guard = self.write_shared_state().await;
         let edits = vec![(params.key_path, params.value, params.merge_strategy)];
         self.apply_edits(params.file_path, params.expected_version, edits)
             .await
@@ -180,6 +181,7 @@ impl ConfigManager {
         &self,
         params: ConfigBatchWriteParams,
     ) -> Result<ConfigWriteResponse, ConfigManagerError> {
+        let _guard = self.write_shared_state().await;
         let edits = params
             .edits
             .into_iter()

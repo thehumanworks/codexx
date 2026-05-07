@@ -20,6 +20,9 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::RwLock;
+use tokio::sync::RwLock as AsyncRwLock;
+use tokio::sync::RwLockReadGuard;
+use tokio::sync::RwLockWriteGuard;
 use toml::Value as TomlValue;
 use tracing::warn;
 
@@ -33,6 +36,7 @@ pub(crate) struct ConfigManager {
     cloud_requirements: Arc<RwLock<CloudRequirementsLoader>>,
     arg0_paths: Arg0DispatchPaths,
     thread_config_loader: Arc<RwLock<Arc<dyn ThreadConfigLoader>>>,
+    shared_state: Arc<AsyncRwLock<()>>,
 }
 
 impl ConfigManager {
@@ -52,6 +56,7 @@ impl ConfigManager {
             cloud_requirements: Arc::new(RwLock::new(cloud_requirements)),
             arg0_paths,
             thread_config_loader: Arc::new(RwLock::new(thread_config_loader)),
+            shared_state: Arc::new(AsyncRwLock::new(())),
         }
     }
 
@@ -71,6 +76,14 @@ impl ConfigManager {
             .read()
             .map(|guard| guard.clone())
             .unwrap_or_default()
+    }
+
+    pub(crate) async fn read_shared_state(&self) -> RwLockReadGuard<'_, ()> {
+        self.shared_state.read().await
+    }
+
+    pub(crate) async fn write_shared_state(&self) -> RwLockWriteGuard<'_, ()> {
+        self.shared_state.write().await
     }
 
     pub(crate) fn extend_runtime_feature_enablement<I>(&self, enablement: I) -> Result<(), ()>

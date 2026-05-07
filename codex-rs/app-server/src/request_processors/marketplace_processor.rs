@@ -51,6 +51,7 @@ impl MarketplaceRequestProcessor {
         &self,
         params: MarketplaceRemoveParams,
     ) -> Result<MarketplaceRemoveResponse, JSONRPCErrorError> {
+        let _guard = self.config_manager.write_shared_state().await;
         remove_marketplace(
             self.config.codex_home.to_path_buf(),
             CoreMarketplaceRemoveRequest {
@@ -72,6 +73,7 @@ impl MarketplaceRequestProcessor {
         &self,
         params: MarketplaceUpgradeParams,
     ) -> Result<MarketplaceUpgradeResponse, JSONRPCErrorError> {
+        let _guard = self.config_manager.write_shared_state().await;
         let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
         let plugins_manager = self.thread_manager.plugins_manager();
         let MarketplaceUpgradeParams { marketplace_name } = params;
@@ -105,6 +107,7 @@ impl MarketplaceRequestProcessor {
         &self,
         params: MarketplaceAddParams,
     ) -> Result<MarketplaceAddResponse, JSONRPCErrorError> {
+        let _guard = self.config_manager.write_shared_state().await;
         add_marketplace_to_codex_home(
             self.config.codex_home.to_path_buf(),
             MarketplaceAddRequest {

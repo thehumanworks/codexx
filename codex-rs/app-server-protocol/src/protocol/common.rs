@@ -589,7 +589,7 @@ client_request_definitions! {
     },
     SkillsList => "skills/list" {
         params: v2::SkillsListParams,
-        serialization: global_shared_read("config"),
+        serialization: None,
         response: v2::SkillsListResponse,
     },
     HooksList => "hooks/list" {
@@ -1667,10 +1667,7 @@ mod tests {
                 per_cwd_extra_user_roots: None,
             },
         };
-        assert_eq!(
-            skills_list.serialization_scope(),
-            Some(ClientRequestSerializationScope::GlobalSharedRead("config"))
-        );
+        assert_eq!(skills_list.serialization_scope(), None);
 
         let plugin_list = ClientRequest::PluginList {
             request_id: request_id(),

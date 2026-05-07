@@ -261,6 +261,7 @@ impl PluginRequestProcessor {
         &self,
         params: PluginInstallParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let _guard = self.config_manager.write_shared_state().await;
         self.plugin_install_response(params)
             .await
             .map(|response| Some(response.into()))
@@ -270,6 +271,7 @@ impl PluginRequestProcessor {
         &self,
         params: PluginUninstallParams,
     ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        let _guard = self.config_manager.write_shared_state().await;
         self.plugin_uninstall_response(params)
             .await
             .map(|response| Some(response.into()))

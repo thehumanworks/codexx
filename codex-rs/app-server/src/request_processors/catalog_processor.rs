@@ -1,5 +1,6 @@
 use super::*;
 use futures::StreamExt;
+use std::time::Instant;
 
 #[derive(Clone)]
 pub(crate) struct CatalogRequestProcessor {
@@ -11,6 +12,19 @@ pub(crate) struct CatalogRequestProcessor {
 }
 
 const SKILLS_LIST_CWD_CONCURRENCY: usize = 5;
+
+enum PreparedSkillsListEntry {
+    Ready {
+        index: usize,
+        cwd: PathBuf,
+        skills_input: codex_core::skills::SkillsLoadInput,
+        extra_roots: Vec<AbsolutePathBuf>,
+    },
+    Error {
+        index: usize,
+        entry: codex_app_server_protocol::SkillsListEntry,
+    },
+}
 
 fn skills_to_info(
     skills: &[codex_core::skills::SkillMetadata],
@@ -421,68 +435,102 @@ impl CatalogRequestProcessor {
                 .extend(valid_extra_roots);
         }
 
-        let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
-        let auth = self.auth_manager.auth().await;
-        let workspace_codex_plugins_enabled = self
-            .workspace_codex_plugins_enabled(&config, auth.as_ref())
-            .await;
+        let snapshot_started_at = Instant::now();
+        let prepared_entries = {
+            let _guard = self.config_manager.read_shared_state().await;
+            let config = self.load_latest_config(/*fallback_cwd*/ None).await?;
+            let auth = self.auth_manager.auth().await;
+            let workspace_codex_plugins_enabled = self
+                .workspace_codex_plugins_enabled(&config, auth.as_ref())
+                .await;
+            let plugins_manager = self.thread_manager.plugins_manager();
+            futures::stream::iter(cwds.into_iter().enumerate())
+                .map(|(index, cwd)| {
+                    let config = &config;
+                    let extra_roots_by_cwd = &extra_roots_by_cwd;
+                    let plugins_manager = &plugins_manager;
+                    async move {
+                        let (cwd_abs, config_layer_stack) = match self
+                            .resolve_cwd_config(&cwd)
+                            .await
+                        {
+                            Ok(resolved) => resolved,
+                            Err(message) => {
+                                let error_path = cwd.clone();
+                                return PreparedSkillsListEntry::Error {
+                                    index,
+                                    entry: codex_app_server_protocol::SkillsListEntry {
+                                        cwd,
+                                        skills: Vec::new(),
+                                        errors: vec![codex_app_server_protocol::SkillErrorInfo {
+                                            path: error_path,
+                                            message,
+                                        }],
+                                    },
+                                };
+                            }
+                        };
+                        let extra_roots = extra_roots_by_cwd.get(&cwd).cloned().unwrap_or_default();
+                        let effective_skill_roots = if workspace_codex_plugins_enabled {
+                            let plugins_input = config.plugins_config_input();
+                            plugins_manager
+                                .effective_skill_roots_for_layer_stack(
+                                    &config_layer_stack,
+                                    &plugins_input,
+                                )
+                                .await
+                        } else {
+                            Vec::new()
+                        };
+                        PreparedSkillsListEntry::Ready {
+                            index,
+                            cwd,
+                            skills_input: codex_core::skills::SkillsLoadInput::new(
+                                cwd_abs.clone(),
+                                effective_skill_roots,
+                                config_layer_stack,
+                                config.bundled_skills_enabled(),
+                            ),
+                            extra_roots,
+                        }
+                    }
+                })
+                .buffer_unordered(SKILLS_LIST_CWD_CONCURRENCY)
+                .collect::<Vec<_>>()
+                .await
+        };
+        warn!(
+            elapsed_ms = snapshot_started_at.elapsed().as_millis(),
+            entry_count = prepared_entries.len(),
+            "skills/list prepared lower-level snapshot"
+        );
         let skills_manager = self.thread_manager.skills_manager();
-        let plugins_manager = self.thread_manager.plugins_manager();
         let fs = self
             .thread_manager
             .environment_manager()
             .default_environment()
             .map(|environment| environment.get_filesystem());
-        let mut data = futures::stream::iter(cwds.into_iter().enumerate())
-            .map(|(index, cwd)| {
-                let config = &config;
-                let extra_roots_by_cwd = &extra_roots_by_cwd;
+        let mut data = futures::stream::iter(prepared_entries.into_iter())
+            .map(|prepared_entry| {
                 let fs = fs.clone();
-                let plugins_manager = &plugins_manager;
                 let skills_manager = &skills_manager;
                 async move {
-                    let (cwd_abs, config_layer_stack) = match self.resolve_cwd_config(&cwd).await {
-                        Ok(resolved) => resolved,
-                        Err(message) => {
-                            let error_path = cwd.clone();
-                            return (
-                                index,
-                                codex_app_server_protocol::SkillsListEntry {
-                                    cwd,
-                                    skills: Vec::new(),
-                                    errors: vec![codex_app_server_protocol::SkillErrorInfo {
-                                        path: error_path,
-                                        message,
-                                    }],
-                                },
-                            );
+                    let (index, cwd, skills_input, extra_roots) = match prepared_entry {
+                        PreparedSkillsListEntry::Ready {
+                            index,
+                            cwd,
+                            skills_input,
+                            extra_roots,
+                        } => (index, cwd, skills_input, extra_roots),
+                        PreparedSkillsListEntry::Error { index, entry } => {
+                            return (index, entry);
                         }
                     };
-                    let extra_roots = extra_roots_by_cwd
-                        .get(&cwd)
-                        .map_or(&[][..], std::vec::Vec::as_slice);
-                    let effective_skill_roots = if workspace_codex_plugins_enabled {
-                        let plugins_input = config.plugins_config_input();
-                        plugins_manager
-                            .effective_skill_roots_for_layer_stack(
-                                &config_layer_stack,
-                                &plugins_input,
-                            )
-                            .await
-                    } else {
-                        Vec::new()
-                    };
-                    let skills_input = codex_core::skills::SkillsLoadInput::new(
-                        cwd_abs.clone(),
-                        effective_skill_roots,
-                        config_layer_stack,
-                        config.bundled_skills_enabled(),
-                    );
                     let outcome = skills_manager
                         .skills_for_cwd_with_extra_user_roots(
                             &skills_input,
                             force_reload,
-                            extra_roots,
+                            &extra_roots,
                             fs,
                         )
                         .await;
@@ -585,6 +633,7 @@ impl CatalogRequestProcessor {
         &self,
         params: SkillsConfigWriteParams,
     ) -> Result<SkillsConfigWriteResponse, JSONRPCErrorError> {
+        let _guard = self.config_manager.write_shared_state().await;
         let SkillsConfigWriteParams {
             path,
             name,

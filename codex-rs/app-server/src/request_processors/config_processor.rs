@@ -363,13 +363,16 @@ impl ConfigRequestProcessor {
             return Ok(ExperimentalFeatureEnablementSetResponse { enablement });
         }
 
-        self.config_manager
-            .extend_runtime_feature_enablement(
-                enablement
-                    .iter()
-                    .map(|(name, enabled)| (name.clone(), *enabled)),
-            )
-            .map_err(|_| internal_error("failed to update feature enablement"))?;
+        {
+            let _guard = self.config_manager.write_shared_state().await;
+            self.config_manager
+                .extend_runtime_feature_enablement(
+                    enablement
+                        .iter()
+                        .map(|(name, enabled)| (name.clone(), *enabled)),
+                )
+                .map_err(|_| internal_error("failed to update feature enablement"))?;
+        }
 
         self.load_latest_config(/*fallback_cwd*/ None).await?;
         self.reload_user_config().await;
