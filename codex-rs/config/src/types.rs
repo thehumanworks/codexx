@@ -508,6 +508,7 @@ pub enum OtelExporterKind {
 }
 
 /// OTEL settings loaded from config.toml. Fields are optional so we can apply defaults.
+#[serde_as]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct OtelConfigToml {
@@ -518,12 +519,18 @@ pub struct OtelConfigToml {
     pub environment: Option<String>,
 
     /// Optional log exporter
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub exporter: Option<OtelExporterKind>,
 
     /// Optional trace exporter
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub trace_exporter: Option<OtelExporterKind>,
 
     /// Optional metrics exporter
+    #[serde(default)]
+    #[serde_as(deserialize_as = "DefaultOnError")]
     pub metrics_exporter: Option<OtelExporterKind>,
 }
 

@@ -37,6 +37,7 @@ use codex_model_provider_info::ModelProviderInfo;
 use codex_model_provider_info::OLLAMA_CHAT_PROVIDER_REMOVED_ERROR;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::OPENAI_PROVIDER_ID;
+use codex_model_provider_info::WireApi;
 use codex_protocol::config_types::ForcedLoginMethod;
 use codex_protocol::config_types::Personality;
 use codex_protocol::config_types::ReasoningSummary;
@@ -1002,7 +1003,30 @@ fn deserialize_model_providers<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    let model_providers = HashMap::<String, ModelProviderInfo>::deserialize(deserializer)?;
+    let raw_model_providers = HashMap::<String, TomlValue>::deserialize(deserializer)?;
+    let mut model_providers = HashMap::new();
+    for (key, value) in raw_model_providers {
+        let provider = match value.clone().try_into::<ModelProviderInfo>() {
+            Ok(provider) => provider,
+            Err(err) => {
+                // Invalid `wire_api` is already reported by the schema warning
+                // pass. Remove just that leaf so the provider can fall back to
+                // its default wire API without hiding unrelated provider errors.
+                let mut without_wire_api = value;
+                let removed_wire_api = without_wire_api
+                    .as_table_mut()
+                    .and_then(|table| table.remove("wire_api"))
+                    .is_some_and(|wire_api| wire_api.try_into::<WireApi>().is_err());
+                if !removed_wire_api {
+                    return Err(serde::de::Error::custom(err.to_string()));
+                }
+                without_wire_api
+                    .try_into::<ModelProviderInfo>()
+                    .map_err(serde::de::Error::custom)?
+            }
+        };
+        model_providers.insert(key, provider);
+    }
     validate_model_providers(&model_providers).map_err(serde::de::Error::custom)?;
     Ok(model_providers)
 }

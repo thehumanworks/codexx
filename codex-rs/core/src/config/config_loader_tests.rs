@@ -25,6 +25,7 @@ use codex_config::loader::load_config_layers_state;
 use codex_config::loader::load_requirements_toml;
 use codex_config::version_for_toml;
 use codex_exec_server::LOCAL_FS;
+use codex_model_provider_info::WireApi;
 use codex_protocol::config_types::TrustLevel;
 use codex_protocol::config_types::WebSearchMode;
 use codex_protocol::models::PermissionProfile;
@@ -33,6 +34,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use pretty_assertions::assert_eq;
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::path::Path;
 use tempfile::tempdir;
@@ -174,6 +176,64 @@ context_size = "galactic"
     assert_eq!(
         (effective_config, enum_warnings),
         (expected_config, expected_startup_warnings)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn nested_invalid_enum_values_emit_warnings_without_poisoning_config() -> anyhow::Result<()> {
+    let tmp = tempdir().expect("tempdir");
+    let contents = r#"
+[model_providers.custom]
+name = "Custom"
+base_url = "https://example.invalid/v1"
+wire_api = "telegraph"
+
+[otel.exporter.otlp-http]
+endpoint = "http://localhost:4318/v1/logs"
+protocol = "xml"
+
+[otel.trace_exporter.otlp-http]
+endpoint = "http://localhost:4318/v1/traces"
+protocol = "yaml"
+"#;
+    let config_path = tmp.path().join(CONFIG_TOML_FILE);
+    std::fs::write(&config_path, contents).expect("write config");
+
+    let cwd = AbsolutePathBuf::try_from(tmp.path()).expect("cwd");
+    let layers = load_config_layers_state(
+        LOCAL_FS.as_ref(),
+        tmp.path(),
+        Some(cwd),
+        &[] as &[(String, TomlValue)],
+        LoaderOverrides::default(),
+        CloudRequirementsLoader::default(),
+        &codex_config::NoopThreadConfigLoader,
+    )
+    .await?;
+
+    let (_effective_config, config_toml, enum_warnings) =
+        layers.deserialize_effective_config_with_warnings()?;
+    let otel = config_toml.otel.expect("otel config should deserialize");
+    let expected_warnings = BTreeSet::from([
+        "Ignoring invalid config value at model_providers.custom.wire_api: \"telegraph\""
+            .to_string(),
+        "Ignoring invalid config value at otel.exporter.otlp-http.protocol: \"xml\"".to_string(),
+        "Ignoring invalid config value at otel.trace_exporter.otlp-http.protocol: \"yaml\""
+            .to_string(),
+    ]);
+
+    assert_eq!(
+        (
+            config_toml
+                .model_providers
+                .get("custom")
+                .map(|provider| provider.wire_api),
+            otel.exporter,
+            otel.trace_exporter,
+            enum_warnings.into_iter().collect::<BTreeSet<_>>(),
+        ),
+        (Some(WireApi::Responses), None, None, expected_warnings)
     );
     Ok(())
 }

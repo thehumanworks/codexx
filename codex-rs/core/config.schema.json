@@ -1710,6 +1710,7 @@
               "$ref": "#/definitions/OtelExporterKind"
             }
           ],
+          "default": null,
           "description": "Optional log exporter"
         },
         "log_user_prompt": {
@@ -1722,6 +1723,7 @@
               "$ref": "#/definitions/OtelExporterKind"
             }
           ],
+          "default": null,
           "description": "Optional metrics exporter"
         },
         "trace_exporter": {
@@ -1730,6 +1732,7 @@
               "$ref": "#/definitions/OtelExporterKind"
             }
           ],
+          "default": null,
           "description": "Optional trace exporter"
         }
       },
