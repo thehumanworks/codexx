@@ -145,6 +145,21 @@ pub async fn build_turn_metadata_header(
     cwd: &AbsolutePathBuf,
     sandbox: Option<&str>,
 ) -> Option<String> {
+    build_turn_metadata_header_with_identity(
+        cwd, sandbox, /*session_id*/ None, /*thread_id*/ None,
+        /*thread_source*/ None, /*turn_id*/ None,
+    )
+    .await
+}
+
+pub async fn build_turn_metadata_header_with_identity(
+    cwd: &AbsolutePathBuf,
+    sandbox: Option<&str>,
+    session_id: Option<String>,
+    thread_id: Option<String>,
+    thread_source: Option<ThreadSource>,
+    turn_id: Option<String>,
+) -> Option<String> {
     let repo_root = get_git_repo_root(cwd).map(|root| root.to_string_lossy().into_owned());
 
     let (head_commit_hash, associated_remote_urls, has_changes) = tokio::join!(
@@ -157,15 +172,19 @@ pub async fn build_turn_metadata_header(
         && associated_remote_urls.is_none()
         && has_changes.is_none()
         && sandbox.is_none()
+        && session_id.is_none()
+        && thread_id.is_none()
+        && thread_source.is_none()
+        && turn_id.is_none()
     {
         return None;
     }
 
     build_turn_metadata_bag(
-        /*session_id*/ None,
-        /*thread_id*/ None,
-        /*thread_source*/ None,
-        /*turn_id*/ None,
+        session_id,
+        thread_id,
+        thread_source,
+        turn_id,
         sandbox.map(ToString::to_string),
         repo_root,
         Some(WorkspaceGitMetadata {

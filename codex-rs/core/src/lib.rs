@@ -194,6 +194,7 @@ pub use exec_policy::load_exec_policy;
 pub use file_watcher::FileWatcherEvent;
 pub use installation_id::resolve_installation_id;
 pub use turn_metadata::build_turn_metadata_header;
+pub use turn_metadata::build_turn_metadata_header_with_identity;
 pub mod compact;
 mod memory_usage;
 pub mod otel_init;

@@ -33,6 +33,7 @@ use codex_terminal_detection::user_agent;
 use futures::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
+use uuid::Uuid;
 
 pub(crate) struct SpawnedConsolidationAgent {
     pub(crate) thread_id: ThreadId,
@@ -145,8 +146,15 @@ impl MemoryStartupContext {
             .get_models_manager()
             .get_model_info(model_name, &config.to_models_manager_config())
             .await;
-        let turn_metadata_header =
-            codex_core::build_turn_metadata_header(&config.cwd, /*sandbox*/ None).await;
+        let turn_metadata_header = codex_core::build_turn_metadata_header_with_identity(
+            &config.cwd,
+            /*sandbox*/ None,
+            Some(self.thread_id.to_string()),
+            Some(self.thread_id.to_string()),
+            Some(ThreadSource::MemoryConsolidation),
+            Some(format!("memory-stage-one-{}", Uuid::new_v4())),
+        )
+        .await;
         let reasoning_summary = config
             .model_reasoning_summary
             .unwrap_or(model_info.default_reasoning_summary);

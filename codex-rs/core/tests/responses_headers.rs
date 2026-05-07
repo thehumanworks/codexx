@@ -422,10 +422,15 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
     test.submit_turn("hello")
         .await
         .expect("submit first turn prompt");
-    let initial_header = first_request
-        .single_request()
+    let initial_request = first_request.single_request();
+    let initial_header = initial_request
         .header("x-codex-turn-metadata")
         .expect("x-codex-turn-metadata header should be present");
+    assert_eq!(
+        initial_request.body_json()["client_metadata"]["x-codex-turn-metadata"].as_str(),
+        Some(initial_header.as_str()),
+        "HTTP client_metadata should mirror x-codex-turn-metadata"
+    );
     let initial_parsed: serde_json::Value =
         serde_json::from_str(&initial_header).expect("x-codex-turn-metadata should be valid JSON");
     let initial_turn_id = initial_parsed
@@ -539,6 +544,16 @@ async fn responses_stream_includes_turn_metadata_header_for_git_workspace_e2e() 
             .expect("second request should include turn metadata"),
     )
     .expect("second metadata should be valid json");
+    assert_eq!(
+        requests[0].body_json()["client_metadata"]["x-codex-turn-metadata"].as_str(),
+        requests[0].header("x-codex-turn-metadata").as_deref(),
+        "first HTTP client_metadata should mirror x-codex-turn-metadata"
+    );
+    assert_eq!(
+        requests[1].body_json()["client_metadata"]["x-codex-turn-metadata"].as_str(),
+        requests[1].header("x-codex-turn-metadata").as_deref(),
+        "second HTTP client_metadata should mirror x-codex-turn-metadata"
+    );
 
     let first_turn_id = first_parsed
         .get("turn_id")

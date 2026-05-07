@@ -85,6 +85,38 @@ async fn build_turn_metadata_header_includes_has_changes_for_clean_repo() {
     );
 }
 
+#[tokio::test]
+async fn build_turn_metadata_header_with_identity_keeps_turn_id_without_git_metadata() {
+    let temp_dir = TempDir::new().expect("temp dir");
+    let cwd = temp_dir.path().abs();
+
+    let header = build_turn_metadata_header_with_identity(
+        &cwd,
+        /*sandbox*/ None,
+        Some("session-a".to_string()),
+        Some("thread-a".to_string()),
+        Some(ThreadSource::MemoryConsolidation),
+        Some("turn-a".to_string()),
+    )
+    .await
+    .expect("header");
+
+    let json: Value = serde_json::from_str(&header).expect("json");
+    assert_eq!(
+        json.get("session_id").and_then(Value::as_str),
+        Some("session-a")
+    );
+    assert_eq!(
+        json.get("thread_id").and_then(Value::as_str),
+        Some("thread-a")
+    );
+    assert_eq!(
+        json.get("thread_source").and_then(Value::as_str),
+        Some("memory_consolidation")
+    );
+    assert_eq!(json.get("turn_id").and_then(Value::as_str), Some("turn-a"));
+}
+
 #[test]
 fn turn_metadata_state_uses_platform_sandbox_tag() {
     let temp_dir = TempDir::new().expect("temp dir");

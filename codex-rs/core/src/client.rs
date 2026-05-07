@@ -450,6 +450,7 @@ impl ModelClient {
             settings.effort,
             settings.summary,
             settings.service_tier,
+            /*turn_metadata_header*/ None,
         )?;
         let ResponsesApiRequest {
             model,
@@ -607,7 +608,7 @@ impl ModelClient {
         extra_headers
     }
 
-    fn build_ws_client_metadata(
+    fn build_responses_client_metadata(
         &self,
         turn_metadata_header: Option<&str>,
     ) -> HashMap<String, String> {
@@ -638,6 +639,13 @@ impl ModelClient {
             );
         }
         client_metadata
+    }
+
+    fn build_ws_client_metadata(
+        &self,
+        turn_metadata_header: Option<&str>,
+    ) -> HashMap<String, String> {
+        self.build_responses_client_metadata(turn_metadata_header)
     }
 
     /// Builds request telemetry for unary API calls (e.g., Compact endpoint).
@@ -684,6 +692,7 @@ impl ModelClient {
         effort: Option<ReasoningEffortConfig>,
         summary: ReasoningSummaryConfig,
         service_tier: Option<String>,
+        turn_metadata_header: Option<&str>,
     ) -> Result<ResponsesApiRequest> {
         let instructions = &prompt.base_instructions.text;
         let input = prompt.get_formatted_input();
@@ -725,10 +734,7 @@ impl ModelClient {
             service_tier,
             prompt_cache_key,
             text,
-            client_metadata: Some(HashMap::from([(
-                X_CODEX_INSTALLATION_ID_HEADER.to_string(),
-                self.state.installation_id.clone(),
-            )])),
+            client_metadata: Some(self.build_responses_client_metadata(turn_metadata_header)),
         };
         Ok(request)
     }
@@ -1224,6 +1230,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier.clone(),
+                turn_metadata_header,
             )?;
             let inference_trace_attempt = inference_trace.start_attempt();
             inference_trace_attempt.record_started(&request);
@@ -1330,6 +1337,7 @@ impl ModelClientSession {
                 effort,
                 summary,
                 service_tier.clone(),
+                turn_metadata_header,
             )?;
             let mut ws_payload = ResponseCreateWsRequest {
                 client_metadata: response_create_client_metadata(
