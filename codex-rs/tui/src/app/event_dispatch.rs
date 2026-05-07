@@ -679,6 +679,7 @@ impl App {
                         "Failed to upload '{}': {err}",
                         local_path.display()
                     ));
+                    self.chat_widget.maybe_send_next_queued_input();
                 }
             },
             AppEvent::RefreshRateLimits { origin } => {
