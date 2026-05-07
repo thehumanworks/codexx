@@ -85,13 +85,11 @@ fn create_codex_apps_tools_cache_context(
     }
 }
 
-fn sorted_model_tool_names(tools: &[ToolInfo]) -> Vec<String> {
-    let mut names = tools
+fn model_tool_names(tools: &[ToolInfo]) -> HashSet<ToolName> {
+    tools
         .iter()
-        .map(|tool| tool.canonical_tool_name().display())
-        .collect::<Vec<_>>();
-    names.sort();
-    names
+        .map(ToolInfo::canonical_tool_name)
+        .collect::<HashSet<_>>()
 }
 
 #[test]
@@ -290,11 +288,11 @@ fn test_normalize_tools_short_non_duplicated_names() {
     let model_tools = normalize_tools_for_model(tools);
 
     assert_eq!(
-        sorted_model_tool_names(&model_tools),
-        vec![
-            "mcp__server1__tool1".to_string(),
-            "mcp__server1__tool2".to_string()
-        ]
+        model_tool_names(&model_tools),
+        HashSet::from([
+            ToolName::namespaced("mcp__server1__", "tool1"),
+            ToolName::namespaced("mcp__server1__", "tool2")
+        ])
     );
 }
 
@@ -309,8 +307,8 @@ fn test_normalize_tools_duplicated_names_skipped() {
 
     // Only the first tool should remain, the second is skipped
     assert_eq!(
-        sorted_model_tool_names(&model_tools),
-        vec!["mcp__server1__duplicate_tool".to_string()]
+        model_tool_names(&model_tools),
+        HashSet::from([ToolName::namespaced("mcp__server1__", "duplicate_tool")])
     );
 }
 
@@ -333,18 +331,19 @@ fn test_normalize_tools_long_names_same_server() {
 
     assert_eq!(model_tools.len(), 2);
 
-    let names = sorted_model_tool_names(&model_tools);
+    let names = model_tool_names(&model_tools);
 
-    assert!(names.iter().all(|name| name.len() == 64));
+    assert!(names.iter().all(|name| name.display().len() == 64));
     assert!(
         names
             .iter()
-            .all(|name| name.starts_with("mcp__my_server__"))
+            .all(|name| name.namespace.as_deref() == Some("mcp__my_server__"))
     );
     assert!(
-        names
-            .iter()
-            .all(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')),
+        names.iter().all(|name| name
+            .display()
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')),
         "model-visible names must be code-mode compatible: {names:?}"
     );
 }
@@ -357,11 +356,14 @@ fn test_normalize_tools_sanitizes_invalid_characters() {
 
     assert_eq!(model_tools.len(), 1);
     let tool = model_tools.into_iter().next().expect("one tool");
-    let model_name = tool.canonical_tool_name().display();
-    assert_eq!(model_name, "mcp__server_one__tool_two_three");
+    let model_name = tool.canonical_tool_name();
+    assert_eq!(
+        model_name,
+        ToolName::namespaced("mcp__server_one__", "tool_two_three")
+    );
     assert_eq!(
         format!("{}{}", tool.callable_namespace, tool.callable_name),
-        model_name
+        model_name.display()
     );
 
     // The callable parts are sanitized for model-visible tool calls, but the raw
@@ -373,6 +375,7 @@ fn test_normalize_tools_sanitizes_invalid_characters() {
 
     assert!(
         model_name
+            .display()
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_'),
         "model-visible name must be code-mode compatible: {model_name:?}"
@@ -388,8 +391,8 @@ fn test_normalize_tools_keeps_hyphenated_mcp_tools_callable() {
     assert_eq!(model_tools.len(), 1);
     let tool = model_tools.into_iter().next().expect("one tool");
     assert_eq!(
-        tool.canonical_tool_name().display(),
-        "mcp__music_studio__get_strudel_guide"
+        tool.canonical_tool_name(),
+        ToolName::namespaced("mcp__music_studio__", "get_strudel_guide")
     );
     assert_eq!(tool.callable_namespace, "mcp__music_studio__");
     assert_eq!(tool.callable_name, "get_strudel_guide");
@@ -419,11 +422,12 @@ fn test_normalize_tools_disambiguates_sanitized_namespace_collisions() {
         .map(|tool| tool.server_name.as_str())
         .collect::<HashSet<_>>();
     assert_eq!(raw_servers, HashSet::from(["basic-server", "basic_server"]));
-    let model_names = sorted_model_tool_names(&model_tools);
+    let model_names = model_tool_names(&model_tools);
     assert!(
-        model_names
-            .iter()
-            .all(|name| name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')),
+        model_names.iter().all(|name| name
+            .display()
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')),
         "model-visible names must be code-mode compatible: {model_names:?}"
     );
 }
@@ -698,7 +702,8 @@ async fn list_all_tools_uses_startup_snapshot_while_client_is_pending() {
     let tool = tools
         .iter()
         .find(|tool| {
-            tool.canonical_tool_name().display() == "mcp__codex_apps__calendar_create_event"
+            tool.canonical_tool_name()
+                == ToolName::namespaced("mcp__codex_apps__", "calendar_create_event")
         })
         .expect("tool from startup cache");
     assert_eq!(tool.server_name, CODEX_APPS_MCP_SERVER_NAME);
@@ -827,7 +832,8 @@ async fn list_all_tools_uses_startup_snapshot_when_client_startup_fails() {
     let tool = tools
         .iter()
         .find(|tool| {
-            tool.canonical_tool_name().display() == "mcp__codex_apps__calendar_create_event"
+            tool.canonical_tool_name()
+                == ToolName::namespaced("mcp__codex_apps__", "calendar_create_event")
         })
         .expect("tool from startup cache");
     assert_eq!(tool.server_name, CODEX_APPS_MCP_SERVER_NAME);
