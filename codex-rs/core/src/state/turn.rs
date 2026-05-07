@@ -114,6 +114,7 @@ pub(crate) struct TurnState {
     pending_elicitations: HashMap<(String, RequestId), oneshot::Sender<ElicitationResponse>>,
     pending_dynamic_tools: HashMap<String, oneshot::Sender<DynamicToolResponse>>,
     pending_input: Vec<ResponseInputItem>,
+    usage_limit_reached: bool,
     mailbox_delivery_phase: MailboxDeliveryPhase,
     granted_permissions: Option<AdditionalPermissionProfile>,
     strict_auto_review_enabled: bool,
@@ -151,6 +152,7 @@ impl TurnState {
         self.pending_elicitations.clear();
         self.pending_dynamic_tools.clear();
         self.pending_input.clear();
+        self.usage_limit_reached = false;
     }
 
     pub(crate) fn insert_pending_request_permissions(
@@ -243,6 +245,14 @@ impl TurnState {
 
     pub(crate) fn has_pending_input(&self) -> bool {
         !self.pending_input.is_empty()
+    }
+
+    pub(crate) fn mark_usage_limit_reached(&mut self) {
+        self.usage_limit_reached = true;
+    }
+
+    pub(crate) fn usage_limit_reached(&self) -> bool {
+        self.usage_limit_reached
     }
 
     pub(crate) fn accept_mailbox_delivery_for_current_turn(&mut self) {

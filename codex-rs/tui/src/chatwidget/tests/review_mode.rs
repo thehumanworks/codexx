@@ -356,6 +356,7 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
         rejected_steer_history_records: VecDeque::new(),
         queued_user_messages,
         queued_user_message_history_records: VecDeque::new(),
+        queued_sends_paused_after_usage_limit: true,
         user_turn_pending_start: false,
         current_collaboration_mode: chat.current_collaboration_mode.clone(),
         active_collaboration_mask: chat.active_collaboration_mask.clone(),
@@ -376,6 +377,7 @@ async fn restore_thread_input_state_restores_pending_steers_without_downgrading_
         chat.pending_steers.front().unwrap().compare_key,
         expected_compare_key
     );
+    assert!(chat.queued_sends_paused_after_usage_limit);
 }
 
 #[tokio::test]

@@ -568,6 +568,7 @@ impl Session {
         let mut turn_had_memory_citation = false;
         let mut turn_tool_calls = 0_u64;
         let mut records_turn_token_usage_on_span = false;
+        let mut usage_limit_reached = false;
         let turn_state = {
             let mut active = self.active_turn.lock().await;
             if let Some(at) = active.as_mut()
@@ -591,8 +592,9 @@ impl Session {
             turn_had_memory_citation = ts.has_memory_citation;
             turn_tool_calls = ts.tool_calls;
             token_usage_at_turn_start = Some(ts.token_usage_at_turn_start.clone());
+            usage_limit_reached = ts.usage_limit_reached();
         }
-        if !pending_input.is_empty() {
+        if !usage_limit_reached && !pending_input.is_empty() {
             for pending_input_item in pending_input {
                 match inspect_pending_input(self, &turn_context, pending_input_item).await {
                     PendingInputHookDisposition::Accepted(pending_input) => {

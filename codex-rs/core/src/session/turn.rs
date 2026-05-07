@@ -1080,6 +1080,7 @@ async fn run_sampling_request(
                 if let Some(rate_limits) = rate_limits {
                     sess.update_rate_limits(&turn_context, *rate_limits).await;
                 }
+                sess.mark_usage_limit_reached(&turn_context.sub_id).await;
                 return Err(CodexErr::UsageLimitReached(e));
             }
             Err(err) => err,
