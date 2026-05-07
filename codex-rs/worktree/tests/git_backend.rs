@@ -95,6 +95,36 @@ fn creates_reuses_lists_and_removes_managed_worktree() -> anyhow::Result<()> {
 }
 
 #[test]
+fn creates_sibling_from_sibling_using_primary_repo_name() -> anyhow::Result<()> {
+    let fixture = GitFixture::new()?;
+    let first = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home: fixture.codex_home.path().to_path_buf(),
+        source_cwd: fixture.repo.path().to_path_buf(),
+        branch: "fcoury/worktrees".to_string(),
+        base_ref: None,
+        dirty_policy: DirtyPolicy::Fail,
+    })?;
+
+    let second = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home: fixture.codex_home.path().to_path_buf(),
+        source_cwd: first.info.workspace_cwd,
+        branch: "fcoury/test".to_string(),
+        base_ref: None,
+        dirty_policy: DirtyPolicy::Fail,
+    })?;
+
+    let canonical_repo = fixture.repo.path().canonicalize()?;
+    assert_eq!(
+        second.info.worktree_git_root,
+        canonical_repo.with_file_name(format!(
+            "{}.fcoury-test",
+            canonical_repo.file_name().unwrap().to_string_lossy()
+        ))
+    );
+    Ok(())
+}
+
+#[test]
 fn copy_tracked_preserves_staged_and_unstaged_diffs() -> anyhow::Result<()> {
     let fixture = GitFixture::new()?;
     fs::write(fixture.repo.path().join("staged.txt"), "staged changed\n")?;

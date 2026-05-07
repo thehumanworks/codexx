@@ -25,7 +25,7 @@ pub fn ensure_worktree(req: WorktreeRequest) -> Result<WorktreeResolution> {
     let branch = req.branch.clone();
     let slug = paths::slugify_name(&branch)?;
     ensure_safe_branch_name(&repo.root, &branch)?;
-    let worktree_git_root = paths::sibling_worktree_git_root(&repo.root, &branch)?;
+    let worktree_git_root = paths::sibling_worktree_git_root(&repo.primary_root, &branch)?;
     let workspace_cwd = worktree_git_root.join(&repo.relative_cwd);
 
     if worktree_git_root.exists() {
@@ -445,6 +445,7 @@ fn display_branch_or_name(info: &WorktreeInfo) -> &str {
 
 struct SourceRepo {
     root: PathBuf,
+    primary_root: PathBuf,
     relative_cwd: PathBuf,
     common_git_dir: PathBuf,
     repo_name: String,
@@ -462,9 +463,13 @@ impl SourceRepo {
         let common_git_dir = absolutize(&source_cwd, Path::new(&common_git_dir_raw))
             .canonicalize()
             .unwrap_or_else(|_| absolutize(&source_cwd, Path::new(&common_git_dir_raw)));
+        let primary_root = primary_worktree_root(&root)
+            .unwrap_or_else(|_| root.clone())
+            .canonicalize()
+            .unwrap_or_else(|_| root.clone());
         let origin = git::stdout(&root, &["remote", "get-url", "origin"]).ok();
         let id = paths::repo_fingerprint(&common_git_dir, origin.as_deref());
-        let repo_name = root
+        let repo_name = primary_root
             .file_name()
             .context("repository root has no directory name")?
             .to_string_lossy()
@@ -475,6 +480,7 @@ impl SourceRepo {
             .to_path_buf();
         Ok(Self {
             root,
+            primary_root,
             relative_cwd,
             common_git_dir,
             repo_name,
