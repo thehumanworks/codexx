@@ -1,10 +1,21 @@
 name: rust-ci-full
+run-name: >-
+  rust-ci-full${{
+    github.event_name == 'workflow_dispatch' &&
+    format(' windows-nextest-{0}', inputs.windows_nextest_threads) ||
+    ''
+  }}
 on:
   push:
     branches:
       - main
       - "**full-ci**"
   workflow_dispatch:
+    inputs:
+      windows_nextest_threads:
+        description: "Optional nextest --test-threads override for Windows test jobs"
+        required: false
+        type: string
 
 # CI builds in debug (dev) for faster signal.
 
@@ -532,6 +543,7 @@ jobs:
       USE_SCCACHE: ${{ (matrix.runner == 'macos-15-xlarge' && matrix.target == 'x86_64-apple-darwin') && 'false' || 'true' }}
       CARGO_INCREMENTAL: "0"
       SCCACHE_CACHE_SIZE: 10G
+      WINDOWS_NEXTEST_THREADS: ${{ github.event_name == 'workflow_dispatch' && inputs.windows_nextest_threads || '' }}
 
     strategy:
       fail-fast: false
@@ -682,7 +694,19 @@ jobs:
 
       - name: tests
         id: test
-        run: cargo nextest run --no-fail-fast --target ${{ matrix.target }} --cargo-profile ci-test --timings
+        shell: bash
+        run: |
+          set -euo pipefail
+          nextest_args=(
+            --no-fail-fast
+            --target "${{ matrix.target }}"
+            --cargo-profile ci-test
+            --timings
+          )
+          if [[ "${{ runner.os }}" == "Windows" && -n "${WINDOWS_NEXTEST_THREADS}" ]]; then
+            nextest_args+=(--test-threads "${WINDOWS_NEXTEST_THREADS}")
+          fi
+          cargo nextest run "${nextest_args[@]}"
         env:
           RUST_BACKTRACE: 1
           RUST_MIN_STACK: "8388608" # 8 MiB
