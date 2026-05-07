@@ -6,7 +6,7 @@ use codex_tools::ToolName;
 
 pub(crate) fn collect_unavailable_called_tools(
     input: &[ResponseItem],
-    exposed_tool_names: &HashSet<&str>,
+    exposed_tool_names: &HashSet<ToolName>,
 ) -> Vec<ToolName> {
     let mut unavailable_tools = BTreeMap::new();
 
@@ -25,11 +25,11 @@ pub(crate) fn collect_unavailable_called_tools(
             Some(namespace) => ToolName::namespaced(namespace.clone(), name.clone()),
             None => ToolName::plain(name.clone()),
         };
-        let display_name = tool_name.display();
-        if exposed_tool_names.contains(display_name.as_str()) {
+        if exposed_tool_names.contains(&tool_name) {
             continue;
         }
 
+        let display_name = tool_name.display();
         unavailable_tools
             .entry(display_name)
             .or_insert_with(|| tool_name);
@@ -78,7 +78,10 @@ mod tests {
 
     #[test]
     fn collect_unavailable_called_tools_skips_currently_available_tools() {
-        let exposed_tool_names = HashSet::from(["mcp__server__lookup", "mcp__server__search"]);
+        let exposed_tool_names = HashSet::from([
+            ToolName::plain("mcp__server__lookup"),
+            ToolName::plain("mcp__server__search"),
+        ]);
         let input = vec![
             function_call("mcp__server__lookup", /*namespace*/ None),
             function_call("mcp__server__search", /*namespace*/ None),
