@@ -37,6 +37,7 @@ use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::ffi::c_void;
 use std::fs::File;
+use std::fs::ReadDir;
 use std::io::Write;
 use std::os::windows::process::CommandExt;
 use std::path::Path;
@@ -247,6 +248,109 @@ fn read_mask_allows_or_log(
             Ok(false)
         }
     }
+}
+
+fn path_is_under_any(path: &Path, prefixes: &[PathBuf]) -> bool {
+    prefixes.iter().any(|prefix| path.starts_with(prefix))
+}
+
+fn repair_existing_write_root_descendants(
+    root: &Path,
+    sid_strings: &[String],
+    skip_prefixes: &[PathBuf],
+    log: &mut File,
+    refresh_errors: &mut Vec<String>,
+) -> Result<()> {
+    let mut psids: Vec<*mut c_void> = Vec::new();
+    for sid_str in sid_strings {
+        if let Some(psid) = unsafe { convert_string_sid_to_sid(sid_str) } {
+            psids.push(psid);
+        } else {
+            for psid in psids {
+                unsafe {
+                    LocalFree(psid as HLOCAL);
+                }
+            }
+            refresh_errors.push(format!(
+                "recursive ACL repair SID conversion failed on {} for {sid_str}",
+                root.display()
+            ));
+            return Ok(());
+        }
+    }
+
+    let repair_result = (|| -> Result<()> {
+        let mut pending: Vec<ReadDir> = vec![std::fs::read_dir(root)
+            .with_context(|| format!("read descendants for {}", root.display()))?];
+        let mut repaired_entries: usize = 0;
+
+        while let Some(mut entries) = pending.pop() {
+            while let Some(entry) = entries.next() {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        refresh_errors.push(format!(
+                            "recursive ACL repair read_dir entry failed under {}: {err}",
+                            root.display()
+                        ));
+                        continue;
+                    }
+                };
+                let path = entry.path();
+                if path_is_under_any(&path, skip_prefixes) {
+                    continue;
+                }
+
+                let file_type = match entry.file_type() {
+                    Ok(file_type) => file_type,
+                    Err(err) => {
+                        refresh_errors.push(format!(
+                            "recursive ACL repair file_type failed on {}: {err}",
+                            path.display()
+                        ));
+                        continue;
+                    }
+                };
+
+                match unsafe { ensure_allow_write_aces(&path, &psids) } {
+                    Ok(_) => repaired_entries += 1,
+                    Err(err) => {
+                        refresh_errors.push(format!(
+                            "recursive write ACE failed on {}: {err}",
+                            path.display()
+                        ));
+                    }
+                }
+
+                if file_type.is_dir() {
+                    match std::fs::read_dir(&path) {
+                        Ok(children) => pending.push(children),
+                        Err(err) => refresh_errors.push(format!(
+                            "recursive ACL repair read_dir failed on {}: {err}",
+                            path.display()
+                        )),
+                    }
+                }
+            }
+        }
+
+        log_line(
+            log,
+            &format!(
+                "repaired write ACEs on {repaired_entries} existing descendants under {}",
+                root.display()
+            ),
+        )?;
+        Ok(())
+    })();
+
+    for psid in psids {
+        unsafe {
+            LocalFree(psid as HLOCAL);
+        }
+    }
+
+    repair_result
 }
 
 fn lock_sandbox_dir(
@@ -772,6 +876,33 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         }
     });
 
+    if !refresh_only {
+        for root in &seen_write_roots {
+            if !root.is_dir() {
+                continue;
+            }
+            let is_command_cwd = is_command_cwd_root(root, &canonical_command_cwd);
+            let sid_strings = if is_command_cwd {
+                vec![sandbox_group_sid_str.clone(), workspace_sid_str.clone()]
+            } else {
+                vec![sandbox_group_sid_str.clone(), cap_sid_str.clone()]
+            };
+            let skip_prefixes: Vec<PathBuf> = payload
+                .deny_write_paths
+                .iter()
+                .filter(|path| path.starts_with(root))
+                .cloned()
+                .collect();
+            repair_existing_write_root_descendants(
+                root,
+                &sid_strings,
+                &skip_prefixes,
+                log,
+                &mut refresh_errors,
+            )?;
+        }
+    }
+
     for path in &payload.deny_write_paths {
         if !seen_deny_paths.insert(path.clone()) {
             continue;
@@ -912,11 +1043,14 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
 
 #[cfg(test)]
 mod tests {
+    use super::path_is_under_any;
     use super::Payload;
     use super::SETUP_VERSION;
     use codex_otel::StatsigMetricsSettings;
     use pretty_assertions::assert_eq;
     use serde_json::json;
+    use std::path::Path;
+    use std::path::PathBuf;
 
     fn payload_json() -> serde_json::Value {
         json!({
@@ -953,5 +1087,19 @@ mod tests {
                 environment: "prod".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn path_is_under_any_matches_descendants_only() {
+        let prefixes = vec![PathBuf::from(r"C:\workspace\.git")];
+
+        assert!(path_is_under_any(
+            Path::new(r"C:\workspace\.git\objects\ab\cd"),
+            &prefixes
+        ));
+        assert!(!path_is_under_any(
+            Path::new(r"C:\workspace\src\lib.rs"),
+            &prefixes
+        ));
     }
 }
