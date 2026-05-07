@@ -9895,17 +9895,15 @@ fn test_tui_notification_condition_always() {
 }
 
 #[test]
-fn test_tui_notification_condition_rejects_unknown_value() {
+fn test_tui_notification_condition_defaults_unknown_value() {
     let toml = r#"
             [tui]
             notification_condition = "background"
         "#;
-    let err = toml::from_str::<RootTomlTest>(toml).expect_err("reject unknown condition");
-    let err = err.to_string();
-    assert!(
-        err.contains("unknown variant `background`")
-            && err.contains("unfocused")
-            && err.contains("always"),
-        "unexpected error: {err}"
+    let parsed: RootTomlTest =
+        toml::from_str(toml).expect("deserialize invalid notification condition as default");
+    assert_eq!(
+        parsed.tui.notifications.condition,
+        NotificationCondition::Unfocused
     );
 }

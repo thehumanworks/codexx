@@ -81,6 +81,7 @@ pub use hook_config::HooksToml;
 pub use hook_config::ManagedHooksRequirementsToml;
 pub use hook_config::MatcherGroup;
 pub use host_name::host_name;
+pub use lenient::enum_value_warnings;
 pub use marketplace_edit::MarketplaceConfigUpdate;
 pub use marketplace_edit::RemoveMarketplaceConfigOutcome;
 pub use marketplace_edit::record_user_marketplace;

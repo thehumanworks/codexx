@@ -32,12 +32,14 @@ enum CurrentNodeWarning {
     Skip,
 }
 
-/// Return best-effort startup warnings for raw TOML values that look like invalid enums.
+/// Return best-effort warnings for raw TOML values that look like invalid enums.
 ///
 /// `DefaultOnError` is responsible for keeping config deserialization lenient.
 /// This pass is intentionally advisory: it walks the final merged TOML value
 /// against the generated config schema and reports enum-looking mismatches
-/// without changing the TOML that will be deserialized.
+/// without changing the TOML that will be deserialized. Startup loading keeps
+/// these warnings non-blocking; config write paths may use the same signal to
+/// reject newly provided invalid enum values.
 pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
     // Startup warnings should never make config loading fail. If schema
     // generation or traversal panics, the typed config load still proceeds.
