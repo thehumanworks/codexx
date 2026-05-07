@@ -40,7 +40,7 @@ enum CurrentNodeWarning {
 /// without changing the TOML that will be deserialized. Startup loading keeps
 /// these warnings non-blocking; config write paths may use the same signal to
 /// reject newly provided invalid enum values.
-pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
+pub fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
     // Startup warnings should never make config loading fail. If schema
     // generation or traversal panics, the typed config load still proceeds.
     catch_unwind(AssertUnwindSafe(|| {
