@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 
 use codex_config::ConfigLayerStack;
+use codex_config::SkillSourceRequirement;
 use codex_exec_server::ExecutorFileSystem;
 use codex_protocol::protocol::Product;
 use codex_protocol::protocol::SkillScope;
@@ -51,7 +52,7 @@ impl SkillsLoadInput {
 pub struct SkillsManager {
     codex_home: AbsolutePathBuf,
     restriction_product: Option<Product>,
-    cache_by_cwd: RwLock<HashMap<AbsolutePathBuf, SkillLoadOutcome>>,
+    cache_by_cwd: RwLock<HashMap<CwdSkillsCacheKey, SkillLoadOutcome>>,
     cache_by_config: RwLock<HashMap<ConfigSkillsCacheKey, SkillLoadOutcome>>,
 }
 
@@ -123,6 +124,7 @@ impl SkillsManager {
         if !input.bundled_skills_enabled {
             roots.retain(|root| root.scope != SkillScope::System);
         }
+        retain_allowed_skill_roots(&mut roots, &input.config_layer_stack);
         roots
     }
 
@@ -144,9 +146,10 @@ impl SkillsManager {
         fs: Option<Arc<dyn ExecutorFileSystem>>,
     ) -> SkillLoadOutcome {
         let use_cwd_cache = fs.is_some();
+        let cache_key = cwd_skills_cache_key(&input.cwd, &input.config_layer_stack);
         if use_cwd_cache
             && !force_reload
-            && let Some(outcome) = self.cached_outcome_for_cwd(&input.cwd)
+            && let Some(outcome) = self.cached_outcome_for_cwd(&cache_key)
         {
             return outcome;
         }
@@ -173,6 +176,7 @@ impl SkillsManager {
                     }),
             );
         }
+        retain_allowed_skill_roots(&mut roots, &input.config_layer_stack);
         let skill_config_rules = skill_config_rules_from_stack(&input.config_layer_stack);
         let outcome = self.build_skill_outcome(roots, &skill_config_rules).await;
         if use_cwd_cache {
@@ -180,7 +184,7 @@ impl SkillsManager {
                 .cache_by_cwd
                 .write()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            cache.insert(input.cwd.clone(), outcome.clone());
+            cache.insert(cache_key, outcome.clone());
         }
         outcome
     }
@@ -221,10 +225,10 @@ impl SkillsManager {
         info!("skills cache cleared ({cleared} entries)");
     }
 
-    fn cached_outcome_for_cwd(&self, cwd: &AbsolutePathBuf) -> Option<SkillLoadOutcome> {
+    fn cached_outcome_for_cwd(&self, cache_key: &CwdSkillsCacheKey) -> Option<SkillLoadOutcome> {
         match self.cache_by_cwd.read() {
-            Ok(cache) => cache.get(cwd).cloned(),
-            Err(err) => err.into_inner().get(cwd).cloned(),
+            Ok(cache) => cache.get(cache_key).cloned(),
+            Err(err) => err.into_inner().get(cache_key).cloned(),
         }
     }
 
@@ -239,10 +243,41 @@ impl SkillsManager {
     }
 }
 
+fn retain_allowed_skill_roots(roots: &mut Vec<SkillRoot>, config_layer_stack: &ConfigLayerStack) {
+    let Some(requirements) = config_layer_stack.requirements().skills.as_ref() else {
+        return;
+    };
+
+    roots.retain(|root| {
+        requirements
+            .value
+            .allows_source(skill_source_for_root(root))
+    });
+}
+
+fn skill_source_for_root(root: &SkillRoot) -> SkillSourceRequirement {
+    if root.plugin_id.is_some() {
+        return SkillSourceRequirement::Plugin;
+    }
+
+    match root.scope {
+        SkillScope::Repo => SkillSourceRequirement::Repo,
+        SkillScope::User => SkillSourceRequirement::User,
+        SkillScope::System => SkillSourceRequirement::System,
+        SkillScope::Admin => SkillSourceRequirement::Admin,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ConfigSkillsCacheKey {
     roots: Vec<(AbsolutePathBuf, u8, Option<String>)>,
     skill_config_rules: SkillConfigRules,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CwdSkillsCacheKey {
+    cwd: AbsolutePathBuf,
+    allowed_sources: Option<Vec<SkillSourceRequirement>>,
 }
 
 pub fn bundled_skills_enabled_from_stack(
@@ -285,6 +320,20 @@ fn config_skills_cache_key(
             })
             .collect(),
         skill_config_rules: skill_config_rules.clone(),
+    }
+}
+
+fn cwd_skills_cache_key(
+    cwd: &AbsolutePathBuf,
+    config_layer_stack: &ConfigLayerStack,
+) -> CwdSkillsCacheKey {
+    CwdSkillsCacheKey {
+        cwd: cwd.clone(),
+        allowed_sources: config_layer_stack
+            .requirements()
+            .skills
+            .as_ref()
+            .and_then(|requirements| requirements.value.allowed_sources.clone()),
     }
 }
 
