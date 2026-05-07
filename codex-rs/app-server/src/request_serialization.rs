@@ -4,6 +4,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::Instant;
 
 use codex_app_server_protocol::ClientRequestSerializationScope;
 use tokio::sync::Mutex;
@@ -105,6 +106,8 @@ impl RequestSerializationQueueKey {
 pub(crate) struct QueuedInitializedRequest {
     gate: Arc<ConnectionRpcGate>,
     future: BoxFutureUnit,
+    method: String,
+    request_id: String,
 }
 
 impl QueuedInitializedRequest {
@@ -115,11 +118,19 @@ impl QueuedInitializedRequest {
         Self {
             gate,
             future: Box::pin(future),
+            method: "<unknown>".to_string(),
+            request_id: "<unknown>".to_string(),
         }
     }
 
+    pub(crate) fn with_log_metadata(mut self, method: String, request_id: String) -> Self {
+        self.method = method;
+        self.request_id = request_id;
+        self
+    }
+
     pub(crate) async fn run(self) {
-        let Self { gate, future } = self;
+        let Self { gate, future, .. } = self;
         gate.run(future).await;
     }
 }
@@ -127,6 +138,46 @@ impl QueuedInitializedRequest {
 struct QueuedSerializedRequest {
     access: RequestSerializationAccess,
     request: QueuedInitializedRequest,
+    enqueued_at: Instant,
+}
+
+impl QueuedSerializedRequest {
+    async fn run(
+        self,
+        key: RequestSerializationQueueKey,
+        batch_size: usize,
+        queue_depth_after_pop: usize,
+    ) {
+        let Self {
+            access,
+            request,
+            enqueued_at,
+        } = self;
+        let method = request.method.clone();
+        let request_id = request.request_id.clone();
+        tracing::warn!(
+            ?key,
+            ?access,
+            method,
+            request_id,
+            queue_wait_ms = enqueued_at.elapsed().as_millis(),
+            batch_size,
+            queue_depth_after_pop,
+            "serialized request started"
+        );
+
+        let started_at = Instant::now();
+        request.run().await;
+
+        tracing::warn!(
+            ?key,
+            ?access,
+            method,
+            request_id,
+            run_ms = started_at.elapsed().as_millis(),
+            "serialized request completed"
+        );
+    }
 }
 
 #[derive(Default)]
@@ -203,22 +254,74 @@ impl RequestSerializationQueues {
         access: RequestSerializationAccess,
         request: QueuedInitializedRequest,
     ) {
-        let request = QueuedSerializedRequest { access, request };
-        let ready_requests = {
+        let method = request.method.clone();
+        let request_id = request.request_id.clone();
+        let request = QueuedSerializedRequest {
+            access,
+            request,
+            enqueued_at: Instant::now(),
+        };
+        let (
+            ready_requests,
+            queue_depth_before,
+            queued_exclusive_count,
+            head_access,
+            head_method,
+            head_request_id,
+            queue_depth_after_pop,
+        ) = {
             let mut queues = self.inner.lock().await;
             let queue = queues.entry(key.clone()).or_default();
+            let queue_depth_before = queue.pending.len();
+            let queued_exclusive_count = queue
+                .pending
+                .iter()
+                .filter(|request| request.access == RequestSerializationAccess::Exclusive)
+                .count();
+            let head_request = queue.pending.front();
+            let head_access = head_request.map(|request| request.access);
+            let head_method = head_request
+                .map(|request| request.request.method.clone())
+                .unwrap_or_else(|| "<none>".to_string());
+            let head_request_id = head_request
+                .map(|request| request.request.request_id.clone())
+                .unwrap_or_else(|| "<none>".to_string());
             queue.enqueue(request);
-            queue.take_ready_requests()
+            let ready_requests = queue.take_ready_requests();
+            (
+                ready_requests,
+                queue_depth_before,
+                queued_exclusive_count,
+                head_access,
+                head_method,
+                head_request_id,
+                queue.pending.len(),
+            )
         };
+        tracing::warn!(
+            ?key,
+            ?access,
+            method,
+            request_id,
+            queue_depth_before,
+            queue_depth_after = queue_depth_before + 1,
+            queued_exclusive_count,
+            ?head_access,
+            head_method,
+            head_request_id,
+            "serialized request queued"
+        );
 
-        self.spawn_ready_requests(key, ready_requests);
+        self.spawn_ready_requests(key, ready_requests, queue_depth_after_pop);
     }
 
     fn spawn_ready_requests(
         &self,
         key: RequestSerializationQueueKey,
         requests: Vec<QueuedSerializedRequest>,
+        queue_depth_after_pop: usize,
     ) {
+        let batch_size = requests.len();
         for request in requests {
             let queues = self.clone();
             let request_key = key.clone();
@@ -226,7 +329,9 @@ impl RequestSerializationQueues {
             tokio::spawn(
                 async move {
                     let access = request.access;
-                    request.request.run().await;
+                    request
+                        .run(request_key.clone(), batch_size, queue_depth_after_pop)
+                        .await;
                     queues.complete(request_key, access).await;
                 }
                 .instrument(span),
@@ -239,21 +344,22 @@ impl RequestSerializationQueues {
         key: RequestSerializationQueueKey,
         access: RequestSerializationAccess,
     ) {
-        let ready_requests = {
+        let (ready_requests, queue_depth_after_pop) = {
             let mut queues = self.inner.lock().await;
             let Some(queue) = queues.get_mut(&key) else {
                 return;
             };
             queue.complete(access);
             let ready_requests = queue.take_ready_requests();
+            let queue_depth_after_pop = queue.pending.len();
             let should_remove = queue.is_idle();
             if should_remove {
                 queues.remove(&key);
             }
-            ready_requests
+            (ready_requests, queue_depth_after_pop)
         };
 
-        self.spawn_ready_requests(key, ready_requests);
+        self.spawn_ready_requests(key, ready_requests, queue_depth_after_pop);
     }
 }
 
