@@ -62,7 +62,6 @@ use codex_arg0::Arg0DispatchPaths;
 use codex_chatgpt::workspace_settings;
 use codex_core::CoreApiOptions;
 use codex_core::ThreadManager;
-use codex_core::agent_graph_store_from_state_db;
 use codex_core::config::Config;
 use codex_core::thread_store_from_config_with_options;
 use codex_exec_server::EnvironmentManager;
@@ -256,7 +255,7 @@ pub(crate) struct MessageProcessorArgs {
     pub(crate) environment_manager: Arc<EnvironmentManager>,
     pub(crate) feedback: CodexFeedback,
     pub(crate) log_db: Option<LogDbLayer>,
-    pub(crate) state_db: StateDbHandle,
+    pub(crate) state_db: Option<StateDbHandle>,
     pub(crate) config_warnings: Vec<ConfigWarningNotification>,
     pub(crate) session_source: SessionSource,
     pub(crate) auth_manager: Arc<AuthManager>,
@@ -301,16 +300,14 @@ impl MessageProcessor {
             state_db.clone(),
             &core_api_options,
         );
-        let agent_graph_store = agent_graph_store_from_state_db(state_db.clone());
         let thread_manager = Arc::new(ThreadManager::new(
             config.as_ref(),
             auth_manager.clone(),
             session_source,
             environment_manager,
             Some(analytics_events_client.clone()),
-            state_db.clone(),
             Arc::clone(&thread_store),
-            agent_graph_store.clone(),
+            state_db.clone(),
             installation_id,
         ));
         thread_manager
@@ -357,7 +354,7 @@ impl MessageProcessor {
             Arc::clone(&config),
             feedback,
             log_db,
-            Some(state_db.clone()),
+            state_db.clone(),
         );
         let git_processor = GitRequestProcessor::new();
         let initialize_processor = InitializeRequestProcessor::new(
@@ -398,7 +395,6 @@ impl MessageProcessor {
             auth_manager.clone(),
             Arc::clone(&thread_manager),
             outgoing.clone(),
-            analytics_events_client.clone(),
             arg0_paths.clone(),
             Arc::clone(&config),
             config_manager.clone(),
@@ -408,7 +404,7 @@ impl MessageProcessor {
             thread_watch_manager.clone(),
             Arc::clone(&thread_list_state_permit),
             thread_goal_processor.clone(),
-            Some(state_db.clone()),
+            state_db.clone(),
         );
         let turn_processor = TurnRequestProcessor::new(
             auth_manager.clone(),
@@ -808,9 +804,9 @@ impl MessageProcessor {
         );
 
         if let Some(scope) = serialization_scope {
-            let key = RequestSerializationQueueKey::from_scope(connection_id, scope);
+            let (key, access) = RequestSerializationQueueKey::from_scope(connection_id, scope);
             self.request_serialization_queues
-                .enqueue(key, request)
+                .enqueue(key, access, request)
                 .await;
         } else {
             tokio::spawn(async move {

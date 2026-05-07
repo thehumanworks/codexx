@@ -2131,10 +2131,10 @@ name = "codex-builtin-mcps"
 version = "0.0.0"
 dependencies = [
  "anyhow",
- "codex-config",
  "codex-memories-mcp",
  "codex-utils-absolute-path",
  "pretty_assertions",
+ "tokio",
 ]
 
 [[package]]
@@ -2182,7 +2182,6 @@ dependencies = [
  "codex-app-server-protocol",
  "codex-app-server-test-client",
  "codex-arg0",
- "codex-builtin-mcps",
  "codex-chatgpt",
  "codex-cloud-tasks",
  "codex-config",
@@ -2433,7 +2432,6 @@ dependencies = [
  "bm25",
  "chrono",
  "clap",
- "codex-agent-graph-store",
  "codex-analytics",
  "codex-api",
  "codex-app-server-protocol",
@@ -2570,6 +2568,7 @@ dependencies = [
  "codex-core-skills",
  "codex-exec-server",
  "codex-git-utils",
+ "codex-hooks",
  "codex-login",
  "codex-model-provider",
  "codex-otel",
@@ -3133,6 +3132,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "codex-message-history"
+version = "0.0.0"
+dependencies = [
+ "codex-config",
+ "pretty_assertions",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "codex-model-provider"
 version = "0.0.0"
 dependencies = [
@@ -3674,6 +3686,7 @@ dependencies = [
  "codex-install-context",
  "codex-login",
  "codex-mcp",
+ "codex-message-history",
  "codex-model-provider",
  "codex-model-provider-info",
  "codex-models-manager",
@@ -4261,6 +4274,7 @@ dependencies = [
  "reqwest",
  "serde_json",
  "shlex",
+ "similar",
  "tempfile",
  "tokio",
  "tokio-tungstenite",

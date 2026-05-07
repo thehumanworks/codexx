@@ -305,7 +305,6 @@ pub(crate) struct ThreadRequestProcessor {
     pub(super) auth_manager: Arc<AuthManager>,
     pub(super) thread_manager: Arc<ThreadManager>,
     pub(super) outgoing: Arc<OutgoingMessageSender>,
-    pub(super) analytics_events_client: AnalyticsEventsClient,
     pub(super) arg0_paths: Arg0DispatchPaths,
     pub(super) config: Arc<Config>,
     pub(super) config_manager: ConfigManager,
@@ -325,7 +324,6 @@ impl ThreadRequestProcessor {
         auth_manager: Arc<AuthManager>,
         thread_manager: Arc<ThreadManager>,
         outgoing: Arc<OutgoingMessageSender>,
-        analytics_events_client: AnalyticsEventsClient,
         arg0_paths: Arg0DispatchPaths,
         config: Arc<Config>,
         config_manager: ConfigManager,
@@ -341,7 +339,6 @@ impl ThreadRequestProcessor {
             auth_manager,
             thread_manager,
             outgoing,
-            analytics_events_client,
             arg0_paths,
             config,
             config_manager,
@@ -741,7 +738,6 @@ impl ThreadRequestProcessor {
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
-            analytics_events_client: self.analytics_events_client.clone(),
             thread_watch_manager: self.thread_watch_manager.clone(),
             thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
@@ -839,7 +835,6 @@ impl ThreadRequestProcessor {
             thread_state_manager: self.thread_state_manager.clone(),
             outgoing: Arc::clone(&self.outgoing),
             pending_thread_unloads: Arc::clone(&self.pending_thread_unloads),
-            analytics_events_client: self.analytics_events_client.clone(),
             thread_watch_manager: self.thread_watch_manager.clone(),
             thread_list_state_permit: self.thread_list_state_permit.clone(),
             fallback_model_provider: self.config.model_provider_id.clone(),
@@ -2676,10 +2671,10 @@ impl ThreadRequestProcessor {
                 )));
             };
 
-            let emit_thread_goal_update = self.config.features.enabled(Feature::Goals);
-            let thread_goal_state_db = emit_thread_goal_update
-                .then(|| self.state_db.clone())
-                .flatten();
+            let (emit_thread_goal_update, thread_goal_state_db) = self
+                .thread_goal_processor
+                .pending_resume_goal_state(existing_thread.as_ref())
+                .await;
 
             let command = crate::thread_state::ThreadListenerCommand::SendThreadResumeResponse(
                 Box::new(crate::thread_state::PendingThreadResumeRequest {

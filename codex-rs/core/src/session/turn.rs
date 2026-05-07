@@ -68,6 +68,7 @@ use codex_analytics::TurnResolvedConfigFact;
 use codex_analytics::build_track_events_context;
 use codex_async_utils::OrCancelExt;
 use codex_features::Feature;
+use codex_git_utils::get_git_repo_root;
 use codex_hooks::HookEvent;
 use codex_hooks::HookEventAfterAgent;
 use codex_hooks::HookPayload;
@@ -240,6 +241,7 @@ pub(crate) async fn run_turn(
         turn_context.as_ref(),
         &cancellation_token,
         &mentioned_skills,
+        Some(sess.mcp_elicitation_reviewer()),
     )
     .await;
 
@@ -364,7 +366,11 @@ pub(crate) async fn run_turn(
     let mut stop_hook_active = false;
     // Although from the perspective of codex.rs, TurnDiffTracker has the lifecycle of a Task which contains
     // many turns, from the perspective of the user, it is a single turn.
-    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::new()));
+    let display_root = get_git_repo_root(turn_context.cwd.as_path())
+        .unwrap_or_else(|| turn_context.cwd.clone().into_path_buf());
+    let turn_diff_tracker = Arc::new(tokio::sync::Mutex::new(TurnDiffTracker::with_display_root(
+        display_root,
+    )));
 
     // `ModelClientSession` is turn-scoped and caches WebSocket + sticky routing state, so we reuse
     // one instance across retries within this turn.
@@ -1154,6 +1160,7 @@ pub(crate) async fn built_tools(
         .list_all_tools()
         .or_cancel(cancellation_token)
         .await?;
+    let parallel_mcp_server_names = mcp_connection_manager.parallel_tool_call_server_names();
     drop(mcp_connection_manager);
     let loaded_plugins = sess
         .services
@@ -1252,18 +1259,6 @@ pub(crate) async fn built_tools(
     } else {
         Vec::new()
     };
-
-    let parallel_mcp_server_names = turn_context
-        .config
-        .mcp_servers
-        .get()
-        .iter()
-        .filter_map(|(server_name, server_config)| {
-            server_config
-                .supports_parallel_tool_calls
-                .then_some(server_name.clone())
-        })
-        .collect::<HashSet<_>>();
 
     Ok(Arc::new(ToolRouter::from_config(
         &turn_context.tools_config,
@@ -1509,8 +1504,6 @@ pub(super) fn realtime_text_for_event(msg: &EventMsg) -> Option<String> {
         | EventMsg::DeprecationNotice(_)
         | EventMsg::StreamError(_)
         | EventMsg::TurnDiff(_)
-        | EventMsg::GetHistoryEntryResponse(_)
-        | EventMsg::McpListToolsResponse(_)
         | EventMsg::RealtimeConversationListVoicesResponse(_)
         | EventMsg::SkillsUpdateAvailable
         | EventMsg::PlanUpdate(_)
@@ -1885,6 +1878,7 @@ async fn try_run_sampling_request(
     let mut assistant_message_stream_parsers = AssistantMessageStreamParsers::new(plan_mode);
     let mut plan_mode_state = plan_mode.then(|| PlanModeStreamState::new(&turn_context.sub_id));
     let receiving_span = trace_span!("receiving_stream");
+    let mut completed_response_id: Option<String> = None;
     let outcome: CodexResult<SamplingRequestResult> = loop {
         let handle_responses = trace_span!(
             parent: &receiving_span,
@@ -2112,7 +2106,7 @@ async fn try_run_sampling_request(
                 sess.services.models_manager.refresh_if_new_etag(etag).await;
             }
             ResponseEvent::Completed {
-                response_id: _,
+                response_id,
                 token_usage,
                 end_turn,
             } => {
@@ -2129,6 +2123,7 @@ async fn try_run_sampling_request(
                 if let Some(false) = end_turn {
                     needs_follow_up = true;
                 }
+                completed_response_id = Some(response_id);
                 break Ok(SamplingRequestResult {
                     needs_follow_up,
                     last_agent_message,
@@ -2240,6 +2235,15 @@ async fn try_run_sampling_request(
     )
     .await;
 
+    if sess
+        .features
+        .enabled(Feature::ResponsesWebsocketResponseProcessed)
+        && outcome.is_ok()
+        && let Some(response_id) = completed_response_id.as_deref()
+    {
+        client_session.send_response_processed(response_id).await;
+    }
+
     drain_in_flight(&mut in_flight, sess.clone(), turn_context.clone()).await?;
 
     if cancellation_token.is_cancelled() {
@@ -2248,10 +2252,10 @@ async fn try_run_sampling_request(
 
     if should_emit_turn_diff {
         let unified_diff = {
-            let mut tracker = turn_diff_tracker.lock().await;
+            let tracker = turn_diff_tracker.lock().await;
             tracker.get_unified_diff()
         };
-        if let Ok(Some(unified_diff)) = unified_diff {
+        if let Some(unified_diff) = unified_diff {
             let msg = EventMsg::TurnDiff(TurnDiffEvent { unified_diff });
             sess.clone().send_event(&turn_context, msg).await;
         }

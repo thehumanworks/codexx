@@ -351,6 +351,8 @@ use self::status_surfaces::TerminalTitleStatusKind;
 mod user_messages;
 use self::user_messages::PendingSteerCompareKey;
 use self::user_messages::UserMessageDisplay;
+mod warnings;
+use self::warnings::WarningDisplayState;
 pub(crate) use crate::branch_summary::StatusLineGitSummary;
 use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
@@ -780,6 +782,7 @@ pub(crate) struct ChatWidget {
     plan_type: Option<PlanType>,
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     rate_limit_warnings: RateLimitWarningState,
+    warning_display_state: WarningDisplayState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     add_credits_nudge_email_in_flight: Option<AddCreditsNudgeCreditType>,
     adaptive_chunking: AdaptiveChunkingPolicy,
@@ -2043,10 +2046,12 @@ impl ChatWidget {
         self.visible_user_turn_count = 0;
         self.copy_history_evicted_by_rollback = false;
         self.saw_copy_source_this_turn = false;
-        let history_entry_count =
-            usize::try_from(session.history_entry_count).unwrap_or(usize::MAX);
-        self.bottom_pane
-            .set_history_metadata(session.history_log_id, history_entry_count);
+        let history_metadata = session.message_history.unwrap_or_default();
+        self.bottom_pane.set_history_metadata(
+            session.thread_id,
+            history_metadata.log_id,
+            history_metadata.entry_count,
+        );
         self.set_skills(/*skills*/ None);
         self.session_network_proxy = session.network_proxy.clone();
         let previous_thread_id = self.thread_id;
@@ -3131,7 +3136,11 @@ impl ChatWidget {
     }
 
     fn on_warning(&mut self, message: impl Into<String>) {
-        self.add_to_history(history_cell::new_warning_event(message.into()));
+        let message = message.into();
+        if !self.warning_display_state.should_display(&message) {
+            return;
+        }
+        self.add_to_history(history_cell::new_warning_event(message));
         self.request_redraw();
     }
 
@@ -4037,7 +4046,7 @@ impl ChatWidget {
             entry,
         } = event;
         self.bottom_pane
-            .on_history_entry_response(log_id, offset, entry.map(|e| e.text));
+            .on_history_entry_response(log_id, offset, entry);
     }
 
     fn on_shutdown_complete(&mut self) {
@@ -4939,6 +4948,7 @@ impl ChatWidget {
             plan_type: initial_plan_type,
             codex_rate_limit_reached_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
+            warning_display_state: WarningDisplayState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             add_credits_nudge_email_in_flight: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
@@ -5588,7 +5598,7 @@ impl ChatWidget {
     ) -> QueueDrain {
         let drain = self.submit_shell_command(command);
         if drain == QueueDrain::Stop {
-            self.submit_op(AppCommand::add_to_history(history_text.to_string()));
+            self.append_message_history_entry(history_text.to_string());
         }
         drain
     }
@@ -5919,7 +5929,7 @@ impl ChatWidget {
             }
         };
         if let Some(history_text) = history_text {
-            self.submit_op(AppCommand::add_to_history(history_text));
+            self.append_message_history_entry(history_text);
         }
 
         if let Some(pending_steer) = pending_steer {
@@ -10548,6 +10558,15 @@ impl ChatWidget {
             }
         }
         true
+    }
+
+    fn append_message_history_entry(&self, text: String) {
+        let Some(thread_id) = self.thread_id else {
+            tracing::warn!("failed to append to message history: no active thread id");
+            return;
+        };
+        self.app_event_tx
+            .send(AppEvent::AppendMessageHistoryEntry { thread_id, text });
     }
 
     pub(crate) fn prepare_local_op_submission(&mut self, op: &AppCommand) {

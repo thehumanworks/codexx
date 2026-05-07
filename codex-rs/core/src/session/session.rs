@@ -368,7 +368,6 @@ impl Session {
         agent_control: AgentControl,
         environment_manager: Arc<EnvironmentManager>,
         analytics_events_client: Option<AnalyticsEventsClient>,
-        state_db: Option<state_db::StateDbHandle>,
         thread_store: Arc<dyn ThreadStore>,
         parent_rollout_thread_trace: ThreadTraceContext,
     ) -> anyhow::Result<Arc<Self>> {
@@ -468,21 +467,23 @@ impl Session {
             otel.name = "session_init.thread_persistence",
             session_init.ephemeral = config.ephemeral,
         ));
-        let state_db_ctx = if config.ephemeral { None } else { state_db };
-
-        let is_subagent = session_configuration.session_source.is_non_root_agent();
-        let history_meta_fut = async {
-            if is_subagent {
-                (0, 0)
+        let state_db_fut = async {
+            if config.ephemeral {
+                None
+            } else if let Some(local_store) =
+                thread_store.as_any().downcast_ref::<LocalThreadStore>()
+            {
+                local_store.state_db().await
             } else {
-                crate::message_history::history_metadata(&config).await
+                None
             }
         }
         .instrument(info_span!(
-            "session_init.history_metadata",
-            otel.name = "session_init.history_metadata",
-            session_init.is_subagent = is_subagent,
+            "session_init.state_db",
+            otel.name = "session_init.state_db",
+            session_init.ephemeral = config.ephemeral,
         ));
+
         let auth_manager_clone = Arc::clone(&auth_manager);
         let config_for_mcp = Arc::clone(&config);
         let mcp_manager_for_mcp = Arc::clone(&mcp_manager);
@@ -505,11 +506,8 @@ impl Session {
         ));
 
         // Join all independent futures.
-        let (
-            thread_persistence_result,
-            (history_log_id, history_entry_count),
-            (auth, mcp_servers, auth_statuses),
-        ) = tokio::join!(thread_persistence_fut, history_meta_fut, auth_and_mcp_fut);
+        let (thread_persistence_result, state_db_ctx, (auth, mcp_servers, auth_statuses)) =
+            tokio::join!(thread_persistence_fut, state_db_fut, auth_and_mcp_fut);
 
         let mut live_thread_init =
             LiveThreadInitGuard::new(thread_persistence_result.map_err(|e| {
@@ -920,8 +918,6 @@ impl Session {
                     active_permission_profile: session_configuration.active_permission_profile(),
                     cwd: session_configuration.cwd.clone(),
                     reasoning_effort: session_configuration.collaboration_mode.reasoning_effort(),
-                    history_log_id,
-                    history_entry_count,
                     initial_messages,
                     network_proxy: session_network_proxy.filter(|_| {
                         Self::managed_network_proxy_active_for_permission_profile(
@@ -940,11 +936,12 @@ impl Session {
             sess.start_skills_watcher_listener();
             let mut required_mcp_servers: Vec<String> = mcp_servers
                 .iter()
-                .filter(|(_, server)| server.enabled && server.required)
+                .filter(|(_, server)| server.enabled() && server.required())
                 .map(|(name, _)| name.clone())
                 .collect();
             required_mcp_servers.sort();
-            let enabled_mcp_server_count = mcp_servers.values().filter(|server| server.enabled).count();
+            let enabled_mcp_server_count =
+                mcp_servers.values().filter(|server| server.enabled()).count();
             let required_mcp_server_count = required_mcp_servers.len();
             let tool_plugin_provenance = mcp_manager.tool_plugin_provenance(config.as_ref()).await;
             let host_owned_codex_apps_enabled = config
@@ -994,6 +991,7 @@ impl Session {
                 host_owned_codex_apps_enabled,
                 tool_plugin_provenance,
                 auth,
+                Some(sess.mcp_elicitation_reviewer()),
             )
             .instrument(info_span!(
                 "session_init.mcp_manager_init",
