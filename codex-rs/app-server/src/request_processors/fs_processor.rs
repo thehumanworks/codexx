@@ -41,12 +41,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+type UploadPaths = Arc<Mutex<HashSet<PathBuf>>>;
+
 #[derive(Clone)]
 pub(crate) struct FsRequestProcessor {
     file_system: Arc<dyn ExecutorFileSystem>,
     fs_watch_manager: FsWatchManager,
     codex_home: PathBuf,
-    upload_paths: Arc<Mutex<HashSet<PathBuf>>>,
+    upload_paths_by_connection: Arc<Mutex<HashMap<ConnectionId, UploadPaths>>>,
     upload_sftp_lanes: Arc<Mutex<HashMap<ConnectionId, UploadSftpLane>>>,
 }
 
@@ -60,13 +62,17 @@ impl FsRequestProcessor {
             file_system,
             fs_watch_manager,
             codex_home,
-            upload_paths: Arc::new(Mutex::new(HashSet::new())),
+            upload_paths_by_connection: Arc::new(Mutex::new(HashMap::new())),
             upload_sftp_lanes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
         self.fs_watch_manager.connection_closed(connection_id).await;
+        self.upload_paths_by_connection
+            .lock()
+            .await
+            .remove(&connection_id);
         self.upload_sftp_lanes.lock().await.remove(&connection_id);
     }
 
@@ -102,6 +108,7 @@ impl FsRequestProcessor {
 
     pub(crate) async fn create_upload(
         &self,
+        connection_id: ConnectionId,
         params: FsCreateUploadParams,
     ) -> Result<FsCreateUploadResponse, JSONRPCErrorError> {
         let file_name = sanitize_upload_file_name(&params.file_name)?;
@@ -119,7 +126,8 @@ impl FsRequestProcessor {
             )
             .await
             .map_err(map_fs_error)?;
-        self.upload_paths
+        self.upload_paths_for_connection(connection_id)
+            .await
             .lock()
             .await
             .insert(upload_path.as_path().to_path_buf());
@@ -135,7 +143,11 @@ impl FsRequestProcessor {
         let lane = if let Some(lane) = self.upload_sftp_lanes.lock().await.get(&connection_id) {
             lane.clone()
         } else {
-            let lane = UploadSftpLane::start(Arc::clone(&self.upload_paths), binary_writer).await;
+            let lane = UploadSftpLane::start(
+                self.upload_paths_for_connection(connection_id).await,
+                binary_writer,
+            )
+            .await;
             self.upload_sftp_lanes
                 .lock()
                 .await
@@ -144,6 +156,15 @@ impl FsRequestProcessor {
                 .clone()
         };
         lane.send(bytes).await
+    }
+
+    async fn upload_paths_for_connection(&self, connection_id: ConnectionId) -> UploadPaths {
+        self.upload_paths_by_connection
+            .lock()
+            .await
+            .entry(connection_id)
+            .or_insert_with(|| Arc::new(Mutex::new(HashSet::new())))
+            .clone()
     }
 
     pub(crate) async fn create_directory(

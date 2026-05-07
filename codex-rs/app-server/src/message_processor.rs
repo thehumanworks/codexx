@@ -874,7 +874,7 @@ impl MessageProcessor {
                 .map(|response| Some(response.into())),
             ClientRequest::FsCreateUpload { params, .. } => self
                 .fs_processor
-                .create_upload(params)
+                .create_upload(connection_id, params)
                 .await
                 .map(|response| Some(response.into())),
             ClientRequest::FsCreateDirectory { params, .. } => self
