@@ -1366,6 +1366,9 @@ impl App {
         );
         match event {
             ThreadBufferedEvent::Notification(notification) => {
+                if matches!(notification, ServerNotification::McpServerStatusUpdated(_)) {
+                    self.refresh_mcp_startup_expected_servers_from_config();
+                }
                 self.chat_widget
                     .handle_server_notification(notification, /*replay_kind*/ None);
             }
@@ -1392,9 +1395,13 @@ impl App {
 
     pub(super) fn handle_thread_event_replay(&mut self, event: ThreadBufferedEvent) {
         match event {
-            ThreadBufferedEvent::Notification(notification) => self
-                .chat_widget
-                .handle_server_notification(notification, Some(ReplayKind::ThreadSnapshot)),
+            ThreadBufferedEvent::Notification(notification) => {
+                if matches!(notification, ServerNotification::McpServerStatusUpdated(_)) {
+                    self.refresh_mcp_startup_expected_servers_from_config();
+                }
+                self.chat_widget
+                    .handle_server_notification(notification, Some(ReplayKind::ThreadSnapshot));
+            }
             ThreadBufferedEvent::Request(request) => self
                 .chat_widget
                 .handle_server_request(request, Some(ReplayKind::ThreadSnapshot)),

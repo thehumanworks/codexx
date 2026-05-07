@@ -2101,11 +2101,15 @@
         },
         "status": {
           "$ref": "#/definitions/McpServerStartupState"
+        },
+        "threadId": {
+          "type": "string"
         }
       },
       "required": [
         "name",
-        "status"
+        "status",
+        "threadId"
       ],
       "type": "object"
     },
