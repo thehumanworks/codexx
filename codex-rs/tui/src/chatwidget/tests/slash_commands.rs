@@ -1867,7 +1867,9 @@ async fn fast_keybinding_toggle_uses_same_events_as_fast_slash_command() {
             event,
             AppEvent::PersistServiceTierSelection {
                 service_tier: Some(ServiceTier::Fast),
+                service_tier_id: Some(service_tier_id),
             }
+            if service_tier_id == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode persistence app event; events: {events:?}"
     );
