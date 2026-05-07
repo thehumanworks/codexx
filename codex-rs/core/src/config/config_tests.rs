@@ -8764,7 +8764,7 @@ allow_codex_version_mismatch = true
             config.startup_warnings,
         ),
         (
-            "gpt-5-codex".to_string(),
+            Some("gpt-5-codex".to_string()),
             true,
             vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()],
         )
