@@ -159,7 +159,7 @@ fn read_spawn_request(
 }
 
 /// Pick an effective CWD, using a junction if the ACL helper is active.
-fn effective_cwd(req_cwd: &Path, log_dir: Option<&Path>) -> PathBuf {
+fn effective_cwd(req_cwd: &Path, sandbox_home: &Path, log_dir: Option<&Path>) -> PathBuf {
     let use_junction = match read_acl_mutex::read_acl_mutex_exists() {
         Ok(exists) => exists,
         Err(err) => {
@@ -177,7 +177,8 @@ fn effective_cwd(req_cwd: &Path, log_dir: Option<&Path>) -> PathBuf {
             "junction: read ACL helper running; using junction CWD",
             log_dir,
         );
-        cwd_junction::create_cwd_junction(req_cwd, log_dir).unwrap_or_else(|| req_cwd.to_path_buf())
+        cwd_junction::create_cwd_junction(req_cwd, sandbox_home, log_dir)
+            .unwrap_or_else(|| req_cwd.to_path_buf())
     } else {
         req_cwd.to_path_buf()
     }
@@ -240,7 +241,7 @@ fn spawn_ipc_process(
         }
     }
 
-    let effective_cwd = effective_cwd(&req.cwd, Some(log_dir.as_path()));
+    let effective_cwd = effective_cwd(&req.cwd, req.codex_home.as_path(), Some(log_dir.as_path()));
     log_note(
         &format!(
             "runner: effective cwd={} (requested {})",
