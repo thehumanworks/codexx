@@ -1,14 +1,40 @@
 //! App-layer handlers for the worktree TUI flow.
 
+use codex_protocol::ThreadId;
 use codex_worktree::DirtyPolicy;
 use codex_worktree::WorktreeInfo;
 use codex_worktree::WorktreeListQuery;
 use codex_worktree::WorktreeRemoveRequest;
 use codex_worktree::WorktreeRequest;
 use codex_worktree::WorktreeSource;
+use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use super::*;
+
+const WORKTREE_SWITCH_RENDER_DELAY: Duration = Duration::from_millis(20);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorktreeSwitchMode {
+    StartFresh,
+    Fork(ThreadId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorktreeSessionTransition {
+    Forked,
+    Started,
+}
+
+impl WorktreeSessionTransition {
+    fn message_prefix(self) -> &'static str {
+        match self {
+            WorktreeSessionTransition::Forked => "Forked into",
+            WorktreeSessionTransition::Started => "Started session in",
+        }
+    }
+}
 
 impl App {
     pub(super) fn open_worktree_picker(&mut self, tui: &mut tui::Tui) {
@@ -97,7 +123,7 @@ impl App {
             .branch
             .clone()
             .unwrap_or_else(|| resolution.info.name.clone());
-        self.show_worktree_switching_view(tui, target).await;
+        self.show_worktree_switching_view(tui, target);
         self.switch_to_worktree_info(tui, app_server, resolution.info)
             .await;
         for warning in warnings {
@@ -105,7 +131,18 @@ impl App {
         }
     }
 
-    pub(super) async fn switch_to_worktree_target(
+    pub(super) fn begin_switch_to_worktree_target(&mut self, tui: &mut tui::Tui, target: String) {
+        if self.remote_app_server_url.is_some() {
+            self.chat_widget.add_error_message(
+                "/worktree is not supported for remote sessions yet.".to_string(),
+            );
+            return;
+        }
+        self.show_worktree_switching_view(tui, target.clone());
+        self.defer_switch_to_worktree_target(target);
+    }
+
+    pub(super) async fn switch_to_worktree_target_after_loading(
         &mut self,
         tui: &mut tui::Tui,
         app_server: &mut AppServerSession,
@@ -117,7 +154,6 @@ impl App {
             );
             return;
         }
-        self.show_worktree_switching_view(tui, target.clone()).await;
         let entries = match self.list_current_repo_worktrees() {
             Ok(entries) => entries,
             Err(err) => {
@@ -264,59 +300,142 @@ impl App {
         };
         self.apply_runtime_policy_overrides(&mut config);
 
-        if let Some(thread_id) = self.chat_widget.thread_id() {
-            match app_server.fork_thread(config.clone(), thread_id).await {
-                Ok(forked) => {
-                    self.shutdown_current_thread(app_server).await;
-                    self.install_worktree_config(tui, config);
-                    if let Err(err) = self
-                        .replace_chat_widget_with_app_server_thread(
-                            tui, app_server, forked, /*initial_user_message*/ None,
-                        )
-                        .await
-                    {
-                        self.show_worktree_error(
-                            "Failed to attach to worktree thread.".to_string(),
-                            err.to_string(),
-                        );
-                    }
-                }
-                Err(err) => {
+        let mode = self.worktree_switch_mode().await;
+        self.spawn_worktree_session_request(app_server, info, config, mode);
+        tui.frame_requester().schedule_frame();
+    }
+
+    pub(super) async fn on_worktree_session_ready(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        info: WorktreeInfo,
+        config: Config,
+        forked: bool,
+        result: Result<AppServerStartedThread, String>,
+    ) {
+        match result {
+            Ok(started) => {
+                self.shutdown_current_thread(app_server).await;
+                self.install_worktree_config(tui, config);
+                if let Err(err) = self
+                    .replace_chat_widget_with_app_server_thread(
+                        tui, app_server, started, /*initial_user_message*/ None,
+                    )
+                    .await
+                {
                     self.show_worktree_error(
-                        "Failed to fork current session into worktree.".to_string(),
+                        "Failed to attach to worktree thread.".to_string(),
                         err.to_string(),
                     );
+                } else {
+                    let transition = if forked {
+                        WorktreeSessionTransition::Forked
+                    } else {
+                        WorktreeSessionTransition::Started
+                    };
+                    self.add_worktree_session_message(&info, transition);
                 }
             }
-        } else {
-            self.shutdown_current_thread(app_server).await;
-            self.install_worktree_config(tui, config.clone());
-            match app_server.start_thread(&config).await {
-                Ok(started) => {
-                    if let Err(err) = self
-                        .replace_chat_widget_with_app_server_thread(
-                            tui, app_server, started, /*initial_user_message*/ None,
-                        )
-                        .await
-                    {
-                        self.show_worktree_error(
-                            "Failed to attach to worktree thread.".to_string(),
-                            err.to_string(),
-                        );
-                    }
-                }
-                Err(err) => {
-                    self.show_worktree_error(
-                        "Failed to start session in worktree.".to_string(),
-                        err.to_string(),
-                    );
-                }
+            Err(err) => {
+                let summary = if forked {
+                    "Failed to fork current session into worktree."
+                } else {
+                    "Failed to start session in worktree."
+                };
+                self.show_worktree_error(summary.to_string(), err);
             }
         }
         tui.frame_requester().schedule_frame();
     }
 
-    async fn show_worktree_switching_view(&mut self, tui: &mut tui::Tui, target: String) {
+    fn spawn_worktree_session_request(
+        &self,
+        app_server: &AppServerSession,
+        info: WorktreeInfo,
+        config: Config,
+        mode: WorktreeSwitchMode,
+    ) {
+        let request_handle = app_server.request_handle();
+        let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let forked = matches!(mode, WorktreeSwitchMode::Fork(_));
+            let result = match mode {
+                WorktreeSwitchMode::Fork(thread_id) => {
+                    crate::app_server_session::fork_thread_with_request_handle(
+                        request_handle,
+                        config.clone(),
+                        thread_id,
+                        remote_cwd_override,
+                    )
+                    .await
+                }
+                WorktreeSwitchMode::StartFresh => {
+                    crate::app_server_session::start_thread_with_request_handle(
+                        request_handle,
+                        config.clone(),
+                        remote_cwd_override,
+                    )
+                    .await
+                }
+            }
+            .map_err(|err| err.to_string());
+            app_event_tx.send(AppEvent::WorktreeSessionReady {
+                info,
+                config,
+                forked,
+                result,
+            });
+        });
+    }
+
+    fn add_worktree_session_message(
+        &mut self,
+        info: &WorktreeInfo,
+        transition: WorktreeSessionTransition,
+    ) {
+        let (message, hint) = worktree_session_message(info, transition);
+        self.chat_widget.add_info_message(message, Some(hint));
+    }
+
+    async fn worktree_switch_mode(&self) -> WorktreeSwitchMode {
+        let Some(thread_id) = self.current_displayed_thread_id() else {
+            return WorktreeSwitchMode::StartFresh;
+        };
+
+        if self
+            .session_for_thread(thread_id)
+            .await
+            .as_ref()
+            .is_some_and(Self::session_has_materialized_rollout)
+        {
+            WorktreeSwitchMode::Fork(thread_id)
+        } else {
+            WorktreeSwitchMode::StartFresh
+        }
+    }
+
+    async fn session_for_thread(&self, thread_id: ThreadId) -> Option<ThreadSessionState> {
+        if self.primary_thread_id == Some(thread_id)
+            && let Some(session) = self.primary_session_configured.clone()
+        {
+            return Some(session);
+        }
+
+        let channel = self.thread_event_channels.get(&thread_id)?;
+        let store = channel.store.lock().await;
+        store.session.clone()
+    }
+
+    fn session_has_materialized_rollout(session: &ThreadSessionState) -> bool {
+        session
+            .rollout_path
+            .as_ref()
+            .is_some_and(|rollout_path| rollout_path.exists())
+    }
+
+    fn show_worktree_switching_view(&mut self, tui: &mut tui::Tui, target: String) {
         self.chat_widget
             .show_selection_view(crate::worktree::switching_params(
                 target,
@@ -324,7 +443,14 @@ impl App {
                 self.config.animations,
             ));
         tui.frame_requester().schedule_frame();
-        tokio::task::yield_now().await;
+    }
+
+    fn defer_switch_to_worktree_target(&self, target: String) {
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(WORKTREE_SWITCH_RENDER_DELAY).await;
+            app_event_tx.send(AppEvent::SwitchToWorktreeAfterLoading { target });
+        });
     }
 
     fn replace_worktree_view(&mut self, params: crate::bottom_pane::SelectionViewParams) -> bool {
@@ -348,5 +474,212 @@ impl App {
         );
         self.file_search
             .update_search_dir(self.config.cwd.to_path_buf());
+    }
+}
+
+fn worktree_session_message(
+    info: &WorktreeInfo,
+    transition: WorktreeSessionTransition,
+) -> (String, String) {
+    let worktree_name = info.branch.as_deref().unwrap_or(info.name.as_str());
+    let state = if info.dirty.is_dirty() {
+        "dirty"
+    } else {
+        "clean"
+    };
+    let source = crate::worktree::source_label(info.source);
+    (
+        format!(
+            "{} {source} worktree {worktree_name} · {state} · {}",
+            transition.message_prefix(),
+            info.repo_name
+        ),
+        info.workspace_cwd.display().to_string(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codex_app_server_protocol::AskForApproval;
+    use codex_protocol::config_types::ApprovalsReviewer;
+    use codex_protocol::models::PermissionProfile;
+    use codex_utils_absolute_path::AbsolutePathBuf;
+    use codex_worktree::DirtyState;
+    use codex_worktree::WorktreeLocation;
+    use tempfile::TempDir;
+
+    #[tokio::test]
+    async fn worktree_switch_mode_starts_fresh_without_current_thread() {
+        let app = crate::app::test_support::make_test_app().await;
+
+        assert_eq!(
+            app.worktree_switch_mode().await,
+            WorktreeSwitchMode::StartFresh
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_switch_mode_starts_fresh_for_unmaterialized_primary_rollout() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let thread_id = ThreadId::new();
+        let missing_rollout_path = temp_dir.path().join("missing-rollout.jsonl");
+        let session = test_thread_session(
+            thread_id,
+            temp_dir.path().join("repo"),
+            missing_rollout_path,
+        );
+        let mut app = crate::app::test_support::make_test_app().await;
+        app.primary_thread_id = Some(thread_id);
+        app.active_thread_id = Some(thread_id);
+        app.primary_session_configured = Some(session);
+
+        assert_eq!(
+            app.worktree_switch_mode().await,
+            WorktreeSwitchMode::StartFresh
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_switch_mode_forks_materialized_primary_rollout() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let thread_id = ThreadId::new();
+        let rollout_path = temp_dir.path().join("rollout.jsonl");
+        std::fs::write(&rollout_path, "{}\\n").expect("write rollout");
+        let session = test_thread_session(thread_id, temp_dir.path().join("repo"), rollout_path);
+        let mut app = crate::app::test_support::make_test_app().await;
+        app.primary_thread_id = Some(thread_id);
+        app.active_thread_id = Some(thread_id);
+        app.primary_session_configured = Some(session);
+
+        assert_eq!(
+            app.worktree_switch_mode().await,
+            WorktreeSwitchMode::Fork(thread_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn worktree_switch_mode_uses_active_non_primary_thread_session() {
+        let temp_dir = TempDir::new().expect("temp dir");
+        let primary_thread_id = ThreadId::new();
+        let active_thread_id = ThreadId::new();
+        let active_rollout_path = temp_dir.path().join("active-rollout.jsonl");
+        std::fs::write(&active_rollout_path, "{}\\n").expect("write rollout");
+        let active_session = test_thread_session(
+            active_thread_id,
+            temp_dir.path().join("active"),
+            active_rollout_path,
+        );
+        let mut app = crate::app::test_support::make_test_app().await;
+        app.primary_thread_id = Some(primary_thread_id);
+        app.active_thread_id = Some(active_thread_id);
+        app.primary_session_configured = Some(test_thread_session(
+            primary_thread_id,
+            temp_dir.path().join("primary"),
+            temp_dir.path().join("missing-primary-rollout.jsonl"),
+        ));
+        app.thread_event_channels.insert(
+            active_thread_id,
+            ThreadEventChannel::new_with_session(
+                THREAD_EVENT_CHANNEL_CAPACITY,
+                active_session,
+                Vec::new(),
+            ),
+        );
+
+        assert_eq!(
+            app.worktree_switch_mode().await,
+            WorktreeSwitchMode::Fork(active_thread_id)
+        );
+    }
+
+    #[test]
+    fn worktree_session_message_describes_forked_workspace() {
+        let info = test_worktree_info(
+            WorktreeSource::Cli,
+            Some("fcoury/demo".to_string()),
+            /*dirty*/ false,
+        );
+
+        assert_eq!(
+            worktree_session_message(&info, WorktreeSessionTransition::Forked),
+            (
+                "Forked into cli worktree fcoury/demo · clean · codex".to_string(),
+                "/repo/codex.fcoury-demo".to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn worktree_session_message_describes_started_dirty_workspace() {
+        let info = test_worktree_info(
+            WorktreeSource::App,
+            /*branch*/ None,
+            /*dirty*/ true,
+        );
+
+        assert_eq!(
+            worktree_session_message(&info, WorktreeSessionTransition::Started),
+            (
+                "Started session in app worktree app-worktree · dirty · codex".to_string(),
+                "/repo/codex.fcoury-demo".to_string()
+            )
+        );
+    }
+
+    fn test_thread_session(
+        thread_id: ThreadId,
+        cwd: PathBuf,
+        rollout_path: PathBuf,
+    ) -> ThreadSessionState {
+        ThreadSessionState {
+            thread_id,
+            forked_from_id: None,
+            fork_parent_title: None,
+            thread_name: None,
+            model: "gpt-test".to_string(),
+            model_provider_id: "test-provider".to_string(),
+            service_tier: None,
+            approval_policy: AskForApproval::Never,
+            approvals_reviewer: ApprovalsReviewer::User,
+            permission_profile: PermissionProfile::read_only(),
+            active_permission_profile: None,
+            cwd: AbsolutePathBuf::try_from(cwd).expect("absolute cwd"),
+            instruction_source_paths: Vec::new(),
+            reasoning_effort: None,
+            message_history: None,
+            network_proxy: None,
+            rollout_path: Some(rollout_path),
+        }
+    }
+
+    fn test_worktree_info(
+        source: WorktreeSource,
+        branch: Option<String>,
+        dirty: bool,
+    ) -> WorktreeInfo {
+        let path = PathBuf::from("/repo/codex.fcoury-demo");
+        WorktreeInfo {
+            id: "repo-id".to_string(),
+            name: "app-worktree".to_string(),
+            slug: "fcoury-demo".to_string(),
+            source,
+            location: WorktreeLocation::Sibling,
+            repo_name: "codex".to_string(),
+            repo_root: path.clone(),
+            common_git_dir: PathBuf::from("/repo/codex/.git"),
+            worktree_git_root: path.clone(),
+            workspace_cwd: path,
+            original_relative_cwd: PathBuf::new(),
+            branch,
+            head: Some("abcdef".to_string()),
+            owner_thread_id: None,
+            metadata_path: PathBuf::from("/repo/codex/.git/codex-worktree.json"),
+            dirty: DirtyState {
+                has_staged_changes: false,
+                has_unstaged_changes: dirty,
+                has_untracked_files: false,
+            },
+        }
     }
 }

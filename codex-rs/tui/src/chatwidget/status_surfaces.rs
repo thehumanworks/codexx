@@ -6,18 +6,13 @@
 use super::*;
 use crate::bottom_pane::status_line_from_segments;
 use crate::branch_summary;
+use crate::motion::ACTIVITY_SPINNER_INTERVAL;
+use crate::motion::activity_spinner_frame_at;
 use crate::status::format_tokens_compact;
 
 /// Items shown in the terminal title when the user has not configured a
 /// custom selection. Intentionally minimal: activity indicator + project name.
 pub(super) const DEFAULT_TERMINAL_TITLE_ITEMS: [&str; 2] = ["activity", "project-name"];
-
-/// Braille-pattern dot-spinner frames for the terminal title animation.
-pub(super) const TERMINAL_TITLE_SPINNER_FRAMES: [&str; 10] =
-    ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-
-/// Time between spinner frame advances in the terminal title.
-pub(super) const TERMINAL_TITLE_SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Time between action-required blink phases in the terminal title.
 const TERMINAL_TITLE_ACTION_REQUIRED_INTERVAL: Duration = Duration::from_secs(1);
@@ -362,7 +357,7 @@ impl ChatWidget {
         }
 
         self.should_animate_terminal_title_spinner_with_selections(selections)
-            .then_some(TERMINAL_TITLE_SPINNER_INTERVAL)
+            .then_some(ACTIVITY_SPINNER_INTERVAL)
     }
 
     pub(super) fn request_status_line_branch_refresh(&mut self) {
@@ -816,14 +811,7 @@ impl ChatWidget {
             return None;
         }
 
-        Some(self.terminal_title_spinner_frame_at(now).to_string())
-    }
-
-    fn terminal_title_spinner_frame_at(&self, now: Instant) -> &'static str {
-        let elapsed = now.saturating_duration_since(self.terminal_title_animation_origin);
-        let frame_index =
-            (elapsed.as_millis() / TERMINAL_TITLE_SPINNER_INTERVAL.as_millis()) as usize;
-        TERMINAL_TITLE_SPINNER_FRAMES[frame_index % TERMINAL_TITLE_SPINNER_FRAMES.len()]
+        Some(activity_spinner_frame_at(self.terminal_title_animation_origin, now).to_string())
     }
 
     fn terminal_title_uses_activity(&self) -> bool {

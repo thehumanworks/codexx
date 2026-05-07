@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::time::Duration;
 use std::time::Instant;
 
 use codex_worktree::DirtyPolicy;
@@ -19,9 +18,8 @@ use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionRowDisplay;
 use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line;
-use crate::motion::MotionMode;
-use crate::motion::ReducedMotionIndicator;
-use crate::motion::activity_indicator;
+use crate::motion::ACTIVITY_SPINNER_INTERVAL;
+use crate::motion::activity_spinner_frame_at;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::tui::FrameRequester;
@@ -29,7 +27,6 @@ use crate::tui::FrameRequester;
 const WORKTREE_USAGE: &str =
     "Usage: /worktree [list|new <branch>|switch <branch>|path <branch>|remove <branch>]";
 pub(crate) const WORKTREE_SELECTION_VIEW_ID: &str = "worktree-selection";
-const LOADING_ANIMATION_INTERVAL: Duration = Duration::from_millis(100);
 
 struct WorktreeLoadingHeader {
     started_at: Instant,
@@ -62,19 +59,17 @@ impl Renderable for WorktreeLoadingHeader {
             return;
         }
 
-        let motion_mode = MotionMode::from_animations_enabled(self.animations_enabled);
         if self.animations_enabled {
             self.frame_requester
-                .schedule_frame_in(LOADING_ANIMATION_INTERVAL);
+                .schedule_frame_in(ACTIVITY_SPINNER_INTERVAL);
         }
 
         let mut loading_spans = Vec::new();
-        if let Some(indicator) = activity_indicator(
-            Some(self.started_at),
-            motion_mode,
-            ReducedMotionIndicator::StaticBullet,
-        ) {
-            loading_spans.push(indicator);
+        if self.animations_enabled {
+            loading_spans.push(activity_spinner_frame_at(self.started_at, Instant::now()).into());
+            loading_spans.push(" ".into());
+        } else {
+            loading_spans.push("•".dim());
             loading_spans.push(" ".into());
         }
         loading_spans.push(self.status.clone().dim());

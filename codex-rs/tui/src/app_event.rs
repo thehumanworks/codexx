@@ -34,10 +34,12 @@ use codex_utils_approval_presets::ApprovalPreset;
 use codex_worktree::DirtyPolicy;
 
 use crate::app_command::AppCommand;
+use crate::app_server_session::AppServerStartedThread;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
+use crate::legacy_core::config::Config;
 use codex_app_server_protocol::AskForApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_features::Feature;
@@ -211,6 +213,19 @@ pub(crate) enum AppEvent {
     /// Switch the TUI into an existing worktree.
     SwitchToWorktree {
         target: String,
+    },
+
+    /// Continue switching into an existing worktree after the loading view has rendered.
+    SwitchToWorktreeAfterLoading {
+        target: String,
+    },
+
+    /// Result of starting or forking a session in a worktree.
+    WorktreeSessionReady {
+        info: codex_worktree::WorktreeInfo,
+        config: Config,
+        forked: bool,
+        result: Result<AppServerStartedThread, String>,
     },
 
     /// Show the filesystem path for an existing worktree.
