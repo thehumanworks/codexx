@@ -372,7 +372,16 @@ async fn wait_for_single_request(mock: &ResponseMock) -> ResponsesRequest {
 async fn wait_for_file_removed(path: &Path) -> anyhow::Result<()> {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        if !tokio::fs::try_exists(path).await? {
+        let exists = match tokio::fs::try_exists(path).await {
+            Ok(exists) => exists,
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                // Windows can transiently deny metadata reads while another task
+                // is removing or resetting files in this workspace.
+                true
+            }
+            Err(err) => return Err(err.into()),
+        };
+        if !exists {
             return Ok(());
         }
         assert!(
