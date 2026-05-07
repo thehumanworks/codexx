@@ -90,6 +90,8 @@ pub struct ConfigRequirements {
     pub managed_hooks: Option<ConstrainedWithSource<ManagedHooksRequirementsToml>>,
     pub mcp_servers: Option<Sourced<BTreeMap<String, McpServerRequirement>>>,
     pub plugins: Option<Sourced<BTreeMap<String, PluginRequirementsToml>>>,
+    pub skills: Option<Sourced<SkillsRequirementsToml>>,
+    pub plugin_marketplaces: Option<Sourced<PluginMarketplaceRequirementsToml>>,
     pub exec_policy: Option<Sourced<RequirementsExecPolicy>>,
     pub enforce_residency: ConstrainedWithSource<Option<ResidencyRequirement>>,
     /// Managed network constraints derived from requirements.
@@ -123,6 +125,8 @@ impl Default for ConfigRequirements {
             managed_hooks: None,
             mcp_servers: None,
             plugins: None,
+            skills: None,
+            plugin_marketplaces: None,
             exec_policy: None,
             enforce_residency: ConstrainedWithSource::new(
                 Constrained::allow_any(/*initial_value*/ None),
@@ -161,6 +165,57 @@ pub struct PluginRequirementsToml {
 impl PluginRequirementsToml {
     pub fn is_empty(&self) -> bool {
         self.mcp_servers.as_ref().is_none_or(BTreeMap::is_empty)
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum SkillSourceRequirement {
+    User,
+    Repo,
+    System,
+    Admin,
+    Plugin,
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct SkillsRequirementsToml {
+    pub allowed_sources: Option<Vec<SkillSourceRequirement>>,
+}
+
+impl SkillsRequirementsToml {
+    pub fn is_empty(&self) -> bool {
+        self.allowed_sources.is_none()
+    }
+
+    pub fn allows_source(&self, source: SkillSourceRequirement) -> bool {
+        self.allowed_sources
+            .as_ref()
+            .is_none_or(|sources| sources.contains(&source))
+    }
+}
+
+#[derive(Deserialize, Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginMarketplaceRequirementsToml {
+    pub allowed_names: Option<Vec<String>>,
+    pub allow_user_additions: Option<bool>,
+}
+
+impl PluginMarketplaceRequirementsToml {
+    pub fn is_empty(&self) -> bool {
+        self.allowed_names.is_none() && self.allow_user_additions.is_none()
+    }
+
+    pub fn allows_marketplace(&self, marketplace_name: &str) -> bool {
+        self.allowed_names.as_ref().is_none_or(|allowed_names| {
+            allowed_names
+                .iter()
+                .any(|allowed_name| allowed_name == marketplace_name)
+        })
+    }
+
+    pub fn allows_user_additions(&self) -> bool {
+        self.allow_user_additions.unwrap_or(true)
     }
 }
 
@@ -1158,6 +1213,8 @@ impl TryFrom<ConfigRequirementsWithSources> for ConfigRequirements {
             managed_hooks,
             mcp_servers,
             plugins,
+            skills: None,
+            plugin_marketplaces: None,
             exec_policy,
             enforce_residency,
             network,
@@ -1369,6 +1426,8 @@ mod tests {
                 hooks: None,
                 mcp_servers: None,
                 plugins: None,
+                skills: None,
+                plugin_marketplaces: None,
                 apps: None,
                 rules: None,
                 enforce_residency: None,
@@ -1416,6 +1475,8 @@ mod tests {
                 hooks: None,
                 mcp_servers: None,
                 plugins: None,
+                skills: None,
+                plugin_marketplaces: None,
                 apps: None,
                 rules: None,
                 enforce_residency: None,
