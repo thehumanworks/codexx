@@ -2855,7 +2855,7 @@ impl ChatComposer {
             return None;
         }
         if let Some(command) = self.find_service_tier_command(name) {
-            self.stage_slash_command_history();
+            self.stage_slash_command_history_text(self.textarea.text().trim().to_string());
             self.textarea.set_text_clearing_elements("");
             self.is_bash_mode = false;
             return Some(InputResult::ServiceTierCommand(command));
