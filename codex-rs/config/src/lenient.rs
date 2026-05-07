@@ -27,6 +27,11 @@ enum PathElement {
     Index(usize),
 }
 
+enum CurrentNodeWarning {
+    Check,
+    Skip,
+}
+
 /// Return best-effort startup warnings for raw TOML values that look like invalid enums.
 ///
 /// `DefaultOnError` is responsible for keeping config deserialization lenient.
@@ -51,6 +56,7 @@ pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
                     &mut path,
                     &mut ref_stack,
                     &mut warnings,
+                    CurrentNodeWarning::Check,
                 );
 
                 warnings
@@ -74,32 +80,45 @@ fn collect_warnings(
     path: &mut Vec<PathElement>,
     ref_stack: &mut Vec<String>,
     warnings: &mut Vec<String>,
+    current_node_warning: CurrentNodeWarning,
 ) {
     let mut choices = EnumChoices::default();
     collect_enum_choices(schema, definitions, ref_stack, &mut choices);
 
     // Warn only when this schema node has string enum choices. Non-enum shape
     // mismatches are left alone so this pass stays small and advisory.
-    let invalid_enum_value = if let Some(value) = value.as_str() {
-        !choices.allowed_strings.contains(value)
-    } else {
-        !choices.allows_non_string
-    };
-    if !choices.allowed_strings.is_empty() && invalid_enum_value {
-        let warning = format!(
-            "Ignoring invalid config value at {}: {value}",
-            display_path(path)
-        );
-        if !warnings.contains(&warning) {
-            warnings.push(warning);
+    if matches!(current_node_warning, CurrentNodeWarning::Check) {
+        let invalid_enum_value = if let Some(value) = value.as_str() {
+            !choices.allowed_strings.contains(value)
+        } else {
+            !choices.allows_non_string
+        };
+        if !choices.allowed_strings.is_empty() && invalid_enum_value {
+            let warning = format!(
+                "Ignoring invalid config value at {}: {value}",
+                display_path(path)
+            );
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
         }
     }
 
-    // Follow references and composition at the same TOML path. Schemars often
-    // emits enum fields as `allOf: [{ "$ref": ... }]` when defaults or
-    // attributes are present on the field.
+    // Follow references and composition at the same TOML path so nested object
+    // schemas are still traversed. Current-path warnings are skipped here
+    // because the enum choices above already aggregate refs and composition
+    // children; warning inside each oneOf branch would reject valid sibling
+    // enum variants.
     if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
-        collect_warnings(value, definition, definitions, path, ref_stack, warnings);
+        collect_warnings(
+            value,
+            definition,
+            definitions,
+            path,
+            ref_stack,
+            warnings,
+            CurrentNodeWarning::Skip,
+        );
         ref_stack.pop();
     }
 
@@ -108,7 +127,15 @@ fn collect_warnings(
             continue;
         };
         for child_schema in child_schemas {
-            collect_warnings(value, child_schema, definitions, path, ref_stack, warnings);
+            collect_warnings(
+                value,
+                child_schema,
+                definitions,
+                path,
+                ref_stack,
+                warnings,
+                CurrentNodeWarning::Skip,
+            );
         }
     }
 
@@ -128,6 +155,7 @@ fn collect_warnings(
                 path,
                 ref_stack,
                 warnings,
+                CurrentNodeWarning::Check,
             );
             path.pop();
         }
@@ -152,6 +180,7 @@ fn collect_warnings(
                 path,
                 ref_stack,
                 warnings,
+                CurrentNodeWarning::Check,
             );
             path.pop();
         }
@@ -163,7 +192,15 @@ fn collect_warnings(
     if let (Some(array), Some(items)) = (value.as_array(), items) {
         for (index, child_value) in array.iter().enumerate() {
             path.push(PathElement::Index(index));
-            collect_warnings(child_value, items, definitions, path, ref_stack, warnings);
+            collect_warnings(
+                child_value,
+                items,
+                definitions,
+                path,
+                ref_stack,
+                warnings,
+                CurrentNodeWarning::Check,
+            );
             path.pop();
         }
     }
@@ -271,5 +308,83 @@ fn display_path(path: &[PathElement]) -> String {
             }
         }
         output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::collections::BTreeSet;
+
+    fn warning_set(contents: &str) -> BTreeSet<String> {
+        let value = toml::from_str::<TomlValue>(contents).expect("config should parse");
+        enum_value_warnings(&value).into_iter().collect()
+    }
+
+    #[test]
+    fn enum_warning_walk_follows_refs_composition_and_dynamic_maps() {
+        let contents = r#"
+sandbox_mode = "hyperdrive"
+
+[tui]
+notification_method = "shout"
+notification_condition = "whenever"
+
+[profiles."alpha.beta"]
+sandbox_mode = "moonwalk"
+
+[mcp_servers.local]
+command = "server"
+default_tools_approval_mode = "ship-it"
+
+[mcp_servers.local.tools."danger.tool"]
+approval_mode = "yolo"
+"#;
+        let value = toml::from_str::<TomlValue>(contents).expect("config should parse");
+        let original = value.clone();
+        let warnings = enum_value_warnings(&value).into_iter().collect();
+        let expected_warnings = BTreeSet::from([
+            "Ignoring invalid config value at mcp_servers.local.default_tools_approval_mode: \
+             \"ship-it\""
+                .to_string(),
+            "Ignoring invalid config value at mcp_servers.local.tools.\"danger.tool\".\
+             approval_mode: \"yolo\""
+                .to_string(),
+            "Ignoring invalid config value at profiles.\"alpha.beta\".sandbox_mode: \"moonwalk\""
+                .to_string(),
+            "Ignoring invalid config value at sandbox_mode: \"hyperdrive\"".to_string(),
+            "Ignoring invalid config value at tui.notification_condition: \"whenever\"".to_string(),
+            "Ignoring invalid config value at tui.notification_method: \"shout\"".to_string(),
+        ]);
+
+        assert_eq!((value, warnings), (original, expected_warnings));
+    }
+
+    #[test]
+    fn valid_one_of_enum_values_do_not_warn_from_sibling_branches() {
+        let warnings = warning_set(
+            r#"
+[tui]
+notification_condition = "always"
+"#,
+        );
+
+        assert_eq!(warnings, BTreeSet::new());
+    }
+
+    #[test]
+    fn non_string_union_branches_do_not_warn() {
+        let warnings = warning_set(
+            r#"
+[tools]
+web_search = true
+
+[tui]
+notifications = ["notify-send"]
+"#,
+        );
+
+        assert_eq!(warnings, BTreeSet::new());
     }
 }

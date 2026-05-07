@@ -231,6 +231,9 @@ async fn invalid_enum_values_do_not_poison_relative_path_resolution() -> anyhow:
         r#"
 model_instructions_file = "instructions.md"
 sandbox_mode = "make-it-so"
+
+[tui]
+notification_method = "loudly"
 "#,
     )
     .expect("write config");
@@ -250,7 +253,10 @@ sandbox_mode = "make-it-so"
         (config.base_instructions.as_deref(), config.startup_warnings,),
         (
             Some("resolved instructions"),
-            vec!["Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string()],
+            vec![
+                "Ignoring invalid config value at sandbox_mode: \"make-it-so\"".to_string(),
+                "Ignoring invalid config value at tui.notification_method: \"loudly\"".to_string(),
+            ],
         )
     );
     Ok(())
