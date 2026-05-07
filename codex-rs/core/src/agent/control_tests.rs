@@ -239,6 +239,65 @@ async fn wait_for_live_thread_spawn_children(
     .expect("expected persisted child tree");
 }
 
+async fn wait_for_agent_shutdown(
+    thread_id: ThreadId,
+    mut status_rx: tokio::sync::watch::Receiver<AgentStatus>,
+) {
+    if matches!(status_rx.borrow().clone(), AgentStatus::Shutdown) {
+        return;
+    }
+
+    timeout(Duration::from_secs(5), async {
+        loop {
+            status_rx
+                .changed()
+                .await
+                .unwrap_or_else(|_| panic!("thread {thread_id} status should reach shutdown"));
+            if matches!(status_rx.borrow().clone(), AgentStatus::Shutdown) {
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("thread {thread_id} should shut down before resume"));
+}
+
+async fn shutdown_live_agent_and_wait(control: &AgentControl, thread_id: ThreadId) {
+    let status_rx = control
+        .subscribe_status(thread_id)
+        .await
+        .expect("status subscription should succeed before shutdown");
+    let _ = control
+        .shutdown_live_agent(thread_id)
+        .await
+        .expect("thread shutdown should submit");
+    wait_for_agent_shutdown(thread_id, status_rx).await;
+}
+
+async fn close_agent_and_wait(
+    control: &AgentControl,
+    agent_id: ThreadId,
+    shutdown_ids: &[ThreadId],
+) {
+    let mut status_rxs = Vec::with_capacity(shutdown_ids.len());
+    for thread_id in shutdown_ids {
+        status_rxs.push((
+            *thread_id,
+            control
+                .subscribe_status(*thread_id)
+                .await
+                .expect("status subscription should succeed before close"),
+        ));
+    }
+    let _ = control
+        .close_agent(agent_id)
+        .await
+        .expect("agent close should succeed");
+    for (thread_id, status_rx) in status_rxs {
+        wait_for_agent_shutdown(thread_id, status_rx).await;
+    }
+}
+
 #[tokio::test]
 async fn send_input_errors_when_manager_dropped() {
     let control = AgentControl::default();
@@ -1626,26 +1685,8 @@ async fn resume_thread_subagent_restores_stored_nickname_and_role() {
     .await
     .expect("child thread metadata should be persisted to sqlite before shutdown");
 
-    let _ = harness
-        .control
-        .shutdown_live_agent(child_thread_id)
-        .await
-        .expect("child shutdown should submit");
-    if !matches!(status_rx.borrow().clone(), AgentStatus::Shutdown) {
-        timeout(Duration::from_secs(5), async {
-            loop {
-                status_rx
-                    .changed()
-                    .await
-                    .expect("child status should reach shutdown");
-                if matches!(status_rx.borrow().clone(), AgentStatus::Shutdown) {
-                    break;
-                }
-            }
-        })
-        .await
-        .expect("child should shut down before resume");
-    }
+    drop(status_rx);
+    shutdown_live_agent_and_wait(&harness.control, child_thread_id).await;
     drop(child_thread);
 
     let resumed_thread_id = harness
@@ -1715,11 +1756,8 @@ async fn resume_agent_from_rollout_reads_archived_rollout_path() {
         .await
         .expect("child thread should exist");
     persist_thread_for_tree_resume(&child_thread, "persist before archiving").await;
-    let _ = harness
-        .control
-        .shutdown_live_agent(child_thread_id)
-        .await
-        .expect("child shutdown should succeed");
+    shutdown_live_agent_and_wait(&harness.control, child_thread_id).await;
+    drop(child_thread);
     let store = LocalThreadStore::new(
         LocalThreadStoreConfig::from_config(&harness.config),
         harness.state_db.clone(),
@@ -2009,11 +2047,12 @@ async fn shutdown_agent_tree_closes_descendants_when_started_at_child() {
     wait_for_live_thread_spawn_children(&harness.control, child_thread_id, &[grandchild_thread_id])
         .await;
 
-    let _ = harness
-        .control
-        .close_agent(child_thread_id)
-        .await
-        .expect("child close should succeed");
+    close_agent_and_wait(
+        &harness.control,
+        child_thread_id,
+        &[child_thread_id, grandchild_thread_id],
+    )
+    .await;
 
     let _ = harness
         .control
@@ -2101,16 +2140,14 @@ async fn resume_agent_from_rollout_does_not_reopen_closed_descendants() {
     wait_for_live_thread_spawn_children(&harness.control, child_thread_id, &[grandchild_thread_id])
         .await;
 
-    let _ = harness
-        .control
-        .close_agent(child_thread_id)
-        .await
-        .expect("child close should succeed");
-    let _ = harness
-        .control
-        .shutdown_live_agent(parent_thread_id)
-        .await
-        .expect("parent shutdown should succeed");
+    close_agent_and_wait(
+        &harness.control,
+        child_thread_id,
+        &[child_thread_id, grandchild_thread_id],
+    )
+    .await;
+    shutdown_live_agent_and_wait(&harness.control, parent_thread_id).await;
+    drop(parent_thread);
 
     let resumed_parent_thread_id = harness
         .control
@@ -2196,11 +2233,12 @@ async fn resume_closed_child_reopens_open_descendants() {
     wait_for_live_thread_spawn_children(&harness.control, child_thread_id, &[grandchild_thread_id])
         .await;
 
-    let _ = harness
-        .control
-        .close_agent(child_thread_id)
-        .await
-        .expect("child close should succeed");
+    close_agent_and_wait(
+        &harness.control,
+        child_thread_id,
+        &[child_thread_id, grandchild_thread_id],
+    )
+    .await;
 
     let resumed_child_thread_id = harness
         .control
