@@ -114,9 +114,11 @@ use codex_protocol::openai_models::ModelServiceTier;
 use codex_protocol::openai_models::ModelUpgrade;
 use codex_protocol::openai_models::ReasoningEffortPreset;
 use codex_utils_absolute_path::AbsolutePathBuf;
+use codex_utils_absolute_path::AbsolutePathBufGuard;
 use color_eyre::eyre::ContextCompat;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -336,22 +338,26 @@ impl AppServerSession {
         session_start_source: Option<ThreadStartSource>,
     ) -> Result<AppServerStartedThread> {
         let request_id = self.next_request_id();
+        let thread_params_mode = self.thread_params_mode();
         let response: ThreadStartResponse = self
-            .client
-            .request_typed(ClientRequest::ThreadStart {
-                request_id,
-                params: thread_start_params_from_config(
-                    config,
-                    self.thread_params_mode(),
-                    self.remote_cwd_override.as_deref(),
-                    session_start_source,
-                ),
-            })
+            .request_thread_lifecycle_response(
+                "thread/start",
+                ClientRequest::ThreadStart {
+                    request_id,
+                    params: thread_start_params_from_config(
+                        config,
+                        thread_params_mode,
+                        self.remote_cwd_override.as_deref(),
+                        session_start_source,
+                    ),
+                },
+                config,
+            )
             .await
             .map_err(|err| {
                 bootstrap_request_error("thread/start failed during TUI bootstrap", err)
             })?;
-        started_thread_from_start_response(response, config, self.thread_params_mode()).await
+        started_thread_from_start_response(response, config, thread_params_mode).await
     }
 
     pub(crate) async fn resume_thread(
@@ -360,17 +366,21 @@ impl AppServerSession {
         thread_id: ThreadId,
     ) -> Result<AppServerStartedThread> {
         let request_id = self.next_request_id();
+        let thread_params_mode = self.thread_params_mode();
         let response: ThreadResumeResponse = self
-            .client
-            .request_typed(ClientRequest::ThreadResume {
-                request_id,
-                params: thread_resume_params_from_config(
-                    config.clone(),
-                    thread_id,
-                    self.thread_params_mode(),
-                    self.remote_cwd_override.as_deref(),
-                ),
-            })
+            .request_thread_lifecycle_response(
+                "thread/resume",
+                ClientRequest::ThreadResume {
+                    request_id,
+                    params: thread_resume_params_from_config(
+                        config.clone(),
+                        thread_id,
+                        thread_params_mode,
+                        self.remote_cwd_override.as_deref(),
+                    ),
+                },
+                &config,
+            )
             .await
             .map_err(|err| {
                 bootstrap_request_error("thread/resume failed during TUI bootstrap", err)
@@ -379,8 +389,7 @@ impl AppServerSession {
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
         let mut started =
-            started_thread_from_resume_response(response, &config, self.thread_params_mode())
-                .await?;
+            started_thread_from_resume_response(response, &config, thread_params_mode).await?;
         started.session.fork_parent_title = fork_parent_title;
         Ok(started)
     }
@@ -391,17 +400,21 @@ impl AppServerSession {
         thread_id: ThreadId,
     ) -> Result<AppServerStartedThread> {
         let request_id = self.next_request_id();
+        let thread_params_mode = self.thread_params_mode();
         let response: ThreadForkResponse = self
-            .client
-            .request_typed(ClientRequest::ThreadFork {
-                request_id,
-                params: thread_fork_params_from_config(
-                    config.clone(),
-                    thread_id,
-                    self.thread_params_mode(),
-                    self.remote_cwd_override.as_deref(),
-                ),
-            })
+            .request_thread_lifecycle_response(
+                "thread/fork",
+                ClientRequest::ThreadFork {
+                    request_id,
+                    params: thread_fork_params_from_config(
+                        config.clone(),
+                        thread_id,
+                        thread_params_mode,
+                        self.remote_cwd_override.as_deref(),
+                    ),
+                },
+                &config,
+            )
             .await
             .map_err(|err| {
                 bootstrap_request_error("thread/fork failed during TUI bootstrap", err)
@@ -410,7 +423,7 @@ impl AppServerSession {
             .fork_parent_title_from_app_server(response.thread.forked_from_id.as_deref())
             .await;
         let mut started =
-            started_thread_from_fork_response(response, &config, self.thread_params_mode()).await?;
+            started_thread_from_fork_response(response, &config, thread_params_mode).await?;
         started.session.fork_parent_title = fork_parent_title;
         Ok(started)
     }
@@ -420,6 +433,46 @@ impl AppServerSession {
             AppServerClient::InProcess(_) => ThreadParamsMode::Embedded,
             AppServerClient::Remote(_) => ThreadParamsMode::Remote,
         }
+    }
+
+    /// Sends a thread lifecycle request as raw JSON so the TUI can capture the
+    /// raw cwd before typed deserialization resolves paths against a local base.
+    async fn request_thread_lifecycle_response<T>(
+        &mut self,
+        method: &'static str,
+        request: ClientRequest,
+        config: &Config,
+    ) -> std::result::Result<T, TypedRequestError>
+    where
+        T: DeserializeOwned,
+    {
+        let response =
+            self.client
+                .request(request)
+                .await
+                .map_err(|source| TypedRequestError::Transport {
+                    method: method.to_string(),
+                    source,
+                })?;
+        let result = response.map_err(|source| TypedRequestError::Server {
+            method: method.to_string(),
+            source,
+        })?;
+        let raw_cwd = self
+            .is_remote()
+            .then(|| thread_lifecycle_response_cwd(&result))
+            .flatten();
+        let path_base_guard = AbsolutePathBufGuard::new(config.cwd.as_path());
+        let response =
+            serde_json::from_value(result).map_err(|source| TypedRequestError::Deserialize {
+                method: method.to_string(),
+                source,
+            })?;
+        drop(path_base_guard);
+        if let Some(raw_cwd) = raw_cwd {
+            self.remote_cwd_override = Some(raw_cwd);
+        }
+        Ok(response)
     }
 
     async fn fork_parent_title_from_app_server(
@@ -536,10 +589,11 @@ impl AppServerSession {
         output_schema: Option<serde_json::Value>,
     ) -> Result<TurnStartResponse> {
         let request_id = self.next_request_id();
+        let cwd_for_request = self.remote_cwd_override.clone().unwrap_or(cwd);
         let (sandbox_policy, permissions) = turn_permissions_overrides(
             &permission_profile,
             active_permission_profile,
-            cwd.as_path(),
+            cwd_for_request.as_path(),
             self.thread_params_mode(),
         );
         self.client
@@ -550,7 +604,7 @@ impl AppServerSession {
                     input: items,
                     responsesapi_client_metadata: None,
                     environments: None,
-                    cwd: Some(cwd),
+                    cwd: Some(cwd_for_request),
                     approval_policy: Some(approval_policy),
                     approvals_reviewer: Some(approvals_reviewer.into()),
                     sandbox_policy,
@@ -1281,6 +1335,20 @@ fn thread_cwd_from_config(
     }
 }
 
+fn thread_lifecycle_response_cwd(result: &serde_json::Value) -> Option<PathBuf> {
+    result
+        .get("cwd")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| {
+            result
+                .get("thread")
+                .and_then(|thread| thread.get("cwd"))
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter(|cwd| !cwd.is_empty())
+        .map(PathBuf::from)
+}
+
 async fn started_thread_from_start_response(
     response: ThreadStartResponse,
     config: &Config,
@@ -1524,6 +1592,7 @@ mod tests {
     use codex_utils_absolute_path::test_support::PathBufExt;
     use codex_utils_absolute_path::test_support::test_path_buf;
     use pretty_assertions::assert_eq;
+    use serde_json::json;
     use tempfile::TempDir;
 
     async fn build_config(temp_dir: &TempDir) -> Config {
@@ -1532,6 +1601,56 @@ mod tests {
             .build()
             .await
             .expect("config should build")
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TestThreadLifecycleResponse {
+        cwd: AbsolutePathBuf,
+        instruction_sources: Vec<AbsolutePathBuf>,
+        thread: TestThreadLifecycleThread,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct TestThreadLifecycleThread {
+        cwd: AbsolutePathBuf,
+    }
+
+    #[tokio::test]
+    async fn thread_lifecycle_response_preserves_raw_cwd_when_paths_need_local_base() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let config = build_config(&temp_dir).await;
+        let (server_cwd, instruction_source) = if cfg!(windows) {
+            ("/home/remote/project", "/home/remote/project/AGENTS.md")
+        } else {
+            (
+                r"C:\Users\remote\project",
+                r"C:\Users\remote\project\AGENTS.md",
+            )
+        };
+        let response = json!({
+            "cwd": server_cwd,
+            "instructionSources": [instruction_source],
+            "thread": {
+                "cwd": server_cwd
+            }
+        });
+        assert!(
+            serde_json::from_value::<TestThreadLifecycleResponse>(response.clone()).is_err(),
+            "remote cwd should not decode without a local base path"
+        );
+
+        let raw_cwd = thread_lifecycle_response_cwd(&response);
+        let path_base_guard = AbsolutePathBufGuard::new(config.cwd.as_path());
+        let decoded = serde_json::from_value::<TestThreadLifecycleResponse>(response)
+            .expect("remote thread response should decode through local path base");
+        drop(path_base_guard);
+
+        assert_eq!(raw_cwd, Some(PathBuf::from(server_cwd)));
+        assert!(decoded.cwd.as_path().is_absolute());
+        assert!(decoded.thread.cwd.as_path().is_absolute());
+        assert_eq!(decoded.instruction_sources.len(), 1);
+        assert!(decoded.instruction_sources[0].as_path().is_absolute());
     }
 
     #[tokio::test]
