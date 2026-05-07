@@ -1,3 +1,4 @@
+mod backend;
 mod execute_handler;
 pub(crate) mod execute_spec;
 mod response_adapter;
@@ -8,6 +9,10 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
+use backend::CodeModeBackend;
+use backend::CodeModeTurnWorker;
+use backend::InProcessCodeModeBackend;
+use backend::StoredValues;
 use codex_code_mode::CodeModeNestedToolCall;
 use codex_code_mode::CodeModeTurnHost;
 use codex_code_mode::RuntimeResponse;
@@ -15,6 +20,7 @@ use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use serde_json::Value as JsonValue;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::function_tool::FunctionCallError;
@@ -59,43 +65,42 @@ pub(crate) struct ExecContext {
 }
 
 pub(crate) struct CodeModeService {
-    inner: codex_code_mode::CodeModeService,
+    backend: Arc<dyn CodeModeBackend>,
+    stored_values: Mutex<StoredValues>,
 }
 
 impl CodeModeService {
     pub(crate) fn new() -> Self {
         Self {
-            inner: codex_code_mode::CodeModeService::new(),
+            backend: Arc::new(InProcessCodeModeBackend::new()),
+            stored_values: Mutex::new(StoredValues::new()),
         }
     }
 
-    pub(crate) async fn stored_values(&self) -> std::collections::HashMap<String, JsonValue> {
-        self.inner.stored_values().await
+    pub(crate) async fn stored_values(&self) -> StoredValues {
+        self.stored_values.lock().await.clone()
     }
 
-    pub(crate) async fn replace_stored_values(
-        &self,
-        values: std::collections::HashMap<String, JsonValue>,
-    ) {
-        self.inner.replace_stored_values(values).await;
+    pub(crate) async fn replace_stored_values(&self, values: StoredValues) {
+        *self.stored_values.lock().await = values;
     }
 
     pub(crate) fn allocate_cell_id(&self) -> String {
-        self.inner.allocate_cell_id()
+        self.backend.allocate_cell_id()
     }
 
     pub(crate) async fn execute(
         &self,
         request: codex_code_mode::ExecuteRequest,
     ) -> Result<RuntimeResponse, String> {
-        self.inner.execute(request).await
+        self.backend.execute(request).await
     }
 
     pub(crate) async fn wait(
         &self,
         request: codex_code_mode::WaitRequest,
     ) -> Result<codex_code_mode::WaitOutcome, String> {
-        self.inner.wait(request).await
+        self.backend.wait(request).await
     }
 
     pub(crate) async fn start_turn_worker(
@@ -104,7 +109,7 @@ impl CodeModeService {
         turn: &Arc<TurnContext>,
         router: Arc<ToolRouter>,
         tracker: SharedTurnDiffTracker,
-    ) -> Option<codex_code_mode::CodeModeTurnWorker> {
+    ) -> Option<CodeModeTurnWorker> {
         if !turn.features.enabled(Feature::CodeMode) {
             return None;
         }
@@ -116,7 +121,7 @@ impl CodeModeService {
         let tool_runtime =
             ToolCallRuntime::new(router, Arc::clone(session), Arc::clone(turn), tracker);
         let host = Arc::new(CoreTurnHost { exec, tool_runtime });
-        Some(self.inner.start_turn_worker(host))
+        Some(self.backend.start_turn_worker(host))
     }
 }
 
