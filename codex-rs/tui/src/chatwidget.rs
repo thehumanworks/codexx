@@ -9477,10 +9477,7 @@ impl ChatWidget {
         } else {
             Some(ServiceTier::Fast)
         };
-        self.set_service_tier_selection(
-            next_tier,
-            next_tier.map(|service_tier| service_tier.request_value().to_string()),
-        );
+        self.set_service_tier_selection(next_tier, /*service_tier_id*/ None);
     }
 
     pub(crate) fn current_model(&self) -> &str {
