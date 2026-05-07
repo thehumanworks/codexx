@@ -9,6 +9,10 @@ pub(crate) fn collect_unavailable_called_tools(
     exposed_tool_names: &HashSet<ToolName>,
 ) -> Vec<ToolName> {
     let mut unavailable_tools = BTreeMap::new();
+    let exposed_display_names = exposed_tool_names
+        .iter()
+        .map(ToolName::display)
+        .collect::<HashSet<_>>();
 
     for item in input {
         let ResponseItem::FunctionCall {
@@ -25,11 +29,11 @@ pub(crate) fn collect_unavailable_called_tools(
             Some(namespace) => ToolName::namespaced(namespace.clone(), name.clone()),
             None => ToolName::plain(name.clone()),
         };
-        if exposed_tool_names.contains(&tool_name) {
+        let display_name = tool_name.display();
+        if exposed_display_names.contains(&display_name) {
             continue;
         }
 
-        let display_name = tool_name.display();
         unavailable_tools
             .entry(display_name)
             .or_insert_with(|| tool_name);
@@ -91,5 +95,18 @@ mod tests {
         let tools = collect_unavailable_called_tools(&input, &exposed_tool_names);
 
         assert_eq!(tools, vec![ToolName::plain("mcp__server__missing")]);
+    }
+
+    #[test]
+    fn collect_unavailable_called_tools_matches_exposed_display_names() {
+        let exposed_tool_names = HashSet::from([ToolName::namespaced("mcp__server__", "lookup")]);
+        let input = vec![function_call(
+            "mcp__server__lookup",
+            /*namespace*/ None,
+        )];
+
+        let tools = collect_unavailable_called_tools(&input, &exposed_tool_names);
+
+        assert_eq!(tools, Vec::new());
     }
 }
