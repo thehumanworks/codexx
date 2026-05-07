@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use codex_connectors::metadata::sanitize_name;
 use codex_features::Feature;
 use codex_features::Features;
 use codex_mcp::CODEX_APPS_MCP_SERVER_NAME;
@@ -43,37 +42,15 @@ fn make_connector(id: &str, name: &str) -> AppInfo {
 fn make_mcp_tool(
     server_name: &str,
     tool_name: &str,
+    callable_namespace: &str,
+    callable_name: &str,
     connector_id: Option<&str>,
     connector_name: Option<&str>,
 ) -> ToolInfo {
-    let tool_namespace = if server_name == CODEX_APPS_MCP_SERVER_NAME {
-        connector_name
-            .map(sanitize_name)
-            .map(|connector_name| format!("mcp__{server_name}__{connector_name}"))
-            .unwrap_or_else(|| server_name.to_string())
-    } else {
-        format!("mcp__{server_name}__")
-    };
-    let callable_name = if server_name == CODEX_APPS_MCP_SERVER_NAME {
-        let tool_name = sanitize_name(tool_name);
-        if let Some(connector_name) = connector_name
-            .map(sanitize_name)
-            .filter(|name| !name.is_empty())
-            && let Some(stripped) = tool_name.strip_prefix(&connector_name)
-            && !stripped.is_empty()
-        {
-            stripped.to_string()
-        } else {
-            tool_name
-        }
-    } else {
-        tool_name.to_string()
-    };
-
     ToolInfo {
         server_name: server_name.to_string(),
-        callable_name,
-        callable_namespace: tool_namespace,
+        callable_name: callable_name.to_string(),
+        callable_namespace: callable_namespace.to_string(),
         namespace_description: None,
         tool: Tool {
             name: tool_name.to_string().into(),
@@ -97,7 +74,12 @@ fn numbered_mcp_tools(count: usize) -> Vec<ToolInfo> {
         .map(|index| {
             let tool_name = format!("tool_{index}");
             make_mcp_tool(
-                "rmcp", &tool_name, /*connector_id*/ None, /*connector_name*/ None,
+                "rmcp",
+                &tool_name,
+                "mcp__rmcp__",
+                &tool_name,
+                /*connector_id*/ None,
+                /*connector_name*/ None,
             )
         })
         .collect()
@@ -178,6 +160,8 @@ async fn directly_exposes_explicit_apps_without_deferred_overlap() {
     mcp_tools.push(make_mcp_tool(
         CODEX_APPS_MCP_SERVER_NAME,
         "calendar_create_event",
+        "mcp__codex_apps__calendar",
+        "_create_event",
         Some("calendar"),
         Some("Calendar"),
     ));
@@ -229,11 +213,18 @@ async fn always_defer_feature_preserves_explicit_apps() {
     let tools_config = tools_config_for_mcp_tool_exposure(/*search_tool*/ true).await;
     let mcp_tools = vec![
         make_mcp_tool(
-            "rmcp", "tool", /*connector_id*/ None, /*connector_name*/ None,
+            "rmcp",
+            "tool",
+            "mcp__rmcp__",
+            "tool",
+            /*connector_id*/ None,
+            /*connector_name*/ None,
         ),
         make_mcp_tool(
             CODEX_APPS_MCP_SERVER_NAME,
             "calendar_create_event",
+            "mcp__codex_apps__calendar",
+            "_create_event",
             Some("calendar"),
             Some("Calendar"),
         ),
