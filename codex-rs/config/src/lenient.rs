@@ -6,14 +6,22 @@ use std::panic::AssertUnwindSafe;
 use std::panic::catch_unwind;
 use toml::Value as TomlValue;
 
+/// String enum choices collected from a schema node and anything it references.
+///
+/// `allows_non_string` matters for untagged/union schemas such as `bool | table`:
+/// if a schema accepts a non-string shape, this warning pass should not report a
+/// non-string TOML value as an invalid enum.
 #[derive(Default)]
 struct EnumChoices {
     allowed_strings: BTreeSet<String>,
     allows_non_string: bool,
 }
 
+/// One concrete location in the TOML value being compared with the schema.
 enum PathElement {
+    /// A table key, including keys from `additionalProperties` maps.
     Key(String),
+    /// An array element when the schema has an `items` child.
     Index(usize),
 }
 
@@ -24,6 +32,8 @@ enum PathElement {
 /// against the generated config schema and reports enum-looking mismatches
 /// without changing the TOML that will be deserialized.
 pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
+    // Startup warnings should never make config loading fail. If schema
+    // generation or traversal panics, the typed config load still proceeds.
     catch_unwind(AssertUnwindSafe(|| {
         let Ok(schema) = serde_json::to_value(config_schema()) else {
             return Vec::new();
@@ -47,6 +57,12 @@ pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
     .unwrap_or_default()
 }
 
+/// Walk a TOML value and a schema node together and append enum warnings.
+///
+/// The traversal intentionally follows the schema shapes emitted by
+/// `config_schema`: object `properties`, map-like `additionalProperties`, array
+/// `items`, `$ref`, and schema composition keywords. It never validates the full
+/// shape. Serde remains the source of truth for real config parsing.
 fn collect_warnings(
     value: &TomlValue,
     schema: &JsonValue,
@@ -57,6 +73,9 @@ fn collect_warnings(
 ) {
     let mut choices = EnumChoices::default();
     collect_enum_choices(schema, definitions, ref_stack, &mut choices);
+
+    // Warn only when this schema node has string enum choices. Non-enum shape
+    // mismatches are left alone so this pass stays small and advisory.
     let invalid_enum_value = if let Some(value) = value.as_str() {
         !choices.allowed_strings.contains(value)
     } else {
@@ -72,6 +91,9 @@ fn collect_warnings(
         }
     }
 
+    // Follow references and composition at the same TOML path. Schemars often
+    // emits enum fields as `allOf: [{ "$ref": ... }]` when defaults or
+    // attributes are present on the field.
     if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
         collect_warnings(value, definition, definitions, path, ref_stack, warnings);
         ref_stack.pop();
@@ -81,6 +103,8 @@ fn collect_warnings(
         collect_warnings(value, child_schema, definitions, path, ref_stack, warnings);
     }
 
+    // For ordinary tables, recurse only into keys present in both the TOML and
+    // the schema. Unknown keys are not part of enum warning collection.
     let properties = schema.get("properties").and_then(JsonValue::as_object);
     if let (Some(table), Some(properties)) = (value.as_table(), properties) {
         for (key, child_schema) in properties {
@@ -100,6 +124,9 @@ fn collect_warnings(
         }
     }
 
+    // Dynamic maps such as profiles and MCP servers are represented by
+    // `additionalProperties`; every unmatched TOML key uses the same child
+    // schema.
     let additional_properties = schema
         .get("additionalProperties")
         .filter(|additional_properties| additional_properties.is_object());
@@ -121,6 +148,8 @@ fn collect_warnings(
         }
     }
 
+    // Arrays are rare for enum config today, but following `items` keeps the
+    // schema walk honest if a future list contains enum-valued entries.
     let items = schema.get("items");
     if let (Some(array), Some(items)) = (value.as_array(), items) {
         for (index, child_value) in array.iter().enumerate() {
@@ -131,6 +160,11 @@ fn collect_warnings(
     }
 }
 
+/// Collect string enum values reachable from one schema node.
+///
+/// This mirrors the traversal used by `collect_warnings` at a single location:
+/// referenced schemas and union/composition children all contribute choices for
+/// the same TOML value.
 fn collect_enum_choices(
     schema: &JsonValue,
     definitions: Option<&JsonMap<String, JsonValue>>,
@@ -152,6 +186,7 @@ fn collect_enum_choices(
     }
 }
 
+/// Return any literal string enum choices directly declared on this schema node.
 fn string_enum_values(schema: &JsonValue) -> impl Iterator<Item = &str> {
     schema
         .get("enum")
@@ -161,6 +196,11 @@ fn string_enum_values(schema: &JsonValue) -> impl Iterator<Item = &str> {
         .filter_map(JsonValue::as_str)
 }
 
+/// Whether this schema node accepts a TOML shape other than a string/null.
+///
+/// A schema with object properties, map entries, or array items may be part of a
+/// union with an enum string. In that case a table/array/bool value can be valid
+/// even though this node also has string enum choices elsewhere.
 fn schema_allows_non_string(schema: &JsonValue) -> bool {
     match schema.get("type") {
         Some(JsonValue::String(value)) => value != "string" && value != "null",
@@ -176,6 +216,10 @@ fn schema_allows_non_string(schema: &JsonValue) -> bool {
     }
 }
 
+/// Resolve an internal `#/definitions/...` reference while avoiding cycles.
+///
+/// When this returns `Some`, the resolved name has been pushed onto `ref_stack`;
+/// callers must pop after they finish walking that definition.
 fn resolve_definition<'a>(
     schema: &JsonValue,
     definitions: Option<&'a JsonMap<String, JsonValue>>,
@@ -193,6 +237,7 @@ fn resolve_definition<'a>(
     Some(definition)
 }
 
+/// Schema composition children that describe the same TOML location.
 fn schema_composition_children(schema: &JsonValue) -> impl Iterator<Item = &JsonValue> {
     ["allOf", "anyOf", "oneOf"]
         .into_iter()
@@ -200,6 +245,7 @@ fn schema_composition_children(schema: &JsonValue) -> impl Iterator<Item = &Json
         .flatten()
 }
 
+/// Render a warning path using TOML-style dotted keys where possible.
 fn display_path(path: &[PathElement]) -> String {
     if path.is_empty() {
         return "<root>".to_string();
@@ -222,6 +268,7 @@ fn display_path(path: &[PathElement]) -> String {
     output
 }
 
+/// Render one TOML table key, quoting keys that would be ambiguous in dotted form.
 fn display_key(key: &str) -> String {
     if !key.is_empty()
         && key

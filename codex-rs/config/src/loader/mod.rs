@@ -918,6 +918,10 @@ fn copy_shape_from_original(original: &TomlValue, resolved: &TomlValue) -> TomlV
             TomlValue::Array(items)
         }
         (TomlValue::String(original), TomlValue::String(resolved)) => {
+            // Relative path normalization turns a string into a different
+            // absolute path string. Lenient enum defaults can also change a
+            // string, but those default strings are not absolute paths and must
+            // not replace the user's raw value before warning collection.
             if original != resolved && Path::new(resolved).is_absolute() {
                 TomlValue::String(resolved.clone())
             } else {
