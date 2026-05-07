@@ -334,7 +334,14 @@ jobs:
       - name: Enable sccache wrapper
         if: ${{ env.USE_SCCACHE == 'true' }}
         shell: bash
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          wrapper="$(command -v sccache)"
+          if [[ "${RUNNER_OS}" == "Windows" ]] && command -v cygpath >/dev/null 2>&1; then
+            wrapper="$(cygpath -w "${wrapper}")"
+          fi
+          echo "RUSTC_WRAPPER=${wrapper}" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_RUSTC_WRAPPER=${wrapper}" >> "$GITHUB_ENV"
 
       - name: Restore sccache cache (fallback)
         if: ${{ env.USE_SCCACHE == 'true' && env.SCCACHE_GHA_ENABLED != 'true' }}
@@ -361,6 +368,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "RUSTC_WRAPPER=" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_RUSTC_WRAPPER=" >> "$GITHUB_ENV"
           echo "RUSTC_WORKSPACE_WRAPPER=" >> "$GITHUB_ENV"
 
       - if: ${{ matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'}}
@@ -660,7 +668,14 @@ jobs:
       - name: Enable sccache wrapper
         if: ${{ env.USE_SCCACHE == 'true' }}
         shell: bash
-        run: echo "RUSTC_WRAPPER=sccache" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          wrapper="$(command -v sccache)"
+          if [[ "${RUNNER_OS}" == "Windows" ]] && command -v cygpath >/dev/null 2>&1; then
+            wrapper="$(cygpath -w "${wrapper}")"
+          fi
+          echo "RUSTC_WRAPPER=${wrapper}" >> "$GITHUB_ENV"
+          echo "CARGO_BUILD_RUSTC_WRAPPER=${wrapper}" >> "$GITHUB_ENV"
 
       - name: Restore sccache cache (fallback)
         if: ${{ env.USE_SCCACHE == 'true' && env.SCCACHE_GHA_ENABLED != 'true' }}
