@@ -196,6 +196,12 @@ async fn run_agent_job_loop(
                 )
                 .await?;
             for item in pending_items {
+                let claimed = db
+                    .mark_agent_job_item_running(job_id.as_str(), item.item_id.as_str())
+                    .await?;
+                if !claimed {
+                    continue;
+                }
                 let prompt = build_worker_prompt(&job, &item)?;
                 let items = vec![UserInput::Text {
                     text: prompt,
@@ -240,7 +246,7 @@ async fn run_agent_job_loop(
                     }
                 };
                 let assigned = db
-                    .mark_agent_job_item_running_with_thread(
+                    .set_agent_job_item_thread(
                         job_id.as_str(),
                         item.item_id.as_str(),
                         thread_id.to_string().as_str(),
