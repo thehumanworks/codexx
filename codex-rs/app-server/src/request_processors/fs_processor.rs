@@ -2,7 +2,7 @@ use crate::error_code::internal_error;
 use crate::error_code::invalid_request;
 use crate::fs_watch::FsWatchManager;
 use crate::outgoing_message::ConnectionId;
-use crate::request_processors::upload_sftp::UploadSftpSession;
+use crate::request_processors::upload_sftp::UploadSftpLane;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::FsCopyParams;
@@ -47,7 +47,7 @@ pub(crate) struct FsRequestProcessor {
     fs_watch_manager: FsWatchManager,
     codex_home: PathBuf,
     upload_paths: Arc<Mutex<HashSet<PathBuf>>>,
-    upload_sftp_sessions: Arc<Mutex<HashMap<ConnectionId, UploadSftpSession>>>,
+    upload_sftp_lanes: Arc<Mutex<HashMap<ConnectionId, UploadSftpLane>>>,
 }
 
 impl FsRequestProcessor {
@@ -61,16 +61,13 @@ impl FsRequestProcessor {
             fs_watch_manager,
             codex_home,
             upload_paths: Arc::new(Mutex::new(HashSet::new())),
-            upload_sftp_sessions: Arc::new(Mutex::new(HashMap::new())),
+            upload_sftp_lanes: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub(crate) async fn connection_closed(&self, connection_id: ConnectionId) {
         self.fs_watch_manager.connection_closed(connection_id).await;
-        self.upload_sftp_sessions
-            .lock()
-            .await
-            .remove(&connection_id);
+        self.upload_sftp_lanes.lock().await.remove(&connection_id);
     }
 
     pub(crate) async fn read_file(
@@ -129,24 +126,24 @@ impl FsRequestProcessor {
         Ok(FsCreateUploadResponse { path: upload_path })
     }
 
-    #[expect(
-        clippy::await_holding_invalid_type,
-        reason = "SFTP packets for one connection must be processed in arrival order"
-    )]
     pub(crate) async fn process_upload_sftp_bytes(
         &self,
         connection_id: ConnectionId,
+        binary_writer: tokio::sync::mpsc::Sender<Vec<u8>>,
         bytes: Vec<u8>,
-    ) -> Result<Vec<Vec<u8>>, JSONRPCErrorError> {
-        let mut sessions = self.upload_sftp_sessions.lock().await;
-        let session = sessions
-            .entry(connection_id)
-            .or_insert_with(|| UploadSftpSession::new(Arc::clone(&self.upload_paths)));
-        let result = session.process_bytes(bytes).await;
-        if result.is_err() {
-            sessions.remove(&connection_id);
-        }
-        result
+    ) -> Result<(), JSONRPCErrorError> {
+        let lane = if let Some(lane) = self.upload_sftp_lanes.lock().await.get(&connection_id) {
+            lane.clone()
+        } else {
+            let lane = UploadSftpLane::start(Arc::clone(&self.upload_paths), binary_writer).await;
+            self.upload_sftp_lanes
+                .lock()
+                .await
+                .entry(connection_id)
+                .or_insert_with(|| lane.clone())
+                .clone()
+        };
+        lane.send(bytes).await
     }
 
     pub(crate) async fn create_directory(

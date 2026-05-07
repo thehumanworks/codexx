@@ -89,6 +89,7 @@ tracing = { workspace = true, features = ["log"] }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
 url = { workspace = true }
 uuid = { workspace = true, features = ["serde", "v7"] }
+russh-sftp = { workspace = true }
 
 [dev-dependencies]
 app_test_support = { workspace = true }

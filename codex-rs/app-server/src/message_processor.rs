@@ -598,10 +598,11 @@ impl MessageProcessor {
     pub(crate) async fn process_upload_binary(
         &self,
         connection_id: ConnectionId,
+        binary_writer: tokio::sync::mpsc::Sender<Vec<u8>>,
         bytes: Vec<u8>,
-    ) -> Result<Vec<Vec<u8>>, JSONRPCErrorError> {
+    ) -> Result<(), JSONRPCErrorError> {
         self.fs_processor
-            .process_upload_sftp_bytes(connection_id, bytes)
+            .process_upload_sftp_bytes(connection_id, binary_writer, bytes)
             .await
     }
 

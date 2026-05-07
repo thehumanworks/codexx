@@ -973,14 +973,11 @@ pub async fn run_main_with_transport_options(
                                     warn!("dropping binary payload from connection without a binary lane: {connection_id:?}");
                                     continue;
                                 };
-                                match processor.process_upload_binary(connection_id, bytes).await {
-                                    Ok(responses) => {
-                                        for response in responses {
-                                            if binary_writer.send(response).await.is_err() {
-                                                break;
-                                            }
-                                        }
-                                    }
+                                match processor
+                                    .process_upload_binary(connection_id, binary_writer, bytes)
+                                    .await
+                                {
+                                    Ok(()) => {}
                                     Err(err) => {
                                         warn!("failed to process upload binary payload: {}", err.message);
                                     }
