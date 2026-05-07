@@ -9,6 +9,7 @@ use codex_config::types::AppToolApproval;
 use codex_config::types::McpServerConfig;
 use codex_config::types::McpServerTransportConfig;
 use codex_core::config::Config;
+use codex_features::Feature;
 use core_test_support::hooks::trust_discovered_hooks;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -26,10 +27,15 @@ use serde_json::Value;
 use serde_json::json;
 
 const RMCP_SERVER: &str = "rmcp";
-const RMCP_NAMESPACE: &str = "mcp__rmcp__";
 const RMCP_ECHO_TOOL_NAME: &str = "mcp__rmcp__echo";
-const RMCP_HOOK_MATCHER: &str = "mcp__rmcp__.*";
+const RMCP_HOOK_MATCHER: &str = RMCP_ECHO_TOOL_NAME;
 const RMCP_ECHO_MESSAGE: &str = "hook e2e ping";
+
+fn enable_mcp_tool_name_features(config: &mut Config, prefix_mcp_tool_names: bool) {
+    if !prefix_mcp_tool_names {
+        let _ = config.features.enable(Feature::NonPrefixedMcpToolNames);
+    }
+}
 
 fn write_pre_tool_use_hook(home: &Path, reason: &str) -> Result<()> {
     let script_path = home.join("pre_tool_use_hook.py");
@@ -162,13 +168,27 @@ fn enable_hooks_and_rmcp_server(
     config: &mut Config,
     rmcp_test_server_bin: String,
     approval_mode: AppToolApproval,
+    prefix_mcp_tool_names: bool,
 ) {
     trust_discovered_hooks(config);
+    enable_mcp_tool_name_features(config, prefix_mcp_tool_names);
     insert_rmcp_test_server(config, rmcp_test_server_bin, approval_mode);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn pre_tool_use_blocks_mcp_tool_before_execution() -> Result<()> {
+async fn pre_tool_use_blocks_mcp_tool_before_execution_with_legacy_prefixed_names() -> Result<()> {
+    pre_tool_use_blocks_mcp_tool_before_execution(/*prefix_mcp_tool_names*/ true, "mcp__rmcp").await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pre_tool_use_blocks_mcp_tool_before_execution_with_non_prefixed_names() -> Result<()> {
+    pre_tool_use_blocks_mcp_tool_before_execution(/*prefix_mcp_tool_names*/ false, "rmcp").await
+}
+
+async fn pre_tool_use_blocks_mcp_tool_before_execution(
+    prefix_mcp_tool_names: bool,
+    mcp_namespace: &'static str,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -179,7 +199,7 @@ async fn pre_tool_use_blocks_mcp_tool_before_execution() -> Result<()> {
         vec![
             sse(vec![
                 ev_response_created("resp-1"),
-                ev_function_call_with_namespace(call_id, RMCP_NAMESPACE, "echo", &arguments),
+                ev_function_call_with_namespace(call_id, mcp_namespace, "echo", &arguments),
                 ev_completed("resp-1"),
             ]),
             sse(vec![
@@ -200,7 +220,12 @@ async fn pre_tool_use_blocks_mcp_tool_before_execution() -> Result<()> {
             }
         })
         .with_config(move |config| {
-            enable_hooks_and_rmcp_server(config, rmcp_test_server_bin, AppToolApproval::Approve);
+            enable_hooks_and_rmcp_server(
+                config,
+                rmcp_test_server_bin,
+                AppToolApproval::Approve,
+                prefix_mcp_tool_names,
+            );
         })
         .build(&server)
         .await?;
@@ -214,7 +239,7 @@ async fn pre_tool_use_blocks_mcp_tool_before_execution() -> Result<()> {
     let output = output_item
         .get("output")
         .and_then(Value::as_str)
-        .expect("blocked MCP tool output string");
+        .context("blocked MCP tool output string")?;
     assert!(
         output.contains(&format!(
             "Tool call blocked by PreToolUse hook: {block_reason}. Tool: {RMCP_ECHO_TOOL_NAME}"
@@ -240,7 +265,7 @@ async fn pre_tool_use_blocks_mcp_tool_before_execution() -> Result<()> {
     );
     let transcript_path = hook_inputs[0]["transcript_path"]
         .as_str()
-        .expect("pre tool use hook transcript_path");
+        .context("pre tool use hook transcript_path")?;
     assert!(
         Path::new(transcript_path).exists(),
         "pre tool use hook transcript_path should be materialized on disk",
@@ -250,7 +275,26 @@ async fn pre_tool_use_blocks_mcp_tool_before_execution() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn post_tool_use_records_mcp_tool_payload_and_context() -> Result<()> {
+async fn post_tool_use_records_mcp_tool_payload_and_context_with_legacy_prefixed_names()
+-> Result<()> {
+    post_tool_use_records_mcp_tool_payload_and_context(
+        /*prefix_mcp_tool_names*/ true,
+        "mcp__rmcp",
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn post_tool_use_records_mcp_tool_payload_and_context_with_non_prefixed_names() -> Result<()>
+{
+    post_tool_use_records_mcp_tool_payload_and_context(/*prefix_mcp_tool_names*/ false, "rmcp")
+        .await
+}
+
+async fn post_tool_use_records_mcp_tool_payload_and_context(
+    prefix_mcp_tool_names: bool,
+    mcp_namespace: &'static str,
+) -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -260,7 +304,7 @@ async fn post_tool_use_records_mcp_tool_payload_and_context() -> Result<()> {
         &server,
         sse(vec![
             ev_response_created("resp-1"),
-            ev_function_call_with_namespace(call_id, RMCP_NAMESPACE, "echo", &arguments),
+            ev_function_call_with_namespace(call_id, mcp_namespace, "echo", &arguments),
             ev_completed("resp-1"),
         ]),
     )
@@ -284,7 +328,12 @@ async fn post_tool_use_records_mcp_tool_payload_and_context() -> Result<()> {
             }
         })
         .with_config(move |config| {
-            enable_hooks_and_rmcp_server(config, rmcp_test_server_bin, AppToolApproval::Approve);
+            enable_hooks_and_rmcp_server(
+                config,
+                rmcp_test_server_bin,
+                AppToolApproval::Approve,
+                prefix_mcp_tool_names,
+            );
         })
         .build(&server)
         .await?;
@@ -303,7 +352,7 @@ async fn post_tool_use_records_mcp_tool_payload_and_context() -> Result<()> {
     let output = output_item
         .get("output")
         .and_then(Value::as_str)
-        .expect("MCP tool output string");
+        .context("MCP tool output string")?;
     assert!(
         output.contains(&format!("ECHOING: {RMCP_ECHO_MESSAGE}")),
         "MCP tool output should still reach the model",
@@ -336,7 +385,7 @@ async fn post_tool_use_records_mcp_tool_payload_and_context() -> Result<()> {
     );
     let transcript_path = hook_inputs[0]["transcript_path"]
         .as_str()
-        .expect("post tool use hook transcript_path");
+        .context("post tool use hook transcript_path")?;
     assert!(
         Path::new(transcript_path).exists(),
         "post tool use hook transcript_path should be materialized on disk",

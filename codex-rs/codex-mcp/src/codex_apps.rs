@@ -127,9 +127,9 @@ pub(crate) fn normalize_codex_apps_callable_namespace(
     if server_name == CODEX_APPS_MCP_SERVER_NAME
         && let Some(connector_name) = connector_name
     {
-        format!("mcp__{}__{}", server_name, sanitize_name(connector_name))
+        format!("{}__{}", server_name, sanitize_name(connector_name))
     } else {
-        format!("mcp__{server_name}__")
+        server_name.to_string()
     }
 }
 
