@@ -6,6 +6,8 @@ use std::panic::AssertUnwindSafe;
 use std::panic::catch_unwind;
 use toml::Value as TomlValue;
 
+const SCHEMA_COMPOSITION_KEYS: [&str; 3] = ["allOf", "anyOf", "oneOf"];
+
 /// String enum choices collected from a schema node and anything it references.
 ///
 /// `allows_non_string` matters for untagged/union schemas such as `bool | table`:
@@ -35,24 +37,26 @@ pub(crate) fn enum_value_warnings(value: &TomlValue) -> Vec<String> {
     // Startup warnings should never make config loading fail. If schema
     // generation or traversal panics, the typed config load still proceeds.
     catch_unwind(AssertUnwindSafe(|| {
-        let Ok(schema) = serde_json::to_value(config_schema()) else {
-            return Vec::new();
-        };
-        let definitions = schema.get("definitions").and_then(JsonValue::as_object);
-        let mut path = Vec::new();
-        let mut ref_stack = Vec::new();
-        let mut warnings = Vec::new();
+        match serde_json::to_value(config_schema()) {
+            Ok(schema) => {
+                let definitions = schema.get("definitions").and_then(JsonValue::as_object);
+                let mut path = Vec::new();
+                let mut ref_stack = Vec::new();
+                let mut warnings = Vec::new();
 
-        collect_warnings(
-            value,
-            &schema,
-            definitions,
-            &mut path,
-            &mut ref_stack,
-            &mut warnings,
-        );
+                collect_warnings(
+                    value,
+                    &schema,
+                    definitions,
+                    &mut path,
+                    &mut ref_stack,
+                    &mut warnings,
+                );
 
-        warnings
+                warnings
+            }
+            Err(_) => Vec::new(),
+        }
     }))
     .unwrap_or_default()
 }
@@ -99,8 +103,13 @@ fn collect_warnings(
         ref_stack.pop();
     }
 
-    for child_schema in schema_composition_children(schema) {
-        collect_warnings(value, child_schema, definitions, path, ref_stack, warnings);
+    for key in SCHEMA_COMPOSITION_KEYS {
+        let Some(child_schemas) = schema.get(key).and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for child_schema in child_schemas {
+            collect_warnings(value, child_schema, definitions, path, ref_stack, warnings);
+        }
     }
 
     // For ordinary tables, recurse only into keys present in both the TOML and
@@ -171,38 +180,17 @@ fn collect_enum_choices(
     ref_stack: &mut Vec<String>,
     choices: &mut EnumChoices,
 ) {
-    choices
-        .allowed_strings
-        .extend(string_enum_values(schema).map(str::to_string));
-    choices.allows_non_string |= schema_allows_non_string(schema);
+    choices.allowed_strings.extend(
+        schema
+            .get("enum")
+            .and_then(JsonValue::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(JsonValue::as_str)
+            .map(str::to_string),
+    );
 
-    if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
-        collect_enum_choices(definition, definitions, ref_stack, choices);
-        ref_stack.pop();
-    }
-
-    for child_schema in schema_composition_children(schema) {
-        collect_enum_choices(child_schema, definitions, ref_stack, choices);
-    }
-}
-
-/// Return any literal string enum choices directly declared on this schema node.
-fn string_enum_values(schema: &JsonValue) -> impl Iterator<Item = &str> {
-    schema
-        .get("enum")
-        .and_then(JsonValue::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(JsonValue::as_str)
-}
-
-/// Whether this schema node accepts a TOML shape other than a string/null.
-///
-/// A schema with object properties, map entries, or array items may be part of a
-/// union with an enum string. In that case a table/array/bool value can be valid
-/// even though this node also has string enum choices elsewhere.
-fn schema_allows_non_string(schema: &JsonValue) -> bool {
-    match schema.get("type") {
+    choices.allows_non_string |= match schema.get("type") {
         Some(JsonValue::String(value)) => value != "string" && value != "null",
         Some(JsonValue::Array(values)) => values
             .iter()
@@ -212,6 +200,20 @@ fn schema_allows_non_string(schema: &JsonValue) -> bool {
             schema.get("properties").is_some()
                 || schema.get("additionalProperties").is_some()
                 || schema.get("items").is_some()
+        }
+    };
+
+    if let Some(definition) = resolve_definition(schema, definitions, ref_stack) {
+        collect_enum_choices(definition, definitions, ref_stack, choices);
+        ref_stack.pop();
+    }
+
+    for key in SCHEMA_COMPOSITION_KEYS {
+        let Some(child_schemas) = schema.get(key).and_then(JsonValue::as_array) else {
+            continue;
+        };
+        for child_schema in child_schemas {
+            collect_enum_choices(child_schema, definitions, ref_stack, choices);
         }
     }
 }
@@ -230,53 +232,44 @@ fn resolve_definition<'a>(
         .as_str()?
         .strip_prefix("#/definitions/")?;
     if ref_stack.iter().any(|entry| entry == name) {
-        return None;
+        None
+    } else {
+        let definition = definitions?.get(name)?;
+        ref_stack.push(name.to_string());
+        Some(definition)
     }
-    let definition = definitions?.get(name)?;
-    ref_stack.push(name.to_string());
-    Some(definition)
-}
-
-/// Schema composition children that describe the same TOML location.
-fn schema_composition_children(schema: &JsonValue) -> impl Iterator<Item = &JsonValue> {
-    ["allOf", "anyOf", "oneOf"]
-        .into_iter()
-        .filter_map(|key| schema.get(key).and_then(JsonValue::as_array))
-        .flatten()
 }
 
 /// Render a warning path using TOML-style dotted keys where possible.
 fn display_path(path: &[PathElement]) -> String {
     if path.is_empty() {
-        return "<root>".to_string();
-    }
-
-    let mut output = String::new();
-    for element in path {
-        match element {
-            PathElement::Key(key) => {
-                if !output.is_empty() {
-                    output.push('.');
+        "<root>".to_string()
+    } else {
+        let mut output = String::new();
+        for element in path {
+            match element {
+                PathElement::Key(key) => {
+                    if !output.is_empty() {
+                        output.push('.');
+                    }
+                    if !key.is_empty()
+                        && key
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+                    {
+                        output.push_str(key);
+                    } else {
+                        let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
+                        output.push('"');
+                        output.push_str(&escaped);
+                        output.push('"');
+                    }
                 }
-                output.push_str(&display_key(key));
-            }
-            PathElement::Index(index) => {
-                output.push_str(&format!("[{index}]"));
+                PathElement::Index(index) => {
+                    output.push_str(&format!("[{index}]"));
+                }
             }
         }
+        output
     }
-    output
-}
-
-/// Render one TOML table key, quoting keys that would be ambiguous in dotted form.
-fn display_key(key: &str) -> String {
-    if !key.is_empty()
-        && key
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return key.to_string();
-    }
-    let escaped = key.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
 }
