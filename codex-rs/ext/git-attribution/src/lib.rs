@@ -1,21 +1,13 @@
-//! Git-attribution prompt contribution packaged as a Codex extension.
-
-#![forbid(unsafe_code)]
-
 use std::sync::Arc;
 
 use codex_extension_api::CodexExtension;
 use codex_extension_api::ContextContributor;
 use codex_extension_api::ExtensionRegistryBuilder;
 use codex_extension_api::PromptFragment;
+use codex_extension_api::Stores;
 
 const DEFAULT_ATTRIBUTION_VALUE: &str = "Codex <noreply@openai.com>";
 
-/// Runtime facts needed to render the git-attribution prompt contribution.
-///
-/// Hosts should return the current effective attribution override for the
-/// thread being assembled. `None` selects Codex's default attribution, while a
-/// blank string disables the contribution.
 pub trait GitAttributionContext {
     fn commit_attribution(&self) -> Option<&str>;
 }
@@ -40,7 +32,7 @@ impl GitAttributionExtension {
 }
 
 impl<C: GitAttributionContext> ContextContributor<C> for GitAttributionExtension {
-    fn contribute(&self, context: &C) -> Vec<PromptFragment> {
+    fn contribute(&self, context: &C, _stores: &Stores<'_>) -> Vec<PromptFragment> {
         self.instruction(context)
             .map(PromptFragment::developer_capability)
             .into_iter()
@@ -59,6 +51,7 @@ pub fn extension() -> Arc<GitAttributionExtension> {
     Arc::new(GitAttributionExtension::new())
 }
 
+// This is just a copy/paste
 fn build_commit_message_trailer(config_attribution: Option<&str>) -> Option<String> {
     let value = resolve_attribution_value(config_attribution)?;
     Some(format!("Co-authored-by: {value}"))

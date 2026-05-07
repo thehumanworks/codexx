@@ -1,3 +1,5 @@
+// This file must be replaced by tools from `codex-memories-mcp` once the extracted tools land. This is just a vibe-coded copy/paster for now.
+
 use std::borrow::Cow;
 use std::future::Future;
 use std::path::Component;

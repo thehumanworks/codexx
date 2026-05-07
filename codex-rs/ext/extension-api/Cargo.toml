@@ -17,7 +17,5 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-codex-guardian = { workspace = true }
 codex-git-attribution = { workspace = true }
 codex-memories = { workspace = true }
-codex-multi-agent-v2 = { workspace = true }

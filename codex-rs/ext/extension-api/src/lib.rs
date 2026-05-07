@@ -18,5 +18,4 @@ pub use registry::ExtensionRegistry;
 pub use registry::ExtensionRegistryBuilder;
 pub use state::ExtensionData;
 pub use state::Stores;
-pub use state::Thread;
-pub use state::Turn;
+pub use state::scopes;
