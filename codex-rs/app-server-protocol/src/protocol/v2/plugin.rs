@@ -15,7 +15,7 @@ use serde::Serialize;
 use std::path::PathBuf;
 use ts_rs::TS;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, JsonSchema, TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, JsonSchema, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export_to = "v2/")]
 pub struct SkillsListParams {
