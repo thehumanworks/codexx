@@ -208,13 +208,10 @@ Example with notification opt-out:
 - `marketplace/remove` — remove a configured marketplace by name from the user marketplace config, and delete its installed marketplace root when one exists.
 - `marketplace/upgrade` — upgrade all configured Git plugin marketplaces, or one named marketplace when `marketplaceName` is provided. Returns selected marketplace names, upgraded roots, and per-marketplace errors.
 - `plugin/list` — list discovered plugin marketplaces and plugin state, including effective marketplace install/auth policy metadata, plugin `availability` (`AVAILABLE` by default or `DISABLED_BY_ADMIN` for remote plugins blocked upstream), fail-open `marketplaceLoadErrors` entries for marketplace files that could not be parsed or loaded, and best-effort `featuredPluginIds` for the official curated marketplace. `interface.category` uses the marketplace category when present; otherwise it falls back to the plugin manifest category (**under development; do not call from production clients yet**).
-- `plugin/read` — read one plugin by `marketplacePath` plus `pluginName`, returning marketplace info, a list-style `summary`, manifest descriptions/interface metadata, and bundled skills/apps/MCP server names. Returned plugin skills include their current `enabled` state after local config filtering. Plugin app summaries also include `needsAuth` when the server can determine connector accessibility (**under development; do not call from production clients yet**).
+- `plugin/read` — read one plugin by `marketplacePath` plus `pluginName`, returning marketplace info, a list-style `summary`, manifest descriptions/interface metadata, and bundled skills/hooks/apps/MCP server names. Returned plugin skills include their current `enabled` state after local config filtering; bundled hooks are returned as lightweight declaration summaries keyed for correlation with `hooks/list`. Plugin app summaries also include `needsAuth` when the server can determine connector accessibility (**under development; do not call from production clients yet**).
 - `plugin/skill/read` — read remote plugin skill markdown on demand by `remoteMarketplaceName`, `remotePluginId`, and `skillName`. This lets clients preview uninstalled remote plugin skills without downloading the plugin bundle.
 - `skills/changed` — notification emitted when watched local skill files change.
 - `app/list` — list available apps.
-- `device/key/create` — create or load a controller-local device signing key for an account/client binding. This local-key API is available only over local transports such as stdio and in-process; remote transports reject it. Hardware-backed providers are the target protection class; an OS-protected non-extractable fallback is allowed only with `protectionPolicy: "allow_os_protected_nonextractable"` and returns the reported `protectionClass`.
-- `device/key/public` — return a device key's SPKI DER public key as base64 plus its `algorithm` and `protectionClass`.
-- `device/key/sign` — sign one of the accepted structured payload variants with a controller-local device key. The only accepted payload today is `remoteControlClientConnection`, which binds a server-issued `/client` websocket challenge to the enrolled controller device without signing the bearer token itself; this is intentionally not an arbitrary-byte signing API.
 - `remoteControl/status/changed` — notification emitted when the remote-control status or client-visible environment id changes. `status` is one of `disabled`, `connecting`, `connected`, or `errored`; `environmentId` is a string when the app-server has a current enrollment and `null` when that enrollment is cleared, invalidated, or remote control is disabled. Newly initialized app-server clients always receive the current status snapshot.
 - `skills/config/write` — write user-level skill config by name or absolute path.
 - `plugin/install` — install a plugin from a discovered marketplace entry, rejecting marketplace entries marked unavailable for install, install MCPs if any, and return the effective plugin auth policy plus any apps that still need auth (**under development; do not call from production clients yet**).
@@ -303,11 +300,11 @@ Example:
 { "id": 12, "result": { "thread": { "id": "thr_123", "turns": [], … } } }
 ```
 
-To branch from a stored session, call `thread/fork` with the `thread.id`. This creates a new thread id and emits a `thread/started` notification for it. When the source history includes persisted token usage, the server also emits `thread/tokenUsage/updated` for the new thread immediately after the response. If the source thread is actively running, the fork snapshots it as if the current turn had been interrupted first. Pass `ephemeral: true` when the fork should stay in-memory only:
+To branch from a stored session, call `thread/fork` with the `thread.id`. This creates a new thread id and emits a `thread/started` notification for it. The returned `thread.sessionId` identifies the current live session tree root. Root threads use their own `thread.id` as `thread.sessionId`; stored threads that are not loaded also report their own `thread.id`, because resuming one makes it the root of a new live session tree. When the source history includes persisted token usage, the server also emits `thread/tokenUsage/updated` for the new thread immediately after the response. If the source thread is actively running, the fork snapshots it as if the current turn had been interrupted first. Pass `ephemeral: true` when the fork should stay in-memory only:
 
 ```json
 { "method": "thread/fork", "id": 12, "params": { "threadId": "thr_123", "ephemeral": true } }
-{ "id": 12, "result": { "thread": { "id": "thr_456", … } } }
+{ "id": 12, "result": { "thread": { "id": "thr_456", "sessionId": "thr_456", … } } }
 { "method": "thread/started", "params": { "thread": { … } } }
 ```
 
@@ -426,6 +423,8 @@ Use `thread/read` to fetch a stored thread by id without resuming it. Pass `incl
 ### Example: List thread turns (experimental)
 
 Use `thread/turns/list` with `capabilities.experimentalApi = true` to page a stored thread’s turn history without resuming it. By default, results are sorted descending so clients can start at the present and fetch older turns with `nextCursor`. The response also includes `backwardsCursor`; pass it as `cursor` on a later request with `sortDirection: "asc"` to fetch turns newer than the first item from the earlier page.
+
+Every returned `Turn` includes `itemsView`, which tells clients whether the `items` array was omitted intentionally (`notLoaded`), contains only summary items (`summary`), or contains every item available from persisted app-server history (`full`). Current `thread/turns/list` responses return `full` turns.
 
 ```json
 { "method": "thread/turns/list", "id": 24, "params": {
@@ -1391,6 +1390,12 @@ If the session approval policy uses `Granular` with `request_permissions: false`
 
 `dynamicTools` on `thread/start` and the corresponding `item/tool/call` request/response flow are experimental APIs. To enable them, set `initialize.params.capabilities.experimentalApi = true`.
 
+Dynamic tool identifiers follow the same constraints as Responses function tools:
+
+- `name` must match `^[a-zA-Z0-9_-]+$` and be between 1 and 128 characters.
+- `namespace`, when present, must match `^[a-zA-Z0-9_-]+$` and be between 1 and 64 characters.
+- `namespace` must not collide with reserved Responses runtime namespaces such as `functions`, `multi_tool_use`, `file_search`, `web`, `browser`, `image_gen`, `computer`, `container`, `terminal`, `python`, `python_user_visible`, `api_tool`, `tool_search`, or `submodel_delegator`.
+
 Each dynamic tool may set `deferLoading`. When omitted, it defaults to `false`. Set it to `true` to keep the tool registered and callable by runtime features such as `code_mode`, while excluding it from the model-facing tool list sent on ordinary turns. When `tool_search` is available, deferred dynamic tools are searchable and can be exposed by a matching search result.
 
 When a dynamic tool is invoked during a turn, the server sends an `item/tool/call` JSON-RPC request to the client:
@@ -1539,7 +1544,11 @@ To enable or disable a skill by name:
 }
 ```
 
-Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Each entry is evaluated using that `cwd`'s effective config, so feature gating and discovered config layers can differ across entries in the same request. Disabled hooks are still returned with `"enabled": false` so clients can render and re-enable them. Hook state is stored under `hooks.state`; clients should treat hooks from managed sources as non-configurable, and user config entries for those keys are ignored during loading. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
+Use `hooks/list` to fetch discovered hooks for one or more `cwds`. Each result is evaluated with that `cwd`'s effective config, so feature gates and discovered config layers can differ within a single response.
+
+Hooks are returned even when disabled so clients can render and re-enable them. User-controlled state lives under `hooks.state`. Managed hooks are non-configurable, and user entries for managed hook keys are ignored during loading.
+
+For unmanaged hooks, `currentHash` and `trustStatus` describe whether the current definition is first-seen, approved, or changed since approval. Only trusted unmanaged hooks become runnable. Hook keys combine the source identity with a trailing event/group/handler selector that is currently positional.
 
 ```json
 {
@@ -1570,7 +1579,9 @@ Use `hooks/list` to fetch the discovered hooks for one or more `cwds`. Each entr
         "source": "user",
         "pluginId": null,
         "displayOrder": 0,
-        "enabled": true
+        "enabled": true,
+        "currentHash": "sha256:...",
+        "trustStatus": "untrusted"
       }],
       "warnings": [],
       "errors": []

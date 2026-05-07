@@ -7,7 +7,6 @@ use crate::environment_selection::default_thread_environment_selections;
 use crate::environment_selection::resolve_environment_selections;
 use crate::file_watcher::FileWatcher;
 use crate::mcp::McpManager;
-use crate::rollout::RolloutRecorder;
 use crate::rollout::truncation;
 use crate::session::Codex;
 use crate::session::CodexSpawnArgs;
@@ -40,12 +39,13 @@ use codex_protocol::openai_models::ModelPreset;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::InitialHistory;
-use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::Op;
+use codex_protocol::protocol::ResumedHistory;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::SessionConfiguredEvent;
 use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
+use codex_protocol::protocol::ThreadSource;
 use codex_protocol::protocol::TurnAbortReason;
 use codex_protocol::protocol::TurnAbortedEvent;
 use codex_protocol::protocol::TurnEnvironmentSelection;
@@ -55,6 +55,7 @@ use codex_state::DirectionalThreadSpawnEdgeStatus;
 use codex_thread_store::InMemoryThreadStore;
 use codex_thread_store::LocalThreadStore;
 use codex_thread_store::LocalThreadStoreConfig;
+use codex_thread_store::ReadThreadByRolloutPathParams;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::RemoteThreadStore;
 use codex_thread_store::StoredThread;
@@ -217,6 +218,7 @@ pub struct StartThreadOptions {
     pub config: Config,
     pub initial_history: InitialHistory,
     pub session_source: Option<SessionSource>,
+    pub thread_source: Option<ThreadSource>,
     pub dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
     pub persist_extended_history: bool,
     pub metrics_service_name: Option<String>,
@@ -248,6 +250,7 @@ pub(crate) struct ThreadManagerState {
     skills_watcher: Arc<SkillsWatcher>,
     thread_store: Arc<dyn ThreadStore>,
     session_source: SessionSource,
+    installation_id: String,
     analytics_events_client: Option<AnalyticsEventsClient>,
     state_db: Option<StateDbHandle>,
     // Captures submitted ops for testing purpose when test mode is enabled.
@@ -280,6 +283,7 @@ pub fn thread_store_from_config(
 }
 
 impl ThreadManager {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: &Config,
         auth_manager: Arc<AuthManager>,
@@ -288,6 +292,7 @@ impl ThreadManager {
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
+        installation_id: String,
     ) -> Self {
         let codex_home = config.codex_home.clone();
         let restriction_product = session_source.restriction_product();
@@ -316,6 +321,7 @@ impl ThreadManager {
                 thread_store,
                 auth_manager,
                 session_source,
+                installation_id,
                 analytics_events_client,
                 state_db,
                 ops_log: should_use_test_thread_manager_behavior()
@@ -374,6 +380,7 @@ impl ThreadManager {
     ) -> Self {
         set_thread_manager_test_mode_for_tests(/*enabled*/ true);
         let auth_manager = AuthManager::from_auth_for_testing(auth);
+        let installation_id = uuid::Uuid::new_v4().to_string();
         let skills_codex_home = match AbsolutePathBuf::from_absolute_path_checked(&codex_home) {
             Ok(codex_home) => codex_home,
             Err(err) => panic!("test codex_home should be absolute: {err}"),
@@ -415,6 +422,7 @@ impl ThreadManager {
                 thread_store,
                 auth_manager,
                 session_source: SessionSource::Exec,
+                installation_id,
                 analytics_events_client: None,
                 state_db,
                 ops_log: should_use_test_thread_manager_behavior()
@@ -480,27 +488,6 @@ impl ThreadManager {
 
     pub async fn list_thread_ids(&self) -> Vec<ThreadId> {
         self.state.list_thread_ids().await
-    }
-
-    pub async fn refresh_mcp_servers(&self, refresh_config: McpServerRefreshConfig) {
-        let threads = self
-            .state
-            .threads
-            .read()
-            .await
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for thread in threads {
-            if let Err(err) = thread
-                .submit(Op::RefreshMcpServers {
-                    config: refresh_config.clone(),
-                })
-                .await
-            {
-                warn!("failed to request MCP server refresh: {err}");
-            }
-        }
     }
 
     pub fn subscribe_thread_created(&self) -> broadcast::Receiver<ThreadId> {
@@ -583,6 +570,7 @@ impl ThreadManager {
             config,
             initial_history: InitialHistory::New,
             session_source: None,
+            thread_source: None,
             dynamic_tools,
             persist_extended_history,
             metrics_service_name: None,
@@ -599,12 +587,16 @@ impl ThreadManager {
         let session_source = options
             .session_source
             .unwrap_or_else(|| self.state.session_source.clone());
+        let thread_source = options
+            .thread_source
+            .or_else(|| options.initial_history.get_resumed_thread_source());
         Box::pin(self.state.spawn_thread_with_source(
             options.config,
             options.initial_history,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
             session_source,
+            thread_source,
             options.dynamic_tools,
             options.persist_extended_history,
             options.metrics_service_name,
@@ -624,7 +616,7 @@ impl ThreadManager {
         auth_manager: Arc<AuthManager>,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
-        let initial_history = RolloutRecorder::get_rollout_history(&rollout_path).await?;
+        let initial_history = self.initial_history_from_rollout_path(rollout_path).await?;
         Box::pin(self.resume_thread_with_history(
             config,
             initial_history,
@@ -647,11 +639,13 @@ impl ThreadManager {
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let thread_source = initial_history.get_resumed_thread_source();
         Box::pin(self.state.spawn_thread(
             config,
             initial_history,
             auth_manager,
             self.agent_control(),
+            thread_source,
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -676,6 +670,7 @@ impl ThreadManager {
             InitialHistory::New,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
+            /*thread_source*/ None,
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -693,16 +688,18 @@ impl ThreadManager {
         auth_manager: Arc<AuthManager>,
         user_shell_override: crate::shell::Shell,
     ) -> CodexResult<NewThread> {
-        let initial_history = RolloutRecorder::get_rollout_history(&rollout_path).await?;
+        let initial_history = self.initial_history_from_rollout_path(rollout_path).await?;
         let environments = default_thread_environment_selections(
             self.state.environment_manager.as_ref(),
             &config.cwd,
         );
+        let thread_source = initial_history.get_resumed_thread_source();
         Box::pin(self.state.spawn_thread(
             config,
             initial_history,
             auth_manager,
             self.agent_control(),
+            thread_source,
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -780,6 +777,7 @@ impl ThreadManager {
         snapshot: S,
         config: Config,
         path: PathBuf,
+        thread_source: Option<ThreadSource>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread>
@@ -787,15 +785,34 @@ impl ThreadManager {
         S: Into<ForkSnapshot>,
     {
         let snapshot = snapshot.into();
-        let history = RolloutRecorder::get_rollout_history(&path).await?;
+        let history = self.initial_history_from_rollout_path(path).await?;
         self.fork_thread_from_history(
             snapshot,
             config,
             history,
+            thread_source,
             persist_extended_history,
             parent_trace,
         )
         .await
+    }
+
+    async fn initial_history_from_rollout_path(
+        &self,
+        rollout_path: PathBuf,
+    ) -> CodexResult<InitialHistory> {
+        let requested_rollout_path = rollout_path.clone();
+        let stored_thread = self
+            .state
+            .thread_store
+            .read_thread_by_rollout_path(ReadThreadByRolloutPathParams {
+                rollout_path,
+                include_archived: true,
+                include_history: true,
+            })
+            .await
+            .map_err(thread_store_rollout_read_error)?;
+        stored_thread_to_initial_history(stored_thread, Some(requested_rollout_path))
     }
 
     /// Fork an existing thread from already-loaded store history.
@@ -804,6 +821,7 @@ impl ThreadManager {
         snapshot: S,
         config: Config,
         history: InitialHistory,
+        thread_source: Option<ThreadSource>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread>
@@ -814,6 +832,7 @@ impl ThreadManager {
             snapshot.into(),
             config,
             history,
+            thread_source,
             persist_extended_history,
             parent_trace,
         )
@@ -825,6 +844,7 @@ impl ThreadManager {
         snapshot: ForkSnapshot,
         config: Config,
         history: InitialHistory,
+        thread_source: Option<ThreadSource>,
         persist_extended_history: bool,
         parent_trace: Option<W3cTraceContext>,
     ) -> CodexResult<NewThread> {
@@ -839,6 +859,7 @@ impl ThreadManager {
             history,
             Arc::clone(&self.state.auth_manager),
             self.agent_control(),
+            thread_source,
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -950,6 +971,7 @@ impl ThreadManagerState {
             config,
             agent_control,
             self.session_source.clone(),
+            /*thread_source*/ None,
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
             /*inherited_shell_snapshot*/ None,
@@ -965,6 +987,7 @@ impl ThreadManagerState {
         config: Config,
         agent_control: AgentControl,
         session_source: SessionSource,
+        thread_source: Option<ThreadSource>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
@@ -980,6 +1003,7 @@ impl ThreadManagerState {
             Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
+            thread_source,
             Vec::new(),
             persist_extended_history,
             metrics_service_name,
@@ -1006,12 +1030,14 @@ impl ThreadManagerState {
         } = options;
         let environments =
             default_thread_environment_selections(self.environment_manager.as_ref(), &config.cwd);
+        let thread_source = initial_history.get_resumed_thread_source();
         Box::pin(self.spawn_thread_with_source(
             config,
             initial_history,
             Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
+            thread_source,
             Vec::new(),
             /*persist_extended_history*/ false,
             /*metrics_service_name*/ None,
@@ -1031,6 +1057,7 @@ impl ThreadManagerState {
         initial_history: InitialHistory,
         agent_control: AgentControl,
         session_source: SessionSource,
+        thread_source: Option<ThreadSource>,
         persist_extended_history: bool,
         inherited_shell_snapshot: Option<Arc<ShellSnapshot>>,
         inherited_exec_policy: Option<Arc<crate::exec_policy::ExecPolicyManager>>,
@@ -1045,6 +1072,7 @@ impl ThreadManagerState {
             Arc::clone(&self.auth_manager),
             agent_control,
             session_source,
+            thread_source,
             Vec::new(),
             persist_extended_history,
             /*metrics_service_name*/ None,
@@ -1065,6 +1093,7 @@ impl ThreadManagerState {
         initial_history: InitialHistory,
         auth_manager: Arc<AuthManager>,
         agent_control: AgentControl,
+        thread_source: Option<ThreadSource>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
@@ -1078,6 +1107,7 @@ impl ThreadManagerState {
             auth_manager,
             agent_control,
             self.session_source.clone(),
+            thread_source,
             dynamic_tools,
             persist_extended_history,
             metrics_service_name,
@@ -1098,6 +1128,7 @@ impl ThreadManagerState {
         auth_manager: Arc<AuthManager>,
         agent_control: AgentControl,
         session_source: SessionSource,
+        thread_source: Option<ThreadSource>,
         dynamic_tools: Vec<codex_protocol::dynamic_tools::DynamicToolSpec>,
         persist_extended_history: bool,
         metrics_service_name: Option<String>,
@@ -1152,6 +1183,7 @@ impl ThreadManagerState {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
             config,
+            installation_id: self.installation_id.clone(),
             auth_manager,
             models_manager: Arc::clone(&self.models_manager),
             environment_manager: Arc::clone(&self.environment_manager),
@@ -1161,6 +1193,7 @@ impl ThreadManagerState {
             skills_watcher: Arc::clone(&self.skills_watcher),
             conversation_history: initial_history,
             session_source,
+            thread_source,
             agent_control,
             dynamic_tools,
             persist_extended_history,
@@ -1263,6 +1296,31 @@ impl ThreadManagerState {
             .ok()
             .map(|thread| thread.codex.session.services.rollout_thread_trace.clone())
             .unwrap_or_else(codex_rollout_trace::ThreadTraceContext::disabled)
+    }
+}
+
+fn stored_thread_to_initial_history(
+    stored_thread: StoredThread,
+    rollout_path: Option<PathBuf>,
+) -> CodexResult<InitialHistory> {
+    let thread_id = stored_thread.thread_id;
+    let history = stored_thread.history.ok_or_else(|| {
+        CodexErr::Fatal(format!(
+            "thread {thread_id} did not include persisted history"
+        ))
+    })?;
+    Ok(InitialHistory::Resumed(ResumedHistory {
+        conversation_id: thread_id,
+        history: history.items,
+        rollout_path: rollout_path.or(stored_thread.rollout_path),
+    }))
+}
+
+fn thread_store_rollout_read_error(err: ThreadStoreError) -> CodexErr {
+    match err {
+        ThreadStoreError::ThreadNotFound { thread_id } => CodexErr::ThreadNotFound(thread_id),
+        ThreadStoreError::InvalidRequest { message } => CodexErr::InvalidRequest(message),
+        err => CodexErr::Fatal(format!("failed to read thread by rollout path: {err}")),
     }
 }
 
