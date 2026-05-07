@@ -1,4 +1,5 @@
-/// Prompt region targeted by a contributed fragment.
+// All this file should be replaced by the existing fragment implementation ofc
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PromptSlot {
     DeveloperPolicy,
@@ -7,7 +8,6 @@ pub enum PromptSlot {
     SeparateDeveloper,
 }
 
-/// One text fragment contributed to prompt assembly by an extension. (wiring not done yet on purpose)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptFragment {
     slot: PromptSlot,
