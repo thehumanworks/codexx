@@ -1271,31 +1271,26 @@ impl App {
                     }
                 }
             }
-            AppEvent::PersistServiceTierSelection {
-                service_tier,
-                service_tier_id,
-            } => {
+            AppEvent::PersistServiceTierSelection { service_tier } => {
                 self.refresh_status_line();
                 let profile = self.active_profile.as_deref();
-                self.config.service_tier = service_tier_id.clone().or_else(|| {
-                    service_tier.map(|service_tier| service_tier.request_value().to_string())
-                });
-                let mut edits =
-                    ConfigEditsBuilder::new(&self.config.codex_home).with_profile(profile);
-                if let Some(service_tier) = service_tier {
-                    edits = edits.set_service_tier(Some(service_tier));
-                } else if service_tier_id.is_none() {
-                    edits = edits.set_service_tier(/*service_tier*/ None);
+                self.config.service_tier =
+                    service_tier.map(|service_tier| service_tier.request_value().to_string());
+                let mut edits = ConfigEditsBuilder::new(&self.config.codex_home)
+                    .with_profile(profile)
+                    .set_service_tier(service_tier);
+                if service_tier.is_none() {
                     self.config.notices.fast_default_opt_out = Some(true);
                     edits = edits.set_fast_default_opt_out(/*opted_out*/ true);
                 }
                 match edits.apply().await {
                     Ok(()) => {
-                        let mut message = if let Some(service_tier_id) = &self.config.service_tier {
-                            format!("Service tier set to {service_tier_id}")
-                        } else {
-                            "Service tier cleared".to_string()
-                        };
+                        let mut message =
+                            if let Some(service_tier_value) = &self.config.service_tier {
+                                format!("Service tier set to {service_tier_value}")
+                            } else {
+                                "Service tier cleared".to_string()
+                            };
                         if let Some(profile) = profile {
                             message.push_str(" for ");
                             message.push_str(profile);

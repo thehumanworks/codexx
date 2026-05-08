@@ -2738,15 +2738,20 @@ impl Config {
                 notices.fast_default_opt_out = Some(true);
                 None
             }
-            None => config_profile.service_tier.or(cfg.service_tier).and_then(
-                |service_tier| match service_tier {
-                    ServiceTier::Fast => features
-                        .enabled(Feature::FastMode)
-                        .then(|| ServiceTier::Fast.request_value().to_string()),
-                    ServiceTier::Flex => Some(ServiceTier::Flex.request_value().to_string()),
-                },
-            ),
+            None => config_profile
+                .service_tier
+                .or(cfg.service_tier)
+                .map(|service_tier| service_tier.request_value().to_string()),
         };
+        let service_tier = service_tier.and_then(|service_tier| {
+            match ServiceTier::from_request_value(&service_tier) {
+                Some(ServiceTier::Fast) => features
+                    .enabled(Feature::FastMode)
+                    .then(|| ServiceTier::Fast.request_value().to_string()),
+                Some(ServiceTier::Flex) => Some(ServiceTier::Flex.request_value().to_string()),
+                None => Some(service_tier),
+            }
+        });
 
         let compact_prompt = compact_prompt.or(cfg.compact_prompt).and_then(|value| {
             let trimmed = value.trim();

@@ -62,6 +62,7 @@ use codex_model_provider_info::LMSTUDIO_OSS_PROVIDER_ID;
 use codex_model_provider_info::OLLAMA_OSS_PROVIDER_ID;
 use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
+use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
 use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::ManagedFileSystemPermissions;
@@ -7138,7 +7139,7 @@ async fn explicit_null_service_tier_override_sets_fast_default_opt_out() -> std:
 }
 
 #[tokio::test]
-async fn explicit_fast_service_tier_override_preserves_request_id() -> std::io::Result<()> {
+async fn legacy_fast_service_tier_override_uses_priority_request_value() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
 
     let config = Config::load_from_base_config_with_overrides(
@@ -7152,7 +7153,10 @@ async fn explicit_fast_service_tier_override_preserves_request_id() -> std::io::
     )
     .await?;
 
-    assert_eq!(config.service_tier, Some("fast".to_string()));
+    assert_eq!(
+        config.service_tier,
+        Some(ServiceTier::Fast.request_value().to_string())
+    );
     Ok(())
 }
 

@@ -1665,6 +1665,11 @@ fn token_usage_info_from_app_server(token_usage: ThreadTokenUsage) -> TokenUsage
     }
 }
 
+fn service_tier_from_value(value: &str) -> Option<ServiceTier> {
+    ServiceTier::from_request_value(value)
+        .or_else(|| (value == SPEED_TIER_FAST).then_some(ServiceTier::Fast))
+}
+
 impl ChatWidget {
     /// Stores or overwrites the cached nickname and role for a collab agent thread.
     ///
@@ -9304,14 +9309,6 @@ impl ChatWidget {
         self.effective_service_tier = service_tier;
     }
 
-    pub(crate) fn set_service_tier_id(&mut self, service_tier_id: Option<String>) {
-        self.effective_service_tier = service_tier_id.as_deref().and_then(|service_tier_id| {
-            ServiceTier::from_request_value(service_tier_id)
-                .or_else(|| (service_tier_id == SPEED_TIER_FAST).then_some(ServiceTier::Fast))
-        });
-        self.config.service_tier = service_tier_id;
-    }
-
     pub(crate) fn current_service_tier(&self) -> Option<ServiceTier> {
         self.effective_service_tier
     }
@@ -9320,10 +9317,7 @@ impl ChatWidget {
         self.config
             .service_tier
             .as_deref()
-            .and_then(|service_tier_id| {
-                ServiceTier::from_request_value(service_tier_id)
-                    .or_else(|| (service_tier_id == SPEED_TIER_FAST).then_some(ServiceTier::Fast))
-            })
+            .and_then(service_tier_from_value)
     }
 
     pub(crate) fn fast_default_opt_out(&self) -> Option<bool> {
@@ -9418,14 +9412,17 @@ impl ChatWidget {
     fn set_service_tier_selection(
         &mut self,
         service_tier: Option<ServiceTier>,
-        service_tier_id: Option<String>,
+        service_tier_value: Option<String>,
     ) {
-        if service_tier_id.is_none() && service_tier.is_none() {
+        if service_tier_value.is_none() && service_tier.is_none() {
             self.config.notices.fast_default_opt_out = Some(true);
         }
-        let next_service_tier_id = service_tier_id
+        let next_service_tier_value = service_tier_value
             .or_else(|| service_tier.map(|service_tier| service_tier.request_value().to_string()));
-        self.set_service_tier_id(next_service_tier_id.clone());
+        self.effective_service_tier = next_service_tier_value
+            .as_deref()
+            .and_then(service_tier_from_value);
+        self.config.service_tier = next_service_tier_value.clone();
         self.app_event_tx
             .send(AppEvent::CodexOp(AppCommand::override_turn_context(
                 /*cwd*/ None,
@@ -9436,37 +9433,36 @@ impl ChatWidget {
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
-                Some(next_service_tier_id.clone()),
+                Some(next_service_tier_value.clone()),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));
-        self.app_event_tx
-            .send(AppEvent::PersistServiceTierSelection {
-                service_tier,
-                service_tier_id: next_service_tier_id,
-            });
+        if service_tier.is_some() || next_service_tier_value.is_none() {
+            self.app_event_tx
+                .send(AppEvent::PersistServiceTierSelection { service_tier });
+        }
     }
 
     fn handle_service_tier_slash_command(&mut self, command: ServiceTierCommand) {
-        let active_service_tier_id_matches_command = self
+        let active_service_tier_matches_command = self
             .config
             .service_tier
             .as_deref()
-            .is_some_and(|service_tier_id| service_tier_id == command.id)
+            .is_some_and(|service_tier_value| service_tier_value == command.id)
             || self.effective_service_tier.is_some_and(|service_tier| {
-                ServiceTier::from_request_value(&command.id) == Some(service_tier)
+                service_tier_from_value(&command.id) == Some(service_tier)
                     || (matches!(service_tier, ServiceTier::Fast) && command.id == SPEED_TIER_FAST)
             });
-        let next_service_tier_id = if active_service_tier_id_matches_command {
+        let next_service_tier_value = if active_service_tier_matches_command {
             None
         } else {
             Some(command.id)
         };
         self.set_service_tier_selection(
-            next_service_tier_id
+            next_service_tier_value
                 .as_deref()
-                .and_then(ServiceTier::from_request_value),
-            next_service_tier_id,
+                .and_then(service_tier_from_value),
+            next_service_tier_value,
         );
         self.bottom_pane.record_pending_slash_command_history();
     }
@@ -9477,7 +9473,7 @@ impl ChatWidget {
         } else {
             Some(ServiceTier::Fast)
         };
-        self.set_service_tier_selection(next_tier, /*service_tier_id*/ None);
+        self.set_service_tier_selection(next_tier, /*service_tier_value*/ None);
     }
 
     pub(crate) fn current_model(&self) -> &str {

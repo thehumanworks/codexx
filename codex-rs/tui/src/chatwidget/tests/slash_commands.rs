@@ -1810,7 +1810,7 @@ async fn slash_rollout_handles_missing_path() {
 }
 
 #[tokio::test]
-async fn service_tier_slash_command_updates_and_persists_local_service_tier_id() {
+async fn service_tier_slash_command_updates_and_persists_local_service_tier() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
     set_fast_mode_test_catalog(&mut chat);
     chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
@@ -1833,9 +1833,7 @@ async fn service_tier_slash_command_updates_and_persists_local_service_tier_id()
             event,
             AppEvent::PersistServiceTierSelection {
                 service_tier: Some(ServiceTier::Fast),
-                service_tier_id: Some(service_tier_id),
             }
-            if service_tier_id == SPEED_TIER_FAST
         )),
         "expected service-tier persistence app event; events: {events:?}"
     );
@@ -1867,9 +1865,7 @@ async fn fast_keybinding_toggle_uses_same_events_as_fast_slash_command() {
             event,
             AppEvent::PersistServiceTierSelection {
                 service_tier: Some(ServiceTier::Fast),
-                service_tier_id: Some(service_tier_id),
             }
-            if service_tier_id == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode persistence app event; events: {events:?}"
     );
@@ -1984,10 +1980,7 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::PersistServiceTierSelection {
-                service_tier: None,
-                service_tier_id: None,
-            }
+            AppEvent::PersistServiceTierSelection { service_tier: None }
         )),
         "expected fast-mode opt-out persistence app event; events: {events:?}"
     );
