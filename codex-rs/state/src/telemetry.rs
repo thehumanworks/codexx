@@ -98,18 +98,13 @@ pub(crate) fn record_init_result<T>(
     duration: Duration,
     result: &anyhow::Result<T>,
 ) {
-    let status = if result.is_ok() { "success" } else { "failed" };
-    let error_tags = result
-        .as_ref()
-        .err()
-        .map(classify_error)
-        .unwrap_or_else(DbErrorTags::none);
+    let outcome = DbOutcomeTags::from_result(result);
     let tags = [
-        ("status", status),
+        ("status", outcome.status),
         ("phase", phase),
         ("db", db.as_str()),
-        ("error_class", error_tags.error_class),
-        ("sqlite_code", error_tags.sqlite_code.as_str()),
+        ("error_class", outcome.error.error_class),
+        ("sqlite_code", outcome.error.sqlite_code.as_str()),
     ];
     record_counter(metrics, DB_INIT_METRIC, &tags);
     record_duration(metrics, DB_INIT_DURATION_METRIC, duration, &tags);
@@ -191,7 +186,7 @@ pub(crate) fn classify_sqlite_code(code: &str) -> &'static str {
     }
 }
 
-fn record_operation_result<T>(
+pub(crate) fn record_operation_result<T>(
     metrics: Option<&dyn DbMetricsRecorder>,
     db: DbKind,
     operation: &'static str,
@@ -199,22 +194,37 @@ fn record_operation_result<T>(
     duration: Duration,
     result: &anyhow::Result<T>,
 ) {
-    let status = if result.is_ok() { "success" } else { "failed" };
-    let error_tags = result
-        .as_ref()
-        .err()
-        .map(classify_error)
-        .unwrap_or_else(DbErrorTags::none);
+    let outcome = DbOutcomeTags::from_result(result);
     let tags = [
-        ("status", status),
+        ("status", outcome.status),
         ("db", db.as_str()),
         ("operation", operation),
         ("access", access.as_str()),
-        ("error_class", error_tags.error_class),
-        ("sqlite_code", error_tags.sqlite_code.as_str()),
+        ("error_class", outcome.error.error_class),
+        ("sqlite_code", outcome.error.sqlite_code.as_str()),
     ];
     record_counter(metrics, DB_OPERATION_METRIC, &tags);
     record_duration(metrics, DB_OPERATION_DURATION_METRIC, duration, &tags);
+}
+
+struct DbOutcomeTags {
+    status: &'static str,
+    error: DbErrorTags,
+}
+
+impl DbOutcomeTags {
+    fn from_result<T>(result: &anyhow::Result<T>) -> Self {
+        match result {
+            Ok(_) => Self {
+                status: "success",
+                error: DbErrorTags::none(),
+            },
+            Err(err) => Self {
+                status: "failed",
+                error: classify_error(err),
+            },
+        }
+    }
 }
 
 fn classify_sqlx_error(err: &sqlx::Error) -> DbErrorTags {

@@ -121,84 +121,74 @@ async fn try_init_with_roots_inner(
         )
     })?;
     let backfill_gate_started = Instant::now();
+    let backfill_gate_result = wait_for_startup_backfill(
+        runtime.as_ref(),
+        codex_home.as_path(),
+        default_model_provider_id.as_str(),
+        backfill_lease_seconds,
+    )
+    .await;
+    codex_state::record_db_init_backfill_gate_metric(
+        metrics.as_deref(),
+        backfill_gate_started.elapsed(),
+        &backfill_gate_result,
+    );
+    backfill_gate_result?;
+    Ok(runtime)
+}
+
+async fn wait_for_startup_backfill(
+    runtime: &codex_state::StateRuntime,
+    codex_home: &Path,
+    default_model_provider_id: &str,
+    backfill_lease_seconds: Option<i64>,
+) -> anyhow::Result<()> {
     let wait_started = Instant::now();
     let mut reported_wait = false;
     loop {
         let backfill_state = match runtime.get_backfill_state().await {
             Ok(state) => state,
             Err(err) => {
-                let err = anyhow::anyhow!(
+                return Err(anyhow::anyhow!(
                     "failed to read backfill state at {}: {err}",
                     codex_home.display()
-                );
-                return finish_backfill_gate(
-                    metrics.as_deref(),
-                    backfill_gate_started,
-                    Err(err),
-                    runtime,
-                );
+                ));
             }
         };
         if backfill_state.status == codex_state::BackfillStatus::Complete {
-            return finish_backfill_gate(
-                metrics.as_deref(),
-                backfill_gate_started,
-                Ok(()),
-                runtime,
-            );
+            return Ok(());
         }
 
         if let Some(backfill_lease_seconds) = backfill_lease_seconds {
             metadata::backfill_sessions_with_lease(
-                runtime.as_ref(),
-                codex_home.as_path(),
-                default_model_provider_id.as_str(),
+                runtime,
+                codex_home,
+                default_model_provider_id,
                 backfill_lease_seconds,
             )
             .await;
         } else {
-            metadata::backfill_sessions(
-                runtime.as_ref(),
-                codex_home.as_path(),
-                default_model_provider_id.as_str(),
-            )
-            .await;
+            metadata::backfill_sessions(runtime, codex_home, default_model_provider_id).await;
         }
         let backfill_state = match runtime.get_backfill_state().await {
             Ok(state) => state,
             Err(err) => {
-                let err = anyhow::anyhow!(
+                return Err(anyhow::anyhow!(
                     "failed to read backfill state at {} after startup backfill: {err}",
                     codex_home.display()
-                );
-                return finish_backfill_gate(
-                    metrics.as_deref(),
-                    backfill_gate_started,
-                    Err(err),
-                    runtime,
-                );
+                ));
             }
         };
         if backfill_state.status == codex_state::BackfillStatus::Complete {
-            return finish_backfill_gate(
-                metrics.as_deref(),
-                backfill_gate_started,
-                Ok(()),
-                runtime,
-            );
+            return Ok(());
         }
         if wait_started.elapsed() >= STARTUP_BACKFILL_WAIT_TIMEOUT {
-            return finish_backfill_gate(
-                metrics.as_deref(),
-                backfill_gate_started,
-                Err(anyhow::anyhow!(
-                    "timed out waiting for state db backfill at {} after {:?} (status: {})",
-                    codex_home.display(),
-                    STARTUP_BACKFILL_WAIT_TIMEOUT,
-                    backfill_state.status.as_str()
-                )),
-                runtime,
-            );
+            return Err(anyhow::anyhow!(
+                "timed out waiting for state db backfill at {} after {:?} (status: {})",
+                codex_home.display(),
+                STARTUP_BACKFILL_WAIT_TIMEOUT,
+                backfill_state.status.as_str()
+            ));
         }
 
         let message = format!(
@@ -215,16 +205,6 @@ async fn try_init_with_roots_inner(
         }
         tokio::time::sleep(STARTUP_BACKFILL_POLL_INTERVAL).await;
     }
-}
-
-fn finish_backfill_gate(
-    metrics: Option<&dyn codex_state::DbMetricsRecorder>,
-    started: Instant,
-    result: anyhow::Result<()>,
-    runtime: StateDbHandle,
-) -> anyhow::Result<StateDbHandle> {
-    codex_state::record_db_init_backfill_gate_metric(metrics, started.elapsed(), &result);
-    result.map(|()| runtime)
 }
 
 fn emit_startup_warning(message: &str) {

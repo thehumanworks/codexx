@@ -9,7 +9,8 @@ impl StateRuntime {
 
     /// Insert a batch of log entries into the logs table.
     pub async fn insert_logs(&self, entries: &[LogEntry]) -> anyhow::Result<()> {
-        self.record_db_operation(DbKind::Logs, "insert_logs", DbAccess::Transaction, async {
+        let started = Instant::now();
+        let result: anyhow::Result<()> = async {
             if entries.is_empty() {
                 return Ok(());
             }
@@ -45,8 +46,16 @@ impl StateRuntime {
             self.prune_logs_after_insert(entries, &mut tx).await?;
             tx.commit().await?;
             Ok(())
-        })
-        .await
+        }
+        .await;
+        self.record_db_operation_result(
+            DbKind::Logs,
+            "insert_logs",
+            DbAccess::Transaction,
+            started,
+            &result,
+        );
+        result
     }
 
     /// Enforce per-partition retained-log-content caps after a successful batch insert.

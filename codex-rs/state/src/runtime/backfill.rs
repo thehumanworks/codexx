@@ -55,19 +55,27 @@ WHERE id = 1
 
     /// Mark rollout metadata backfill as running.
     pub async fn mark_backfill_running(&self) -> anyhow::Result<()> {
-        self.ensure_backfill_state_row().await?;
-        sqlx::query(
-            r#"
+        self.record_db_operation(
+            DbKind::State,
+            "mark_backfill_running",
+            DbAccess::Write,
+            async {
+                self.ensure_backfill_state_row().await?;
+                sqlx::query(
+                    r#"
 UPDATE backfill_state
 SET status = ?, updated_at = ?
 WHERE id = 1
             "#,
+                )
+                .bind(crate::BackfillStatus::Running.as_str())
+                .bind(Utc::now().timestamp())
+                .execute(self.pool.as_ref())
+                .await?;
+                Ok(())
+            },
         )
-        .bind(crate::BackfillStatus::Running.as_str())
-        .bind(Utc::now().timestamp())
-        .execute(self.pool.as_ref())
-        .await?;
-        Ok(())
+        .await
     }
 
     /// Persist rollout metadata backfill progress.

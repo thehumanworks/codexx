@@ -702,7 +702,8 @@ WHERE id = ?
         metadata: &crate::ThreadMetadata,
         creation_memory_mode: Option<&str>,
     ) -> anyhow::Result<()> {
-        self.record_db_operation(DbKind::State, "upsert_thread", DbAccess::Write, async {
+        let started = Instant::now();
+        let result: anyhow::Result<()> = async {
             let updated_at = self.allocate_thread_updated_at(metadata.updated_at)?;
             // Backfill/reconcile callers merge existing git info before upserting, but that
             // read/modify/write is not atomic. Preserve non-null SQLite git fields here so
@@ -810,8 +811,16 @@ ON CONFLICT(id) DO UPDATE SET
             )
             .await?;
             Ok(())
-        })
-        .await
+        }
+        .await;
+        self.record_db_operation_result(
+            DbKind::State,
+            "upsert_thread",
+            DbAccess::Write,
+            started,
+            &result,
+        );
+        result
     }
 
     /// Persist dynamic tools for a thread if none have been stored yet.
@@ -823,24 +832,21 @@ ON CONFLICT(id) DO UPDATE SET
         thread_id: ThreadId,
         tools: Option<&[DynamicToolSpec]>,
     ) -> anyhow::Result<()> {
-        self.record_db_operation(
-            DbKind::State,
-            "persist_dynamic_tools",
-            DbAccess::Transaction,
-            async {
-                let Some(tools) = tools else {
-                    return Ok(());
-                };
-                if tools.is_empty() {
-                    return Ok(());
-                }
-                let thread_id = thread_id.to_string();
-                let mut tx = self.pool.begin().await?;
-                for (idx, tool) in tools.iter().enumerate() {
-                    let position = i64::try_from(idx).unwrap_or(i64::MAX);
-                    let input_schema = serde_json::to_string(&tool.input_schema)?;
-                    sqlx::query(
-                        r#"
+        let started = Instant::now();
+        let result: anyhow::Result<()> = async {
+            let Some(tools) = tools else {
+                return Ok(());
+            };
+            if tools.is_empty() {
+                return Ok(());
+            }
+            let thread_id = thread_id.to_string();
+            let mut tx = self.pool.begin().await?;
+            for (idx, tool) in tools.iter().enumerate() {
+                let position = i64::try_from(idx).unwrap_or(i64::MAX);
+                let input_schema = serde_json::to_string(&tool.input_schema)?;
+                sqlx::query(
+                    r#"
 INSERT INTO thread_dynamic_tools (
     thread_id,
     position,
@@ -852,22 +858,29 @@ INSERT INTO thread_dynamic_tools (
 ) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(thread_id, position) DO NOTHING
                 "#,
-                    )
-                    .bind(thread_id.as_str())
-                    .bind(position)
-                    .bind(tool.namespace.as_deref())
-                    .bind(tool.name.as_str())
-                    .bind(tool.description.as_str())
-                    .bind(input_schema)
-                    .bind(tool.defer_loading)
-                    .execute(&mut *tx)
-                    .await?;
-                }
-                tx.commit().await?;
-                Ok(())
-            },
-        )
-        .await
+                )
+                .bind(thread_id.as_str())
+                .bind(position)
+                .bind(tool.namespace.as_deref())
+                .bind(tool.name.as_str())
+                .bind(tool.description.as_str())
+                .bind(input_schema)
+                .bind(tool.defer_loading)
+                .execute(&mut *tx)
+                .await?;
+            }
+            tx.commit().await?;
+            Ok(())
+        }
+        .await;
+        self.record_db_operation_result(
+            DbKind::State,
+            "persist_dynamic_tools",
+            DbAccess::Transaction,
+            started,
+            &result,
+        );
+        result
     }
 
     /// Apply rollout items incrementally using the underlying database.

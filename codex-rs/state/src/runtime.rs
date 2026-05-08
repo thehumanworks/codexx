@@ -227,6 +227,24 @@ impl StateRuntime {
     {
         crate::telemetry::record_operation(self.metrics(), db, operation, access, future).await
     }
+
+    pub(crate) fn record_db_operation_result<T>(
+        &self,
+        db: DbKind,
+        operation: &'static str,
+        access: DbAccess,
+        started: Instant,
+        result: &anyhow::Result<T>,
+    ) {
+        crate::telemetry::record_operation_result(
+            self.metrics(),
+            db,
+            operation,
+            access,
+            started.elapsed(),
+            result,
+        );
+    }
 }
 
 fn base_sqlite_options(path: &Path) -> SqliteConnectOptions {
