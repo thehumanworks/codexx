@@ -416,6 +416,24 @@ impl App {
             } => {
                 self.chat_widget.open_hooks_browser(hooks, warnings, errors);
             }
+            AppEvent::TrustStartupHooksAndContinue {
+                hooks,
+                warnings,
+                errors,
+            } => {
+                self.trust_startup_hooks_and_continue(app_server, hooks, warnings, errors);
+            }
+            AppEvent::StartupHooksTrusted {
+                hooks,
+                warnings,
+                errors,
+                result,
+            } => match result {
+                Ok(()) => self.chat_widget.complete_startup_hooks_review(),
+                Err(err) => self
+                    .chat_widget
+                    .show_startup_hooks_review_error(hooks, warnings, errors, err),
+            },
             AppEvent::OpenMarketplaceAddPrompt => {
                 self.chat_widget.open_marketplace_add_prompt();
             }

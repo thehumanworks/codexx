@@ -49,8 +49,40 @@ impl ChatWidget {
                 hooks,
                 warnings,
                 errors,
+                None,
                 self.app_event_tx.clone(),
             )));
+        self.request_redraw();
+    }
+
+    pub(crate) fn complete_startup_hooks_review(&mut self) {
+        self.bottom_pane.complete_active_view_if_id(
+            HooksReviewPromptView::VIEW_ID,
+            crate::bottom_pane::ViewCompletion::Accepted,
+        );
+        self.request_redraw();
+    }
+
+    pub(crate) fn show_startup_hooks_review_error(
+        &mut self,
+        hooks: Vec<HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<HookErrorInfo>,
+        error: String,
+    ) {
+        let replaced = self.bottom_pane.replace_active_view_if_id(
+            HooksReviewPromptView::VIEW_ID,
+            Box::new(HooksReviewPromptView::new(
+                hooks,
+                warnings,
+                errors,
+                Some(error.clone()),
+                self.app_event_tx.clone(),
+            )),
+        );
+        if !replaced {
+            self.add_error_message(error);
+        }
         self.request_redraw();
     }
 

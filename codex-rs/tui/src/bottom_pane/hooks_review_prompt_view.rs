@@ -33,22 +33,29 @@ pub(crate) struct HooksReviewPromptView {
     hooks: Vec<HookMetadata>,
     warnings: Vec<String>,
     errors: Vec<HookErrorInfo>,
+    trust_all_error: Option<String>,
+    trusting_all: bool,
     highlighted: HooksReviewPromptSelection,
     completion: Option<ViewCompletion>,
     app_event_tx: AppEventSender,
 }
 
 impl HooksReviewPromptView {
+    pub(crate) const VIEW_ID: &'static str = "hooks_review_prompt";
+
     pub(crate) fn new(
         hooks: Vec<HookMetadata>,
         warnings: Vec<String>,
         errors: Vec<HookErrorInfo>,
+        trust_all_error: Option<String>,
         app_event_tx: AppEventSender,
     ) -> Self {
         Self {
             hooks,
             warnings,
             errors,
+            trust_all_error,
+            trusting_all: false,
             highlighted: HooksReviewPromptSelection::ReviewHooks,
             completion: None,
             app_event_tx,
@@ -101,21 +108,18 @@ impl HooksReviewPromptView {
                 self.completion = Some(ViewCompletion::Accepted);
             }
             HooksReviewPromptSelection::TrustAllAndContinue => {
-                self.trust_all_hooks();
-                self.completion = Some(ViewCompletion::Accepted);
+                self.trusting_all = true;
+                self.trust_all_error = None;
+                self.app_event_tx
+                    .send(AppEvent::TrustStartupHooksAndContinue {
+                        hooks: self.hooks.clone(),
+                        warnings: self.warnings.clone(),
+                        errors: self.errors.clone(),
+                    });
             }
             HooksReviewPromptSelection::ContinueWithoutTrusting => {
                 self.completion = Some(ViewCompletion::Cancelled);
             }
-        }
-    }
-
-    fn trust_all_hooks(&self) {
-        for hook in self.hooks.iter().filter(|hook| hook_needs_review(hook)) {
-            self.app_event_tx.send(AppEvent::TrustHook {
-                key: hook.key.clone(),
-                current_hash: hook.current_hash.clone(),
-            });
         }
     }
 
@@ -144,8 +148,13 @@ impl HooksReviewPromptView {
             "Hooks can run outside the sandbox after you trust them."
                 .dim()
                 .into(),
-            Line::default(),
         ];
+        if let Some(error) = self.trust_all_error.as_deref() {
+            lines.push(Line::from(error.to_string()).red());
+        } else if self.trusting_all {
+            lines.push("Trusting hooks...".dim().into());
+        }
+        lines.push(Line::default());
         lines.extend(
             options
                 .into_iter()
@@ -160,6 +169,10 @@ impl HooksReviewPromptView {
 
 impl BottomPaneView for HooksReviewPromptView {
     fn handle_key_event(&mut self, key_event: KeyEvent) {
+        if self.trusting_all {
+            return;
+        }
+
         match key_event {
             KeyEvent {
                 code: KeyCode::Up, ..
@@ -225,12 +238,20 @@ impl BottomPaneView for HooksReviewPromptView {
     }
 
     fn on_ctrl_c(&mut self) -> CancellationEvent {
+        if self.trusting_all {
+            return CancellationEvent::Handled;
+        }
+
         self.completion = Some(ViewCompletion::Cancelled);
         CancellationEvent::Handled
     }
 
     fn prefer_esc_to_handle_key_event(&self) -> bool {
         true
+    }
+
+    fn view_id(&self) -> Option<&'static str> {
+        Some(Self::VIEW_ID)
     }
 }
 
@@ -333,6 +354,7 @@ mod tests {
             ],
             Vec::new(),
             Vec::new(),
+            None,
             AppEventSender::new(tx_raw),
         )
     }
@@ -367,12 +389,30 @@ mod tests {
     }
 
     #[test]
+    fn renders_prompt_with_trust_error() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let view = HooksReviewPromptView::new(
+            vec![hook("path:new", HookTrustStatus::Untrusted)],
+            Vec::new(),
+            Vec::new(),
+            Some("Failed to trust hooks: disk full".to_string()),
+            AppEventSender::new(tx_raw),
+        );
+
+        assert_snapshot!(
+            "hooks_review_prompt_with_trust_error",
+            render_lines(&view, /*width*/ 80)
+        );
+    }
+
+    #[test]
     fn review_selection_opens_hooks_browser() {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let mut view = HooksReviewPromptView::new(
             vec![hook("path:new", HookTrustStatus::Untrusted)],
             Vec::new(),
             Vec::new(),
+            None,
             AppEventSender::new(tx_raw),
         );
 
@@ -386,7 +426,7 @@ mod tests {
     }
 
     #[test]
-    fn trust_all_selection_trusts_each_review_needed_hook() {
+    fn trust_all_selection_waits_for_batched_trust_write() {
         let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
         let mut view = HooksReviewPromptView::new(
             vec![
@@ -396,19 +436,19 @@ mod tests {
             ],
             Vec::new(),
             Vec::new(),
+            None,
             AppEventSender::new(tx_raw),
         );
         view.handle_key_event(KeyEvent::from(KeyCode::Down));
 
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
 
-        let trust_events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-        assert_eq!(trust_events.len(), 2);
-        assert!(
-            trust_events
-                .into_iter()
-                .all(|event| matches!(event, AppEvent::TrustHook { .. }))
-        );
-        assert_eq!(view.completion(), Some(ViewCompletion::Accepted));
+        assert!(matches!(
+            rx.try_recv().expect("trust all event"),
+            AppEvent::TrustStartupHooksAndContinue { .. }
+        ));
+        assert!(rx.try_recv().is_err());
+        assert_eq!(view.completion(), None);
+        assert!(view.trusting_all);
     }
 }

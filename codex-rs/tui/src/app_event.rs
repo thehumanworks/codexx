@@ -332,6 +332,21 @@ pub(crate) enum AppEvent {
         errors: Vec<codex_app_server_protocol::HookErrorInfo>,
     },
 
+    /// Trust every pending startup hook, then continue only after persistence succeeds.
+    TrustStartupHooksAndContinue {
+        hooks: Vec<codex_app_server_protocol::HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
+    },
+
+    /// Result of persisting every pending startup hook trust decision.
+    StartupHooksTrusted {
+        hooks: Vec<codex_app_server_protocol::HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
+        result: Result<(), String>,
+    },
+
     /// Open the prompt for adding a marketplace source.
     OpenMarketplaceAddPrompt,
 

@@ -31,7 +31,7 @@ use crate::render::renderable::Renderable;
 use crate::render::renderable::RenderableItem;
 use crate::tui::FrameRequester;
 pub(crate) use bottom_pane_view::BottomPaneView;
-use bottom_pane_view::ViewCompletion;
+pub(crate) use bottom_pane_view::ViewCompletion;
 use codex_app_server_protocol::ToolRequestUserInputParams;
 use codex_core_skills::model::SkillMetadata;
 use codex_features::Features;
@@ -1220,6 +1220,42 @@ impl BottomPane {
 
     pub(crate) fn show_view(&mut self, view: Box<dyn BottomPaneView>) {
         self.push_view(view);
+    }
+
+    pub(crate) fn replace_active_view_if_id(
+        &mut self,
+        view_id: &'static str,
+        view: Box<dyn BottomPaneView>,
+    ) -> bool {
+        let Some(active_view) = self.view_stack.last_mut() else {
+            return false;
+        };
+        if active_view.view_id() != Some(view_id) {
+            return false;
+        }
+
+        *active_view = view;
+        self.schedule_active_view_frame();
+        self.request_redraw();
+        true
+    }
+
+    pub(crate) fn complete_active_view_if_id(
+        &mut self,
+        view_id: &'static str,
+        completion: ViewCompletion,
+    ) -> bool {
+        if self
+            .view_stack
+            .last()
+            .is_none_or(|view| view.view_id() != Some(view_id))
+        {
+            return false;
+        }
+
+        self.pop_active_view_with_completion(Some(completion));
+        self.request_redraw();
+        true
     }
 
     /// Called when the agent requests user approval.

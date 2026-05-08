@@ -5,6 +5,8 @@
 //! the main event loop remains single-threaded.
 
 use super::*;
+use codex_app_server_protocol::HookErrorInfo;
+use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookTrustStatus;
 use codex_app_server_protocol::MarketplaceAddParams;
 use codex_app_server_protocol::MarketplaceAddResponse;
@@ -366,6 +368,39 @@ impl App {
                 .map(|_| ())
                 .map_err(|err| format!("Failed to trust hook: {err}"));
             app_event_tx.send(AppEvent::HookTrusted { result });
+        });
+    }
+
+    pub(super) fn trust_startup_hooks_and_continue(
+        &mut self,
+        app_server: &AppServerSession,
+        hooks: Vec<HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<HookErrorInfo>,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let trust_updates = hooks
+                .iter()
+                .filter(|hook| {
+                    matches!(
+                        hook.trust_status,
+                        HookTrustStatus::Untrusted | HookTrustStatus::Modified
+                    )
+                })
+                .map(|hook| (hook.key.clone(), hook.current_hash.clone()))
+                .collect();
+            let result = write_hook_trusts(request_handle, trust_updates)
+                .await
+                .map(|_| ())
+                .map_err(|err| format!("Failed to trust hooks: {err}"));
+            app_event_tx.send(AppEvent::StartupHooksTrusted {
+                hooks,
+                warnings,
+                errors,
+                result,
+            });
         });
     }
 
@@ -857,12 +892,27 @@ pub(super) async fn write_hook_trust(
     key: String,
     current_hash: String,
 ) -> Result<ConfigWriteResponse> {
+    write_hook_trusts(request_handle, vec![(key, current_hash)]).await
+}
+
+pub(super) async fn write_hook_trusts(
+    request_handle: AppServerRequestHandle,
+    trust_updates: Vec<(String, String)>,
+) -> Result<ConfigWriteResponse> {
     let request_id = RequestId::String(format!("hooks-config-write-{}", Uuid::new_v4()));
-    let value = serde_json::json!({
-        key: {
-            "trusted_hash": current_hash,
-        }
-    });
+    let value = serde_json::Value::Object(
+        trust_updates
+            .into_iter()
+            .map(|(key, current_hash)| {
+                (
+                    key,
+                    serde_json::json!({
+                        "trusted_hash": current_hash,
+                    }),
+                )
+            })
+            .collect(),
+    );
     request_handle
         .request_typed(ClientRequest::ConfigBatchWrite {
             request_id,
