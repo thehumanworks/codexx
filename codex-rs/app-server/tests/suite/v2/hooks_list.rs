@@ -1,3 +1,5 @@
+use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -104,6 +106,19 @@ hooks = true
 enabled = true
 "#,
     )?;
+    Ok(())
+}
+
+fn run_git(cwd: &Path, args: &[&str]) -> Result<()> {
+    let output = Command::new("git").current_dir(cwd).args(args).output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git {} failed in {}: {}",
+            args.join(" "),
+            cwd.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     Ok(())
 }
 
@@ -363,6 +378,109 @@ timeout = 5
             },
         ]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn hooks_list_shares_project_hook_trust_across_linked_worktrees() -> Result<()> {
+    skip_if_windows!(Ok(()));
+
+    let codex_home = TempDir::new()?;
+    let workspace = TempDir::new()?;
+    let repo = workspace.path().join("repo");
+    let linked_worktree = workspace.path().join("linked-worktree");
+
+    std::fs::create_dir_all(&repo)?;
+    run_git(&repo, &["init"])?;
+    run_git(&repo, &["config", "user.email", "codex@example.com"])?;
+    run_git(&repo, &["config", "user.name", "Codex Tests"])?;
+    std::fs::create_dir_all(repo.join(".codex"))?;
+    std::fs::write(
+        repo.join(".codex/config.toml"),
+        r#"[features]
+hooks = true
+
+[hooks]
+
+[[hooks.PreToolUse]]
+matcher = "Bash"
+
+[[hooks.PreToolUse.hooks]]
+type = "command"
+command = "echo project hook"
+timeout = 5
+"#,
+    )?;
+    run_git(&repo, &["add", ".codex/config.toml"])?;
+    run_git(&repo, &["commit", "-m", "initial hooks config"])?;
+    run_git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            linked_worktree.to_str().expect("utf-8 path"),
+            "-b",
+            "feature/hooks",
+        ],
+    )?;
+    set_project_trust_level(codex_home.path(), &repo, TrustLevel::Trusted)?;
+
+    let mut mcp = McpProcess::new(codex_home.path()).await?;
+    timeout(DEFAULT_TIMEOUT, mcp.initialize()).await??;
+
+    let request_id = mcp
+        .send_hooks_list_request(HooksListParams {
+            cwds: vec![repo.clone()],
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let HooksListResponse { data } = to_response(response)?;
+    let hook = data[0].hooks[0].clone();
+    assert_eq!(hook.trust_status, HookTrustStatus::Untrusted);
+
+    let write_id = mcp
+        .send_config_batch_write_request(ConfigBatchWriteParams {
+            edits: vec![ConfigEdit {
+                key_path: "hooks.state".to_string(),
+                value: serde_json::json!({
+                    hook.key.clone(): {
+                        "trusted_hash": hook.current_hash.clone()
+                    }
+                }),
+                merge_strategy: MergeStrategy::Upsert,
+            }],
+            file_path: None,
+            expected_version: None,
+            reload_user_config: true,
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(write_id)),
+    )
+    .await??;
+    let _: codex_app_server_protocol::ConfigWriteResponse = to_response(response)?;
+
+    let request_id = mcp
+        .send_hooks_list_request(HooksListParams {
+            cwds: vec![linked_worktree],
+        })
+        .await?;
+    let response: JSONRPCResponse = timeout(
+        DEFAULT_TIMEOUT,
+        mcp.read_stream_until_response_message(RequestId::Integer(request_id)),
+    )
+    .await??;
+    let HooksListResponse { data } = to_response(response)?;
+    let linked_worktree_hook = &data[0].hooks[0];
+    assert_eq!(linked_worktree_hook.key, hook.key);
+    assert_eq!(linked_worktree_hook.current_hash, hook.current_hash);
+    assert_eq!(linked_worktree_hook.trust_status, HookTrustStatus::Trusted);
+
     Ok(())
 }
 
