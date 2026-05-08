@@ -89,39 +89,33 @@ impl App {
         });
     }
 
-    /// Opens the startup hook review prompt without delaying the first interactive frame.
-    pub(super) fn refresh_startup_hooks(&mut self, app_server: &AppServerSession) {
+    /// Opens the startup hook review prompt before the first interactive frame if needed.
+    pub(super) async fn maybe_open_startup_hooks_review(&mut self, app_server: &AppServerSession) {
         let request_handle = app_server.request_handle();
-        let app_event_tx = self.app_event_tx.clone();
         let cwd = self.config.cwd.to_path_buf();
-        tokio::spawn(async move {
-            let result = fetch_hooks_list(request_handle, cwd.clone()).await;
-            let response = match result {
-                Ok(response) => response,
-                Err(err) => {
-                    tracing::warn!("failed to load startup hook review state: {err:#}");
-                    return;
-                }
-            };
-            let (hooks, warnings, errors) = response
-                .data
-                .into_iter()
-                .find(|entry| entry.cwd.as_path() == cwd.as_path())
-                .map(|entry| (entry.hooks, entry.warnings, entry.errors))
-                .unwrap_or_default();
-            if hooks.iter().any(|hook| {
-                matches!(
-                    hook.trust_status,
-                    HookTrustStatus::Untrusted | HookTrustStatus::Modified
-                )
-            }) {
-                app_event_tx.send(AppEvent::OpenStartupHooksReview {
-                    hooks,
-                    warnings,
-                    errors,
-                });
+        let result = fetch_hooks_list(request_handle, cwd.clone()).await;
+        let response = match result {
+            Ok(response) => response,
+            Err(err) => {
+                tracing::warn!("failed to load startup hook review state: {err:#}");
+                return;
             }
-        });
+        };
+        let (hooks, warnings, errors) = response
+            .data
+            .into_iter()
+            .find(|entry| entry.cwd.as_path() == cwd.as_path())
+            .map(|entry| (entry.hooks, entry.warnings, entry.errors))
+            .unwrap_or_default();
+        if hooks.iter().any(|hook| {
+            matches!(
+                hook.trust_status,
+                HookTrustStatus::Untrusted | HookTrustStatus::Modified
+            )
+        }) {
+            self.chat_widget
+                .open_startup_hooks_review(hooks, warnings, errors);
+        }
     }
 
     pub(super) fn fetch_plugins_list(&mut self, app_server: &AppServerSession, cwd: PathBuf) {

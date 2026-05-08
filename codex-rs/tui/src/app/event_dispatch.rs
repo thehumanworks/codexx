@@ -409,14 +409,6 @@ impl App {
             AppEvent::FetchHooksList { cwd } => {
                 self.fetch_hooks_list(app_server, cwd);
             }
-            AppEvent::OpenStartupHooksReview {
-                hooks,
-                warnings,
-                errors,
-            } => {
-                self.chat_widget
-                    .open_startup_hooks_review(hooks, warnings, errors);
-            }
             AppEvent::OpenHooksBrowser {
                 hooks,
                 warnings,

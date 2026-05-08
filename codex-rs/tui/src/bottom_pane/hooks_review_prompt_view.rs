@@ -133,7 +133,7 @@ impl HooksReviewPromptView {
                 HooksReviewPromptSelection::TrustAllAndContinue,
             ),
             (
-                "Continue without trusting",
+                "Continue without trusting (hooks won't run)",
                 HooksReviewPromptSelection::ContinueWithoutTrusting,
             ),
         ];

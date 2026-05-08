@@ -9,6 +9,6 @@ expression: "render_lines(&view(), 80)"
                                                                                 
   › 1. Review hooks                                                             
     2. Trust all and continue                                                   
-    3. Continue without trusting                                                
+    3. Continue without trusting (hooks won't run)                              
                                                                                 
   Press enter to continue; esc to continue without trusting

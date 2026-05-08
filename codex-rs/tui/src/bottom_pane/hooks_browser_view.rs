@@ -301,57 +301,43 @@ impl HooksBrowserView {
         header.push("Description".into());
         lines.push(Line::from(header));
         for (idx, row) in rows.into_iter().enumerate() {
+            let selected = self.state.selected_idx == Some(idx);
             let needs_review = row.needs_review > 0;
-            if self.state.selected_idx == Some(idx) {
-                let mut row_line = vec![
-                    Span::from(format!(
-                        "{:<EVENT_COLUMN_WIDTH$}",
-                        event_label(row.event_name)
-                    )),
-                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.installed)),
-                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.active)),
-                ];
-                if show_review {
-                    row_line.push(Span::from(format!(
-                        "{:<COUNT_COLUMN_WIDTH$}",
-                        row.needs_review
-                    )));
-                }
-                row_line.push(Span::from(event_description(row.event_name)));
-                let line = if needs_review {
-                    Line::from(row_line).yellow().bold()
+            let mut row_line = vec![
+                Span::from(format!(
+                    "{:<EVENT_COLUMN_WIDTH$}",
+                    event_label(row.event_name)
+                )),
+                Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.installed)),
+                Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.active)),
+            ];
+            if show_review {
+                let review_count = Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.needs_review));
+                row_line.push(if needs_review {
+                    review_count.yellow()
                 } else {
-                    Line::from(row_line).cyan().bold()
-                };
-                lines.push(line);
-            } else if needs_review {
-                let mut row_line = vec![
-                    format!("{:<EVENT_COLUMN_WIDTH$}", event_label(row.event_name)).into(),
-                    format!("{:<COUNT_COLUMN_WIDTH$}", row.installed).into(),
-                    format!("{:<COUNT_COLUMN_WIDTH$}", row.active).into(),
-                ];
-                if show_review {
-                    row_line.push(format!("{:<COUNT_COLUMN_WIDTH$}", row.needs_review).into());
-                }
-                row_line.push(event_description(row.event_name).into());
-                lines.push(Line::from(row_line).yellow());
-            } else {
-                let mut row_line = vec![
-                    Span::from(format!(
-                        "{:<EVENT_COLUMN_WIDTH$}",
-                        event_label(row.event_name)
-                    )),
-                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.installed)).dim(),
-                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.active)).dim(),
-                ];
-                if show_review {
-                    row_line.push(
-                        Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.needs_review)).dim(),
-                    );
-                }
-                row_line.push(Span::from(event_description(row.event_name)).dim());
-                lines.push(Line::from(row_line));
+                    review_count
+                });
             }
+            row_line.push(Span::from(event_description(row.event_name)));
+
+            if selected {
+                for span in row_line
+                    .iter_mut()
+                    .filter(|span| span.style.fg != Some(ratatui::style::Color::Yellow))
+                {
+                    *span = span.clone().cyan().bold();
+                }
+            } else {
+                row_line[1] = row_line[1].clone().dim();
+                row_line[2] = row_line[2].clone().dim();
+                if show_review && !needs_review {
+                    row_line[3] = row_line[3].clone().dim();
+                }
+                let description_idx = row_line.len() - 1;
+                row_line[description_idx] = row_line[description_idx].clone().dim();
+            }
+            lines.push(Line::from(row_line));
         }
         lines
     }
@@ -999,7 +985,11 @@ mod tests {
             "hooks_browser_events_with_review_column",
             render_lines(&view, /*width*/ 112)
         );
-        assert_eq!(view.event_table_lines()[1].style.fg, Some(Color::Yellow));
+        assert_eq!(view.event_table_lines()[1].spans[0].style.fg, None);
+        assert_eq!(
+            view.event_table_lines()[1].spans[3].style.fg,
+            Some(Color::Yellow)
+        );
     }
 
     #[test]
