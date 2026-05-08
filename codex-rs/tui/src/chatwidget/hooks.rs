@@ -3,6 +3,9 @@ use std::path::PathBuf;
 use super::ChatWidget;
 use crate::app_event::AppEvent;
 use crate::bottom_pane::HooksBrowserView;
+use crate::bottom_pane::HooksReviewPromptView;
+use codex_app_server_protocol::HookErrorInfo;
+use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HooksListResponse;
 
 impl ChatWidget {
@@ -29,15 +32,40 @@ impl ChatWidget {
                     .find(|entry| entry.cwd.as_path() == cwd.as_path())
                     .map(|entry| (entry.hooks, entry.warnings, entry.errors))
                     .unwrap_or_default();
-                self.bottom_pane.show_view(Box::new(HooksBrowserView::new(
-                    hooks,
-                    warnings,
-                    errors,
-                    self.app_event_tx.clone(),
-                )));
-                self.request_redraw();
+                self.open_hooks_browser(hooks, warnings, errors);
             }
             Err(err) => self.add_error_message(format!("Failed to load hooks: {err}")),
         }
+    }
+
+    pub(crate) fn open_startup_hooks_review(
+        &mut self,
+        hooks: Vec<HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<HookErrorInfo>,
+    ) {
+        self.bottom_pane
+            .show_view(Box::new(HooksReviewPromptView::new(
+                hooks,
+                warnings,
+                errors,
+                self.app_event_tx.clone(),
+            )));
+        self.request_redraw();
+    }
+
+    pub(crate) fn open_hooks_browser(
+        &mut self,
+        hooks: Vec<HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<HookErrorInfo>,
+    ) {
+        self.bottom_pane.show_view(Box::new(HooksBrowserView::new(
+            hooks,
+            warnings,
+            errors,
+            self.app_event_tx.clone(),
+        )));
+        self.request_redraw();
     }
 }

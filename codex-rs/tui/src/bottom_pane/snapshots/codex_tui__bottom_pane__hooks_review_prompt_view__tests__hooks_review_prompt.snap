@@ -1,0 +1,14 @@
+---
+source: tui/src/bottom_pane/hooks_review_prompt_view.rs
+expression: "render_lines(&view(), 80)"
+---
+                                                                                
+  Hooks need review                                                             
+  2 hooks are new or changed.                                                   
+  Hooks can run outside the sandbox after you trust them.                       
+                                                                                
+  › 1. Review hooks                                                             
+    2. Trust all and continue                                                   
+    3. Continue without trusting                                                
+                                                                                
+  Press enter to continue; esc to continue without trusting

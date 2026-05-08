@@ -409,6 +409,21 @@ impl App {
             AppEvent::FetchHooksList { cwd } => {
                 self.fetch_hooks_list(app_server, cwd);
             }
+            AppEvent::OpenStartupHooksReview {
+                hooks,
+                warnings,
+                errors,
+            } => {
+                self.chat_widget
+                    .open_startup_hooks_review(hooks, warnings, errors);
+            }
+            AppEvent::OpenHooksBrowser {
+                hooks,
+                warnings,
+                errors,
+            } => {
+                self.chat_widget.open_hooks_browser(hooks, warnings, errors);
+            }
             AppEvent::OpenMarketplaceAddPrompt => {
                 self.chat_widget.open_marketplace_add_prompt();
             }

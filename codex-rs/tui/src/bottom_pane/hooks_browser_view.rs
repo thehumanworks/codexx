@@ -208,6 +208,20 @@ impl HooksBrowserView {
         });
     }
 
+    fn trust_all_hooks(&mut self) {
+        for hook in &mut self.hooks {
+            if !hook_needs_review(hook) {
+                continue;
+            }
+
+            hook.trust_status = HookTrustStatus::Trusted;
+            self.app_event_tx.send(AppEvent::TrustHook {
+                key: hook.key.clone(),
+                current_hash: hook.current_hash.clone(),
+            });
+        }
+    }
+
     fn close(&mut self) {
         self.complete = true;
     }
@@ -236,6 +250,14 @@ impl HooksBrowserView {
         ]
     }
 
+    fn review_needed_total_count(&self) -> usize {
+        self.hooks
+            .iter()
+            .filter(|hook| hook_needs_review(hook))
+            .count()
+    }
+
+    #[allow(clippy::disallowed_methods)]
     fn handler_header_lines(
         event_name: HookEventName,
         review_needed_count: usize,
@@ -263,6 +285,7 @@ impl HooksBrowserView {
             .count()
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn event_table_lines(&self) -> Vec<Line<'static>> {
         let rows = self.event_rows();
         let show_review = rows.iter().any(|row| row.needs_review > 0);
@@ -353,9 +376,26 @@ impl HooksBrowserView {
         lines
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn event_page_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Self::event_header_lines();
         lines.push(Line::default());
+
+        match self.review_needed_total_count() {
+            0 => {}
+            1 => {
+                lines.push("⚠ 1 hook needs review before it can run.".yellow().into());
+                lines.push(Line::default());
+            }
+            count => {
+                lines.push(
+                    format!("⚠ {count} hooks need review before they can run.")
+                        .yellow()
+                        .into(),
+                );
+                lines.push(Line::default());
+            }
+        }
 
         let issue_lines = self.event_issue_lines();
         if !issue_lines.is_empty() {
@@ -367,6 +407,7 @@ impl HooksBrowserView {
         lines
     }
 
+    #[allow(clippy::disallowed_methods)]
     fn handler_row_lines(&self, event_name: HookEventName, width: usize) -> Vec<Line<'static>> {
         self.handlers_for_event(event_name)
             .enumerate()
@@ -442,6 +483,15 @@ impl HooksBrowserView {
             height: area.height,
         };
         let footer = match self.page {
+            HooksBrowserPage::Events if self.review_needed_total_count() > 0 => Line::from(vec![
+                "Press ".into(),
+                key_hint::plain(KeyCode::Char('t')).into(),
+                " to trust all; ".into(),
+                key_hint::plain(KeyCode::Enter).into(),
+                " to review hooks; ".into(),
+                key_hint::plain(KeyCode::Esc).into(),
+                " to close".into(),
+            ]),
             HooksBrowserPage::Events => Line::from(vec![
                 "Press ".into(),
                 key_hint::plain(KeyCode::Enter).into(),
@@ -535,11 +585,10 @@ impl BottomPaneView for HooksBrowserView {
                 code: KeyCode::Char('t'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => {
-                if let HooksBrowserPage::Handlers(event_name) = self.page {
-                    self.trust_selected_hook(event_name);
-                }
-            }
+            } => match self.page {
+                HooksBrowserPage::Events => self.trust_all_hooks(),
+                HooksBrowserPage::Handlers(event_name) => self.trust_selected_hook(event_name),
+            },
             KeyEvent {
                 code: KeyCode::Esc, ..
             } => match self.page {
@@ -1430,6 +1479,73 @@ mod tests {
             }
             other => panic!("expected hook trust event, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn trust_key_on_event_page_trusts_all_review_needed_hooks() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let mut untrusted_hook = hook(
+            "path:untrusted",
+            HookEventName::PreToolUse,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "/tmp/pre-tool-use-check.sh",
+            /*enabled*/ false,
+            /*is_managed*/ false,
+            /*display_order*/ 0,
+        );
+        untrusted_hook.trust_status = HookTrustStatus::Untrusted;
+        let mut modified_hook = hook(
+            "path:modified",
+            HookEventName::Stop,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "/tmp/stop-check.sh",
+            /*enabled*/ false,
+            /*is_managed*/ false,
+            /*display_order*/ 1,
+        );
+        modified_hook.trust_status = HookTrustStatus::Modified;
+        let mut view = HooksBrowserView::new(
+            vec![
+                untrusted_hook,
+                modified_hook,
+                hook(
+                    "path:trusted",
+                    HookEventName::PreToolUse,
+                    HookSource::User,
+                    /*plugin_id*/ None,
+                    "/tmp/trusted.sh",
+                    /*enabled*/ true,
+                    /*is_managed*/ false,
+                    /*display_order*/ 2,
+                ),
+            ],
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
+
+        view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
+
+        assert_eq!(
+            view.hooks
+                .iter()
+                .map(|hook| hook.trust_status)
+                .collect::<Vec<_>>(),
+            vec![
+                HookTrustStatus::Trusted,
+                HookTrustStatus::Trusted,
+                HookTrustStatus::Trusted,
+            ]
+        );
+        let trust_events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+        assert_eq!(trust_events.len(), 2);
+        assert!(
+            trust_events
+                .into_iter()
+                .all(|event| matches!(event, AppEvent::TrustHook { .. }))
+        );
     }
 
     #[test]

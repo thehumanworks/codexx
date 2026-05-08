@@ -325,6 +325,20 @@ pub(crate) enum AppEvent {
         result: Result<codex_app_server_protocol::HooksListResponse, String>,
     },
 
+    /// Show the startup review prompt for hooks that cannot run until trusted.
+    OpenStartupHooksReview {
+        hooks: Vec<codex_app_server_protocol::HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
+    },
+
+    /// Open the lifecycle hooks browser with already-fetched hook state.
+    OpenHooksBrowser {
+        hooks: Vec<codex_app_server_protocol::HookMetadata>,
+        warnings: Vec<String>,
+        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
+    },
+
     /// Open the prompt for adding a marketplace source.
     OpenMarketplaceAddPrompt,
 

@@ -89,7 +89,7 @@ impl App {
         });
     }
 
-    /// Emits the initial hook review warning without delaying the first interactive frame.
+    /// Opens the startup hook review prompt without delaying the first interactive frame.
     pub(super) fn refresh_startup_hooks(&mut self, app_server: &AppServerSession) {
         let request_handle = app_server.request_handle();
         let app_event_tx = self.app_event_tx.clone();
@@ -103,29 +103,23 @@ impl App {
                     return;
                 }
             };
-            let hooks_needing_review = response
+            let (hooks, warnings, errors) = response
                 .data
                 .into_iter()
                 .find(|entry| entry.cwd.as_path() == cwd.as_path())
-                .map(|entry| {
-                    entry
-                        .hooks
-                        .into_iter()
-                        .filter(|hook| {
-                            matches!(
-                                hook.trust_status,
-                                HookTrustStatus::Untrusted | HookTrustStatus::Modified
-                            )
-                        })
-                        .count()
-                })
+                .map(|entry| (entry.hooks, entry.warnings, entry.errors))
                 .unwrap_or_default();
-            if let Some(message) =
-                startup_prompts::hooks_needing_review_warning(hooks_needing_review)
-            {
-                app_event_tx.send(AppEvent::InsertHistoryCell(Box::new(
-                    history_cell::new_warning_event(message),
-                )));
+            if hooks.iter().any(|hook| {
+                matches!(
+                    hook.trust_status,
+                    HookTrustStatus::Untrusted | HookTrustStatus::Modified
+                )
+            }) {
+                app_event_tx.send(AppEvent::OpenStartupHooksReview {
+                    hooks,
+                    warnings,
+                    errors,
+                });
             }
         });
     }
