@@ -200,10 +200,15 @@ pub async fn run_main(
 mod tests {
     use super::*;
     use codex_config::types::OtelExporterKind;
+    use codex_config::types::OtelHttpProtocol;
     use codex_core::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use tempfile::TempDir;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
 
     #[test]
     fn mcp_server_defaults_analytics_to_enabled() {
@@ -212,14 +217,21 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_server_builds_otel_provider_with_logs_traces_and_metrics() -> anyhow::Result<()> {
+        let collector = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&collector)
+            .await;
+
         let codex_home = TempDir::new()?;
         let mut config = ConfigBuilder::default()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await?;
-        let exporter = OtelExporterKind::OtlpGrpc {
-            endpoint: "http://localhost:4317".to_string(),
+        let exporter = OtelExporterKind::OtlpHttp {
+            endpoint: collector.uri(),
             headers: HashMap::new(),
+            protocol: OtelHttpProtocol::Binary,
             tls: None,
         };
         config.otel.exporter = exporter.clone();

@@ -41,6 +41,7 @@ use std::time::Duration;
 use tracing::debug;
 
 const ENV_ATTRIBUTE: &str = "env";
+const ARCH_ATTRIBUTE: &str = "arch";
 const METER_NAME: &str = "codex";
 const DURATION_UNIT: &str = "ms";
 const DURATION_DESCRIPTION: &str = "Duration in milliseconds.";
@@ -198,13 +199,13 @@ impl MetricsClient {
 
         validate_tags(&default_tags)?;
 
-        let mut resource_attributes = Vec::with_capacity(4);
+        let mut resource_attributes = Vec::with_capacity(5);
         resource_attributes.push(KeyValue::new(
             semconv::attribute::SERVICE_VERSION,
             service_version,
         ));
         resource_attributes.push(KeyValue::new(ENV_ATTRIBUTE, environment));
-        resource_attributes.extend(os_resource_attributes());
+        resource_attributes.extend(platform_resource_attributes());
 
         let resource = Resource::builder()
             .with_service_name(service_name)
@@ -290,18 +291,22 @@ impl MetricsClient {
     }
 }
 
-fn os_resource_attributes() -> Vec<KeyValue> {
+fn platform_resource_attributes() -> Vec<KeyValue> {
     let os_info = os_info::get();
     let os_type_raw = os_info.os_type().to_string();
     let os_type = sanitize_metric_tag_value(os_type_raw.as_str());
     let os_version_raw = os_info.version().to_string();
     let os_version = sanitize_metric_tag_value(os_version_raw.as_str());
+    let arch = sanitize_metric_tag_value(std::env::consts::ARCH);
     let mut attributes = Vec::new();
     if os_type != "unspecified" {
         attributes.push(KeyValue::new("os", os_type));
     }
     if os_version != "unspecified" {
         attributes.push(KeyValue::new("os_version", os_version));
+    }
+    if arch != "unspecified" {
+        attributes.push(KeyValue::new(ARCH_ATTRIBUTE, arch));
     }
     attributes
 }

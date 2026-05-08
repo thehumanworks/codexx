@@ -2,7 +2,6 @@ use super::*;
 
 impl StateRuntime {
     pub async fn get_backfill_state(&self) -> anyhow::Result<crate::BackfillState> {
-        self.ensure_backfill_state_row().await?;
         let row = sqlx::query(
             r#"
 SELECT status, last_watermark, last_success_at
