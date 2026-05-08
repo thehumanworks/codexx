@@ -17,14 +17,26 @@ use crate::tools::registry::PostToolUsePayload;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
 use crate::tools::runtimes::shell::ShellRuntimeBackend;
+use codex_tools::ToolSpec;
 
+use super::super::shell_spec::ShellToolOptions;
+use super::super::shell_spec::create_shell_tool;
 use super::RunExecLikeArgs;
 use super::run_exec_like;
 use super::shell_function_post_tool_use_payload;
 
-pub struct ShellHandler;
+#[derive(Default)]
+pub struct ShellHandler {
+    options: Option<ShellToolOptions>,
+}
 
 impl ShellHandler {
+    pub(crate) fn new(options: ShellToolOptions) -> Self {
+        Self {
+            options: Some(options),
+        }
+    }
+
     pub(super) fn to_exec_params(
         params: &ShellToolCallParams,
         turn_context: &TurnContext,
@@ -54,6 +66,14 @@ impl ToolHandler for ShellHandler {
 
     fn tool_name(&self) -> ToolName {
         ToolName::plain("shell")
+    }
+
+    fn spec(&self) -> Option<ToolSpec> {
+        self.options.map(create_shell_tool)
+    }
+
+    fn supports_parallel_tool_calls(&self) -> bool {
+        self.options.is_some()
     }
 
     fn kind(&self) -> ToolKind {

@@ -241,7 +241,7 @@ async fn exec_command_post_tool_use_payload_uses_output_for_noninteractive_one_s
         hook_command: Some("echo three".to_string()),
     };
     let invocation = invocation_for_payload("exec_command", "call-43", payload).await;
-    let handler = ExecCommandHandler;
+    let handler = ExecCommandHandler::default();
     assert_eq!(
         handler.post_tool_use_payload(&invocation, &output),
         Some(crate::tools::registry::PostToolUsePayload {
@@ -270,7 +270,7 @@ async fn exec_command_post_tool_use_payload_uses_output_for_interactive_completi
         hook_command: Some("echo three".to_string()),
     };
     let invocation = invocation_for_payload("exec_command", "call-44", payload).await;
-    let handler = ExecCommandHandler;
+    let handler = ExecCommandHandler::default();
 
     assert_eq!(
         handler.post_tool_use_payload(&invocation, &output),
@@ -300,7 +300,7 @@ async fn exec_command_post_tool_use_payload_skips_running_sessions() {
         hook_command: Some("echo three".to_string()),
     };
     let invocation = invocation_for_payload("exec_command", "call-45", payload).await;
-    let handler = ExecCommandHandler;
+    let handler = ExecCommandHandler::default();
     assert_eq!(handler.post_tool_use_payload(&invocation, &output), None);
 }
 

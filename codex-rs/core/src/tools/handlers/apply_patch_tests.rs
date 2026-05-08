@@ -83,7 +83,7 @@ async fn post_tool_use_payload_uses_patch_input_and_tool_output() {
     };
     let invocation = invocation_for_payload(payload).await;
     let output = ApplyPatchToolOutput::from_text("Success. Updated files.".to_string());
-    let handler = ApplyPatchHandler;
+    let handler = ApplyPatchHandler::default();
 
     assert_eq!(
         handler.post_tool_use_payload(&invocation, &output),
