@@ -36,7 +36,7 @@ async fn thread_name_updated_broadcasts_for_loaded_threads() -> Result<()> {
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
     let conversation_id = create_rollout(codex_home.path(), "2025-01-05T12-00-00")?;
 
-    let (mut process, socket_path) = spawn_websocket_server(codex_home.path()).await?;
+    let (mut process, socket_path, _socket_dir) = spawn_websocket_server(codex_home.path()).await?;
 
     let result = async {
         let mut ws1 = connect_websocket(&socket_path).await?;
@@ -102,7 +102,7 @@ async fn thread_name_updated_broadcasts_for_not_loaded_threads() -> Result<()> {
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
     let conversation_id = create_rollout(codex_home.path(), "2025-01-05T12-05-00")?;
 
-    let (mut process, socket_path) = spawn_websocket_server(codex_home.path()).await?;
+    let (mut process, socket_path, _socket_dir) = spawn_websocket_server(codex_home.path()).await?;
 
     let result = async {
         let mut ws1 = connect_websocket(&socket_path).await?;

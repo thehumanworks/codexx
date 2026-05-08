@@ -861,7 +861,7 @@ async fn command_exec_process_ids_are_connection_scoped_and_disconnect_terminate
             .as_nanos()
     );
 
-    let (mut process, socket_path) = spawn_websocket_server(codex_home.path()).await?;
+    let (mut process, socket_path, _socket_dir) = spawn_websocket_server(codex_home.path()).await?;
 
     let mut ws1 = connect_websocket(&socket_path).await?;
     let mut ws2 = connect_websocket(&socket_path).await?;

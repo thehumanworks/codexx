@@ -51,7 +51,7 @@ async fn unix_socket_transport_routes_per_connection_handshake_and_responses() -
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
 
-    let (mut process, socket_path) = spawn_websocket_server(codex_home.path()).await?;
+    let (mut process, socket_path, _socket_dir) = spawn_websocket_server(codex_home.path()).await?;
 
     let mut ws1 = connect_websocket(&socket_path).await?;
     let mut ws2 = connect_websocket(&socket_path).await?;
@@ -97,7 +97,7 @@ async fn unix_socket_disconnect_keeps_last_subscribed_thread_loaded_until_idle_t
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
 
-    let (mut process, socket_path) = spawn_websocket_server(codex_home.path()).await?;
+    let (mut process, socket_path, _socket_dir) = spawn_websocket_server(codex_home.path()).await?;
 
     let mut ws1 = connect_websocket(&socket_path).await?;
     send_initialize_request(&mut ws1, /*id*/ 1, "ws_thread_owner").await?;
@@ -122,12 +122,20 @@ async fn unix_socket_disconnect_keeps_last_subscribed_thread_loaded_until_idle_t
     Ok(())
 }
 
-pub(super) async fn spawn_websocket_server(codex_home: &Path) -> Result<(Child, PathBuf)> {
+pub(super) async fn spawn_websocket_server(codex_home: &Path) -> Result<(Child, PathBuf, TempDir)> {
     let program = codex_utils_cargo_bin::cargo_bin("codex-app-server")
         .context("should find app-server binary")?;
-    let socket_path = codex_home
-        .join("app-server-test-socket")
-        .join("app-server-control.sock");
+    #[cfg(unix)]
+    let socket_dir = tempfile::Builder::new()
+        .prefix("cxs-")
+        .tempdir_in("/tmp")
+        .context("failed to create short app-server socket temp dir")?;
+    #[cfg(not(unix))]
+    let socket_dir = tempfile::Builder::new()
+        .prefix("cxs-")
+        .tempdir()
+        .context("failed to create app-server socket temp dir")?;
+    let socket_path = socket_dir.path().join("c.sock");
     let listen_url = format!("unix://{}", socket_path.display());
     let mut cmd = Command::new(program);
     cmd.arg("--listen")
@@ -157,7 +165,7 @@ pub(super) async fn spawn_websocket_server(codex_home: &Path) -> Result<(Child, 
     let deadline = Instant::now() + DEFAULT_READ_TIMEOUT;
     loop {
         if socket_path.exists() {
-            return Ok((process, socket_path));
+            return Ok((process, socket_path, socket_dir));
         }
         if let Some(status) = process.try_wait()? {
             bail!("app-server exited before creating control socket: {status}");

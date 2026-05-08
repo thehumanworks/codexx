@@ -38,6 +38,7 @@ async fn unix_socket_transport_ctrl_c_waits_for_running_turn_before_exit() -> Re
         _server,
         mut process,
         mut ws,
+        ..
     } = start_ctrl_c_restart_fixture(Duration::from_secs(3)).await?;
 
     send_sigint(&process)?;
@@ -63,6 +64,7 @@ async fn unix_socket_transport_second_ctrl_c_forces_exit_while_turn_running() ->
         _server,
         mut process,
         mut ws,
+        ..
     } = start_ctrl_c_restart_fixture(Duration::from_secs(3)).await?;
 
     send_sigint(&process)?;
@@ -89,6 +91,7 @@ async fn unix_socket_transport_sigterm_waits_for_running_turn_before_exit() -> R
         _server,
         mut process,
         mut ws,
+        ..
     } = start_ctrl_c_restart_fixture(Duration::from_secs(3)).await?;
 
     send_sigterm(&process)?;
@@ -114,6 +117,7 @@ async fn unix_socket_transport_second_sigterm_forces_exit_while_turn_running() -
         _server,
         mut process,
         mut ws,
+        ..
     } = start_ctrl_c_restart_fixture(Duration::from_secs(3)).await?;
 
     send_sigterm(&process)?;
@@ -140,6 +144,7 @@ async fn websocket_transport_repeated_sighup_keeps_waiting_for_running_turn() ->
         _server,
         mut process,
         mut ws,
+        ..
     } = start_ctrl_c_restart_fixture(Duration::from_secs(3)).await?;
 
     send_sighup(&process)?;
@@ -163,6 +168,7 @@ async fn websocket_transport_repeated_sighup_keeps_waiting_for_running_turn() ->
 
 struct GracefulCtrlCFixture {
     _codex_home: TempDir,
+    _socket_dir: TempDir,
     _server: wiremock::MockServer,
     process: Child,
     ws: WsClient,
@@ -181,7 +187,7 @@ async fn start_ctrl_c_restart_fixture(turn_delay: Duration) -> Result<GracefulCt
     let codex_home = TempDir::new()?;
     create_config_toml(codex_home.path(), &server.uri(), "never")?;
 
-    let (process, socket_path) = spawn_websocket_server(codex_home.path()).await?;
+    let (process, socket_path, socket_dir) = spawn_websocket_server(codex_home.path()).await?;
     let mut ws = connect_websocket(&socket_path).await?;
 
     send_initialize_request(&mut ws, /*id*/ 1, "ws_graceful_shutdown").await?;
@@ -200,6 +206,7 @@ async fn start_ctrl_c_restart_fixture(turn_delay: Duration) -> Result<GracefulCt
 
     Ok(GracefulCtrlCFixture {
         _codex_home: codex_home,
+        _socket_dir: socket_dir,
         _server: server,
         process,
         ws,
