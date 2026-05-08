@@ -22,6 +22,7 @@ use codex_app_server_protocol::ThreadStartParams;
 use codex_app_server_protocol::ThreadStartResponse;
 use codex_app_server_protocol::TurnStartParams;
 use codex_app_server_protocol::UserInput as V2UserInput;
+use codex_config::loader::project_trust_key;
 use codex_core::config::set_project_trust_level;
 use codex_protocol::config_types::TrustLevel;
 use codex_utils_absolute_path::AbsolutePathBuf;
@@ -322,6 +323,7 @@ timeout = 5
     let HooksListResponse { data } = to_response(response)?;
     let project_config_path =
         AbsolutePathBuf::try_from(workspace.path().join(".codex/config.toml"))?;
+    let project_trust_key = project_trust_key(workspace.path());
     assert_eq!(
         data,
         vec![
@@ -334,10 +336,7 @@ timeout = 5
             HooksListEntry {
                 cwd: workspace.path().to_path_buf(),
                 hooks: vec![HookMetadata {
-                    key: format!(
-                        "{}:pre_tool_use:0:0",
-                        project_config_path.as_path().display()
-                    ),
+                    key: format!("project:{project_trust_key}:.codex/config.toml:pre_tool_use:0:0"),
                     event_name: HookEventName::PreToolUse,
                     handler_type: HookHandlerType::Command,
                     matcher: Some("Bash".to_string()),
