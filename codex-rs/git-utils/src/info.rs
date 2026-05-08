@@ -760,7 +760,7 @@ fn find_ancestor_git_entry(base_dir: &Path) -> Option<(PathBuf, PathBuf)> {
 
     loop {
         let dot_git = dir.join(".git");
-        if dot_git.exists() && !is_world_writable_sticky_dir(&dir) {
+        if dot_git.exists() && !is_ambient_git_marker_dir(&dir) {
             return Some((dir, dot_git));
         }
 
@@ -775,18 +775,19 @@ fn find_ancestor_git_entry(base_dir: &Path) -> Option<(PathBuf, PathBuf)> {
 }
 
 #[cfg(unix)]
-fn is_world_writable_sticky_dir(dir: &Path) -> bool {
+fn is_ambient_git_marker_dir(dir: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
-    dir.metadata().is_ok_and(|metadata| {
-        let mode = metadata.mode();
-        mode & 0o002 != 0 && mode & 0o1000 != 0
-    })
+    dir.parent().is_none()
+        || dir.metadata().is_ok_and(|metadata| {
+            let mode = metadata.mode();
+            mode & 0o002 != 0 && mode & 0o1000 != 0
+        })
 }
 
 #[cfg(not(unix))]
-fn is_world_writable_sticky_dir(_dir: &Path) -> bool {
-    false
+fn is_ambient_git_marker_dir(dir: &Path) -> bool {
+    dir.parent().is_none()
 }
 
 async fn find_ancestor_git_entry_with_fs(
@@ -796,7 +797,7 @@ async fn find_ancestor_git_entry_with_fs(
     for dir in base_dir.ancestors() {
         let dot_git = dir.join(".git");
         if fs.get_metadata(&dot_git, /*sandbox*/ None).await.is_ok()
-            && !is_world_writable_sticky_dir(dir.as_path())
+            && !is_ambient_git_marker_dir(dir.as_path())
         {
             return Some((dir, dot_git));
         }
@@ -851,7 +852,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn get_git_repo_root_ignores_sticky_tmp_root_git_marker() {
+    fn get_git_repo_root_ignores_ambient_git_markers() {
         use std::fs;
         use std::os::unix::fs::PermissionsExt;
 

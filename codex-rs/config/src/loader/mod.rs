@@ -937,7 +937,7 @@ async fn find_project_root(
                 .await
                 .is_ok()
             {
-                if marker == ".git" && is_world_writable_sticky_dir(ancestor.as_path()) {
+                if marker == ".git" && is_ambient_git_marker_dir(ancestor.as_path()) {
                     continue;
                 }
                 return Ok(ancestor);
@@ -948,18 +948,19 @@ async fn find_project_root(
 }
 
 #[cfg(unix)]
-fn is_world_writable_sticky_dir(dir: &Path) -> bool {
+fn is_ambient_git_marker_dir(dir: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
-    dir.metadata().is_ok_and(|metadata| {
-        let mode = metadata.mode();
-        mode & 0o002 != 0 && mode & 0o1000 != 0
-    })
+    dir.parent().is_none()
+        || dir.metadata().is_ok_and(|metadata| {
+            let mode = metadata.mode();
+            mode & 0o002 != 0 && mode & 0o1000 != 0
+        })
 }
 
 #[cfg(not(unix))]
-fn is_world_writable_sticky_dir(_dir: &Path) -> bool {
-    false
+fn is_ambient_git_marker_dir(dir: &Path) -> bool {
+    dir.parent().is_none()
 }
 
 struct LoadedProjectLayers {

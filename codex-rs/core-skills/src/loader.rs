@@ -409,7 +409,7 @@ async fn find_project_root(
         for marker in project_root_markers {
             let marker_path = ancestor.join(marker);
             match fs.get_metadata(&marker_path, /*sandbox*/ None).await {
-                Ok(_) if marker == ".git" && is_world_writable_sticky_dir(ancestor.as_path()) => {
+                Ok(_) if marker == ".git" && is_ambient_git_marker_dir(ancestor.as_path()) => {
                     continue;
                 }
                 Ok(_) => return ancestor,
@@ -428,18 +428,19 @@ async fn find_project_root(
 }
 
 #[cfg(unix)]
-fn is_world_writable_sticky_dir(dir: &Path) -> bool {
+fn is_ambient_git_marker_dir(dir: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
-    dir.metadata().is_ok_and(|metadata| {
-        let mode = metadata.mode();
-        mode & 0o002 != 0 && mode & 0o1000 != 0
-    })
+    dir.parent().is_none()
+        || dir.metadata().is_ok_and(|metadata| {
+            let mode = metadata.mode();
+            mode & 0o002 != 0 && mode & 0o1000 != 0
+        })
 }
 
 #[cfg(not(unix))]
-fn is_world_writable_sticky_dir(_dir: &Path) -> bool {
-    false
+fn is_ambient_git_marker_dir(dir: &Path) -> bool {
+    dir.parent().is_none()
 }
 
 fn dirs_between_project_root_and_cwd(
