@@ -9409,11 +9409,20 @@ impl ChatWidget {
         self.refresh_model_dependent_surfaces();
     }
 
-    fn set_service_tier_selection(&mut self, service_tier: Option<ServiceTier>) {
-        if service_tier.is_none() {
+    fn set_service_tier_selection(
+        &mut self,
+        service_tier: Option<ServiceTier>,
+        service_tier_value: Option<String>,
+    ) {
+        if service_tier.is_none() && service_tier_value.is_none() {
             self.config.notices.fast_default_opt_out = Some(true);
         }
-        self.set_service_tier(service_tier);
+        let next_service_tier_value = service_tier_value
+            .or_else(|| service_tier.map(|service_tier| service_tier.request_value().to_string()));
+        self.config.service_tier = next_service_tier_value.clone();
+        self.effective_service_tier = next_service_tier_value
+            .as_deref()
+            .and_then(service_tier_from_value);
         self.app_event_tx
             .send(AppEvent::CodexOp(AppCommand::override_turn_context(
                 /*cwd*/ None,
@@ -9424,24 +9433,37 @@ impl ChatWidget {
                 /*model*/ None,
                 /*effort*/ None,
                 /*summary*/ None,
-                Some(service_tier.map(|service_tier| service_tier.request_value().to_string())),
+                Some(next_service_tier_value.clone()),
                 /*collaboration_mode*/ None,
                 /*personality*/ None,
             )));
-        self.app_event_tx
-            .send(AppEvent::PersistServiceTierSelection { service_tier });
+        if service_tier.is_some() || next_service_tier_value.is_none() {
+            self.app_event_tx
+                .send(AppEvent::PersistServiceTierSelection { service_tier });
+        }
     }
 
     fn handle_service_tier_slash_command(&mut self, command: ServiceTierCommand) {
-        let Some(service_tier) = service_tier_from_value(&command.id) else {
-            return;
-        };
-        let next_tier = if self.current_service_tier() == Some(service_tier) {
+        let active_service_tier_matches_command = self
+            .config
+            .service_tier
+            .as_deref()
+            .is_some_and(|service_tier_value| service_tier_value == command.id)
+            || self.effective_service_tier.is_some_and(|service_tier| {
+                service_tier_from_value(&command.id) == Some(service_tier)
+                    || (matches!(service_tier, ServiceTier::Fast) && command.id == SPEED_TIER_FAST)
+            });
+        let next_service_tier_value = if active_service_tier_matches_command {
             None
         } else {
-            Some(service_tier)
+            Some(command.id)
         };
-        self.set_service_tier_selection(next_tier);
+        self.set_service_tier_selection(
+            next_service_tier_value
+                .as_deref()
+                .and_then(service_tier_from_value),
+            next_service_tier_value,
+        );
         self.bottom_pane.record_pending_slash_command_history();
     }
 
@@ -9451,7 +9473,7 @@ impl ChatWidget {
         } else {
             Some(ServiceTier::Fast)
         };
-        self.set_service_tier_selection(next_tier);
+        self.set_service_tier_selection(next_tier, /*service_tier_value*/ None);
     }
 
     pub(crate) fn current_model(&self) -> &str {
@@ -9501,7 +9523,6 @@ impl ChatWidget {
                         preset
                             .service_tiers
                             .into_iter()
-                            .filter(|tier| service_tier_from_value(&tier.id).is_some())
                             .filter_map(|tier| {
                                 ServiceTierCommand::new(&tier.name, tier.id, tier.description)
                             })

@@ -1042,6 +1042,57 @@ async fn service_tier_slash_command_with_args_submits_literal_text() {
 }
 
 #[tokio::test]
+async fn service_tier_slash_command_uses_metadata_id_without_enum_mapping() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(Some("gpt-5.4")).await;
+    chat.thread_id = Some(ThreadId::new());
+    set_chatgpt_auth(&mut chat);
+    set_fast_mode_test_catalog(&mut chat);
+    chat.set_feature_enabled(Feature::FastMode, /*enabled*/ true);
+    chat.bottom_pane
+        .set_composer_text("/ul".to_string(), Vec::new(), Vec::new());
+
+    let popup = render_bottom_popup(&chat, /*width*/ 80);
+    assert!(
+        popup.contains("/ultrafast")
+            && popup.contains("lower-latency inference with increased plan usage"),
+        "expected metadata-backed service tier command in popup; got {popup:?}"
+    );
+
+    submit_composer_text(&mut chat, "/ultrafast");
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AppEvent::CodexOp(Op::OverrideTurnContext {
+                service_tier: Some(Some(service_tier)),
+                ..
+            }) if service_tier == "ultrafast"
+        )),
+        "expected raw metadata service tier override app event; events: {events:?}"
+    );
+
+    chat.bottom_pane
+        .set_composer_text("hello".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+    match next_submit_op(&mut op_rx) {
+        Op::UserTurn {
+            items,
+            service_tier: Some(Some(service_tier)),
+            ..
+        } if service_tier == "ultrafast" => assert_eq!(
+            items,
+            vec![UserInput::Text {
+                text: "hello".to_string(),
+                text_elements: Vec::new(),
+            }]
+        ),
+        other => panic!("expected Op::UserTurn with metadata service tier, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn unrecognized_slash_command_is_not_added_to_local_recall() {
     let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
 

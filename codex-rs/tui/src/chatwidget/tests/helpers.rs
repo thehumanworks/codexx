@@ -393,11 +393,18 @@ pub(crate) fn set_chatgpt_auth(chat: &mut ChatWidget) {
 
 fn test_model_info(slug: &str, priority: i32, supports_fast_mode: bool) -> ModelInfo {
     let service_tiers = if supports_fast_mode {
-        vec![json!({
-            "id": SPEED_TIER_FAST,
-            "name": "fast",
-            "description": "fastest inference with increased plan usage",
-        })]
+        vec![
+            json!({
+                "id": SPEED_TIER_FAST,
+                "name": "fast",
+                "description": "fastest inference with increased plan usage",
+            }),
+            json!({
+                "id": "ultrafast",
+                "name": "ultrafast",
+                "description": "lower-latency inference with increased plan usage",
+            }),
+        ]
     } else {
         Vec::new()
     };
