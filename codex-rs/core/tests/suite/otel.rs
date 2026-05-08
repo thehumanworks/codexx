@@ -36,6 +36,7 @@ use core_test_support::wait_for_event;
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
+use std::time::Instant;
 use tracing::Level;
 use tracing_test::traced_test;
 
@@ -78,6 +79,25 @@ fn assert_empty_mcp_tool_fields(line: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+async fn assert_log_line_eventually(
+    buffer: &Mutex<Vec<u8>>,
+    failure_message: &str,
+    matches: impl Fn(&str) -> bool,
+) {
+    let start = Instant::now();
+    loop {
+        let logs = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        if logs.lines().any(&matches) || start.elapsed() > Duration::from_secs(5) {
+            assert!(
+                logs.lines().any(&matches),
+                "{failure_message}\nlogs:\n{logs}"
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
 }
 
 #[test]
@@ -657,8 +677,10 @@ async fn turn_span_records_token_usage_and_image_metadata() {
         }),
         "missing completed response span token usage\nlogs:\n{logs}"
     );
-    assert!(
-        logs.lines().any(|line| {
+    assert_log_line_eventually(
+        buffer,
+        "missing regular turn span token usage and image metadata",
+        |line| {
             line.contains("turn{otel.name=\"session_task.turn\"")
                 && line.contains("codex.turn.reasoning_effort=high")
                 && line.contains("codex.turn.token_usage.input_tokens=3")
@@ -674,12 +696,12 @@ async fn turn_span_records_token_usage_and_image_metadata() {
                 && line.contains("codex.turn.model_input_image_mime_types=\"image/jpeg\"")
                 && line.contains("\\\"source\\\":\\\"message\\\"")
                 && line.contains("\\\"byte_length\\\":3")
-        }),
-        "missing regular turn span token usage and image metadata\nlogs:\n{logs}"
-    );
+        },
+    )
+    .await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+#[tokio::test(flavor = "current_thread")]
 async fn turn_span_records_tool_output_image_metadata() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
@@ -794,9 +816,10 @@ async fn turn_span_records_tool_output_image_metadata() -> Result<()> {
 
     wait_for_event(&fixture.codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
 
-    let logs = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
-    assert!(
-        logs.lines().any(|line| {
+    assert_log_line_eventually(
+        buffer,
+        "missing tool output image metadata on turn span",
+        |line| {
             line.contains("turn{otel.name=\"session_task.turn\"")
                 && line.contains("codex.turn.model_input_image_count=1")
                 && line.contains("codex.turn.model_input_message_image_count=0")
@@ -804,9 +827,9 @@ async fn turn_span_records_tool_output_image_metadata() -> Result<()> {
                 && line.contains("codex.turn.model_input_image_types=\"png\"")
                 && line.contains("codex.turn.model_input_image_mime_types=\"image/png\"")
                 && line.contains("\\\"source\\\":\\\"tool_output\\\"")
-        }),
-        "missing tool output image metadata on turn span\nlogs:\n{logs}"
-    );
+        },
+    )
+    .await;
 
     Ok(())
 }
