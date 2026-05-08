@@ -193,9 +193,10 @@ fn legacy_non_tty_powershell_emits_output() {
             codex_home.path(),
             vec![
                 pwsh.display().to_string(),
+                "-NonInteractive".to_string(),
                 "-NoProfile".to_string(),
                 "-Command".to_string(),
-                "Write-Output LEGACY-NONTTY-DIRECT".to_string(),
+                "[Console]::Out.WriteLine('LEGACY-NONTTY-DIRECT')".to_string(),
             ],
             cwd.as_path(),
             HashMap::new(),
@@ -376,9 +377,10 @@ fn legacy_capture_powershell_emits_output() {
         codex_home.path(),
         vec![
             pwsh.display().to_string(),
+            "-NonInteractive".to_string(),
             "-NoProfile".to_string(),
             "-Command".to_string(),
-            "Write-Output LEGACY-CAPTURE-DIRECT".to_string(),
+            "[Console]::Out.WriteLine('LEGACY-CAPTURE-DIRECT')".to_string(),
         ],
         cwd.as_path(),
         HashMap::new(),
@@ -416,10 +418,11 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
             vec![
                 pwsh.display().to_string(),
                 "-NoLogo".to_string(),
+                "-NonInteractive".to_string(),
                 "-NoProfile".to_string(),
                 "-NoExit".to_string(),
                 "-Command".to_string(),
-                "$PID; Write-Output ready".to_string(),
+                "$PID; [Console]::Out.WriteLine('ready')".to_string(),
             ],
             cwd.as_path(),
             HashMap::new(),
@@ -434,7 +437,7 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
 
         let writer = spawned.session.writer_sender();
         writer
-            .send(b"Write-Output second\n".to_vec())
+            .send(b"[Console]::Out.WriteLine('second')\n".to_vec())
             .await
             .expect("send second command");
         writer
