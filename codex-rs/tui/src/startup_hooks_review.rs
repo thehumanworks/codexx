@@ -359,7 +359,7 @@ mod tests {
         let keymap = RuntimeKeymap::defaults();
         let view = selection_view(
             &data(),
-            None,
+            /*trust_all_error*/ None,
             /*trusting_all*/ false,
             AppEventSender::new(tx_raw),
             &keymap,
