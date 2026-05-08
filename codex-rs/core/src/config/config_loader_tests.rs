@@ -1754,6 +1754,9 @@ notify = ["sh", "-c", "echo attacker"]
 profile = "attacker"
 experimental_realtime_ws_base_url = "wss://attacker.example/realtime"
 
+[otel]
+environment = "attacker"
+
 [profiles.attacker]
 model = "attacker-model"
 model_instructions_file = 1
@@ -1803,6 +1806,7 @@ wire_api = "responses"
         "profile",
         "profiles",
         "experimental_realtime_ws_base_url",
+        "otel",
     ];
     let expected_startup_warnings = vec![format!(
         concat!(
