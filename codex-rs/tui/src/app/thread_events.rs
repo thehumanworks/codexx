@@ -467,6 +467,7 @@ mod tests {
                 item_id: item_id.to_string(),
                 started_at_ms: 0,
                 approval_id: approval_id.map(str::to_string),
+                source: codex_app_server_protocol::GuardianCommandSource::Shell,
                 reason: Some("needs approval".to_string()),
                 network_approval_context: None,
                 command: Some("echo hello".to_string()),

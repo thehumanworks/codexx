@@ -299,6 +299,10 @@ pub(crate) enum AnalyticsFact {
         completed_at_ms: u64,
         response: Box<ServerResponse>,
     },
+    ServerRequestAborted {
+        completed_at_ms: u64,
+        request_id: RequestId,
+    },
     Notification(Box<ServerNotification>),
     // Facts that do not naturally exist on the app-server protocol surface, or
     // would require non-trivial protocol reshaping on this branch.

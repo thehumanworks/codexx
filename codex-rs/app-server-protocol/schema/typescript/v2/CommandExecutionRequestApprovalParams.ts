@@ -4,6 +4,7 @@
 import type { AbsolutePathBuf } from "../AbsolutePathBuf";
 import type { CommandAction } from "./CommandAction";
 import type { ExecPolicyAmendment } from "./ExecPolicyAmendment";
+import type { GuardianCommandSource } from "./GuardianCommandSource";
 import type { NetworkApprovalContext } from "./NetworkApprovalContext";
 import type { NetworkPolicyAmendment } from "./NetworkPolicyAmendment";
 
@@ -20,6 +21,11 @@ startedAtMs: number, /**
  * (a UUID) used to disambiguate routing.
  */
 approvalId?: string | null, /**
+ * Originating command tool for this approval request.
+ *
+ * Uses `#[serde(default)]` for backwards compatibility with older senders.
+ */
+source: GuardianCommandSource, /**
  * Optional explanatory reason (e.g. request for network access).
  */
 reason?: string | null, /**

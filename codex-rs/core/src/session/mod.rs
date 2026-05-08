@@ -330,6 +330,7 @@ use codex_protocol::protocol::ErrorEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecApprovalRequestEvent;
+use codex_protocol::protocol::GuardianCommandSource;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::protocol::McpServerRefreshConfig;
 use codex_protocol::protocol::ModelRerouteEvent;
@@ -1904,6 +1905,7 @@ impl Session {
         turn_context: &TurnContext,
         call_id: String,
         approval_id: Option<String>,
+        source: GuardianCommandSource,
         command: Vec<String>,
         cwd: AbsolutePathBuf,
         reason: Option<String>,
@@ -1957,6 +1959,7 @@ impl Session {
             approval_id,
             turn_id: turn_context.sub_id.clone(),
             started_at_ms: now_unix_timestamp_ms(),
+            source,
             command,
             cwd,
             reason,

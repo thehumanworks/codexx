@@ -2969,6 +2969,7 @@ mod tests {
             item_id: "call_123".to_string(),
             started_at_ms: 0,
             approval_id: None,
+            source: v2::GuardianCommandSource::Shell,
             reason: None,
             network_approval_context: None,
             command: Some("cat file".to_string()),

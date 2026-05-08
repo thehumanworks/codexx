@@ -171,9 +171,10 @@ impl AnalyticsEventsClient {
         &self,
         tracking: &GuardianReviewTrackContext,
         result: GuardianReviewAnalyticsResult,
+        completed_at_ms: u64,
     ) {
         self.record_fact(AnalyticsFact::Custom(CustomAnalyticsFact::GuardianReview(
-            Box::new(tracking.event_params(result)),
+            Box::new(tracking.event_params(result, completed_at_ms)),
         )));
     }
 
@@ -344,6 +345,13 @@ impl AnalyticsEventsClient {
         self.record_fact(AnalyticsFact::ServerResponse {
             completed_at_ms,
             response: Box::new(response),
+        });
+    }
+
+    pub fn track_server_request_aborted(&self, completed_at_ms: u64, request_id: RequestId) {
+        self.record_fact(AnalyticsFact::ServerRequestAborted {
+            completed_at_ms,
+            request_id,
         });
     }
 

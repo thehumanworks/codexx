@@ -380,6 +380,8 @@ impl OutgoingMessageSender {
         match entry {
             Some((id, entry)) => {
                 warn!("client responded with error for {id:?}: {error:?}");
+                self.analytics_events_client
+                    .track_server_request_aborted(now_unix_timestamp_ms(), id.clone());
                 if let Err(err) = entry.callback.send(Err(error)) {
                     warn!("could not notify callback for {id:?} due to: {err:?}");
                 }
@@ -391,7 +393,14 @@ impl OutgoingMessageSender {
     }
 
     pub(crate) async fn cancel_request(&self, id: &RequestId) -> bool {
-        self.take_request_callback(id).await.is_some()
+        let entry = self.take_request_callback(id).await;
+        if let Some((request_id, _entry)) = entry {
+            self.analytics_events_client
+                .track_server_request_aborted(now_unix_timestamp_ms(), request_id);
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) async fn cancel_all_requests(&self, error: Option<JSONRPCErrorError>) {
@@ -403,12 +412,14 @@ impl OutgoingMessageSender {
                 .collect::<Vec<_>>()
         };
 
-        if let Some(error) = error {
-            for entry in entries {
-                if let Err(err) = entry.callback.send(Err(error.clone())) {
-                    let request_id = entry.request.id();
-                    warn!("could not notify callback for {request_id:?} due to: {err:?}");
-                }
+        for entry in entries {
+            self.analytics_events_client
+                .track_server_request_aborted(now_unix_timestamp_ms(), entry.request.id().clone());
+            if let Some(error) = error.as_ref()
+                && let Err(err) = entry.callback.send(Err(error.clone()))
+            {
+                let request_id = entry.request.id();
+                warn!("could not notify callback for {request_id:?} due to: {err:?}");
             }
         }
     }
@@ -459,12 +470,14 @@ impl OutgoingMessageSender {
             entries
         };
 
-        if let Some(error) = error {
-            for entry in entries {
-                if let Err(err) = entry.callback.send(Err(error.clone())) {
-                    let request_id = entry.request.id();
-                    warn!("could not notify callback for {request_id:?} due to: {err:?}",);
-                }
+        for entry in entries {
+            self.analytics_events_client
+                .track_server_request_aborted(now_unix_timestamp_ms(), entry.request.id().clone());
+            if let Some(error) = error.as_ref()
+                && let Err(err) = entry.callback.send(Err(error.clone()))
+            {
+                let request_id = entry.request.id();
+                warn!("could not notify callback for {request_id:?} due to: {err:?}",);
             }
         }
     }
@@ -918,6 +931,7 @@ mod tests {
                 item_id: "item-1".to_string(),
                 started_at_ms: 0,
                 approval_id: None,
+                source: codex_app_server_protocol::GuardianCommandSource::Shell,
                 reason: None,
                 network_approval_context: None,
                 command: Some("echo hi".to_string()),

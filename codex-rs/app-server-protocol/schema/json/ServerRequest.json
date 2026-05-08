@@ -417,6 +417,15 @@
             "null"
           ]
         },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/GuardianCommandSource"
+            }
+          ],
+          "default": "shell",
+          "description": "Originating command tool for this approval request.\n\nUses `#[serde(default)]` for backwards compatibility with older senders."
+        },
         "startedAtMs": {
           "description": "Unix timestamp (in milliseconds) when this approval request started.",
           "format": "int64",
@@ -819,6 +828,13 @@
           "type": "object"
         }
       ]
+    },
+    "GuardianCommandSource": {
+      "enum": [
+        "shell",
+        "unifiedExec"
+      ],
+      "type": "string"
     },
     "McpElicitationArrayType": {
       "enum": [

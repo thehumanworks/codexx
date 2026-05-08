@@ -486,6 +486,10 @@ pub enum GuardianCommandSource {
     UnifiedExec,
 }
 
+fn default_guardian_command_source() -> GuardianCommandSource {
+    GuardianCommandSource::Shell
+}
+
 impl From<CoreGuardianCommandSource> for GuardianCommandSource {
     fn from(value: CoreGuardianCommandSource) -> Self {
         match value {
@@ -1270,6 +1274,11 @@ pub struct CommandExecutionRequestApprovalParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
     pub approval_id: Option<String>,
+    /// Originating command tool for this approval request.
+    ///
+    /// Uses `#[serde(default)]` for backwards compatibility with older senders.
+    #[serde(default = "default_guardian_command_source")]
+    pub source: GuardianCommandSource,
     /// Optional explanatory reason (e.g. request for network access).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional = nullable)]
