@@ -170,6 +170,8 @@ async fn mcp_startup_complete_preserves_review_status() {
         id: "guardian-1".to_string(),
         target_item_id: Some("guardian-target-1".to_string()),
         turn_id: "turn-1".to_string(),
+        started_at_ms: 0,
+        completed_at_ms: None,
         status: GuardianAssessmentStatus::InProgress,
         risk_level: None,
         user_authorization: None,
