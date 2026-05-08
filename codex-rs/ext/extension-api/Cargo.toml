@@ -16,8 +16,3 @@ codex-protocol = { workspace = true }
 codex-tools = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1.49.0", features = ["rt", "rt-multi-thread", "macros"] }
-
-[dev-dependencies]
-codex-git-attribution = { workspace = true }
-codex-memories = { workspace = true }
