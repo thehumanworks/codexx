@@ -61,7 +61,7 @@ pub fn resolve_windows_deny_read_paths(
             &mut seen,
             &mut seen_scan_dirs,
             scan_plan.max_depth,
-            0,
+            /*depth*/ 0,
         )?;
     }
 

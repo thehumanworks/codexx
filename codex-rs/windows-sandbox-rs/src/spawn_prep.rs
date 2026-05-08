@@ -297,6 +297,7 @@ pub(crate) fn prepare_elevated_spawn_context(
         /*read_roots_override*/ None,
         /*read_roots_include_platform_defaults*/ false,
         write_roots_override,
+        /*deny_read_paths_override*/ &[],
         &deny_write_paths,
         /*proxy_enforced*/ false,
     )?;

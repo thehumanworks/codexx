@@ -158,7 +158,7 @@ pub unsafe fn apply_deny_read_acls(paths: &[PathBuf], psid: *mut c_void) -> Resu
     let planned = plan_deny_read_acl_paths(paths);
     let mut applied = Vec::new();
     let mut seen = HashSet::new();
-    let mut added_in_this_call = Vec::new();
+    let mut added_in_this_call: Vec<PathBuf> = Vec::new();
     for path in planned {
         let result = (|| -> Result<bool> {
             if !path.exists() {
