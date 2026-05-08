@@ -88,7 +88,11 @@ async fn assert_log_line_eventually(
 ) {
     let start = Instant::now();
     loop {
-        let logs = String::from_utf8(buffer.lock().unwrap().clone()).unwrap();
+        let bytes = match buffer.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        };
+        let logs = String::from_utf8_lossy(&bytes);
         if logs.lines().any(&matches) || start.elapsed() > Duration::from_secs(5) {
             assert!(
                 logs.lines().any(&matches),
