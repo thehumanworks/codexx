@@ -84,3 +84,34 @@ async fn try_init_times_out_waiting_for_stuck_startup_backfill() -> anyhow::Resu
 
     Ok(())
 }
+
+#[tokio::test]
+async fn try_init_reopens_ready_state_without_running_mutating_init() -> anyhow::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let runtime =
+        codex_state::StateRuntime::init(home.path().to_path_buf(), "test-provider".to_string())
+            .await?;
+    runtime
+        .mark_backfill_complete(/*last_watermark*/ None)
+        .await?;
+    let legacy_state_path = home.path().join("state.sqlite");
+    tokio::fs::write(&legacy_state_path, b"legacy").await?;
+
+    let initialized = try_init_with_roots(
+        home.path().to_path_buf(),
+        home.path().to_path_buf(),
+        "test-provider".to_string(),
+    )
+    .await?;
+
+    assert_eq!(
+        initialized.get_backfill_state().await?.status,
+        codex_state::BackfillStatus::Complete
+    );
+    assert!(
+        tokio::fs::try_exists(&legacy_state_path).await?,
+        "ready-state fast path should not run legacy db cleanup"
+    );
+
+    Ok(())
+}

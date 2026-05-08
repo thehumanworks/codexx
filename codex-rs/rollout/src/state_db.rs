@@ -106,6 +106,20 @@ async fn try_init_with_roots_inner(
     default_model_provider_id: String,
     backfill_lease_seconds: Option<i64>,
 ) -> anyhow::Result<StateDbHandle> {
+    if let Some(runtime) = codex_state::StateRuntime::try_open_existing_ready(
+        sqlite_home.clone(),
+        default_model_provider_id.clone(),
+    )
+    .await
+    .map_err(|err| {
+        anyhow::anyhow!(
+            "failed to open ready state runtime at {}: {err}",
+            sqlite_home.display()
+        )
+    })? {
+        return Ok(runtime);
+    }
+
     let runtime =
         codex_state::StateRuntime::init(sqlite_home.clone(), default_model_provider_id.clone())
             .await
