@@ -167,6 +167,7 @@ pub(crate) struct SelectionViewParams {
     pub tabs: Vec<SelectionTab>,
     pub initial_tab_id: Option<String>,
     pub is_searchable: bool,
+    pub show_row_numbers: bool,
     pub search_placeholder: Option<String>,
     pub col_width_mode: ColumnWidthMode,
     pub row_display: SelectionRowDisplay,
@@ -215,6 +216,7 @@ impl Default for SelectionViewParams {
             tabs: Vec::new(),
             initial_tab_id: None,
             is_searchable: false,
+            show_row_numbers: true,
             search_placeholder: None,
             col_width_mode: ColumnWidthMode::AutoVisible,
             row_display: SelectionRowDisplay::Wrapped,
@@ -250,6 +252,7 @@ pub(crate) struct ListSelectionView {
     dismiss_after_child_accept: bool,
     app_event_tx: AppEventSender,
     is_searchable: bool,
+    show_row_numbers: bool,
     search_query: String,
     search_placeholder: Option<String>,
     col_width_mode: ColumnWidthMode,
@@ -321,6 +324,7 @@ impl ListSelectionView {
             dismiss_after_child_accept: false,
             app_event_tx,
             is_searchable: params.is_searchable,
+            show_row_numbers: params.show_row_numbers,
             search_query: String::new(),
             search_placeholder: if params.is_searchable {
                 params.search_placeholder
@@ -510,9 +514,10 @@ impl ListSelectionView {
                     };
                     let name_with_marker = format!("{name}{marker}");
                     let is_disabled = item.is_disabled || item.disabled_reason.is_some();
-                    let wrap_prefix = if self.is_searchable {
+                    let wrap_prefix = if self.is_searchable || !self.show_row_numbers {
                         // The number keys don't work when search is enabled (since we let the
-                        // numbers be used for the search query).
+                        // numbers be used for the search query). Some menus also intentionally
+                        // render without numbered shortcuts.
                         format!("{prefix} ")
                     } else if is_disabled {
                         format!("{prefix} {}", " ".repeat(enabled_row_number_width + 2))
@@ -908,10 +913,11 @@ impl BottomPaneView for ListSelectionView {
                     self.accept();
                     return;
                 }
-                if let Some(idx) = c
-                    .to_digit(10)
-                    .map(|d| d as usize)
-                    .and_then(|number| self.actual_idx_for_enabled_number(number))
+                if self.show_row_numbers
+                    && let Some(idx) = c
+                        .to_digit(10)
+                        .map(|d| d as usize)
+                        .and_then(|number| self.actual_idx_for_enabled_number(number))
                 {
                     self.state.selected_idx = Some(idx);
                     self.accept();
@@ -1963,6 +1969,47 @@ mod tests {
         view.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
 
         assert_eq!(view.take_last_selected_index(), Some(3));
+    }
+
+    #[test]
+    fn hidden_row_numbers_disable_number_shortcuts() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let mut view = ListSelectionView::new(
+            SelectionViewParams {
+                items: vec![
+                    SelectionItem {
+                        name: "Alpha".to_string(),
+                        dismiss_on_select: true,
+                        ..Default::default()
+                    },
+                    SelectionItem {
+                        name: "Beta".to_string(),
+                        dismiss_on_select: true,
+                        ..Default::default()
+                    },
+                ],
+                show_row_numbers: false,
+                ..Default::default()
+            },
+            tx,
+            crate::keymap::RuntimeKeymap::defaults().list,
+        );
+
+        let rendered = render_lines_with_width(&view, /*width*/ 60);
+        assert!(
+            rendered.contains("› Alpha") && rendered.contains("  Beta"),
+            "expected rows to render without numbers, got:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("1. Alpha") && !rendered.contains("2. Beta"),
+            "expected hidden row numbers, got:\n{rendered}"
+        );
+
+        view.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+
+        assert_eq!(view.selected_actual_idx(), Some(0));
+        assert_eq!(view.take_last_selected_index(), None);
     }
 
     #[test]

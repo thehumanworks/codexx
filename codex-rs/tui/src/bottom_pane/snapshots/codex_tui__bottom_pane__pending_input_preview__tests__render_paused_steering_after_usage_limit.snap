@@ -8,7 +8,7 @@ Buffer {
         "• Queued sends paused after usage limit         ",
         "  Press enter to review and resume queued sends ",
         "                                                ",
-        "• Queued steering inputs                        ",
+        "• Queued inputs                                 ",
         "  ↳ Check the final command output.             ",
     ],
     styles: [
