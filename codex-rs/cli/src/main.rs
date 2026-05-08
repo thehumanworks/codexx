@@ -126,6 +126,9 @@ enum Subcommand {
     /// [experimental] Run the app server or related tooling.
     AppServer(AppServerCommand),
 
+    /// [experimental] Start a headless app-server with remote control enabled.
+    RemoteControl,
+
     /// Launch the Codex desktop app (opens the app installer if missing).
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     App(app_cmd::AppCommand),
@@ -447,12 +450,20 @@ struct AppServerCommand {
 #[derive(Debug, Parser)]
 struct ExecServerCommand {
     /// Transport endpoint URL. Supported values: `ws://IP:PORT` (default), `stdio`, `stdio://`.
-    #[arg(
-        long = "listen",
-        value_name = "URL",
-        default_value = "ws://127.0.0.1:0"
-    )]
-    listen: String,
+    #[arg(long = "listen", value_name = "URL", conflicts_with = "remote")]
+    listen: Option<String>,
+
+    /// Register this exec-server as a remote executor using the given base URL.
+    #[arg(long = "remote", value_name = "URL", requires = "executor_id")]
+    remote: Option<String>,
+
+    /// Executor id to attach to when registering remotely.
+    #[arg(long = "executor-id", value_name = "ID")]
+    executor_id: Option<String>,
+
+    /// Human-readable executor name.
+    #[arg(long = "name", value_name = "NAME")]
+    name: Option<String>,
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -717,6 +728,14 @@ struct FeatureSetArgs {
     feature: String,
 }
 
+const REMOTE_CONTROL_FEATURE_OVERRIDE: &str = "features.remote_control=true";
+
+fn enable_remote_control_for_invocation(config_overrides: &mut CliConfigOverrides) {
+    config_overrides
+        .raw_overrides
+        .push(REMOTE_CONTROL_FEATURE_OVERRIDE.to_string());
+}
+
 fn stage_str(stage: Stage) -> &'static str {
     match stage {
         Stage::UnderDevelopment => "under development",
@@ -887,6 +906,24 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
                     codex_app_server_protocol::generate_internal_json_schema(&gen_cli.out_dir)?;
                 }
             }
+        }
+        Some(Subcommand::RemoteControl) => {
+            reject_remote_mode_for_subcommand(
+                root_remote.as_deref(),
+                root_remote_auth_token_env.as_deref(),
+                "remote-control",
+            )?;
+            enable_remote_control_for_invocation(&mut root_config_overrides);
+            codex_app_server::run_main_with_transport(
+                arg0_paths.clone(),
+                root_config_overrides,
+                codex_config::LoaderOverrides::default(),
+                /*default_analytics_enabled*/ false,
+                codex_app_server::AppServerTransport::Off,
+                codex_protocol::protocol::SessionSource::Cli,
+                codex_app_server::AppServerWebsocketAuthSettings::default(),
+            )
+            .await?;
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         Some(Subcommand::App(app_cli)) => {
@@ -1264,7 +1301,23 @@ async fn run_exec_server_command(
         codex_self_exe,
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    codex_exec_server::run_main(&cmd.listen, runtime_paths)
+    if let Some(base_url) = cmd.remote {
+        let executor_id = cmd
+            .executor_id
+            .ok_or_else(|| anyhow::anyhow!("--executor-id is required when --remote is set"))?;
+        let mut remote_config =
+            codex_exec_server::RemoteExecutorConfig::new(base_url, executor_id)?;
+        if let Some(name) = cmd.name {
+            remote_config.name = name;
+        }
+        codex_exec_server::run_remote_executor(remote_config, runtime_paths).await?;
+        return Ok(());
+    }
+    let listen_url = cmd
+        .listen
+        .as_deref()
+        .unwrap_or(codex_exec_server::DEFAULT_LISTEN_URL);
+    codex_exec_server::run_main(listen_url, runtime_paths)
         .await
         .map_err(anyhow::Error::from_boxed)
 }
@@ -2250,6 +2303,45 @@ mod tests {
         let app_server =
             app_server_from_args(["codex", "app-server", "--analytics-default-enabled"].as_ref());
         assert!(app_server.analytics_default_enabled);
+    }
+
+    #[test]
+    fn remote_control_override_is_appended_after_root_toggles() {
+        let mut config_overrides = CliConfigOverrides::default();
+        config_overrides
+            .raw_overrides
+            .push("features.remote_control=false".to_string());
+
+        enable_remote_control_for_invocation(&mut config_overrides);
+
+        assert_eq!(
+            config_overrides.raw_overrides,
+            vec![
+                "features.remote_control=false".to_string(),
+                REMOTE_CONTROL_FEATURE_OVERRIDE.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn reject_remote_flag_for_remote_control() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "--remote",
+            "ws://127.0.0.1:1234",
+            "remote-control",
+        ])
+        .expect("parse");
+        assert_matches!(cli.subcommand, Some(Subcommand::RemoteControl));
+
+        let err = reject_remote_mode_for_subcommand(
+            cli.remote.remote.as_deref(),
+            cli.remote.remote_auth_token_env.as_deref(),
+            "remote-control",
+        )
+        .expect_err("remote-control should reject root --remote");
+
+        assert!(err.to_string().contains("remote-control"));
     }
 
     #[test]
