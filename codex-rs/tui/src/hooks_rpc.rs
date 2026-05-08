@@ -2,12 +2,16 @@ use codex_app_server_client::AppServerRequestHandle;
 use codex_app_server_protocol::ClientRequest;
 use codex_app_server_protocol::ConfigBatchWriteParams;
 use codex_app_server_protocol::ConfigWriteResponse;
+use codex_app_server_protocol::HookMetadata;
+use codex_app_server_protocol::HookTrustStatus;
+use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::HooksListParams;
 use codex_app_server_protocol::HooksListResponse;
 use codex_app_server_protocol::MergeStrategy;
 use codex_app_server_protocol::RequestId;
 use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
+use std::path::Path;
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -29,6 +33,26 @@ pub(crate) async fn fetch_hooks_list(
         })
         .await
         .wrap_err("hooks/list failed in TUI")
+}
+
+pub(crate) fn hooks_list_entry_for_cwd(response: HooksListResponse, cwd: &Path) -> HooksListEntry {
+    response
+        .data
+        .into_iter()
+        .find(|entry| entry.cwd.as_path() == cwd)
+        .unwrap_or_else(|| HooksListEntry {
+            cwd: cwd.to_path_buf(),
+            hooks: Vec::new(),
+            warnings: Vec::new(),
+            errors: Vec::new(),
+        })
+}
+
+pub(crate) fn hook_needs_review(hook: &HookMetadata) -> bool {
+    matches!(
+        hook.trust_status,
+        HookTrustStatus::Untrusted | HookTrustStatus::Modified
+    )
 }
 
 pub(crate) async fn write_hook_trusts(
@@ -65,4 +89,12 @@ pub(crate) async fn write_hook_trusts(
         })
         .await
         .wrap_err("config/batchWrite failed while updating hook trust in TUI")
+}
+
+pub(crate) async fn write_hook_trust(
+    request_handle: AppServerRequestHandle,
+    key: String,
+    current_hash: String,
+) -> Result<ConfigWriteResponse> {
+    write_hook_trusts(request_handle, vec![HookTrustUpdate { key, current_hash }]).await
 }

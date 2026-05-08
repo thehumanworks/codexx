@@ -1,6 +1,3 @@
-use codex_app_server_protocol::HookErrorInfo;
-use codex_app_server_protocol::HookMetadata;
-use codex_app_server_protocol::HookTrustStatus;
 use color_eyre::eyre::Result;
 use crossterm::event::KeyEventKind;
 use ratatui::buffer::Buffer;
@@ -22,6 +19,8 @@ use crate::bottom_pane::SelectionViewParams;
 use crate::bottom_pane::popup_consts::standard_popup_hint_line_for_keymap;
 use crate::hooks_rpc::HookTrustUpdate;
 use crate::hooks_rpc::fetch_hooks_list;
+use crate::hooks_rpc::hook_needs_review;
+use crate::hooks_rpc::hooks_list_entry_for_cwd;
 use crate::hooks_rpc::write_hook_trusts;
 use crate::keymap::RuntimeKeymap;
 use crate::legacy_core::config::Config;
@@ -29,17 +28,11 @@ use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::Renderable;
 use crate::tui::Tui;
 use crate::tui::TuiEvent;
-
-#[derive(Clone)]
-pub(crate) struct StartupHooksReviewData {
-    pub(crate) hooks: Vec<HookMetadata>,
-    pub(crate) warnings: Vec<String>,
-    pub(crate) errors: Vec<HookErrorInfo>,
-}
+use codex_app_server_protocol::HooksListEntry;
 
 pub(crate) enum StartupHooksReviewOutcome {
     Continue,
-    OpenHooksBrowser(StartupHooksReviewData),
+    OpenHooksBrowser(HooksListEntry),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -62,32 +55,19 @@ pub(crate) async fn maybe_run_startup_hooks_review(
             return Ok(StartupHooksReviewOutcome::Continue);
         }
     };
-    let data = response
-        .data
-        .into_iter()
-        .find(|entry| entry.cwd.as_path() == cwd.as_path())
-        .map(|entry| StartupHooksReviewData {
-            hooks: entry.hooks,
-            warnings: entry.warnings,
-            errors: entry.errors,
-        })
-        .unwrap_or_else(|| StartupHooksReviewData {
-            hooks: Vec::new(),
-            warnings: Vec::new(),
-            errors: Vec::new(),
-        });
-    if pending_trust_updates(&data.hooks).is_empty() {
+    let entry = hooks_list_entry_for_cwd(response, &cwd);
+    if review_needed_count(&entry) == 0 {
         return Ok(StartupHooksReviewOutcome::Continue);
     }
 
-    run_startup_hooks_review_app(app_server, tui, config, data).await
+    run_startup_hooks_review_app(app_server, tui, config, entry).await
 }
 
 async fn run_startup_hooks_review_app(
     app_server: &mut AppServerSession,
     tui: &mut Tui,
     config: &Config,
-    data: StartupHooksReviewData,
+    entry: HooksListEntry,
 ) -> Result<StartupHooksReviewOutcome> {
     let keymap = RuntimeKeymap::from_config(&config.tui_keymap)
         .map_err(|err| color_eyre::eyre::eyre!(err))?;
@@ -95,7 +75,7 @@ async fn run_startup_hooks_review_app(
     let app_event_tx = AppEventSender::new(tx_raw);
     let mut trust_all_error = None;
     let mut view = selection_view(
-        &data,
+        &entry,
         trust_all_error.as_deref(),
         /*trusting_all*/ false,
         app_event_tx.clone(),
@@ -121,14 +101,14 @@ async fn run_startup_hooks_review_app(
                 };
                 match selection {
                     StartupHooksReviewSelection::ReviewHooks => {
-                        return Ok(StartupHooksReviewOutcome::OpenHooksBrowser(data));
+                        return Ok(StartupHooksReviewOutcome::OpenHooksBrowser(entry));
                     }
                     StartupHooksReviewSelection::ContinueWithoutTrusting => {
                         return Ok(StartupHooksReviewOutcome::Continue);
                     }
                     StartupHooksReviewSelection::TrustAllAndContinue => {
                         view = selection_view(
-                            &data,
+                            &entry,
                             trust_all_error.as_deref(),
                             /*trusting_all*/ true,
                             app_event_tx.clone(),
@@ -137,7 +117,15 @@ async fn run_startup_hooks_review_app(
                         draw_view(tui, &view)?;
                         let result = write_hook_trusts(
                             app_server.request_handle(),
-                            pending_trust_updates(&data.hooks),
+                            entry
+                                .hooks
+                                .iter()
+                                .filter(|hook| hook_needs_review(hook))
+                                .map(|hook| HookTrustUpdate {
+                                    key: hook.key.clone(),
+                                    current_hash: hook.current_hash.clone(),
+                                })
+                                .collect(),
                         )
                         .await
                         .map(|_| ())
@@ -147,7 +135,7 @@ async fn run_startup_hooks_review_app(
                             Err(err) => {
                                 trust_all_error = Some(err);
                                 view = selection_view(
-                                    &data,
+                                    &entry,
                                     trust_all_error.as_deref(),
                                     /*trusting_all*/ false,
                                     app_event_tx.clone(),
@@ -165,22 +153,6 @@ async fn run_startup_hooks_review_app(
     }
 }
 
-fn pending_trust_updates(hooks: &[HookMetadata]) -> Vec<HookTrustUpdate> {
-    hooks
-        .iter()
-        .filter(|hook| {
-            matches!(
-                hook.trust_status,
-                HookTrustStatus::Untrusted | HookTrustStatus::Modified
-            )
-        })
-        .map(|hook| HookTrustUpdate {
-            key: hook.key.clone(),
-            current_hash: hook.current_hash.clone(),
-        })
-        .collect()
-}
-
 fn selected_choice(view: &mut ListSelectionView) -> Option<StartupHooksReviewSelection> {
     if !view.is_complete() {
         return None;
@@ -194,14 +166,14 @@ fn selected_choice(view: &mut ListSelectionView) -> Option<StartupHooksReviewSel
 }
 
 fn selection_view(
-    data: &StartupHooksReviewData,
+    entry: &HooksListEntry,
     trust_all_error: Option<&str>,
     trusting_all: bool,
     app_event_tx: AppEventSender,
     keymap: &RuntimeKeymap,
 ) -> ListSelectionView {
     ListSelectionView::new(
-        selection_view_params(data, trust_all_error, trusting_all, keymap),
+        selection_view_params(entry, trust_all_error, trusting_all, keymap),
         app_event_tx,
         keymap.list.clone(),
     )
@@ -209,12 +181,12 @@ fn selection_view(
 
 #[allow(clippy::disallowed_methods)]
 fn selection_view_params(
-    data: &StartupHooksReviewData,
+    entry: &HooksListEntry,
     trust_all_error: Option<&str>,
     trusting_all: bool,
     keymap: &RuntimeKeymap,
 ) -> SelectionViewParams {
-    let count = pending_trust_updates(&data.hooks).len();
+    let count = review_needed_count(entry);
     let count_line = match count {
         1 => "1 hook is new or changed.".to_string(),
         count => format!("{count} hooks are new or changed."),
@@ -241,6 +213,14 @@ fn selection_view_params(
         header: Box::new(header),
         ..Default::default()
     }
+}
+
+fn review_needed_count(entry: &HooksListEntry) -> usize {
+    entry
+        .hooks
+        .iter()
+        .filter(|hook| hook_needs_review(hook))
+        .count()
 }
 
 fn selection_item(name: &str, is_disabled: bool) -> SelectionItem {
@@ -279,8 +259,6 @@ impl WidgetRef for &StandaloneSelectionView<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::StartupHooksReviewData;
-    use super::pending_trust_updates;
     use super::selection_view;
     use crate::app_event::AppEvent;
     use crate::app_event_sender::AppEventSender;
@@ -293,6 +271,7 @@ mod tests {
     use codex_app_server_protocol::HookMetadata;
     use codex_app_server_protocol::HookSource;
     use codex_app_server_protocol::HookTrustStatus;
+    use codex_app_server_protocol::HooksListEntry;
     use insta::assert_snapshot;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
@@ -318,8 +297,9 @@ mod tests {
         }
     }
 
-    fn data() -> StartupHooksReviewData {
-        StartupHooksReviewData {
+    fn entry() -> HooksListEntry {
+        HooksListEntry {
+            cwd: test_path_buf("/tmp"),
             hooks: vec![
                 hook("path:new", HookTrustStatus::Untrusted),
                 hook("path:changed", HookTrustStatus::Modified),
@@ -358,7 +338,7 @@ mod tests {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let keymap = RuntimeKeymap::defaults();
         let view = selection_view(
-            &data(),
+            &entry(),
             /*trust_all_error*/ None,
             /*trusting_all*/ false,
             AppEventSender::new(tx_raw),
@@ -376,7 +356,7 @@ mod tests {
         let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
         let keymap = RuntimeKeymap::defaults();
         let view = selection_view(
-            &data(),
+            &entry(),
             Some("Failed to trust hooks: disk full"),
             /*trusting_all*/ false,
             AppEventSender::new(tx_raw),
@@ -386,23 +366,6 @@ mod tests {
         assert_snapshot!(
             "startup_hooks_review_prompt_with_trust_error",
             render_lines(&view, /*width*/ 80)
-        );
-    }
-
-    #[test]
-    fn pending_trust_updates_only_include_review_needed_hooks() {
-        let updates = pending_trust_updates(&[
-            hook("path:new", HookTrustStatus::Untrusted),
-            hook("path:changed", HookTrustStatus::Modified),
-            hook("path:trusted", HookTrustStatus::Trusted),
-        ]);
-
-        assert_eq!(
-            updates
-                .into_iter()
-                .map(|update| update.key)
-                .collect::<Vec<_>>(),
-            vec!["path:new".to_string(), "path:changed".to_string()]
         );
     }
 }

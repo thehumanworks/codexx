@@ -15,6 +15,7 @@ use codex_app_server_protocol::MarketplaceUpgradeResponse;
 use codex_app_server_protocol::RequestId;
 
 use crate::hooks_rpc::fetch_hooks_list;
+use crate::hooks_rpc::write_hook_trust;
 use crate::hooks_rpc::write_hook_trusts;
 use codex_utils_absolute_path::AbsolutePathBuf;
 
@@ -324,18 +325,37 @@ impl App {
         });
     }
 
-    pub(super) async fn trust_hooks(
+    pub(super) fn trust_hook(
+        &mut self,
+        app_server: &AppServerSession,
+        key: String,
+        current_hash: String,
+    ) {
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let result = write_hook_trust(request_handle, key, current_hash)
+                .await
+                .map(|_| ())
+                .map_err(|err| format!("Failed to trust hook: {err}"));
+            app_event_tx.send(AppEvent::HookTrusted { result });
+        });
+    }
+
+    pub(super) fn trust_hooks(
         &mut self,
         app_server: &AppServerSession,
         updates: Vec<HookTrustUpdate>,
     ) {
-        let result = write_hook_trusts(app_server.request_handle(), updates)
-            .await
-            .map(|_| ())
-            .map_err(|err| format!("Failed to trust hook: {err}"));
-        if let Err(err) = result {
-            self.chat_widget.add_error_message(err);
-        }
+        let request_handle = app_server.request_handle();
+        let app_event_tx = self.app_event_tx.clone();
+        tokio::spawn(async move {
+            let result = write_hook_trusts(request_handle, updates)
+                .await
+                .map(|_| ())
+                .map_err(|err| format!("Failed to trust hooks: {err}"));
+            app_event_tx.send(AppEvent::HookTrusted { result });
+        });
     }
 
     pub(super) fn refresh_plugin_mentions(&mut self) {

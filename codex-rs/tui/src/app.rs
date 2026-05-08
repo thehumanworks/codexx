@@ -64,7 +64,6 @@ use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
 use crate::resume_picker::SessionTarget;
 use crate::session_state::ThreadSessionState;
-use crate::startup_hooks_review::StartupHooksReviewData;
 #[cfg(test)]
 use crate::test_support::PathBufExt;
 #[cfg(test)]
@@ -93,6 +92,7 @@ use codex_app_server_protocol::ConfigWriteResponse;
 use codex_app_server_protocol::FeedbackUploadParams;
 use codex_app_server_protocol::FeedbackUploadResponse;
 use codex_app_server_protocol::GetAccountRateLimitsResponse;
+use codex_app_server_protocol::HooksListEntry;
 use codex_app_server_protocol::ListMcpServerStatusParams;
 use codex_app_server_protocol::ListMcpServerStatusResponse;
 #[cfg(test)]
@@ -617,7 +617,7 @@ impl App {
         remote_app_server_auth_token: Option<String>,
         state_db: Option<StateDbHandle>,
         environment_manager: Arc<EnvironmentManager>,
-        startup_hooks_browser: Option<StartupHooksReviewData>,
+        startup_hooks_browser: Option<HooksListEntry>,
     ) -> Result<AppExitInfo> {
         use tokio_stream::StreamExt;
         let (app_event_tx, mut app_event_rx) = unbounded_channel();
@@ -911,9 +911,8 @@ See the Codex keymap documentation for supported actions and examples."
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
         };
-        if let Some(data) = startup_hooks_browser {
-            app.chat_widget
-                .open_hooks_browser(data.hooks, data.warnings, data.errors);
+        if let Some(entry) = startup_hooks_browser {
+            app.chat_widget.open_hooks_browser(entry);
         }
         if let Some(started) = initial_started_thread {
             let thread_id = started.session.thread_id;

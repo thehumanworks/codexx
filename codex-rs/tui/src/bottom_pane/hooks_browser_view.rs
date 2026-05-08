@@ -1,9 +1,8 @@
-use crate::hooks_rpc::HookTrustUpdate;
-use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HookSource;
 use codex_app_server_protocol::HookTrustStatus;
+use codex_app_server_protocol::HooksListEntry;
 use crossterm::event::KeyCode;
 use crossterm::event::KeyEvent;
 use crossterm::event::KeyModifiers;
@@ -26,6 +25,8 @@ use super::scroll_state::ScrollState;
 use super::selection_popup_common::render_menu_surface;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
+use crate::hooks_rpc::HookTrustUpdate;
+use crate::hooks_rpc::hook_needs_review;
 use crate::key_hint;
 use crate::line_truncation::truncate_line_with_ellipsis_if_overflow;
 use crate::render::renderable::Renderable;
@@ -42,9 +43,7 @@ enum HooksBrowserPage {
 }
 
 pub(crate) struct HooksBrowserView {
-    hooks: Vec<HookMetadata>,
-    warnings: Vec<String>,
-    errors: Vec<HookErrorInfo>,
+    entry: HooksListEntry,
     page: HooksBrowserPage,
     state: ScrollState,
     complete: bool,
@@ -52,17 +51,28 @@ pub(crate) struct HooksBrowserView {
 }
 
 impl HooksBrowserView {
+    #[cfg(test)]
     pub(crate) fn new(
-        mut hooks: Vec<HookMetadata>,
+        hooks: Vec<HookMetadata>,
         warnings: Vec<String>,
-        errors: Vec<HookErrorInfo>,
+        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
         app_event_tx: AppEventSender,
     ) -> Self {
-        hooks.sort_by_key(|hook| hook.display_order);
+        Self::from_entry(
+            HooksListEntry {
+                cwd: std::path::PathBuf::new(),
+                hooks,
+                warnings,
+                errors,
+            },
+            app_event_tx,
+        )
+    }
+
+    pub(crate) fn from_entry(mut entry: HooksListEntry, app_event_tx: AppEventSender) -> Self {
+        entry.hooks.sort_by_key(|hook| hook.display_order);
         let mut view = Self {
-            hooks,
-            warnings,
-            errors,
+            entry,
             page: HooksBrowserPage::Events,
             state: ScrollState::new(),
             complete: false,
@@ -84,16 +94,19 @@ impl HooksBrowserView {
             .map(|event_name| {
                 let event_name: HookEventName = event_name.into();
                 let installed = self
+                    .entry
                     .hooks
                     .iter()
                     .filter(|hook| hook.event_name == event_name)
                     .count();
                 let active = self
+                    .entry
                     .hooks
                     .iter()
                     .filter(|hook| hook.event_name == event_name && hook_is_active(hook))
                     .count();
                 let needs_review = self
+                    .entry
                     .hooks
                     .iter()
                     .filter(|hook| hook.event_name == event_name && hook_needs_review(hook))
@@ -109,7 +122,8 @@ impl HooksBrowserView {
     }
 
     fn handlers_for_event(&self, event_name: HookEventName) -> impl Iterator<Item = &HookMetadata> {
-        self.hooks
+        self.entry
+            .hooks
             .iter()
             .filter(move |hook| hook.event_name == event_name)
     }
@@ -123,7 +137,8 @@ impl HooksBrowserView {
 
     fn selected_hook_index(&self, event_name: HookEventName) -> Option<usize> {
         let selected_visible_idx = self.state.selected_idx?;
-        self.hooks
+        self.entry
+            .hooks
             .iter()
             .enumerate()
             .filter(|(_, hook)| hook.event_name == event_name)
@@ -133,7 +148,7 @@ impl HooksBrowserView {
 
     fn selected_hook(&self, event_name: HookEventName) -> Option<&HookMetadata> {
         self.selected_hook_index(event_name)
-            .and_then(|idx| self.hooks.get(idx))
+            .and_then(|idx| self.entry.hooks.get(idx))
     }
 
     fn move_up(&mut self) {
@@ -174,7 +189,7 @@ impl HooksBrowserView {
         let Some(idx) = self.selected_hook_index(event_name) else {
             return;
         };
-        let Some(hook) = self.hooks.get_mut(idx) else {
+        let Some(hook) = self.entry.hooks.get_mut(idx) else {
             return;
         };
         if hook.is_managed {
@@ -195,7 +210,7 @@ impl HooksBrowserView {
         let Some(idx) = self.selected_hook_index(event_name) else {
             return;
         };
-        let Some(hook) = self.hooks.get_mut(idx) else {
+        let Some(hook) = self.entry.hooks.get_mut(idx) else {
             return;
         };
         if !hook_needs_review(hook) {
@@ -203,17 +218,15 @@ impl HooksBrowserView {
         }
 
         hook.trust_status = HookTrustStatus::Trusted;
-        self.app_event_tx.send(AppEvent::TrustHooks {
-            updates: vec![HookTrustUpdate {
-                key: hook.key.clone(),
-                current_hash: hook.current_hash.clone(),
-            }],
+        self.app_event_tx.send(AppEvent::TrustHook {
+            key: hook.key.clone(),
+            current_hash: hook.current_hash.clone(),
         });
     }
 
     fn trust_all_hooks(&mut self) {
         let mut updates = Vec::new();
-        for hook in &mut self.hooks {
+        for hook in &mut self.entry.hooks {
             if !hook_needs_review(hook) {
                 continue;
             }
@@ -258,7 +271,8 @@ impl HooksBrowserView {
     }
 
     fn review_needed_total_count(&self) -> usize {
-        self.hooks
+        self.entry
+            .hooks
             .iter()
             .filter(|hook| hook_needs_review(hook))
             .count()
@@ -270,18 +284,13 @@ impl HooksBrowserView {
         review_needed_count: usize,
     ) -> Vec<Line<'static>> {
         let mut lines = vec![format!("{} hooks", event_label(event_name)).bold().into()];
-        match review_needed_count {
-            0 => lines.push(
+        match review_needed_message(review_needed_count) {
+            None => lines.push(
                 "Turn hooks on or off. Your changes are saved automatically."
                     .dim()
                     .into(),
             ),
-            1 => lines.push("1 hook needs review before it can run.".yellow().into()),
-            count => lines.push(
-                format!("{count} hooks need review before they can run.")
-                    .yellow()
-                    .into(),
-            ),
+            Some(message) => lines.push(message.yellow().into()),
         }
         lines
     }
@@ -348,17 +357,18 @@ impl HooksBrowserView {
 
     fn event_issue_lines(&self) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
-        if self.warnings.is_empty() && self.errors.is_empty() {
+        if self.entry.warnings.is_empty() && self.entry.errors.is_empty() {
             return lines;
         }
 
         lines.push("Issues".bold().into());
         lines.extend(
-            self.warnings
+            self.entry
+                .warnings
                 .iter()
                 .map(|warning| format!("⚠ {warning}").into()),
         );
-        lines.extend(self.errors.iter().map(|error| {
+        lines.extend(self.entry.errors.iter().map(|error| {
             format!("■ {}: {}", error.path.display(), error.message)
                 .red()
                 .into()
@@ -371,20 +381,9 @@ impl HooksBrowserView {
         let mut lines = Self::event_header_lines();
         lines.push(Line::default());
 
-        match self.review_needed_total_count() {
-            0 => {}
-            1 => {
-                lines.push("⚠ 1 hook needs review before it can run.".yellow().into());
-                lines.push(Line::default());
-            }
-            count => {
-                lines.push(
-                    format!("⚠ {count} hooks need review before they can run.")
-                        .yellow()
-                        .into(),
-                );
-                lines.push(Line::default());
-            }
+        if let Some(message) = review_needed_message(self.review_needed_total_count()) {
+            lines.push(format!("⚠ {message}").yellow().into());
+            lines.push(Line::default());
         }
 
         let issue_lines = self.event_issue_lines();
@@ -689,18 +688,19 @@ fn hook_is_active(hook: &HookMetadata) -> bool {
         )
 }
 
+fn review_needed_message(count: usize) -> Option<String> {
+    match count {
+        0 => None,
+        1 => Some("1 hook needs review before it can run.".to_string()),
+        count => Some(format!("{count} hooks need review before they can run.")),
+    }
+}
+
 struct EventRow {
     event_name: HookEventName,
     installed: usize,
     active: usize,
     needs_review: usize,
-}
-
-fn hook_needs_review(hook: &HookMetadata) -> bool {
-    matches!(
-        hook.trust_status,
-        HookTrustStatus::Untrusted | HookTrustStatus::Modified
-    )
 }
 
 fn hook_trust_label(status: HookTrustStatus) -> &'static str {
@@ -842,6 +842,7 @@ mod tests {
     use crate::test_support::PathBufExt;
     use crate::test_support::test_path_buf;
     use crate::test_support::test_path_display;
+    use codex_app_server_protocol::HookErrorInfo;
     use codex_app_server_protocol::HookEventName;
     use codex_app_server_protocol::HookHandlerType;
     use codex_app_server_protocol::HookMetadata;
@@ -1434,13 +1435,13 @@ mod tests {
         view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
 
         match rx.try_recv().expect("trust event") {
-            AppEvent::TrustHooks { updates } => assert_eq!(
-                updates,
-                vec![HookTrustUpdate {
-                    key: "path:untrusted".to_string(),
-                    current_hash,
-                }]
-            ),
+            AppEvent::TrustHook {
+                key,
+                current_hash: hash_to_trust,
+            } => {
+                assert_eq!(key, "path:untrusted");
+                assert_eq!(hash_to_trust, current_hash);
+            }
             other => panic!("expected hook trust event, got {other:?}"),
         }
     }
@@ -1469,17 +1470,17 @@ mod tests {
         view.handle_key_event(KeyEvent::from(KeyCode::Enter));
         view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
 
-        let hook = view.hooks.first().expect("trusted hook");
+        let hook = view.entry.hooks.first().expect("trusted hook");
         assert!(!hook.enabled);
         assert_eq!(hook.trust_status, HookTrustStatus::Trusted);
         match rx.try_recv().expect("trust event") {
-            AppEvent::TrustHooks { updates } => assert_eq!(
-                updates,
-                vec![HookTrustUpdate {
-                    key: "path:modified".to_string(),
-                    current_hash,
-                }]
-            ),
+            AppEvent::TrustHook {
+                key,
+                current_hash: hash_to_trust,
+            } => {
+                assert_eq!(key, "path:modified");
+                assert_eq!(hash_to_trust, current_hash);
+            }
             other => panic!("expected hook trust event, got {other:?}"),
         }
     }
@@ -1532,7 +1533,8 @@ mod tests {
         view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
 
         assert_eq!(
-            view.hooks
+            view.entry
+                .hooks
                 .iter()
                 .map(|hook| hook.trust_status)
                 .collect::<Vec<_>>(),

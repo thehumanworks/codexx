@@ -770,6 +770,12 @@ pub(crate) enum AppEvent {
         enabled: bool,
     },
 
+    /// Trust the current definition for a hook by stable hook key.
+    TrustHook {
+        key: String,
+        current_hash: String,
+    },
+
     /// Trust the current definitions for one or more hooks by stable hook key.
     TrustHooks {
         updates: Vec<crate::hooks_rpc::HookTrustUpdate>,
@@ -779,6 +785,11 @@ pub(crate) enum AppEvent {
     HookEnabledSet {
         key: String,
         enabled: bool,
+        result: Result<(), String>,
+    },
+
+    /// Result of persisting hook trust state.
+    HookTrusted {
         result: Result<(), String>,
     },
 
