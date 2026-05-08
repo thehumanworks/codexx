@@ -269,7 +269,7 @@ mod windows_impl {
     use super::sandbox_utils::ensure_codex_home_exists;
     use super::spawn_prep::prepare_legacy_spawn_context;
     use super::token::convert_string_sid_to_sid;
-    use super::token::create_workspace_write_token_with_caps_from;
+    use super::token::create_workspace_write_token_with_caps_and_user_from;
     use super::workspace_acl::is_command_cwd_root;
     use anyhow::Result;
     use std::collections::HashMap;
@@ -398,7 +398,7 @@ mod windows_impl {
                     let psid_workspace =
                         convert_string_sid_to_sid(&ws_sid).expect("valid workspace SID");
                     let base = super::token::get_current_token_for_restriction()?;
-                    let h_res = create_workspace_write_token_with_caps_from(
+                    let h_res = create_workspace_write_token_with_caps_and_user_from(
                         base,
                         &[psid_generic, psid_workspace],
                     );

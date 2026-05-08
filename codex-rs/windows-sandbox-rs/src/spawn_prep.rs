@@ -19,7 +19,7 @@ use crate::sandbox_utils::ensure_codex_home_exists;
 use crate::sandbox_utils::inject_git_safe_directory;
 use crate::token::convert_string_sid_to_sid;
 use crate::token::create_readonly_token_with_cap;
-use crate::token::create_workspace_write_token_with_caps_from;
+use crate::token::create_workspace_write_token_with_caps_and_user_from;
 use crate::token::get_current_token_for_restriction;
 use crate::token::get_logon_sid_bytes;
 use crate::workspace_acl::is_command_cwd_root;
@@ -172,7 +172,7 @@ pub(crate) fn prepare_legacy_session_security(
                 let workspace_sid = workspace_cap_sid_for_cwd(codex_home, cwd)?;
                 let psid_workspace = LocalSid::from_string(&workspace_sid)?;
                 let base = get_current_token_for_restriction()?;
-                let h_token = create_workspace_write_token_with_caps_from(
+                let h_token = create_workspace_write_token_with_caps_and_user_from(
                     base,
                     &[psid_generic.as_ptr(), psid_workspace.as_ptr()],
                 );
