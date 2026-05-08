@@ -357,7 +357,7 @@ async fn thread_fork_can_exclude_turns_and_skip_restored_token_usage() -> Result
     assert!(thread.turns.is_empty());
 
     let note = timeout(
-        DEFAULT_READ_TIMEOUT,
+        std::time::Duration::from_secs(2),
         mcp.read_stream_until_notification_message("thread/tokenUsage/updated"),
     )
     .await;
