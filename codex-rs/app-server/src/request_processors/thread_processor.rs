@@ -191,12 +191,6 @@ fn collect_resume_override_mismatches(
             ));
         }
     }
-    if request.permissions.is_some() {
-        mismatch_details.push(format!(
-            "permissions override was provided and ignored while running; active={:?}",
-            config_snapshot.active_permission_profile
-        ));
-    }
     if let Some(requested_personality) = request.personality.as_ref()
         && config_snapshot.personality.as_ref() != Some(requested_personality)
     {
@@ -2882,6 +2876,49 @@ impl ThreadRequestProcessor {
                 app_server_client_version,
             )
             .await?;
+
+            let active_permission_profile = if let Some(permissions) = params.permissions.clone() {
+                let config_snapshot = existing_thread.config_snapshot().await;
+                Some(
+                    self.validate_active_permission_profile_selection(
+                        permissions,
+                        /*request_overrides*/ None,
+                        /*cwd*/ None,
+                        Some(config_snapshot.cwd.to_path_buf()),
+                    )
+                    .await?,
+                )
+            } else {
+                None
+            };
+            if params.workspace_roots.is_some() || active_permission_profile.is_some() {
+                existing_thread
+                    .update_turn_context_overrides(CodexThreadTurnContextOverrides {
+                        cwd: None,
+                        workspace_roots: params.workspace_roots.clone().map(|roots| {
+                            roots
+                                .into_iter()
+                                .map(AbsolutePathBuf::into_path_buf)
+                                .collect()
+                        }),
+                        approval_policy: None,
+                        approvals_reviewer: None,
+                        sandbox_policy: None,
+                        permission_profile: None,
+                        active_permission_profile,
+                        windows_sandbox_level: None,
+                        model: None,
+                        effort: None,
+                        summary: None,
+                        service_tier: None,
+                        collaboration_mode: None,
+                        personality: None,
+                    })
+                    .await
+                    .map_err(|err| {
+                        invalid_request(format!("invalid thread resume override: {err}"))
+                    })?;
+            }
 
             let config_snapshot = existing_thread.config_snapshot().await;
             let mismatch_details = collect_resume_override_mismatches(params, &config_snapshot);

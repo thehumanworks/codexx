@@ -244,6 +244,23 @@ impl CodexThread {
         &self,
         overrides: CodexThreadTurnContextOverrides,
     ) -> ConstraintResult<()> {
+        let updates = self.turn_context_updates_from_overrides(overrides).await;
+        self.codex.session.validate_settings(&updates).await
+    }
+
+    /// Apply persistent thread context overrides immediately.
+    pub async fn update_turn_context_overrides(
+        &self,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> ConstraintResult<()> {
+        let updates = self.turn_context_updates_from_overrides(overrides).await;
+        self.codex.session.update_settings(updates).await
+    }
+
+    async fn turn_context_updates_from_overrides(
+        &self,
+        overrides: CodexThreadTurnContextOverrides,
+    ) -> SessionSettingsUpdate {
         let CodexThreadTurnContextOverrides {
             cwd,
             workspace_roots,
@@ -270,7 +287,7 @@ impl CodexThread {
                 .with_updates(model, effort, /*developer_instructions*/ None)
         };
 
-        let updates = SessionSettingsUpdate {
+        SessionSettingsUpdate {
             cwd,
             workspace_roots,
             approval_policy,
@@ -284,8 +301,7 @@ impl CodexThread {
             service_tier,
             personality,
             ..Default::default()
-        };
-        self.codex.session.validate_settings(&updates).await
+        }
     }
 
     /// Use sparingly: this is intended to be removed soon.
