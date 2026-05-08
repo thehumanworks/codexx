@@ -140,15 +140,16 @@ def _windows_runfile_env_exports(ctx):
     return "\n".join(lines)
 
 def _bash_workspace_root_setup(ctx):
-    if not ctx.attr.chdir_workspace_root:
-        return ""
-    return 'export INSTA_WORKSPACE_ROOT="${workspace_root}"\ncd "${workspace_root}"'
+    lines = ['export INSTA_WORKSPACE_ROOT="${workspace_root}"']
+    if ctx.attr.chdir_workspace_root:
+        lines.append('cd "${workspace_root}"')
+    return "\n".join(lines)
 
 def _windows_workspace_root_setup(ctx):
-    if not ctx.attr.chdir_workspace_root:
-        return ""
-    return """set "INSTA_WORKSPACE_ROOT=%workspace_root%"
-cd /d "%workspace_root%" || exit /b 1"""
+    lines = ['set "INSTA_WORKSPACE_ROOT=%workspace_root%"']
+    if ctx.attr.chdir_workspace_root:
+        lines.append('cd /d "%workspace_root%" || exit /b 1')
+    return "\n".join(lines)
 
 workspace_root_test = rule(
     implementation = _workspace_root_test_impl,
@@ -257,10 +258,6 @@ def codex_rust_crate(
             `CARGO_BIN_EXE_*` environment variables. These are only needed for binaries from a different crate.
     """
     test_env = {
-        # The launcher resolves an absolute workspace root at runtime so
-        # manifest-only platforms like macOS still point Insta at the real
-        # `codex-rs` checkout.
-        "INSTA_WORKSPACE_ROOT": ".",
         "INSTA_SNAPSHOT_PATH": "src",
     }
 
@@ -421,15 +418,13 @@ def codex_rust_crate(
 
         integration_test_binary = test_name + "-bin"
 
-        # There are three generated integration-test shapes:
+        # There are two generated integration-test shapes:
         #
-        # 1. Unsharded native tests keep the plain rust_test label for minimal
-        #    churn and the usual rules_rust Cargo-like environment.
-        # 2. Sharded native tests split into a manual rust_test binary plus an
-        #    outer workspace_root_test. The outer test action receives Bazel's
-        #    sharding environment, resolves the real binary through the
-        #    runfiles manifest, and implements stable libtest sharding itself.
-        # 3. Windows cross tests always use the workspace_root_test wrapper so
+        # 1. Native tests split into a manual rust_test binary plus an outer
+        #    workspace_root_test. The outer test action owns cwd setup, Insta
+        #    workspace-root setup, runfile env materialization, and stable
+        #    libtest sharding when Bazel sharding is enabled.
+        # 2. Windows cross tests always use the workspace_root_test wrapper so
         #    runfile env vars become Windows-native absolute paths before the
         #    Rust process starts.
         if test_shard_count:
@@ -471,12 +466,8 @@ def codex_rust_crate(
                 **test_kwargs
             )
         else:
-            # For unsharded tests, the direct rust_test rule is still fine:
-            # there is no rules_rust sharding wrapper to bypass, and env can
-            # use rlocation paths directly because the test starts under
-            # Bazel's normal test environment.
             rust_test(
-                name = test_name,
+                name = integration_test_binary,
                 crate_name = test_crate_name,
                 crate_root = test,
                 srcs = [test],
@@ -491,7 +482,16 @@ def codex_rust_crate(
                     "--remap-path-prefix=codex-rs=",
                 ],
                 rustc_env = rustc_env,
-                env = cargo_env,
+                target_compatible_with = WINDOWS_GNULLVM_INCOMPATIBLE,
+                tags = test_tags + ["manual"],
+            )
+
+            workspace_root_test(
+                name = test_name,
+                env = test_env,
+                runfile_env = cargo_env_runfiles,
+                test_bin = ":" + integration_test_binary,
+                workspace_root_marker = "//codex-rs/utils/cargo-bin:repo_root.marker",
                 target_compatible_with = WINDOWS_GNULLVM_INCOMPATIBLE,
                 tags = test_tags,
                 **test_kwargs
@@ -524,7 +524,7 @@ def codex_rust_crate(
         workspace_root_test(
             name = test_name + "-windows-cross",
             chdir_workspace_root = False,
-            env = cargo_env,
+            env = test_env | cargo_env,
             runfile_env = cargo_env_runfiles,
             test_bin = ":" + windows_cross_test_binary,
             workspace_root_marker = "//codex-rs/utils/cargo-bin:repo_root.marker",
