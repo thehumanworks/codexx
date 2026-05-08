@@ -595,7 +595,6 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
         vec![ConfigLayerEntry::new(
             ConfigLayerSource::System {
                 file: config_path.clone(),
-                profile: None,
             },
             config_toml,
         )],

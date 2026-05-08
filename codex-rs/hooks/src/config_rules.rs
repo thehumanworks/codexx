@@ -121,6 +121,7 @@ mod tests {
                 ConfigLayerEntry::new(
                     ConfigLayerSource::User {
                         file: test_path_buf("/tmp/config.toml").abs(),
+                        profile: None,
                     },
                     config_with_hook_state(
                         key,
