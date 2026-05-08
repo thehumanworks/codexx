@@ -1,8 +1,6 @@
 use std::borrow::Cow;
-use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 
 use crate::DB_FALLBACK_METRIC;
 use crate::DB_INIT_DURATION_METRIC;
@@ -48,6 +46,7 @@ pub(crate) enum DbAccess {
     Read,
     Write,
     Transaction,
+    Maintenance,
 }
 
 impl DbAccess {
@@ -56,39 +55,20 @@ impl DbAccess {
             Self::Read => "read",
             Self::Write => "write",
             Self::Transaction => "transaction",
+            Self::Maintenance => "maintenance",
         }
     }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct DbErrorTags {
-    pub error_class: &'static str,
-    pub sqlite_code: String,
+    pub error: &'static str,
 }
 
 impl DbErrorTags {
     fn none() -> Self {
-        Self {
-            error_class: "none",
-            sqlite_code: "none".to_string(),
-        }
+        Self { error: "none" }
     }
-}
-
-pub(crate) async fn record_operation<T, F>(
-    metrics: Option<&dyn DbMetricsRecorder>,
-    db: DbKind,
-    operation: &'static str,
-    access: DbAccess,
-    future: F,
-) -> anyhow::Result<T>
-where
-    F: Future<Output = anyhow::Result<T>>,
-{
-    let started = Instant::now();
-    let result = future.await;
-    record_operation_result(metrics, db, operation, access, started.elapsed(), &result);
-    result
 }
 
 pub(crate) fn record_init_result<T>(
@@ -103,8 +83,7 @@ pub(crate) fn record_init_result<T>(
         ("status", outcome.status),
         ("phase", phase),
         ("db", db.as_str()),
-        ("error_class", outcome.error.error_class),
-        ("sqlite_code", outcome.error.sqlite_code.as_str()),
+        ("error", outcome.error.error),
     ];
     record_counter(metrics, DB_INIT_METRIC, &tags);
     record_duration(metrics, DB_INIT_DURATION_METRIC, duration, &tags);
@@ -145,43 +124,31 @@ pub(crate) fn classify_error(err: &anyhow::Error) -> DbErrorTags {
             .downcast_ref::<sqlx::migrate::MigrateError>()
             .is_some()
         {
-            return DbErrorTags {
-                error_class: "migration",
-                sqlite_code: "none".to_string(),
-            };
+            return DbErrorTags { error: "migration" };
         }
         if cause.downcast_ref::<serde_json::Error>().is_some() {
-            return DbErrorTags {
-                error_class: "serde",
-                sqlite_code: "none".to_string(),
-            };
+            return DbErrorTags { error: "serde" };
         }
         if cause.downcast_ref::<std::io::Error>().is_some() {
-            return DbErrorTags {
-                error_class: "io",
-                sqlite_code: "none".to_string(),
-            };
+            return DbErrorTags { error: "io" };
         }
     }
 
-    DbErrorTags {
-        error_class: "unknown",
-        sqlite_code: "none".to_string(),
-    }
+    DbErrorTags { error: "unknown" }
 }
 
 pub(crate) fn classify_sqlite_code(code: &str) -> &'static str {
     let primary_code = code.parse::<i32>().ok().map(|code| code & 0xff);
     match primary_code {
-        Some(5) => "sqlite_busy",
-        Some(6) => "sqlite_locked",
-        Some(8) => "sqlite_readonly",
-        Some(10) => "sqlite_ioerr",
-        Some(11) => "sqlite_corrupt",
-        Some(13) => "sqlite_full",
-        Some(14) => "sqlite_cantopen",
-        Some(19) => "sqlite_constraint",
-        Some(17) => "sqlite_schema",
+        Some(5) => "busy",
+        Some(6) => "locked",
+        Some(8) => "readonly",
+        Some(10) => "io",
+        Some(11) => "corrupt",
+        Some(13) => "full",
+        Some(14) => "cantopen",
+        Some(19) => "constraint",
+        Some(17) => "schema",
         _ => "unknown",
     }
 }
@@ -200,8 +167,7 @@ pub(crate) fn record_operation_result<T>(
         ("db", db.as_str()),
         ("operation", operation),
         ("access", access.as_str()),
-        ("error_class", outcome.error.error_class),
-        ("sqlite_code", outcome.error.sqlite_code.as_str()),
+        ("error", outcome.error.error),
     ];
     record_counter(metrics, DB_OPERATION_METRIC, &tags);
     record_duration(metrics, DB_OPERATION_DURATION_METRIC, duration, &tags);
@@ -235,32 +201,20 @@ fn classify_sqlx_error(err: &sqlx::Error) -> DbErrorTags {
                 .unwrap_or(Cow::Borrowed("none"))
                 .to_string();
             DbErrorTags {
-                error_class: classify_sqlite_code(code.as_str()),
-                sqlite_code: code,
+                error: classify_sqlite_code(code.as_str()),
             }
         }
         sqlx::Error::PoolTimedOut => DbErrorTags {
-            error_class: "pool_timeout",
-            sqlite_code: "none".to_string(),
+            error: "pool_timeout",
         },
-        sqlx::Error::Io(_) => DbErrorTags {
-            error_class: "io",
-            sqlite_code: "none".to_string(),
-        },
+        sqlx::Error::Io(_) => DbErrorTags { error: "io" },
         sqlx::Error::ColumnDecode { source, .. } if source.is::<serde_json::Error>() => {
-            DbErrorTags {
-                error_class: "serde",
-                sqlite_code: "none".to_string(),
-            }
+            DbErrorTags { error: "serde" }
         }
-        sqlx::Error::Decode(source) if source.is::<serde_json::Error>() => DbErrorTags {
-            error_class: "serde",
-            sqlite_code: "none".to_string(),
-        },
-        _ => DbErrorTags {
-            error_class: "unknown",
-            sqlite_code: "none".to_string(),
-        },
+        sqlx::Error::Decode(source) if source.is::<serde_json::Error>() => {
+            DbErrorTags { error: "serde" }
+        }
+        _ => DbErrorTags { error: "unknown" },
     }
 }
 
@@ -284,45 +238,76 @@ fn record_duration(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DB_FALLBACK_METRIC;
+    use crate::DB_OPERATION_METRIC;
     use pretty_assertions::assert_eq;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct TestMetrics {
+        events: Mutex<Vec<MetricEvent>>,
+    }
+
+    #[derive(Debug, Eq, PartialEq)]
+    struct MetricEvent {
+        name: String,
+        tags: BTreeMap<String, String>,
+    }
+
+    impl TestMetrics {
+        fn events(&self) -> Vec<MetricEvent> {
+            self.events
+                .lock()
+                .expect("metrics lock")
+                .iter()
+                .map(|event| MetricEvent {
+                    name: event.name.clone(),
+                    tags: event.tags.clone(),
+                })
+                .collect()
+        }
+    }
+
+    impl DbMetricsRecorder for TestMetrics {
+        fn counter(&self, name: &str, _inc: i64, tags: &[(&str, &str)]) {
+            self.events.lock().expect("metrics lock").push(MetricEvent {
+                name: name.to_string(),
+                tags: tags_to_map(tags),
+            });
+        }
+
+        fn record_duration(&self, _name: &str, _duration: Duration, _tags: &[(&str, &str)]) {}
+    }
+
+    fn tags_to_map(tags: &[(&str, &str)]) -> BTreeMap<String, String> {
+        tags.iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect()
+    }
 
     #[test]
     fn classifies_sqlite_primary_codes() {
-        assert_eq!(classify_sqlite_code("5"), "sqlite_busy");
-        assert_eq!(classify_sqlite_code("6"), "sqlite_locked");
-        assert_eq!(classify_sqlite_code("14"), "sqlite_cantopen");
-        assert_eq!(classify_sqlite_code("2067"), "sqlite_constraint");
+        assert_eq!(classify_sqlite_code("5"), "busy");
+        assert_eq!(classify_sqlite_code("6"), "locked");
+        assert_eq!(classify_sqlite_code("14"), "cantopen");
+        assert_eq!(classify_sqlite_code("2067"), "constraint");
     }
 
     #[test]
     fn classifies_non_sqlite_errors() {
         let io_error =
             anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::NotFound, "missing"));
-        assert_eq!(
-            classify_error(&io_error),
-            DbErrorTags {
-                error_class: "io",
-                sqlite_code: "none".to_string()
-            }
-        );
+        assert_eq!(classify_error(&io_error), DbErrorTags { error: "io" });
 
         let serde_error =
             anyhow::Error::new(serde_json::from_str::<serde_json::Value>("not-json").unwrap_err());
-        assert_eq!(
-            classify_error(&serde_error),
-            DbErrorTags {
-                error_class: "serde",
-                sqlite_code: "none".to_string()
-            }
-        );
+        assert_eq!(classify_error(&serde_error), DbErrorTags { error: "serde" });
 
         let unknown_error = anyhow::anyhow!("plain failure");
         assert_eq!(
             classify_error(&unknown_error),
-            DbErrorTags {
-                error_class: "unknown",
-                sqlite_code: "none".to_string()
-            }
+            DbErrorTags { error: "unknown" }
         );
     }
 
@@ -332,9 +317,55 @@ mod tests {
         assert_eq!(
             classify_error(&err),
             DbErrorTags {
-                error_class: "pool_timeout",
-                sqlite_code: "none".to_string()
+                error: "pool_timeout"
             }
+        );
+    }
+
+    #[test]
+    fn records_operation_metric_with_stable_tags() {
+        let metrics = TestMetrics::default();
+        let result: anyhow::Result<()> = Ok(());
+
+        record_operation_result(
+            Some(&metrics),
+            DbKind::State,
+            "list_threads",
+            DbAccess::Read,
+            Duration::from_millis(3),
+            &result,
+        );
+
+        assert_eq!(
+            metrics.events(),
+            vec![MetricEvent {
+                name: DB_OPERATION_METRIC.to_string(),
+                tags: BTreeMap::from([
+                    ("access".to_string(), "read".to_string()),
+                    ("db".to_string(), "state".to_string()),
+                    ("error".to_string(), "none".to_string()),
+                    ("operation".to_string(), "list_threads".to_string()),
+                    ("status".to_string(), "success".to_string()),
+                ]),
+            }]
+        );
+    }
+
+    #[test]
+    fn records_fallback_metric_with_reason() {
+        let metrics = TestMetrics::default();
+
+        record_fallback(Some(&metrics), "list_threads", "db_error");
+
+        assert_eq!(
+            metrics.events(),
+            vec![MetricEvent {
+                name: DB_FALLBACK_METRIC.to_string(),
+                tags: BTreeMap::from([
+                    ("caller".to_string(), "list_threads".to_string()),
+                    ("reason".to_string(), "db_error".to_string()),
+                ]),
+            }]
         );
     }
 }

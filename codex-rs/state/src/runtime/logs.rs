@@ -15,7 +15,7 @@ impl StateRuntime {
                 return Ok(());
             }
 
-            let mut tx = self.logs_pool.begin().await?;
+            let mut tx = self.logs_db.pool().begin().await?;
             let mut builder = QueryBuilder::<Sqlite>::new(
                 "INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body, thread_id, process_uuid, module_path, file, line, estimated_bytes) ",
             );
@@ -48,9 +48,8 @@ impl StateRuntime {
             Ok(())
         }
         .await;
-        self.record_db_operation_result(
-            DbKind::Logs,
-            "insert_logs",
+        self.logs_db.record_result(
+            DbOperation::InsertLogs,
             DbAccess::Transaction,
             started,
             &result,
@@ -297,28 +296,28 @@ WHERE id IN (
         Ok(())
     }
 
-    pub(crate) async fn delete_logs_before(&self, cutoff_ts: i64) -> anyhow::Result<u64> {
-        let result = sqlx::query("DELETE FROM logs WHERE ts < ?")
-            .bind(cutoff_ts)
-            .execute(self.logs_pool.as_ref())
-            .await?;
-        Ok(result.rows_affected())
-    }
-
     pub(crate) async fn run_logs_startup_maintenance(&self) -> anyhow::Result<()> {
-        let Some(cutoff) =
-            Utc::now().checked_sub_signed(chrono::Duration::days(LOG_RETENTION_DAYS))
-        else {
-            return Ok(());
-        };
-        self.delete_logs_before(cutoff.timestamp()).await?;
-        // Startup cleanup should not wait behind or block foreground work.
-        // PASSIVE checkpoints copy whatever is immediately available and skip
-        // frames that would require waiting on active readers or writers.
-        sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
-            .execute(self.logs_pool.as_ref())
-            .await?;
-        Ok(())
+        let pool = self.logs_db.pool().clone();
+        self.logs_db
+            .maintenance(DbOperation::LogsStartupMaintenance, async move {
+                let Some(cutoff) =
+                    Utc::now().checked_sub_signed(chrono::Duration::days(LOG_RETENTION_DAYS))
+                else {
+                    return Ok(());
+                };
+                sqlx::query("DELETE FROM logs WHERE ts < ?")
+                    .bind(cutoff.timestamp())
+                    .execute(&pool)
+                    .await?;
+                // Startup cleanup should not wait behind or block foreground work.
+                // PASSIVE checkpoints copy whatever is immediately available and skip
+                // frames that would require waiting on active readers or writers.
+                sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+                    .execute(&pool)
+                    .await?;
+                Ok(())
+            })
+            .await
     }
 
     /// Query logs with optional filters.
@@ -338,7 +337,7 @@ WHERE id IN (
 
         let rows = builder
             .build_query_as::<LogRow>()
-            .fetch_all(self.logs_pool.as_ref())
+            .fetch_all(self.logs_db.pool())
             .await?;
         Ok(rows)
     }
@@ -410,7 +409,7 @@ ORDER BY ts DESC, ts_nanos DESC, id DESC
         }
         let rows = sql
             .bind(LOG_PARTITION_SIZE_LIMIT_BYTES)
-            .fetch_all(self.logs_pool.as_ref())
+            .fetch_all(self.logs_db.pool())
             .await?;
 
         let mut lines = Vec::new();
@@ -443,7 +442,7 @@ ORDER BY ts DESC, ts_nanos DESC, id DESC
         let mut builder =
             QueryBuilder::<Sqlite>::new("SELECT MAX(id) AS max_id FROM logs WHERE 1 = 1");
         push_log_filters(&mut builder, query);
-        let row = builder.build().fetch_one(self.logs_pool.as_ref()).await?;
+        let row = builder.build().fetch_one(self.logs_db.pool()).await?;
         let max_id: Option<i64> = row.try_get("max_id")?;
         Ok(max_id.unwrap_or(0))
     }

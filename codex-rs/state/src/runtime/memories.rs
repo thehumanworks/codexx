@@ -30,7 +30,7 @@ impl StateRuntime {
     /// stage-1 (`memory_stage1`) and phase-2 (`memory_consolidate_global`)
     /// memory pipelines.
     pub async fn clear_memory_data(&self) -> anyhow::Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
 
         sqlx::query(
             r#"
@@ -68,7 +68,7 @@ WHERE kind = ? OR kind = ?
         }
 
         let now = Utc::now().timestamp();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
         let mut updated_rows = 0;
 
         for thread_id in thread_ids {
@@ -209,7 +209,7 @@ LEFT JOIN jobs
 
         let items = builder
             .build()
-            .fetch_all(self.pool.as_ref())
+            .fetch_all(self.state_db.pool())
             .await?
             .into_iter()
             .map(|row| ThreadRow::try_from_row(&row).and_then(ThreadMetadata::try_from))
@@ -279,7 +279,7 @@ LIMIT ?
             "#,
         )
         .bind(n as i64)
-        .fetch_all(self.pool.as_ref())
+        .fetch_all(self.state_db.pool())
         .await?;
 
         rows.into_iter()
@@ -323,7 +323,7 @@ WHERE thread_id IN (
         )
         .bind(cutoff)
         .bind(limit as i64)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?
         .rows_affected();
 
@@ -400,7 +400,7 @@ ORDER BY selected.thread_id ASC
         .bind(cutoff)
         .bind(cutoff)
         .bind(n as i64)
-        .fetch_all(self.pool.as_ref())
+        .fetch_all(self.state_db.pool())
         .await?;
 
         let mut selected = Vec::with_capacity(current_rows.len());
@@ -421,7 +421,7 @@ ORDER BY selected.thread_id ASC
     ) -> anyhow::Result<bool> {
         let now = Utc::now().timestamp();
         let thread_id = thread_id.to_string();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
         let rows_affected = sqlx::query(
             r#"
 UPDATE threads
@@ -489,7 +489,7 @@ WHERE thread_id = ?
         let thread_id = thread_id.to_string();
         let worker_id = worker_id.to_string();
 
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.state_db.pool().begin_with("BEGIN IMMEDIATE").await?;
 
         let existing_output = sqlx::query(
             r#"
@@ -673,7 +673,7 @@ WHERE kind = ? AND job_key = ?
         let now = Utc::now().timestamp();
         let thread_id = thread_id.to_string();
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
         let rows_affected = sqlx::query(
             r#"
 UPDATE jobs
@@ -750,7 +750,7 @@ WHERE excluded.source_updated_at >= stage1_outputs.source_updated_at
         let now = Utc::now().timestamp();
         let thread_id = thread_id.to_string();
 
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
         let rows_affected = sqlx::query(
             r#"
 UPDATE jobs
@@ -848,7 +848,7 @@ WHERE kind = ? AND job_key = ?
         .bind(JOB_KIND_MEMORY_STAGE1)
         .bind(thread_id.as_str())
         .bind(ownership_token)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?
         .rows_affected();
 
@@ -863,7 +863,7 @@ WHERE kind = ? AND job_key = ?
     /// Phase 2 does not use this watermark as a dirty check; git workspace diffing
     /// decides whether consolidation work exists after the lock is claimed.
     pub async fn enqueue_global_consolidation(&self, input_watermark: i64) -> anyhow::Result<()> {
-        enqueue_global_consolidation_with_executor(self.pool.as_ref(), input_watermark).await
+        enqueue_global_consolidation_with_executor(self.state_db.pool(), input_watermark).await
     }
 
     /// Attempts to claim the global phase-2 consolidation lock.
@@ -890,7 +890,7 @@ WHERE kind = ? AND job_key = ?
         let ownership_token = Uuid::new_v4().to_string();
         let worker_id = worker_id.to_string();
 
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.state_db.pool().begin_with("BEGIN IMMEDIATE").await?;
 
         let existing_job = sqlx::query(
             r#"
@@ -1035,7 +1035,7 @@ WHERE kind = ? AND job_key = ?
         .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
         .bind(MEMORY_CONSOLIDATION_JOB_KEY)
         .bind(ownership_token)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?
         .rows_affected();
 
@@ -1058,7 +1058,7 @@ WHERE kind = ? AND job_key = ?
         completed_watermark: i64,
         selected_outputs: &[Stage1Output],
     ) -> anyhow::Result<bool> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
         let rows_affected =
             mark_global_phase2_job_succeeded_row(&mut *tx, ownership_token, completed_watermark)
                 .await?;
@@ -1136,7 +1136,7 @@ WHERE kind = ? AND job_key = ?
         .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
         .bind(MEMORY_CONSOLIDATION_JOB_KEY)
         .bind(ownership_token)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?
         .rows_affected();
 
@@ -1178,7 +1178,7 @@ WHERE kind = ? AND job_key = ?
         .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
         .bind(MEMORY_CONSOLIDATION_JOB_KEY)
         .bind(ownership_token)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?
         .rows_affected();
 
@@ -1300,7 +1300,7 @@ mod tests {
             .bind(Utc::now().timestamp() - PHASE2_SUCCESS_COOLDOWN_SECONDS - 1)
             .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
             .bind(MEMORY_CONSOLIDATION_JOB_KEY)
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("age phase2 success beyond cooldown");
     }
@@ -1409,7 +1409,7 @@ mod tests {
 
         sqlx::query("UPDATE jobs SET lease_until = 0 WHERE kind = 'memory_stage1' AND job_key = ?")
             .bind(thread_id.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("force stale lease");
 
@@ -1789,7 +1789,7 @@ mod tests {
             .expect("upsert disabled thread");
         sqlx::query("UPDATE threads SET memory_mode = 'disabled' WHERE id = ?")
             .bind(disabled_thread_id.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("disable thread memory mode");
 
@@ -1890,7 +1890,7 @@ mod tests {
             .expect("upsert disabled thread");
         sqlx::query("UPDATE threads SET memory_mode = 'disabled' WHERE id = ?")
             .bind(disabled_thread_id.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("disable existing thread");
 
@@ -1900,7 +1900,7 @@ mod tests {
             .expect("clear memory data");
 
         let stage1_outputs_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stage1_outputs")
-            .fetch_one(runtime.pool.as_ref())
+            .fetch_one(runtime.state_db.pool())
             .await
             .expect("count stage1 outputs");
         assert_eq!(stage1_outputs_count, 0);
@@ -1909,7 +1909,7 @@ mod tests {
             sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE kind = ? OR kind = ?")
                 .bind(JOB_KIND_MEMORY_STAGE1)
                 .bind(JOB_KIND_MEMORY_CONSOLIDATE_GLOBAL)
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("count memory jobs");
         assert_eq!(memory_jobs_count, 0);
@@ -1917,7 +1917,7 @@ mod tests {
         let enabled_memory_mode: String =
             sqlx::query_scalar("SELECT memory_mode FROM threads WHERE id = ?")
                 .bind(enabled_thread_id.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("read enabled thread memory mode");
         assert_eq!(enabled_memory_mode, "enabled");
@@ -1925,7 +1925,7 @@ mod tests {
         let disabled_memory_mode: String =
             sqlx::query_scalar("SELECT memory_mode FROM threads WHERE id = ?")
                 .bind(disabled_thread_id.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("read disabled thread memory mode");
         assert_eq!(disabled_memory_mode, "disabled");
@@ -2000,7 +2000,7 @@ INSERT INTO jobs (
                 .bind(lease_until)
                 .bind(3)
                 .bind(metadata.updated_at.timestamp())
-                .execute(runtime.pool.as_ref())
+                .execute(runtime.state_db.pool())
                 .await
                 .expect("seed running stage1 job");
             }
@@ -2034,7 +2034,7 @@ WHERE kind = 'memory_stage1'
             "#,
         )
         .bind(Utc::now().timestamp())
-        .fetch_one(runtime.pool.as_ref())
+        .fetch_one(runtime.state_db.pool())
         .await
         .expect("count running stage1 jobs")
         .try_get::<i64, _>("count")
@@ -2191,7 +2191,7 @@ WHERE kind = 'memory_stage1'
         let count_before =
             sqlx::query("SELECT COUNT(*) AS count FROM stage1_outputs WHERE thread_id = ?")
                 .bind(thread_id.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("count before delete")
                 .try_get::<i64, _>("count")
@@ -2200,14 +2200,14 @@ WHERE kind = 'memory_stage1'
 
         sqlx::query("DELETE FROM threads WHERE id = ?")
             .bind(thread_id.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("delete thread");
 
         let count_after =
             sqlx::query("SELECT COUNT(*) AS count FROM stage1_outputs WHERE thread_id = ?")
                 .bind(thread_id.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("count after delete")
                 .try_get::<i64, _>("count")
@@ -2258,7 +2258,7 @@ WHERE kind = 'memory_stage1'
         let output_row_count =
             sqlx::query("SELECT COUNT(*) AS count FROM stage1_outputs WHERE thread_id = ?")
                 .bind(thread_id.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("load stage1 output count")
                 .try_get::<i64, _>("count")
@@ -2279,7 +2279,7 @@ WHERE kind = 'memory_stage1'
 
         let global_job_row_count = sqlx::query("SELECT COUNT(*) AS count FROM jobs WHERE kind = ?")
             .bind("memory_consolidate_global")
-            .fetch_one(runtime.pool.as_ref())
+            .fetch_one(runtime.state_db.pool())
             .await
             .expect("load phase2 job row count")
             .try_get::<i64, _>("count")
@@ -2383,7 +2383,7 @@ WHERE kind = 'memory_stage1'
         let output_row_count =
             sqlx::query("SELECT COUNT(*) AS count FROM stage1_outputs WHERE thread_id = ?")
                 .bind(thread_id.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("load stage1 output count after delete")
                 .try_get::<i64, _>("count")
@@ -2494,7 +2494,7 @@ WHERE kind = 'memory_stage1'
         )
         .bind("memory_stage1")
         .bind(thread_id.to_string())
-        .fetch_one(runtime.pool.as_ref())
+        .fetch_one(runtime.state_db.pool())
         .await
         .expect("load stage1 job row after newer-source claim");
         assert_eq!(
@@ -2620,7 +2620,7 @@ WHERE kind = 'memory_stage1'
             sqlx::query("SELECT retry_remaining FROM jobs WHERE kind = ? AND job_key = ?")
                 .bind("memory_consolidate_global")
                 .bind("global")
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("load phase2 job row after retry exhaustion");
         assert_eq!(
@@ -2787,7 +2787,7 @@ VALUES (?, ?, ?, ?, ?)
         .bind("raw memory")
         .bind("summary")
         .bind(100_i64)
-        .execute(runtime.pool.as_ref())
+        .execute(runtime.state_db.pool())
         .await
         .expect("insert non-empty stage1 output");
         sqlx::query(
@@ -2801,7 +2801,7 @@ VALUES (?, ?, ?, ?, ?)
         .bind("")
         .bind("")
         .bind(101_i64)
-        .execute(runtime.pool.as_ref())
+        .execute(runtime.state_db.pool())
         .await
         .expect("insert empty stage1 output");
 
@@ -3292,7 +3292,7 @@ VALUES (?, ?, ?, ?, ?)
                 "SELECT selected_for_phase2, selected_for_phase2_source_updated_at FROM stage1_outputs WHERE thread_id = ?",
             )
         .bind(thread_id.to_string())
-        .fetch_one(runtime.pool.as_ref())
+        .fetch_one(runtime.state_db.pool())
         .await
         .expect("load selected_for_phase2");
         assert_eq!(selected_for_phase2, 1);
@@ -3585,7 +3585,7 @@ VALUES (?, ?, ?, ?, ?)
                 "SELECT selected_for_phase2, selected_for_phase2_source_updated_at FROM stage1_outputs WHERE thread_id = ?",
             )
             .bind(thread_id.to_string())
-            .fetch_one(runtime.pool.as_ref())
+            .fetch_one(runtime.state_db.pool())
             .await
             .expect("load selected snapshot after phase2");
         assert_eq!(selected_for_phase2, 1);
@@ -3698,7 +3698,7 @@ VALUES (?, ?, ?, ?, ?)
                 "SELECT selected_for_phase2, selected_for_phase2_source_updated_at FROM stage1_outputs WHERE thread_id = ?",
             )
             .bind(thread_id.to_string())
-            .fetch_one(runtime.pool.as_ref())
+            .fetch_one(runtime.state_db.pool())
             .await
             .expect("load selected_for_phase2");
         assert_eq!(selected_for_phase2, 0);
@@ -3802,13 +3802,13 @@ VALUES (?, ?, ?, ?, ?)
         let row_a =
             sqlx::query("SELECT usage_count, last_usage FROM stage1_outputs WHERE thread_id = ?")
                 .bind(thread_a.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("load stage1 usage row a");
         let row_b =
             sqlx::query("SELECT usage_count, last_usage FROM stage1_outputs WHERE thread_id = ?")
                 .bind(thread_b.to_string())
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("load stage1 usage row b");
 
@@ -3908,7 +3908,7 @@ VALUES (?, ?, ?, ?, ?)
             .bind(usage_count)
             .bind(last_usage.timestamp())
             .bind(thread_id.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("update usage metadata");
         }
@@ -4004,7 +4004,7 @@ VALUES (?, ?, ?, ?, ?)
             .bind(usage_count)
             .bind(last_usage.map(|value| value.timestamp()))
             .bind(thread_id.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("update usage metadata");
         }
@@ -4089,13 +4089,13 @@ VALUES (?, ?, ?, ?, ?)
         sqlx::query("UPDATE stage1_outputs SET generated_at = ? WHERE thread_id = ?")
             .bind(300_i64)
             .bind(older_thread.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("update older generated_at");
         sqlx::query("UPDATE stage1_outputs SET generated_at = ? WHERE thread_id = ?")
             .bind(150_i64)
             .bind(newer_thread.to_string())
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("update newer generated_at");
 
@@ -4201,14 +4201,14 @@ VALUES (?, ?, ?, ?, ?)
         .bind(3_i64)
         .bind(now - Duration::days(40).num_seconds())
         .bind(stale_used.to_string())
-        .execute(runtime.pool.as_ref())
+        .execute(runtime.state_db.pool())
         .await
         .expect("set stale used metadata");
         sqlx::query(
             "UPDATE stage1_outputs SET selected_for_phase2 = 1, selected_for_phase2_source_updated_at = source_updated_at WHERE thread_id = ?",
         )
         .bind(stale_selected.to_string())
-        .execute(runtime.pool.as_ref())
+        .execute(runtime.state_db.pool())
         .await
         .expect("mark selected for phase2");
         sqlx::query(
@@ -4217,13 +4217,13 @@ VALUES (?, ?, ?, ?, ?)
         .bind(8_i64)
         .bind(now - Duration::days(2).num_seconds())
         .bind(fresh_used.to_string())
-        .execute(runtime.pool.as_ref())
+        .execute(runtime.state_db.pool())
         .await
         .expect("set fresh used metadata");
 
         let before_jobs_count =
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs WHERE kind = 'memory_stage1'")
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("count stage1 jobs before prune");
 
@@ -4236,7 +4236,7 @@ VALUES (?, ?, ?, ?, ?)
         let remaining = sqlx::query_scalar::<_, String>(
             "SELECT thread_id FROM stage1_outputs ORDER BY thread_id",
         )
-        .fetch_all(runtime.pool.as_ref())
+        .fetch_all(runtime.state_db.pool())
         .await
         .expect("load remaining stage1 outputs");
         let mut expected_remaining = vec![fresh_used.to_string(), stale_selected.to_string()];
@@ -4245,7 +4245,7 @@ VALUES (?, ?, ?, ?, ?)
 
         let after_jobs_count =
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs WHERE kind = 'memory_stage1'")
-                .fetch_one(runtime.pool.as_ref())
+                .fetch_one(runtime.state_db.pool())
                 .await
                 .expect("count stage1 jobs after prune");
         assert_eq!(after_jobs_count, before_jobs_count);
@@ -4323,7 +4323,7 @@ VALUES (?, ?, ?, ?, ?)
         assert_eq!(pruned, 2);
 
         let remaining_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM stage1_outputs")
-            .fetch_one(runtime.pool.as_ref())
+            .fetch_one(runtime.state_db.pool())
             .await
             .expect("count remaining stage1 outputs");
         assert_eq!(remaining_count, 1);
@@ -4539,7 +4539,7 @@ VALUES (?, ?, ?, ?, ?)
             .bind(Utc::now().timestamp() - 1)
             .bind("memory_consolidate_global")
             .bind("global")
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("expire global consolidation lease");
 
@@ -4675,7 +4675,7 @@ VALUES (?, ?, ?, ?, ?)
         sqlx::query("UPDATE jobs SET ownership_token = NULL WHERE kind = ? AND job_key = ?")
             .bind("memory_consolidate_global")
             .bind("global")
-            .execute(runtime.pool.as_ref())
+            .execute(runtime.state_db.pool())
             .await
             .expect("clear ownership token");
 

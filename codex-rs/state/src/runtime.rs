@@ -61,11 +61,10 @@ use tracing::warn;
 
 mod agent_jobs;
 mod backfill;
+mod db;
 mod goals;
 mod logs;
 mod memories;
-#[cfg(test)]
-mod metrics_tests;
 mod remote_control;
 #[cfg(test)]
 mod test_support;
@@ -76,6 +75,9 @@ pub use goals::ThreadGoalAccountingOutcome;
 pub use goals::ThreadGoalUpdate;
 pub use remote_control::RemoteControlEnrollmentRecord;
 pub use threads::ThreadFilterOptions;
+
+use db::DbOperation;
+use db::InstrumentedDb;
 
 // "Partition" is the retained-log-content bucket we cap at 10 MiB:
 // - one bucket per non-null thread_id
@@ -90,10 +92,9 @@ const LOG_PARTITION_ROW_LIMIT: i64 = 1_000;
 pub struct StateRuntime {
     codex_home: PathBuf,
     default_provider: String,
-    pool: Arc<sqlx::SqlitePool>,
-    logs_pool: Arc<sqlx::SqlitePool>,
+    state_db: InstrumentedDb,
+    logs_db: InstrumentedDb,
     thread_updated_at_millis: Arc<AtomicI64>,
-    metrics: Option<DbMetricsRecorderHandle>,
 }
 
 impl StateRuntime {
@@ -186,12 +187,11 @@ impl StateRuntime {
         let thread_updated_at_millis = thread_updated_at_millis_result?;
         let thread_updated_at_millis = thread_updated_at_millis.unwrap_or(0);
         let runtime = Arc::new(Self {
-            pool,
-            logs_pool,
+            state_db: InstrumentedDb::new(pool, DbKind::State, metrics.clone()),
+            logs_db: InstrumentedDb::new(logs_pool, DbKind::Logs, metrics),
             codex_home,
             default_provider,
             thread_updated_at_millis: Arc::new(AtomicI64::new(thread_updated_at_millis)),
-            metrics,
         });
         if let Err(err) = runtime.run_logs_startup_maintenance().await {
             warn!(
@@ -208,42 +208,11 @@ impl StateRuntime {
     }
 
     pub(crate) fn metrics(&self) -> Option<&dyn DbMetricsRecorder> {
-        self.metrics.as_deref()
+        self.state_db.metrics()
     }
 
     pub(crate) fn metrics_handle(&self) -> Option<DbMetricsRecorderHandle> {
-        self.metrics.clone()
-    }
-
-    pub(crate) async fn record_db_operation<T, F>(
-        &self,
-        db: DbKind,
-        operation: &'static str,
-        access: DbAccess,
-        future: F,
-    ) -> anyhow::Result<T>
-    where
-        F: std::future::Future<Output = anyhow::Result<T>>,
-    {
-        crate::telemetry::record_operation(self.metrics(), db, operation, access, future).await
-    }
-
-    pub(crate) fn record_db_operation_result<T>(
-        &self,
-        db: DbKind,
-        operation: &'static str,
-        access: DbAccess,
-        started: Instant,
-        result: &anyhow::Result<T>,
-    ) {
-        crate::telemetry::record_operation_result(
-            self.metrics(),
-            db,
-            operation,
-            access,
-            started.elapsed(),
-            result,
-        );
+        self.state_db.metrics_handle()
     }
 }
 

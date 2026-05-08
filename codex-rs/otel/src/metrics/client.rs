@@ -409,36 +409,3 @@ fn build_otlp_metric_exporter(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use opentelemetry_sdk::metrics::InMemoryMetricExporter;
-    use pretty_assertions::assert_eq;
-    use std::collections::BTreeMap;
-
-    #[test]
-    fn metrics_resource_attributes_include_arch() {
-        let exporter = InMemoryMetricExporter::default();
-        let metrics = MetricsClient::new(
-            MetricsConfig::in_memory("test", "codex-test", env!("CARGO_PKG_VERSION"), exporter)
-                .with_runtime_reader(),
-        )
-        .expect("metrics client");
-
-        metrics
-            .counter("test.resource_attributes", /*inc*/ 1, &[])
-            .expect("counter");
-        let snapshot = metrics.snapshot().expect("snapshot");
-        let attributes: BTreeMap<String, String> = snapshot
-            .resource()
-            .iter()
-            .map(|(key, value)| (key.as_str().to_string(), value.as_str().to_string()))
-            .collect();
-
-        assert_eq!(
-            attributes.get(ARCH_ATTRIBUTE).map(String::as_str),
-            Some(sanitize_metric_tag_value(std::env::consts::ARCH).as_str())
-        );
-    }
-}

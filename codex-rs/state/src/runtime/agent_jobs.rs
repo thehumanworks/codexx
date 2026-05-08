@@ -19,7 +19,7 @@ impl StateRuntime {
             .map(i64::try_from)
             .transpose()
             .map_err(|_| anyhow::anyhow!("invalid max_runtime_seconds value"))?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.state_db.pool().begin().await?;
         sqlx::query(
             r#"
 INSERT INTO agent_jobs (
@@ -122,7 +122,7 @@ WHERE id = ?
             "#,
         )
         .bind(job_id)
-        .fetch_optional(self.pool.as_ref())
+        .fetch_optional(self.state_db.pool())
         .await?;
         row.map(AgentJob::try_from).transpose()
     }
@@ -166,7 +166,7 @@ WHERE job_id =
         }
         let rows: Vec<AgentJobItemRow> = builder
             .build_query_as::<AgentJobItemRow>()
-            .fetch_all(self.pool.as_ref())
+            .fetch_all(self.state_db.pool())
             .await?;
         rows.into_iter().map(AgentJobItem::try_from).collect()
     }
@@ -199,7 +199,7 @@ WHERE job_id = ? AND item_id = ?
         )
         .bind(job_id)
         .bind(item_id)
-        .fetch_optional(self.pool.as_ref())
+        .fetch_optional(self.state_db.pool())
         .await?;
         row.map(AgentJobItem::try_from).transpose()
     }
@@ -222,7 +222,7 @@ WHERE id = ?
         .bind(now)
         .bind(now)
         .bind(job_id)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(())
     }
@@ -240,7 +240,7 @@ WHERE id = ?
         .bind(now)
         .bind(now)
         .bind(job_id)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(())
     }
@@ -263,7 +263,7 @@ WHERE id = ?
         .bind(now)
         .bind(error_message)
         .bind(job_id)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(())
     }
@@ -288,7 +288,7 @@ WHERE id = ? AND status IN (?, ?)
         .bind(job_id)
         .bind(AgentJobStatus::Pending.as_str())
         .bind(AgentJobStatus::Running.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -302,7 +302,7 @@ WHERE id = ?
             "#,
         )
         .bind(job_id)
-        .fetch_optional(self.pool.as_ref())
+        .fetch_optional(self.state_db.pool())
         .await?;
         let Some(row) = row else {
             return Ok(false);
@@ -334,7 +334,7 @@ WHERE job_id = ? AND item_id = ? AND status = ?
         .bind(job_id)
         .bind(item_id)
         .bind(AgentJobItemStatus::Pending.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -364,7 +364,7 @@ WHERE job_id = ? AND item_id = ? AND status = ?
         .bind(job_id)
         .bind(item_id)
         .bind(AgentJobItemStatus::Pending.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -393,7 +393,7 @@ WHERE job_id = ? AND item_id = ? AND status = ?
         .bind(job_id)
         .bind(item_id)
         .bind(AgentJobItemStatus::Running.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -417,7 +417,7 @@ WHERE job_id = ? AND item_id = ? AND status = ?
         .bind(job_id)
         .bind(item_id)
         .bind(AgentJobItemStatus::Running.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -458,7 +458,7 @@ WHERE
         .bind(item_id)
         .bind(AgentJobItemStatus::Running.as_str())
         .bind(reporting_thread_id)
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -490,7 +490,7 @@ WHERE
         .bind(job_id)
         .bind(item_id)
         .bind(AgentJobItemStatus::Running.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -524,7 +524,7 @@ WHERE
         .bind(job_id)
         .bind(item_id)
         .bind(AgentJobItemStatus::Running.as_str())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected() > 0)
     }
@@ -547,7 +547,7 @@ WHERE job_id = ?
         .bind(AgentJobItemStatus::Completed.as_str())
         .bind(AgentJobItemStatus::Failed.as_str())
         .bind(job_id)
-        .fetch_one(self.pool.as_ref())
+        .fetch_one(self.state_db.pool())
         .await?;
 
         let total_items: i64 = row.try_get("total_items")?;
