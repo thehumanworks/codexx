@@ -44,6 +44,15 @@ if (Test-Path "D:\") {
 
         Invoke-BestEffort { fsutil devdrv trust $Drive } "Trusting Dev Drive $Drive"
         Invoke-BestEffort { fsutil devdrv enable /disallowAv } "Disabling AV filter attachment for Dev Drives"
+        try {
+            Dismount-VHD -Path $VhdPath
+            Mount-VHD -Path $VhdPath | Out-Null
+        } catch {
+            Write-Warning "Remounting Dev Drive $Drive failed: $($_.Exception.Message)"
+            if (-not (Test-Path "$Drive\")) {
+                throw
+            }
+        }
         Invoke-BestEffort { fsutil devdrv query $Drive } "Querying Dev Drive $Drive"
 
         Write-Output "Using Dev Drive at $Drive"
@@ -55,8 +64,12 @@ if (Test-Path "D:\") {
 $Tmp = "$Drive\codex-tmp"
 New-Item -Path $Tmp -ItemType Directory -Force | Out-Null
 
+$CargoTargetDir = "$Drive\codex-cargo-target"
+New-Item -Path $CargoTargetDir -ItemType Directory -Force | Out-Null
+
 @(
     "DEV_DRIVE=$Drive"
+    "CARGO_TARGET_DIR=$CargoTargetDir"
     "TMP=$Tmp"
     "TEMP=$Tmp"
 ) | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append

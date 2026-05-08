@@ -64,7 +64,7 @@ runs:
         # because some Windows test launchers mis-handle MANIFEST paths there.
         $driveRoot = if ($env:DEV_DRIVE) { $env:DEV_DRIVE } elseif (Test-Path 'D:\') { 'D:' } else { 'C:' }
         $bazelOutputUserRoot = Join-Path $driveRoot 'b'
-        $repoContentsCache = Join-Path $env:RUNNER_TEMP "bazel-repo-contents-cache-$env:GITHUB_RUN_ID-$env:GITHUB_JOB"
+        $repoContentsCache = Join-Path $env:TEMP "bazel-repo-contents-cache-$env:GITHUB_RUN_ID-$env:GITHUB_JOB"
         "BAZEL_OUTPUT_USER_ROOT=$bazelOutputUserRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
         "BAZEL_REPO_CONTENTS_CACHE=$repoContentsCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
