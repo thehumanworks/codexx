@@ -215,6 +215,10 @@ impl App {
                 self.begin_switch_to_worktree_target(tui, target);
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::CurrentWorktreeSelected { target } => {
+                self.current_worktree_selected(target);
+                tui.frame_requester().schedule_frame();
+            }
             AppEvent::SwitchToWorktreeAfterLoading { target } => {
                 self.switch_to_worktree_target_after_loading(tui, app_server, target)
                     .await;

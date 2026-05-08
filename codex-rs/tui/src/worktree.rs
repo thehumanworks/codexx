@@ -14,6 +14,7 @@ use ratatui::widgets::WidgetRef;
 use crate::app_event::AppEvent;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ColumnWidthMode;
+use crate::bottom_pane::SelectionAction;
 use crate::bottom_pane::SelectionItem;
 use crate::bottom_pane::SelectionRowDisplay;
 use crate::bottom_pane::SelectionViewParams;
@@ -361,7 +362,8 @@ pub(crate) fn error_with_summary_params(summary: String, error: String) -> Selec
 
 pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> SelectionViewParams {
     let mut items = vec![new_worktree_item()];
-    items.extend(entries.into_iter().map(|entry| {
+    let mut initial_selected_idx = None;
+    items.extend(entries.into_iter().enumerate().map(|(idx, entry)| {
         let target = entry.branch.clone().unwrap_or_else(|| entry.name.clone());
         let source = source_label(entry.source);
         let status = if entry.dirty.is_dirty() {
@@ -369,7 +371,16 @@ pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> S
         } else {
             "clean"
         };
+        let is_current = is_current_worktree(current_cwd, &entry);
+        if is_current {
+            initial_selected_idx = Some(idx + 1);
+        }
         let description = format!("{status} · {source} · {}", entry.workspace_cwd.display());
+        let selected_description = if is_current {
+            "Already in this worktree".to_string()
+        } else {
+            format!("Fork this chat into {}", entry.workspace_cwd.display())
+        };
         let search_value = Some(format!(
             "{} {} {} {}",
             target,
@@ -377,21 +388,28 @@ pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> S
             source,
             entry.workspace_cwd.display()
         ));
-        SelectionItem {
-            name: target.clone(),
-            description: Some(description),
-            selected_description: Some(format!(
-                "Fork this chat into {}",
-                entry.workspace_cwd.display()
-            )),
-            is_current: paths_match(current_cwd, &entry.workspace_cwd),
-            actions: vec![Box::new(move |tx| {
-                tx.send(AppEvent::SwitchToWorktree {
-                    target: target.clone(),
+        let target_for_action = target.clone();
+        let actions: Vec<SelectionAction> = if is_current {
+            vec![Box::new(move |tx| {
+                tx.send(AppEvent::CurrentWorktreeSelected {
+                    target: target_for_action.clone(),
                 });
-            })],
+            })]
+        } else {
+            vec![Box::new(move |tx| {
+                tx.send(AppEvent::SwitchToWorktree {
+                    target: target_for_action.clone(),
+                });
+            })]
+        };
+        SelectionItem {
+            name: target,
+            description: Some(description),
+            selected_description: Some(selected_description),
+            actions,
             dismiss_on_select: true,
             search_value,
+            is_current,
             ..Default::default()
         }
     }));
@@ -411,6 +429,7 @@ pub(crate) fn picker_params(entries: Vec<WorktreeInfo>, current_cwd: &Path) -> S
         search_placeholder: Some("Search worktrees".to_string()),
         col_width_mode: ColumnWidthMode::AutoAllRows,
         row_display: SelectionRowDisplay::SingleLine,
+        initial_selected_idx,
         ..Default::default()
     }
 }
@@ -560,6 +579,20 @@ fn paths_match(a: &Path, b: &Path) -> bool {
     a == b
 }
 
+fn is_current_worktree(current_cwd: &Path, entry: &WorktreeInfo) -> bool {
+    if paths_match(current_cwd, &entry.workspace_cwd) {
+        return true;
+    }
+    let current_cwd = current_cwd
+        .canonicalize()
+        .unwrap_or_else(|_| current_cwd.to_path_buf());
+    let worktree_root = entry
+        .worktree_git_root
+        .canonicalize()
+        .unwrap_or_else(|_| entry.worktree_git_root.clone());
+    current_cwd.starts_with(worktree_root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,6 +655,44 @@ mod tests {
             Path::new("/repo/codex.fcoury-demo"),
         );
         insta::assert_snapshot!("worktree_picker", render_selection(params, /*width*/ 86));
+    }
+
+    #[test]
+    fn worktree_picker_preselects_current_worktree_from_subdirectory() {
+        let params = picker_params(
+            vec![
+                sample_info("fcoury/demo", WorktreeSource::Cli, /*dirty*/ false),
+                sample_info(
+                    "fcoury/worktrees",
+                    WorktreeSource::Git,
+                    /*dirty*/ false,
+                ),
+            ],
+            Path::new("/repo/codex.fcoury-worktrees/codex-rs"),
+        );
+
+        assert_eq!(params.initial_selected_idx, Some(2));
+    }
+
+    #[test]
+    fn current_worktree_item_dispatches_current_selection_event() {
+        let (tx_raw, mut rx) = unbounded_channel::<AppEvent>();
+        let tx = AppEventSender::new(tx_raw);
+        let params = picker_params(
+            vec![sample_info(
+                "fcoury/worktrees",
+                WorktreeSource::Git,
+                /*dirty*/ false,
+            )],
+            Path::new("/repo/codex.fcoury-worktrees/codex-rs"),
+        );
+
+        (params.items[1].actions[0])(&tx);
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(AppEvent::CurrentWorktreeSelected { target }) if target == "fcoury/worktrees"
+        ));
     }
 
     #[test]

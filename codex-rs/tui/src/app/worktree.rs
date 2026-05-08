@@ -183,6 +183,11 @@ impl App {
         self.defer_switch_to_worktree_target(target);
     }
 
+    pub(super) fn current_worktree_selected(&mut self, target: String) {
+        self.chat_widget
+            .add_info_message(format!("Already in worktree {target}."), /*hint*/ None);
+    }
+
     pub(super) async fn switch_to_worktree_target_after_loading(
         &mut self,
         tui: &mut tui::Tui,

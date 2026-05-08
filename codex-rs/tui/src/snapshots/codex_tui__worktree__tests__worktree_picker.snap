@@ -7,8 +7,8 @@ expression: "render_selection(params, 86)"
   Create a worktree or fork this chat into an existing workspace.
 
   Search worktrees
-› New worktree...        Type the branch name for the new worktree.
-  fcoury/demo (current)  clean · cli · /repo/codex.fcoury-demo
+  New worktree...        Create a sibling worktree and start this chat there.
+› fcoury/demo (current)  Already in this worktree
   codex                  clean · app · /repo/codex.codex
   main                   dirty · git · /repo/codex.main
 

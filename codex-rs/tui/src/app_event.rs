@@ -224,6 +224,11 @@ pub(crate) enum AppEvent {
         target: String,
     },
 
+    /// A picker row for the current worktree was selected.
+    CurrentWorktreeSelected {
+        target: String,
+    },
+
     /// Continue switching into an existing worktree after the loading view has rendered.
     SwitchToWorktreeAfterLoading {
         target: String,
