@@ -1986,23 +1986,7 @@ async fn turn_start_updates_sandbox_and_cwd_between_turns_v2() -> Result<()> {
 
 #[tokio::test]
 async fn turn_start_resolves_sticky_thread_environments_and_turn_overrides() -> Result<()> {
-    let tmp = TempDir::new()?;
-    let codex_home = tmp.path().join("codex_home");
-    std::fs::create_dir(&codex_home)?;
-    let workspace = tmp.path().join("workspace");
-    std::fs::create_dir(&workspace)?;
-
-    let server = create_mock_responses_server_repeating_assistant("done").await;
-    create_config_toml(&codex_home, &server.uri(), "never", &BTreeMap::default())?;
-
-    let mut mcp = McpProcess::new_with_env(
-        &codex_home,
-        &[("CODEX_EXEC_SERVER_URL", Some("http://127.0.0.1:1"))],
-    )
-    .await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    for case in [
+    run_environment_selection_cases([
         EnvironmentSelectionCase {
             name: "sticky_unset_turn_unset",
             sticky: None,
@@ -2018,6 +2002,13 @@ async fn turn_start_resolves_sticky_thread_environments_and_turn_overrides() -> 
             sticky: Some(&["local"]),
             turn: None,
         },
+    ])
+    .await
+}
+
+#[tokio::test]
+async fn turn_start_resolves_multi_environment_thread_selection() -> Result<()> {
+    run_environment_selection_cases([
         EnvironmentSelectionCase {
             name: "sticky_remote_turn_unset",
             sticky: Some(&["remote"]),
@@ -2033,6 +2024,13 @@ async fn turn_start_resolves_sticky_thread_environments_and_turn_overrides() -> 
             sticky: Some(&["local"]),
             turn: Some(&[]),
         },
+    ])
+    .await
+}
+
+#[tokio::test]
+async fn turn_start_resolves_turn_environment_overrides() -> Result<()> {
+    run_environment_selection_cases([
         EnvironmentSelectionCase {
             name: "sticky_empty_turn_local",
             sticky: Some(&[]),
@@ -2053,7 +2051,30 @@ async fn turn_start_resolves_sticky_thread_environments_and_turn_overrides() -> 
             sticky: None,
             turn: Some(&["local", "remote"]),
         },
-    ] {
+    ])
+    .await
+}
+
+async fn run_environment_selection_cases(
+    cases: impl IntoIterator<Item = EnvironmentSelectionCase>,
+) -> Result<()> {
+    let tmp = TempDir::new()?;
+    let codex_home = tmp.path().join("codex_home");
+    std::fs::create_dir(&codex_home)?;
+    let workspace = tmp.path().join("workspace");
+    std::fs::create_dir(&workspace)?;
+
+    let server = create_mock_responses_server_repeating_assistant("done").await;
+    create_config_toml(&codex_home, &server.uri(), "never", &BTreeMap::default())?;
+
+    let mut mcp = McpProcess::new_with_env(
+        &codex_home,
+        &[("CODEX_EXEC_SERVER_URL", Some("http://127.0.0.1:1"))],
+    )
+    .await?;
+    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
+
+    for case in cases {
         run_environment_selection_case(&mut mcp, &workspace, case).await?;
     }
 
