@@ -1,18 +1,18 @@
 # codex-exec-server
 
-`codex-exec-server` is the library backing `codex exec-server`, a small
-JSON-RPC server for spawning and controlling subprocesses through
-`codex-utils-pty`.
+`codex-exec-server` is the library backing `codex exec-server` and the
+standalone `codex-exec-server` binary, a small JSON-RPC server for spawning and
+controlling subprocesses through `codex-utils-pty`.
 
 It provides:
 
-- a CLI entrypoint: `codex exec-server`
+- CLI entrypoints: `codex exec-server` and `codex-exec-server`
 - a Rust client: `ExecServerClient`
 - a small protocol module with shared request/response types
 
 This crate owns the transport, protocol, and filesystem/process handlers. The
-top-level `codex` binary owns hidden helper dispatch for sandboxed
-filesystem operations and `codex-linux-sandbox`.
+CLI entrypoints run through `codex-arg0`, which owns hidden helper dispatch for
+sandboxed filesystem operations and `codex-linux-sandbox`.
 
 ## Transport
 
@@ -316,9 +316,10 @@ The crate exports:
 - `RemoteExecutorConfig` and `run_remote_executor()` for embedding remote
   registration mode
 
-Callers must pass `ExecServerRuntimePaths` to `run_main()`. The top-level
-`codex exec-server` command builds these paths from the `codex` arg0 dispatch
-state.
+Callers must pass `ExecServerRuntimePaths` to `run_main()`. The CLI entrypoints
+build these paths from the `codex-arg0` dispatch state so sandboxed filesystem
+helpers and `codex-linux-sandbox` re-entry work the same way from both
+`codex exec-server` and `codex-exec-server`.
 
 ## Example session
 

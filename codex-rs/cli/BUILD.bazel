@@ -9,3 +9,8 @@ codex_rust_crate(
 multiplatform_binaries(
     name = "codex",
 )
+
+multiplatform_binaries(
+    name = "codex-exec-server",
+    release_binaries_name = "codex-exec-server-release_binaries",
+)

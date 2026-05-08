@@ -17,15 +17,16 @@ is_sourced() {
 
 setup_remote_env() {
   local container_name
-  local codex_binary_path
+  local exec_server_binary_path
   local container_ip
-  local remote_codex_path
+  local remote_bwrap_path
+  local remote_exec_server_path
   local remote_exec_server_pid
   local remote_exec_server_port
   local remote_exec_server_stdout_path
 
   container_name="${CODEX_TEST_REMOTE_ENV_CONTAINER_NAME:-codex-remote-test-env-local-$(date +%s)-${RANDOM}}"
-  codex_binary_path="${REPO_ROOT}/codex-rs/target/debug/codex"
+  exec_server_binary_path="${REPO_ROOT}/codex-rs/target/debug/codex-exec-server"
 
   if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required (Colima or Docker Desktop)" >&2
@@ -44,11 +45,11 @@ setup_remote_env() {
 
   (
     cd "${REPO_ROOT}/codex-rs"
-    cargo build -p codex-cli --bin codex
+    cargo build -p codex-cli --bin codex-exec-server
   )
 
-  if [[ ! -f "${codex_binary_path}" ]]; then
-    echo "codex binary not found at ${codex_binary_path}" >&2
+  if [[ ! -f "${exec_server_binary_path}" ]]; then
+    echo "codex-exec-server binary not found at ${exec_server_binary_path}" >&2
     return 1
   fi
 
@@ -59,21 +60,24 @@ setup_remote_env() {
     --privileged \
     --security-opt seccomp=unconfined \
     ubuntu:24.04 sleep infinity >/dev/null
-  if ! docker exec "${container_name}" sh -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y python3 zsh"; then
+  if ! docker exec "${container_name}" sh -lc "apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y bubblewrap python3 zsh"; then
     docker rm -f "${container_name}" >/dev/null 2>&1 || true
     return 1
   fi
 
   if [[ -z "${CODEX_TEST_REMOTE_EXEC_SERVER_URL:-}" ]]; then
-    remote_codex_path="/tmp/codex-remote-env/codex"
+    remote_bwrap_path="/tmp/codex-remote-env/codex-resources/bwrap"
+    remote_exec_server_path="/tmp/codex-remote-env/codex-exec-server"
     remote_exec_server_port="31987"
     remote_exec_server_stdout_path="/tmp/codex-remote-env/exec-server.stdout"
-    docker exec "${container_name}" sh -lc "mkdir -p /tmp/codex-remote-env"
-    docker cp "${codex_binary_path}" "${container_name}:${remote_codex_path}"
-    docker exec "${container_name}" chmod +x "${remote_codex_path}"
+    docker exec "${container_name}" sh -lc "mkdir -p /tmp/codex-remote-env/codex-resources"
+    docker cp "${exec_server_binary_path}" "${container_name}:${remote_exec_server_path}"
+    docker exec "${container_name}" chmod +x "${remote_exec_server_path}"
+    # Match the release resource layout the Linux sandbox probes next to the executable.
+    docker exec "${container_name}" sh -lc "cp /usr/bin/bwrap ${remote_bwrap_path} && chmod +x ${remote_bwrap_path}"
     remote_exec_server_pid="$(
       docker exec "${container_name}" sh -lc \
-        "rm -f ${remote_exec_server_stdout_path}; nohup ${remote_codex_path} exec-server --listen ws://0.0.0.0:${remote_exec_server_port} > ${remote_exec_server_stdout_path} 2>&1 & echo \$!"
+        "rm -f ${remote_exec_server_stdout_path}; PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin nohup ${remote_exec_server_path} --listen ws://0.0.0.0:${remote_exec_server_port} > ${remote_exec_server_stdout_path} 2>&1 & echo \$!"
     )"
     wait_for_remote_exec_server_port "${container_name}" "${remote_exec_server_port}" "${remote_exec_server_stdout_path}"
     container_ip="$(

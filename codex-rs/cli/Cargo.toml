@@ -9,6 +9,10 @@ build = "build.rs"
 name = "codex"
 path = "src/main.rs"
 
+[[bin]]
+name = "codex-exec-server"
+path = "src/bin/codex-exec-server.rs"
+
 [lib]
 name = "codex_cli"
 path = "src/lib.rs"

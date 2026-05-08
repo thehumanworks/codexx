@@ -1,4 +1,5 @@
 pub(crate) mod debug_sandbox;
+mod exec_server_command;
 mod exit_status;
 pub(crate) mod login;
 
@@ -10,6 +11,8 @@ use std::path::PathBuf;
 pub use debug_sandbox::run_command_under_landlock;
 pub use debug_sandbox::run_command_under_seatbelt;
 pub use debug_sandbox::run_command_under_windows;
+pub use exec_server_command::ExecServerCommand;
+pub use exec_server_command::run_exec_server_command;
 pub use login::read_access_token_from_stdin;
 pub use login::read_api_key_from_stdin;
 pub use login::run_login_status;
