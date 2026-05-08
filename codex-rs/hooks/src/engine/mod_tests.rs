@@ -111,7 +111,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
@@ -127,7 +127,7 @@ with Path(r"{log_path}").open("a", encoding="utf-8") as handle:
     let listed = crate::list_hooks(crate::HooksConfig {
         legacy_notify_argv: None,
         feature_enabled: true,
-        trust_hooks: false,
+        bypass_hook_trust: false,
         config_layer_stack: Some(config_layer_stack.clone()),
         plugin_hook_sources: Vec::new(),
         plugin_hook_load_warnings: Vec::new(),
@@ -210,7 +210,7 @@ fn unknown_requirement_source_hooks_stay_managed() {
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
@@ -226,7 +226,7 @@ fn unknown_requirement_source_hooks_stay_managed() {
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
     );
     assert_eq!(discovered.hook_entries.len(), 1);
     assert_eq!(discovered.hook_entries[0].source, HookSource::Unknown);
@@ -288,7 +288,7 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
@@ -304,7 +304,7 @@ fn user_disablement_filters_non_managed_hooks_but_not_managed_hooks() {
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
     );
     assert_eq!(discovered.hook_entries.len(), 2);
     assert_eq!(discovered.hook_entries[0].key, managed_disabled_key);
@@ -350,7 +350,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
@@ -369,7 +369,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
     );
     assert_eq!(discovered.hook_entries.len(), 1);
     assert_eq!(discovered.hook_entries[0].key, managed_key);
@@ -438,7 +438,7 @@ fn trusted_plugin_hook_stack(
         /*config_layer_stack*/ None,
         plugin_hook_sources.to_vec(),
         Vec::new(),
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
     );
     let state = discovered
         .hook_entries
@@ -507,7 +507,7 @@ fn requirements_managed_hooks_warn_when_managed_dir_is_missing() {
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
@@ -617,7 +617,7 @@ fn discovers_hooks_from_json_and_toml_in_the_same_layer() {
 
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         Vec::new(),
         Vec::new(),
@@ -708,7 +708,7 @@ print(json.dumps({
     );
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         plugin_hook_sources.clone(),
         Vec::new(),
@@ -736,7 +736,7 @@ print(json.dumps({
     let listed = crate::list_hooks(crate::HooksConfig {
         legacy_notify_argv: None,
         feature_enabled: true,
-        trust_hooks: false,
+        bypass_hook_trust: false,
         config_layer_stack: None,
         plugin_hook_sources,
         plugin_hook_load_warnings: Vec::new(),
@@ -818,7 +818,7 @@ fn plugin_hook_sources_expand_plugin_placeholders() {
     );
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         Some(&config_layer_stack),
         plugin_hook_sources,
         Vec::new(),
@@ -862,7 +862,7 @@ fn plugin_hook_sources_expand_plugin_placeholders() {
 fn plugin_hook_load_warnings_are_startup_warnings() {
     let engine = ClaudeHooksEngine::new(
         /*enabled*/ true,
-        /*trust_hooks*/ false,
+        /*bypass_hook_trust*/ false,
         /*config_layer_stack*/ None,
         Vec::new(),
         vec!["failed plugin hook".to_string()],

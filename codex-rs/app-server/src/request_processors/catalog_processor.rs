@@ -566,7 +566,7 @@ impl CatalogRequestProcessor {
             };
             let hooks = codex_hooks::list_hooks(codex_hooks::HooksConfig {
                 feature_enabled: config.features.enabled(Feature::CodexHooks),
-                trust_hooks: config.trust_hooks,
+                bypass_hook_trust: config.bypass_hook_trust,
                 config_layer_stack: Some(config.config_layer_stack),
                 plugin_hook_sources: plugin_outcome.effective_plugin_hook_sources(),
                 plugin_hook_load_warnings: plugin_outcome.effective_plugin_hook_warnings(),

@@ -41,7 +41,7 @@ struct HookHandlerSource<'a> {
     key_source: String,
     source: HookSource,
     is_managed: bool,
-    trust_hooks: bool,
+    bypass_hook_trust: bool,
     hook_states: &'a HashMap<String, HookStateToml>,
     env: HashMap<String, String>,
     plugin_id: Option<String>,
@@ -51,7 +51,7 @@ pub(crate) fn discover_handlers(
     config_layer_stack: Option<&ConfigLayerStack>,
     plugin_hook_sources: Vec<PluginHookSource>,
     plugin_hook_load_warnings: Vec<String>,
-    trust_hooks: bool,
+    bypass_hook_trust: bool,
 ) -> DiscoveryResult {
     let mut handlers = Vec::new();
     let mut hook_entries = Vec::new();
@@ -100,7 +100,7 @@ pub(crate) fn discover_handlers(
                         key_source: source_path.display().to_string(),
                         source: hook_source,
                         is_managed,
-                        trust_hooks,
+                        bypass_hook_trust,
                         hook_states: &hook_states,
                         env: HashMap::new(),
                         plugin_id: None,
@@ -118,7 +118,7 @@ pub(crate) fn discover_handlers(
         &mut display_order,
         plugin_hook_sources,
         &hook_states,
-        trust_hooks,
+        bypass_hook_trust,
     );
 
     DiscoveryResult {
@@ -154,7 +154,7 @@ fn append_managed_requirement_handlers(
             key_source: source_path.display().to_string(),
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             is_managed: true,
-            trust_hooks: false,
+            bypass_hook_trust: false,
             hook_states,
             env: HashMap::new(),
             plugin_id: None,
@@ -170,7 +170,7 @@ fn append_plugin_hook_sources(
     display_order: &mut i64,
     plugin_hook_sources: Vec<PluginHookSource>,
     hook_states: &HashMap<String, HookStateToml>,
-    trust_hooks: bool,
+    bypass_hook_trust: bool,
 ) {
     for source in plugin_hook_sources {
         let PluginHookSource {
@@ -204,7 +204,7 @@ fn append_plugin_hook_sources(
                 ),
                 source: HookSource::Plugin,
                 is_managed: false,
-                trust_hooks,
+                bypass_hook_trust,
                 hook_states,
                 env,
                 plugin_id: Some(plugin_id),
@@ -451,7 +451,7 @@ fn append_matcher_groups(
                         trust_status,
                     });
                     if enabled
-                        && (source.trust_hooks
+                        && (source.bypass_hook_trust
                             || matches!(
                                 trust_status,
                                 HookTrustStatus::Managed | HookTrustStatus::Trusted
@@ -606,7 +606,7 @@ mod tests {
             key_source: path.display().to_string(),
             source: hook_source(),
             is_managed: true,
-            trust_hooks: false,
+            bypass_hook_trust: false,
             hook_states,
             env: std::collections::HashMap::new(),
             plugin_id: None,
@@ -616,14 +616,14 @@ mod tests {
     fn unmanaged_hook_handler_source<'a>(
         path: &'a AbsolutePathBuf,
         hook_states: &'a std::collections::HashMap<String, HookStateToml>,
-        trust_hooks: bool,
+        bypass_hook_trust: bool,
     ) -> super::HookHandlerSource<'a> {
         super::HookHandlerSource {
             path,
             key_source: path.display().to_string(),
             source: HookSource::User,
             is_managed: false,
-            trust_hooks,
+            bypass_hook_trust,
             hook_states,
             env: std::collections::HashMap::new(),
             plugin_id: None,
@@ -713,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn trust_hooks_allows_enabled_untrusted_handlers() {
+    fn bypass_hook_trust_allows_enabled_untrusted_handlers() {
         let mut handlers = Vec::new();
         let mut hook_entries = Vec::new();
         let mut warnings = Vec::new();
@@ -726,7 +726,11 @@ mod tests {
             &mut hook_entries,
             &mut warnings,
             &mut display_order,
-            &unmanaged_hook_handler_source(&source_path, &hook_states, /*trust_hooks*/ true),
+            &unmanaged_hook_handler_source(
+                &source_path,
+                &hook_states,
+                /*bypass_hook_trust*/ true,
+            ),
             HookEventName::PreToolUse,
             vec![command_group(Some("Bash"))],
         );
@@ -739,7 +743,7 @@ mod tests {
     }
 
     #[test]
-    fn trust_hooks_respects_disabled_handlers() {
+    fn bypass_hook_trust_respects_disabled_handlers() {
         let mut handlers = Vec::new();
         let mut hook_entries = Vec::new();
         let mut warnings = Vec::new();
@@ -758,7 +762,11 @@ mod tests {
             &mut hook_entries,
             &mut warnings,
             &mut display_order,
-            &unmanaged_hook_handler_source(&source_path, &hook_states, /*trust_hooks*/ true),
+            &unmanaged_hook_handler_source(
+                &source_path,
+                &hook_states,
+                /*bypass_hook_trust*/ true,
+            ),
             HookEventName::PreToolUse,
             vec![command_group(Some("Bash"))],
         );
