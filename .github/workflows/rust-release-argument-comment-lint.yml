@@ -7,6 +7,8 @@ on:
         required: true
         type: boolean
 
+permissions: {}
+
 jobs:
   skip:
     if: ${{ !inputs.publish }}
@@ -18,6 +20,8 @@ jobs:
     if: ${{ inputs.publish }}
     name: Build - ${{ matrix.runner }} - ${{ matrix.target }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
+    permissions:
+      contents: read
     timeout-minutes: 60
     env:
       CARGO_DYLINT_VERSION: 5.0.0

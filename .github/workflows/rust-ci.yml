@@ -3,11 +3,15 @@ on:
   pull_request: {}
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   # --- Detect what changed so the fast PR workflow only runs relevant jobs ----
   changed:
     name: Detect changed areas
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     outputs:
       argument_comment_lint: ${{ steps.detect.outputs.argument_comment_lint }}
       argument_comment_lint_package: ${{ steps.detect.outputs.argument_comment_lint_package }}
@@ -56,6 +60,8 @@ jobs:
   general:
     name: Format / etc
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     needs: changed
     if: ${{ needs.changed.outputs.codex == 'true' || needs.changed.outputs.workflows == 'true' }}
     defaults:
@@ -74,6 +80,8 @@ jobs:
   cargo_shear:
     name: cargo shear
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     needs: changed
     if: ${{ needs.changed.outputs.codex == 'true' || needs.changed.outputs.workflows == 'true' }}
     defaults:
@@ -94,6 +102,8 @@ jobs:
   argument_comment_lint_package:
     name: Argument comment lint package
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     needs: changed
     if: ${{ needs.changed.outputs.argument_comment_lint_package == 'true' }}
     env:
@@ -144,6 +154,8 @@ jobs:
   argument_comment_lint_prebuilt:
     name: Argument comment lint - ${{ matrix.name }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
+    permissions:
+      contents: read
     timeout-minutes: ${{ matrix.timeout_minutes }}
     needs: changed
     strategy:

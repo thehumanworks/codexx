@@ -8,15 +8,16 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   prepare:
     # Prevent scheduled runs on forks (no secrets, wastes Actions minutes)
     if: github.repository == 'openai/codex'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # needed to push the update branch
+      pull-requests: write # needed to open the update PR
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:

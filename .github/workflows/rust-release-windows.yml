@@ -144,7 +144,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      id-token: write
+      id-token: write # needed for Windows code signing
     defaults:
       run:
         working-directory: codex-rs

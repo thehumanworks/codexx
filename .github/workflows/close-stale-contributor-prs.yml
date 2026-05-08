@@ -5,16 +5,17 @@ on:
   schedule:
     - cron: "0 6 * * *"
 
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
+permissions: {}
 
 jobs:
   close-stale-contributor-prs:
     # Prevent scheduled runs on forks
     if: github.repository == 'openai/codex'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # needed to comment on stale PRs
+      pull-requests: write # needed to close stale PRs
     steps:
       - name: Close inactive PRs from contributors
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0

@@ -6,6 +6,8 @@ on:
       - "**full-ci**"
   workflow_dispatch:
 
+permissions: {}
+
 # CI builds in debug (dev) for faster signal.
 env:
   # Cargo's libgit2 transport has been flaky on macOS when fetching git
@@ -18,6 +20,8 @@ jobs:
   general:
     name: Format / etc
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: codex-rs
@@ -34,6 +38,8 @@ jobs:
   cargo_shear:
     name: cargo shear
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: codex-rs
@@ -52,6 +58,8 @@ jobs:
   argument_comment_lint_package:
     name: Argument comment lint package
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     env:
       CARGO_DYLINT_VERSION: 5.0.0
       DYLINT_LINK_VERSION: 5.0.0
@@ -93,6 +101,8 @@ jobs:
   argument_comment_lint_prebuilt:
     name: Argument comment lint - ${{ matrix.name }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
+    permissions:
+      contents: read
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -152,6 +162,8 @@ jobs:
   lint_build:
     name: Lint/Build — ${{ matrix.runner }} - ${{ matrix.target }}${{ matrix.profile == 'release' && ' (release)' || '' }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
+    permissions:
+      contents: read
     timeout-minutes: 30
     defaults:
       run:
@@ -525,6 +537,8 @@ jobs:
   tests:
     name: Tests — ${{ matrix.runner }} - ${{ matrix.target }}${{ matrix.remote_env == 'true' && ' (remote)' || '' }}
     runs-on: ${{ matrix.runs_on || matrix.runner }}
+    permissions:
+      contents: read
     # Perhaps we can bring this back down to 30m once we finish the cutover
     # from tui_app_server/ to tui/. Incidentally, windows-arm64 was the main
     # offender for exceeding the timeout.

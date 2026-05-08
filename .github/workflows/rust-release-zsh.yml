@@ -3,6 +3,9 @@ name: rust-release-zsh
 on:
   workflow_call:
 
+permissions:
+  contents: read
+
 env:
   ZSH_COMMIT: 77045ef899e53b9598bebc5a41db93a548a40ca6
   ZSH_PATCH: codex-rs/shell-escalation/patches/zsh-exec-wrapper.patch

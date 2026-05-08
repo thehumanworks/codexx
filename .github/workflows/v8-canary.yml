@@ -29,6 +29,8 @@ on:
       - "third_party/v8/**"
   workflow_dispatch:
 
+permissions: {}
+
 concurrency:
   group: ${{ github.workflow }}::${{ github.event.pull_request.number > 0 && format('pr-{0}', github.event.pull_request.number) || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' }}
@@ -36,6 +38,8 @@ concurrency:
 jobs:
   metadata:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       v8_version: ${{ steps.v8_version.outputs.version }}
 

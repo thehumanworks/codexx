@@ -5,11 +5,7 @@ on:
   pull_request_target:
     types: [opened, closed, synchronize]
 
-permissions:
-  actions: write
-  contents: write
-  pull-requests: write
-  statuses: write
+permissions: {}
 
 jobs:
   cla:
@@ -17,6 +13,11 @@ jobs:
     # and contributors who signed previously do not receive duplicate CLA notifications.
     if: ${{ github.repository_owner == 'openai' }}
     runs-on: ubuntu-latest
+    permissions:
+      actions: write # needed by the CLA action
+      contents: write # needed to update CLA signatures
+      pull-requests: write # needed to lock merged PRs
+      statuses: write # needed to report CLA status
     steps:
       - uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         # Run on close only if the PR was merged. This will lock the PR to preserve
