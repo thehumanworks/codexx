@@ -244,17 +244,13 @@ pub(super) async fn user_input_or_turn_inner(
         )
         .await
     {
-        Ok(_) => {
-            current_context.session_telemetry.user_prompt(&items);
-            Some(items)
-        }
+        Ok(_) => Some(items),
         Err(SteerInputError::NoActiveTurn(items)) => {
             if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
                 current_context
                     .turn_metadata_state
                     .set_responsesapi_client_metadata(responsesapi_client_metadata);
             }
-            current_context.session_telemetry.user_prompt(&items);
             sess.refresh_mcp_servers_if_requested(
                 &current_context,
                 Some(sess.mcp_elicitation_reviewer()),

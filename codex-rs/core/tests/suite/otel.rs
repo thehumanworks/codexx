@@ -24,10 +24,13 @@ use core_test_support::responses::mount_sse_once;
 use core_test_support::responses::sse;
 use core_test_support::responses::sse_response;
 use core_test_support::responses::start_mock_server;
+use core_test_support::streaming_sse::StreamingSseChunk;
+use core_test_support::streaming_sse::start_streaming_sse_server;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use std::sync::Mutex;
+use tokio::sync::oneshot;
 use tracing::Level;
 use tracing_test::traced_test;
 
@@ -130,6 +133,91 @@ async fn responses_api_emits_api_request_event() {
             .find(|line| line.contains("codex.conversation_starts"))
             .map(|_| Ok(()))
             .unwrap_or_else(|| Err("expected codex.conversation_starts event".to_string()))
+    });
+
+    logs_assert(|lines: &[&str]| {
+        lines
+            .iter()
+            .find(|line| line.contains("codex.user_prompt") && line.contains("prompt_length=5"))
+            .map(|_| Ok(()))
+            .unwrap_or_else(|| Err("expected codex.user_prompt event".to_string()))
+    });
+}
+
+#[tokio::test]
+#[traced_test]
+async fn steer_input_emits_user_prompt_event() {
+    let (complete_first_response_tx, complete_first_response_rx) = oneshot::channel();
+    let (server, _completions) = start_streaming_sse_server(vec![
+        vec![
+            StreamingSseChunk {
+                gate: None,
+                body: sse(vec![
+                    ev_response_created("resp-1"),
+                    ev_assistant_message("msg-1", "Working"),
+                ]),
+            },
+            StreamingSseChunk {
+                gate: Some(complete_first_response_rx),
+                body: sse(vec![ev_completed("resp-1")]),
+            },
+        ],
+        vec![StreamingSseChunk {
+            gate: None,
+            body: sse(vec![
+                ev_response_created("resp-2"),
+                ev_assistant_message("msg-2", "Done"),
+                ev_completed("resp-2"),
+            ]),
+        }],
+    ])
+    .await;
+
+    let TestCodex { codex, .. } = test_codex()
+        .build_with_streaming_server(&server)
+        .await
+        .unwrap();
+
+    codex
+        .submit(Op::UserInput {
+            environments: None,
+            items: vec![UserInput::Text {
+                text: "initial prompt".into(),
+                text_elements: Vec::new(),
+            }],
+            final_output_json_schema: None,
+            responsesapi_client_metadata: None,
+        })
+        .await
+        .unwrap();
+
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnStarted(_))).await;
+    server.wait_for_request_count(/*count*/ 1).await;
+
+    codex
+        .steer_input(
+            vec![UserInput::Text {
+                text: "queued telemetry prompt".into(),
+                text_elements: Vec::new(),
+            }],
+            /*expected_turn_id*/ None,
+            /*responsesapi_client_metadata*/ None,
+        )
+        .await
+        .unwrap();
+
+    complete_first_response_tx
+        .send(())
+        .expect("first response gate should still be open");
+    wait_for_event(&codex, |ev| matches!(ev, EventMsg::TurnComplete(_))).await;
+    server.shutdown().await;
+
+    logs_assert(|lines: &[&str]| {
+        lines
+            .iter()
+            .find(|line| line.contains("codex.user_prompt") && line.contains("prompt_length=23"))
+            .map(|_| Ok(()))
+            .unwrap_or_else(|| Err("expected codex.user_prompt for steered input".to_string()))
     });
 }
 

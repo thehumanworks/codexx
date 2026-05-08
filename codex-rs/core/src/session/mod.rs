@@ -2947,6 +2947,7 @@ impl Session {
         input: &[UserInput],
         response_item: ResponseItem,
     ) {
+        turn_context.session_telemetry.user_prompt(input);
         // Persist the user message to history, but emit the turn item from `UserInput` so
         // UI-only `text_elements` are preserved. `ResponseItem::Message` does not carry
         // those spans, and `record_response_item_and_emit_turn_item` would drop them.
@@ -2993,52 +2994,54 @@ impl Session {
             return Err(SteerInputError::EmptyInput);
         }
 
-        let mut active = self.active_turn.lock().await;
-        let Some(active_turn) = active.as_mut() else {
-            return Err(SteerInputError::NoActiveTurn(input));
-        };
+        let active_turn_id = {
+            let mut active = self.active_turn.lock().await;
+            let Some(active_turn) = active.as_mut() else {
+                return Err(SteerInputError::NoActiveTurn(input));
+            };
 
-        let Some((active_turn_id, _)) = active_turn.tasks.first() else {
-            return Err(SteerInputError::NoActiveTurn(input));
-        };
+            let Some((active_turn_id, active_task)) = active_turn.tasks.first() else {
+                return Err(SteerInputError::NoActiveTurn(input));
+            };
+            let active_turn_id = active_turn_id.clone();
 
-        if let Some(expected_turn_id) = expected_turn_id
-            && expected_turn_id != active_turn_id
-        {
-            return Err(SteerInputError::ExpectedTurnMismatch {
-                expected: expected_turn_id.to_string(),
-                actual: active_turn_id.clone(),
-            });
-        }
-
-        match active_turn.tasks.first().map(|(_, task)| task.kind) {
-            Some(crate::state::TaskKind::Regular) => {}
-            Some(crate::state::TaskKind::Review) => {
-                return Err(SteerInputError::ActiveTurnNotSteerable {
-                    turn_kind: NonSteerableTurnKind::Review,
+            if let Some(expected_turn_id) = expected_turn_id
+                && expected_turn_id != active_turn_id
+            {
+                return Err(SteerInputError::ExpectedTurnMismatch {
+                    expected: expected_turn_id.to_string(),
+                    actual: active_turn_id,
                 });
             }
-            Some(crate::state::TaskKind::Compact) => {
-                return Err(SteerInputError::ActiveTurnNotSteerable {
-                    turn_kind: NonSteerableTurnKind::Compact,
-                });
+
+            match active_task.kind {
+                crate::state::TaskKind::Regular => {}
+                crate::state::TaskKind::Review => {
+                    return Err(SteerInputError::ActiveTurnNotSteerable {
+                        turn_kind: NonSteerableTurnKind::Review,
+                    });
+                }
+                crate::state::TaskKind::Compact => {
+                    return Err(SteerInputError::ActiveTurnNotSteerable {
+                        turn_kind: NonSteerableTurnKind::Compact,
+                    });
+                }
             }
-            None => return Err(SteerInputError::NoActiveTurn(input)),
-        }
 
-        if let Some(responsesapi_client_metadata) = responsesapi_client_metadata
-            && let Some((_, active_task)) = active_turn.tasks.first()
-        {
-            active_task
-                .turn_context
-                .turn_metadata_state
-                .set_responsesapi_client_metadata(responsesapi_client_metadata);
-        }
+            if let Some(responsesapi_client_metadata) = responsesapi_client_metadata {
+                active_task
+                    .turn_context
+                    .turn_metadata_state
+                    .set_responsesapi_client_metadata(responsesapi_client_metadata);
+            }
 
-        let mut turn_state = active_turn.turn_state.lock().await;
-        turn_state.push_pending_input(input.into());
-        turn_state.accept_mailbox_delivery_for_current_turn();
-        Ok(active_turn_id.clone())
+            let mut turn_state = active_turn.turn_state.lock().await;
+            turn_state.push_pending_input(input.into());
+            turn_state.accept_mailbox_delivery_for_current_turn();
+            active_turn_id
+        };
+
+        Ok(active_turn_id)
     }
 
     /// Returns the input if there was no task running to inject into.
