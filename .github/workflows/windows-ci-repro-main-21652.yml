@@ -1,0 +1,91 @@
+name: Windows CI Repro Main 21652
+
+on:
+  push:
+    branches:
+      - pakrym/windows-ci-repro-main-21652
+  workflow_dispatch:
+    inputs:
+      test_filter:
+        description: Exact libtest name to run
+        required: false
+        default: suite::realtime_conversation::conversation_webrtc_sideband_connect_failure_closes_with_error
+
+concurrency:
+  group: windows-ci-repro-main-21652-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REPRO_TEST_FILTER: ${{ github.event.inputs.test_filter || 'suite::realtime_conversation::conversation_webrtc_sideband_connect_failure_closes_with_error' }}
+
+jobs:
+  bazel-windows-cross-realtime:
+    name: Bazel Windows cross realtime repro
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Prepare Bazel CI
+        uses: ./.github/actions/prepare-bazel-ci
+        with:
+          target: x86_64-pc-windows-gnullvm
+          cache-scope: bazel-windows-ci-repro-main-21652
+          install-test-prereqs: "true"
+
+      - name: Run exact Bazel Windows cross test
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        shell: bash
+        run: |
+          ./.github/scripts/run-bazel-ci.sh \
+            --print-failed-action-summary \
+            --print-failed-test-logs \
+            --windows-cross-compile \
+            --remote-download-toplevel \
+            -- \
+            test \
+            --test_output=all \
+            --test_sharding_strategy=disabled \
+            --test_timeout=300 \
+            --test_verbose_timeout_warnings \
+            --build_metadata=COMMIT_SHA=${GITHUB_SHA} \
+            --build_metadata=TAG_repro=main_windows_bazel_realtime \
+            --test_arg="${REPRO_TEST_FILTER}" \
+            --test_arg=--exact \
+            --test_arg=--nocapture \
+            -- \
+            //codex-rs/core:core-all-test-windows-cross
+
+  cargo-windows-x64-realtime:
+    name: Cargo Windows x64 realtime repro
+    runs-on:
+      group: codex-runners
+      labels: codex-windows-x64
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Run exact Cargo Windows x64 test
+        shell: bash
+        run: |
+          cargo test \
+            -p codex-core \
+            --test all \
+            --target x86_64-pc-windows-msvc \
+            --profile ci-test \
+            "${REPRO_TEST_FILTER}" \
+            -- \
+            --exact \
+            --nocapture
