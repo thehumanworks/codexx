@@ -1,19 +1,16 @@
-use std::any::Any;
-use std::any::TypeId;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::ApprovalInterceptorContributor;
 use crate::CodexExtension;
 use crate::ContextContributor;
-use crate::OutputContributor;
 use crate::ToolContributor;
+use crate::TurnItemContributor;
 
 /// Mutable registry used while extensions install their typed contributions.
 pub struct ExtensionRegistryBuilder<C> {
     context_contributors: Vec<Arc<dyn ContextContributor<C>>>,
     tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
-    output_contributors: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    turn_item_contributors: Vec<Arc<dyn TurnItemContributor<C>>>,
     approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
 }
 
@@ -23,7 +20,7 @@ impl<C> Default for ExtensionRegistryBuilder<C> {
             approval_interceptor_contributors: Vec::new(),
             context_contributors: Vec::new(),
             tool_contributors: Vec::new(),
-            output_contributors: HashMap::new(),
+            turn_item_contributors: Vec::new(),
         }
     }
 }
@@ -70,21 +67,9 @@ impl<C> ExtensionRegistryBuilder<C> {
         self.tool_contributors.push(contributor);
     }
 
-    /// Registers one ordered output contributor for output type `O`.
-    pub fn output_contributor<O>(&mut self, contributor: Arc<dyn OutputContributor<C, O>>)
-    where
-        C: 'static,
-        O: 'static,
-    {
-        let Some(contributors) = self
-            .output_contributors
-            .entry(TypeId::of::<O>())
-            .or_insert_with(|| Box::new(Vec::<Arc<dyn OutputContributor<C, O>>>::new()))
-            .downcast_mut::<Vec<Arc<dyn OutputContributor<C, O>>>>()
-        else {
-            unreachable!("output contributor bucket type must match its registered output type");
-        };
-        contributors.push(contributor);
+    /// Registers one ordered turn-item contributor.
+    pub fn turn_item_contributor(&mut self, contributor: Arc<dyn TurnItemContributor<C>>) {
+        self.turn_item_contributors.push(contributor);
     }
 
     /// Finishes construction and returns the immutable registry.
@@ -93,7 +78,7 @@ impl<C> ExtensionRegistryBuilder<C> {
             approval_interceptor_contributors: self.approval_interceptor_contributors,
             context_contributors: self.context_contributors,
             tool_contributors: self.tool_contributors,
-            output_contributors: self.output_contributors,
+            turn_item_contributors: self.turn_item_contributors,
         }
     }
 }
@@ -102,7 +87,7 @@ impl<C> ExtensionRegistryBuilder<C> {
 pub struct ExtensionRegistry<C> {
     context_contributors: Vec<Arc<dyn ContextContributor<C>>>,
     tool_contributors: Vec<Arc<dyn ToolContributor<C>>>,
-    output_contributors: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    turn_item_contributors: Vec<Arc<dyn TurnItemContributor<C>>>,
     approval_interceptor_contributors: Vec<Arc<dyn ApprovalInterceptorContributor<C>>>,
 }
 
@@ -124,18 +109,8 @@ impl<C> ExtensionRegistry<C> {
         &self.tool_contributors
     }
 
-    /// Returns the registered ordered output contributors for output type `O`.
-    pub fn output_contributors<O>(&self) -> &[Arc<dyn OutputContributor<C, O>>]
-    where
-        C: 'static,
-        O: 'static,
-    {
-        self.output_contributors
-            .get(&TypeId::of::<O>())
-            .and_then(|contributors| {
-                contributors.downcast_ref::<Vec<Arc<dyn OutputContributor<C, O>>>>()
-            })
-            .map(Vec::as_slice)
-            .unwrap_or_default()
+    /// Returns the registered ordered turn-item contributors.
+    pub fn turn_item_contributors(&self) -> &[Arc<dyn TurnItemContributor<C>>] {
+        &self.turn_item_contributors
     }
 }
