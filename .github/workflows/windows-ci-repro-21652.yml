@@ -89,3 +89,34 @@ jobs:
             -- \
             --exact \
             --nocapture
+
+  cargo-windows-x64-account:
+    name: Cargo Windows x64 account repro
+    runs-on:
+      group: codex-runners
+      labels: codex-windows-x64
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Run account startup timeout repros
+        shell: bash
+        run: |
+          cargo test \
+            -p codex-app-server \
+            --test all \
+            --target x86_64-pc-windows-msvc \
+            --profile ci-test \
+            suite::v2::account::get_account \
+            -- \
+            --nocapture
