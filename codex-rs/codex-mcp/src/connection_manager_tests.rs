@@ -92,6 +92,21 @@ fn model_tool_names(tools: &[ToolInfo]) -> HashSet<ToolName> {
         .collect::<HashSet<_>>()
 }
 
+fn model_tool_name_len(name: &ToolName) -> usize {
+    name.namespace
+        .as_deref()
+        .map_or(0, |namespace| namespace.len() + "__".len())
+        + name.name.len()
+}
+
+fn is_code_mode_compatible_tool_name(name: &ToolName) -> bool {
+    name.namespace
+        .as_deref()
+        .into_iter()
+        .chain(std::iter::once(name.name.as_str()))
+        .flat_map(str::chars)
+        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
 #[test]
 fn declared_openai_file_fields_treat_names_literally() {
     let meta = serde_json::json!({
@@ -336,27 +351,14 @@ fn test_normalize_tools_long_names_same_server() {
 
     let names = model_tool_names(&model_tools);
 
-    assert!(
-        names
-            .iter()
-            .all(|name| name.namespace.as_ref().expect("namespaced").len()
-                + "__".len()
-                + name.name.len()
-                == 64)
-    );
+    assert!(names.iter().all(|name| model_tool_name_len(name) == 64));
     assert!(
         names
             .iter()
             .all(|name| name.namespace.as_deref() == Some("mcp__my_server"))
     );
     assert!(
-        names.iter().all(|name| name
-            .namespace
-            .as_deref()
-            .expect("namespaced")
-            .chars()
-            .chain(name.name.chars())
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')),
+        names.iter().all(is_code_mode_compatible_tool_name),
         "model-visible names must be code-mode compatible: {names:?}"
     );
 }
@@ -376,16 +378,9 @@ fn test_normalize_tools_sanitizes_invalid_characters() {
         ToolName::namespaced("mcp__server_one", "tool_two_three")
     );
     assert_eq!(
-        (
-            tool.callable_namespace.as_str(),
-            tool.callable_name.as_str()
-        ),
-        (
-            model_name.namespace.as_deref().expect("namespaced"),
-            model_name.name.as_str()
-        )
+        ToolName::namespaced(tool.callable_namespace.clone(), tool.callable_name.clone()),
+        model_name
     );
-
     // The callable parts are sanitized for model-visible tool calls, but the raw
     // MCP name is preserved for the actual MCP call.
     assert_eq!(tool.server_name, "server.one");
@@ -394,13 +389,7 @@ fn test_normalize_tools_sanitizes_invalid_characters() {
     assert_eq!(tool.tool.name, "tool.two-three");
 
     assert!(
-        model_name
-            .namespace
-            .as_deref()
-            .expect("namespaced")
-            .chars()
-            .chain(model_name.name.chars())
-            .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+        is_code_mode_compatible_tool_name(&model_name),
         "model-visible name must be code-mode compatible: {model_name:?}"
     );
 }
@@ -449,13 +438,7 @@ fn test_normalize_tools_disambiguates_sanitized_namespace_collisions() {
     assert_eq!(raw_servers, HashSet::from(["basic-server", "basic_server"]));
     let model_names = model_tool_names(&model_tools);
     assert!(
-        model_names.iter().all(|name| name
-            .namespace
-            .as_deref()
-            .expect("namespaced")
-            .chars()
-            .chain(name.name.chars())
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')),
+        model_names.iter().all(is_code_mode_compatible_tool_name),
         "model-visible names must be code-mode compatible: {model_names:?}"
     );
 }

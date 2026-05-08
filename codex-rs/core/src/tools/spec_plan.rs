@@ -289,8 +289,11 @@ pub fn build_tool_registry_builder(
     }
 
     if config.environment_mode.has_environment() {
+        let include_environment_id =
+            matches!(config.environment_mode, ToolEnvironmentMode::Multiple);
         builder.register_handler(Arc::new(ViewImageHandler::new(ViewImageToolOptions {
             can_request_original_image_detail: config.can_request_original_image_detail,
+            include_environment_id,
         })));
     }
 
@@ -340,7 +343,7 @@ pub fn build_tool_registry_builder(
 
     if let Some(mcp_tools) = params.mcp_tools {
         let mut entries = mcp_tools.to_vec();
-        entries.sort_by_key(|tool| tool.name.display());
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
         let mut namespace_entries = BTreeMap::new();
 
         for tool in entries {
