@@ -240,7 +240,7 @@ async fn websocket_v2_test_codex_shell_chain() -> Result<()> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() -> Result<()> {
+async fn websocket_v2_drops_updated_fast_tier_when_fast_mode_disabled() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_websocket_server(vec![vec![
@@ -281,8 +281,8 @@ async fn websocket_v2_first_turn_uses_updated_fast_tier_after_startup_prewarm() 
         .body_json();
 
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(first_turn["service_tier"].as_str(), Some("priority"));
-    assert_eq!(first_turn.get("previous_response_id"), None);
+    assert_eq!(first_turn.get("service_tier"), None);
+    assert_eq!(first_turn["previous_response_id"].as_str(), Some("warm-1"));
     assert!(
         first_turn
             .get("input")
@@ -323,7 +323,7 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
         .body_json();
     assert_eq!(warmup["type"].as_str(), Some("response.create"));
     assert_eq!(warmup["generate"].as_bool(), Some(false));
-    assert_eq!(warmup["service_tier"].as_str(), Some("priority"));
+    assert_eq!(warmup.get("service_tier"), None);
 
     test.submit_turn_with_service_tier("hello", /*service_tier*/ None)
         .await?;
@@ -338,7 +338,7 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
 
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
     assert_eq!(first_turn.get("service_tier"), None);
-    assert_eq!(first_turn.get("previous_response_id"), None);
+    assert_eq!(first_turn["previous_response_id"].as_str(), Some("warm-1"));
     assert!(
         first_turn
             .get("input")
@@ -351,14 +351,14 @@ async fn websocket_v2_first_turn_drops_fast_tier_after_startup_prewarm() -> Resu
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
+async fn websocket_v2_next_turn_uses_updated_flex_service_tier() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_websocket_server(vec![vec![
         vec![ev_response_created("warm-1"), ev_completed("warm-1")],
         vec![
             ev_response_created("resp-1"),
-            ev_assistant_message("msg-1", "fast"),
+            ev_assistant_message("msg-1", "flex"),
             ev_completed("resp-1"),
         ],
         vec![
@@ -385,7 +385,7 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
     assert_eq!(warmup["generate"].as_bool(), Some(false));
     assert_eq!(warmup.get("service_tier"), None);
 
-    test.submit_turn_with_service_tier("first", Some(ServiceTier::Fast))
+    test.submit_turn_with_service_tier("first", Some(ServiceTier::Flex))
         .await?;
     test.submit_turn_with_service_tier("second", /*service_tier*/ None)
         .await?;
@@ -404,7 +404,7 @@ async fn websocket_v2_next_turn_uses_updated_service_tier() -> Result<()> {
         .body_json();
 
     assert_eq!(first_turn["type"].as_str(), Some("response.create"));
-    assert_eq!(first_turn["service_tier"].as_str(), Some("priority"));
+    assert_eq!(first_turn["service_tier"].as_str(), Some("flex"));
     assert_eq!(first_turn.get("previous_response_id"), None);
     assert!(
         first_turn

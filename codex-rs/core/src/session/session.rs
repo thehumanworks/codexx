@@ -1,7 +1,6 @@
 use super::*;
 use crate::goals::GoalRuntimeState;
 use codex_protocol::SessionId;
-use codex_protocol::config_types::ServiceTier;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::protocol::ThreadSource;
@@ -151,7 +150,16 @@ impl SessionConfiguration {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn apply(&self, updates: &SessionSettingsUpdate) -> ConstraintResult<Self> {
+        self.apply_with_fast_mode(updates, /*fast_mode_enabled*/ true)
+    }
+
+    pub(crate) fn apply_with_fast_mode(
+        &self,
+        updates: &SessionSettingsUpdate,
+        fast_mode_enabled: bool,
+    ) -> ConstraintResult<Self> {
         let mut next_configuration = self.clone();
         let current_sandbox_policy = self.sandbox_policy();
         let current_file_system_sandbox_policy = self.file_system_sandbox_policy();
@@ -186,12 +194,8 @@ impl SessionConfiguration {
         if let Some(service_tier) = updates.service_tier.clone() {
             // TODO(aibrahim): Remove once v2 clients no longer send the legacy
             // "fast" service tier value.
-            next_configuration.service_tier = service_tier.map(|service_tier| {
-                ServiceTier::from_request_value(&service_tier)
-                    .map_or(service_tier, |service_tier| {
-                        service_tier.request_value().to_string()
-                    })
-            });
+            next_configuration.service_tier =
+                normalize_configured_service_tier(service_tier, fast_mode_enabled);
         }
         if let Some(personality) = updates.personality {
             next_configuration.personality = Some(personality);

@@ -799,6 +799,8 @@ fn get_service_tier(
     account_plan_type: Option<AccountPlanType>,
     fast_mode_enabled: bool,
 ) -> Option<String> {
+    let configured_service_tier =
+        normalize_configured_service_tier(configured_service_tier, fast_mode_enabled);
     if configured_service_tier.is_some() || fast_default_opt_out || !fast_mode_enabled {
         return configured_service_tier;
     }
@@ -806,6 +808,19 @@ fn get_service_tier(
     account_plan_type
         .is_some_and(is_enterprise_default_service_tier_plan)
         .then_some(ServiceTier::Fast.request_value().to_string())
+}
+
+fn normalize_configured_service_tier(
+    service_tier: Option<String>,
+    fast_mode_enabled: bool,
+) -> Option<String> {
+    service_tier.and_then(
+        |service_tier| match ServiceTier::from_request_value(&service_tier) {
+            Some(ServiceTier::Fast) if !fast_mode_enabled => None,
+            Some(service_tier) => Some(service_tier.request_value().to_string()),
+            None => Some(service_tier),
+        },
+    )
 }
 
 fn is_enterprise_default_service_tier_plan(plan_type: AccountPlanType) -> bool {
@@ -1334,7 +1349,10 @@ impl Session {
     ) -> ConstraintResult<()> {
         let (previous_cwd, permission_profile_changed, next_cwd, codex_home, session_source) = {
             let mut state = self.state.lock().await;
-            let updated = match state.session_configuration.apply(&updates) {
+            let updated = match state
+                .session_configuration
+                .apply_with_fast_mode(&updates, self.features.enabled(Feature::FastMode))
+            {
                 Ok(updated) => updated,
                 Err(err) => {
                     warn!("rejected session settings update: {err}");
@@ -1379,7 +1397,10 @@ impl Session {
         updates: &SessionSettingsUpdate,
     ) -> ConstraintResult<()> {
         let state = self.state.lock().await;
-        state.session_configuration.apply(updates).map(|_| ())
+        state
+            .session_configuration
+            .apply_with_fast_mode(updates, self.features.enabled(Feature::FastMode))
+            .map(|_| ())
     }
 
     pub(crate) async fn set_session_startup_prewarm(

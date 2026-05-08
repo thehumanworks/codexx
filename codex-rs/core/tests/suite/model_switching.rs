@@ -298,7 +298,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
 
     let test = test_codex().build(&server).await?;
 
-    test.submit_turn_with_service_tier("fast turn", Some(ServiceTier::Fast))
+    test.submit_turn_with_service_tier("flex turn", Some(ServiceTier::Flex))
         .await?;
     test.submit_turn_with_service_tier("standard turn", /*service_tier*/ None)
         .await?;
@@ -309,7 +309,7 @@ async fn service_tier_change_is_applied_on_next_http_turn() -> Result<()> {
     let first_body = requests[0].body_json();
     let second_body = requests[1].body_json();
 
-    assert_eq!(first_body["service_tier"].as_str(), Some("priority"));
+    assert_eq!(first_body["service_tier"].as_str(), Some("flex"));
     assert_eq!(second_body.get("service_tier"), None);
 
     Ok(())
@@ -330,6 +330,33 @@ async fn flex_service_tier_is_applied_to_http_turn() -> Result<()> {
     let request = resp_mock.single_request();
     let body = request.body_json();
     assert_eq!(body["service_tier"].as_str(), Some("flex"));
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fast_service_tier_is_not_applied_when_fast_mode_is_disabled() -> Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+    let resp_mock = mount_sse_once(&server, sse_completed("resp-1")).await;
+
+    let test = test_codex()
+        .with_config(|config| {
+            config
+                .features
+                .disable(Feature::FastMode)
+                .expect("test config should allow feature update");
+        })
+        .build(&server)
+        .await?;
+
+    test.submit_turn_with_service_tier("fast turn", Some(ServiceTier::Fast))
+        .await?;
+
+    let request = resp_mock.single_request();
+    let body = request.body_json();
+    assert_eq!(body.get("service_tier"), None);
 
     Ok(())
 }

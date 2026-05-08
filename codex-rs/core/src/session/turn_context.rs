@@ -585,7 +585,11 @@ impl Session {
     ) -> CodexResult<Arc<TurnContext>> {
         let update_result: CodexResult<_> = {
             let mut state = self.state.lock().await;
-            match state.session_configuration.clone().apply(&updates) {
+            match state
+                .session_configuration
+                .clone()
+                .apply_with_fast_mode(&updates, self.features.enabled(Feature::FastMode))
+            {
                 Ok(next) => {
                     let mut effective_environments = updates
                         .environments

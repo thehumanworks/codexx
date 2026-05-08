@@ -3094,6 +3094,37 @@ fn get_service_tier_does_not_default_non_enterprise_or_disabled_fast_mode() {
     );
 }
 
+#[test]
+fn get_service_tier_filters_configured_fast_when_fast_mode_is_disabled() {
+    assert_eq!(
+        get_service_tier(
+            Some(ServiceTier::Fast.request_value().to_string()),
+            /*fast_default_opt_out*/ false,
+            Some(AccountPlanType::Enterprise),
+            /*fast_mode_enabled*/ false,
+        ),
+        None
+    );
+    assert_eq!(
+        get_service_tier(
+            Some("fast".to_string()),
+            /*fast_default_opt_out*/ false,
+            Some(AccountPlanType::Enterprise),
+            /*fast_mode_enabled*/ false,
+        ),
+        None
+    );
+    assert_eq!(
+        get_service_tier(
+            Some(ServiceTier::Flex.request_value().to_string()),
+            /*fast_default_opt_out*/ false,
+            Some(AccountPlanType::Enterprise),
+            /*fast_mode_enabled*/ false,
+        ),
+        Some(ServiceTier::Flex.request_value().to_string())
+    );
+}
+
 #[tokio::test]
 async fn session_settings_null_service_tier_update_clears_service_tier() {
     let session_configuration = make_session_configuration_for_tests().await;
@@ -3123,6 +3154,23 @@ async fn session_settings_legacy_fast_service_tier_update_uses_priority_request_
         updated.service_tier,
         Some(ServiceTier::Fast.request_value().to_string())
     );
+}
+
+#[tokio::test]
+async fn session_settings_fast_service_tier_update_is_ignored_when_fast_mode_is_disabled() {
+    let session_configuration = make_session_configuration_for_tests().await;
+
+    let updated = session_configuration
+        .apply_with_fast_mode(
+            &SessionSettingsUpdate {
+                service_tier: Some(Some(ServiceTier::Fast.request_value().to_string())),
+                ..Default::default()
+            },
+            /*fast_mode_enabled*/ false,
+        )
+        .expect("service tier update should apply");
+
+    assert_eq!(updated.service_tier, None);
 }
 
 pub(crate) async fn make_session_configuration_for_tests() -> SessionConfiguration {
