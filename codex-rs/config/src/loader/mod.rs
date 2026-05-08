@@ -22,7 +22,6 @@ use crate::project_root_markers::project_root_markers_from_config;
 use crate::state::ConfigLayerEntry;
 use crate::state::ConfigLayerStack;
 use crate::state::LoaderOverrides;
-use crate::state::ProjectTrustScope;
 use crate::thread_config::ThreadConfigContext;
 use crate::thread_config::ThreadConfigLoader;
 use codex_app_server_protocol::ConfigLayerSource;
@@ -718,7 +717,8 @@ fn project_layer_entry(
     dot_codex_folder: &AbsolutePathBuf,
     config: TomlValue,
     disabled_reason: Option<String>,
-    project_trust_scope: ProjectTrustScope,
+    project_trust_key: String,
+    project_root: AbsolutePathBuf,
 ) -> ConfigLayerEntry {
     let source = ConfigLayerSource::Project {
         dot_codex_folder: dot_codex_folder.clone(),
@@ -729,7 +729,7 @@ fn project_layer_entry(
     } else {
         ConfigLayerEntry::new(source, config)
     };
-    entry.with_project_trust_scope(project_trust_scope)
+    entry.with_project_trust(project_trust_key, project_root)
 }
 
 fn sanitize_project_config(config: &mut TomlValue) -> Vec<String> {
@@ -997,10 +997,7 @@ async fn load_project_layers(
 
         let decision = trust_context.decision_for_dir(&dir);
         let disabled_reason = trust_context.disabled_reason_for_decision(&decision);
-        let project_trust_scope = ProjectTrustScope {
-            trust_key: decision.trust_key.clone(),
-            project_root: project_root.clone(),
-        };
+        let project_trust_key = decision.trust_key.clone();
         let dot_codex_normalized =
             normalize_path(dot_codex_abs.as_path()).unwrap_or_else(|_| dot_codex_abs.to_path_buf());
         if dot_codex_abs == codex_home_abs || dot_codex_normalized == codex_home_normalized {
@@ -1025,7 +1022,8 @@ async fn load_project_layers(
                             &dot_codex_abs,
                             TomlValue::Table(toml::map::Map::new()),
                             disabled_reason.clone(),
-                            project_trust_scope.clone(),
+                            project_trust_key.clone(),
+                            project_root.clone(),
                         ));
                         continue;
                     }
@@ -1044,7 +1042,8 @@ async fn load_project_layers(
                     &dot_codex_abs,
                     config,
                     disabled_reason.clone(),
-                    project_trust_scope.clone(),
+                    project_trust_key.clone(),
+                    project_root.clone(),
                 );
                 layers.push(entry);
             }
@@ -1057,7 +1056,8 @@ async fn load_project_layers(
                         &dot_codex_abs,
                         TomlValue::Table(toml::map::Map::new()),
                         disabled_reason,
-                        project_trust_scope,
+                        project_trust_key,
+                        project_root.clone(),
                     ));
                 } else {
                     let config_file_display = config_file.as_path().display();

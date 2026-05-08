@@ -14,7 +14,6 @@ use codex_config::HookEventsToml;
 use codex_config::HookHandlerConfig;
 use codex_config::ManagedHooksRequirementsToml;
 use codex_config::MatcherGroup;
-use codex_config::ProjectTrustScope;
 use codex_config::RequirementSource;
 use codex_config::TomlValue;
 use codex_plugin::PluginHookSource;
@@ -368,7 +367,7 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
 }
 
 #[test]
-fn project_hook_keys_share_project_trust_scope_across_worktrees() {
+fn project_hook_keys_share_project_trust_across_worktrees() {
     let trust_key = test_path_buf("/repo").display().to_string();
     let project_a = test_project_layer("/tmp/worktree-a", &trust_key);
     let project_b = test_project_layer("/tmp/worktree-b", &trust_key);
@@ -482,10 +481,7 @@ fn test_project_layer(project_root: &str, trust_key: &str) -> ConfigLayerEntry {
         ConfigLayerSource::Project { dot_codex_folder },
         config_with_pre_tool_use_hook("python3 /tmp/project.py"),
     )
-    .with_project_trust_scope(ProjectTrustScope {
-        trust_key: trust_key.to_string(),
-        project_root,
-    })
+    .with_project_trust(trust_key.to_string(), project_root)
 }
 
 fn expected_project_hook_key(trust_key: &str) -> String {

@@ -66,14 +66,8 @@ pub struct ConfigLayerEntry {
     pub raw_toml: Option<String>,
     pub version: String,
     pub disabled_reason: Option<String>,
-    pub project_trust_scope: Option<ProjectTrustScope>,
-}
-
-/// Worktree-aware trust scope resolved while loading one project layer.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectTrustScope {
-    pub trust_key: String,
-    pub project_root: AbsolutePathBuf,
+    pub project_trust_key: Option<String>,
+    pub project_root: Option<AbsolutePathBuf>,
 }
 
 impl ConfigLayerEntry {
@@ -85,7 +79,8 @@ impl ConfigLayerEntry {
             raw_toml: None,
             version,
             disabled_reason: None,
-            project_trust_scope: None,
+            project_trust_key: None,
+            project_root: None,
         }
     }
 
@@ -97,7 +92,8 @@ impl ConfigLayerEntry {
             raw_toml: Some(raw_toml),
             version,
             disabled_reason: None,
-            project_trust_scope: None,
+            project_trust_key: None,
+            project_root: None,
         }
     }
 
@@ -113,12 +109,18 @@ impl ConfigLayerEntry {
             raw_toml: None,
             version,
             disabled_reason: Some(disabled_reason.into()),
-            project_trust_scope: None,
+            project_trust_key: None,
+            project_root: None,
         }
     }
 
-    pub fn with_project_trust_scope(mut self, project_trust_scope: ProjectTrustScope) -> Self {
-        self.project_trust_scope = Some(project_trust_scope);
+    pub fn with_project_trust(
+        mut self,
+        project_trust_key: String,
+        project_root: AbsolutePathBuf,
+    ) -> Self {
+        self.project_trust_key = Some(project_trust_key);
+        self.project_root = Some(project_root);
         self
     }
 

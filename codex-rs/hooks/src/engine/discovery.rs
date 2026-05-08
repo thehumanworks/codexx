@@ -507,20 +507,16 @@ fn hook_key_sources_for_config_layer(
     source_path: &AbsolutePathBuf,
 ) -> (String, Option<String>) {
     let legacy_key_source = source_path.display().to_string();
-    let Some(project_trust_scope) = layer.project_trust_scope.as_ref() else {
+    let (Some(project_trust_key), Some(project_root)) = (
+        layer.project_trust_key.as_ref(),
+        layer.project_root.as_ref(),
+    ) else {
         return (legacy_key_source, None);
     };
-    let Ok(relative_path) = source_path
-        .as_path()
-        .strip_prefix(project_trust_scope.project_root.as_path())
-    else {
+    let Ok(relative_path) = source_path.as_path().strip_prefix(project_root.as_path()) else {
         return (legacy_key_source, None);
     };
-    let key_source = format!(
-        "project:{}:{}",
-        project_trust_scope.trust_key,
-        relative_path.display()
-    );
+    let key_source = format!("project:{project_trust_key}:{}", relative_path.display());
     (key_source, Some(legacy_key_source))
 }
 
