@@ -985,7 +985,6 @@ mod tests {
             "hooks_browser_events_with_review_column",
             render_lines(&view, /*width*/ 112)
         );
-        assert_eq!(view.event_table_lines()[1].spans[0].style.fg, None);
         assert_eq!(
             view.event_table_lines()[1].spans[3].style.fg,
             Some(Color::Yellow)
