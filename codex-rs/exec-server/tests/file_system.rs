@@ -735,6 +735,55 @@ async fn file_system_sandboxed_write_rejects_symlink_escape(use_remote: bool) ->
 #[test_case(false ; "local")]
 #[test_case(true ; "remote")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn file_system_sandboxed_write_replaces_final_path_links(use_remote: bool) -> Result<()> {
+    let context = create_file_system_context(use_remote).await?;
+    let file_system = context.file_system;
+
+    let tmp = TempDir::new()?;
+    let allowed_dir = tmp.path().join("allowed");
+    let outside_dir = tmp.path().join("outside");
+    std::fs::create_dir_all(&allowed_dir)?;
+    std::fs::create_dir_all(&outside_dir)?;
+
+    let original = "outside\n";
+    let sandbox = workspace_write_sandbox(allowed_dir.clone());
+    let soft_target = outside_dir.join("soft-target.txt");
+    let soft_link = allowed_dir.join("soft-link.txt");
+    let hard_target = outside_dir.join("hard-target.txt");
+    let hard_link = allowed_dir.join("hard-link.txt");
+    std::fs::write(&soft_target, original)?;
+    std::fs::write(&hard_target, original)?;
+    symlink(&soft_target, &soft_link)?;
+    std::fs::hard_link(&hard_target, &hard_link)?;
+
+    for (target, link, contents) in [
+        (&soft_target, &soft_link, "soft replacement\n"),
+        (&hard_target, &hard_link, "hard replacement\n"),
+    ] {
+        file_system
+            .write_file(
+                &absolute_path(link.clone()),
+                contents.as_bytes().to_vec(),
+                Some(&sandbox),
+            )
+            .await
+            .with_context(|| {
+                format!("sandboxed write should replace final path link mode={use_remote}")
+            })?;
+
+        assert_eq!(std::fs::read_to_string(target)?, original);
+        assert_eq!(std::fs::read_to_string(link)?, contents);
+        let metadata = std::fs::symlink_metadata(link)?;
+        assert!(metadata.file_type().is_file());
+        assert!(!metadata.file_type().is_symlink());
+    }
+
+    Ok(())
+}
+
+#[test_case(false ; "local")]
+#[test_case(true ; "remote")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn file_system_create_directory_rejects_symlink_escape(use_remote: bool) -> Result<()> {
     let context = create_file_system_context(use_remote).await?;
     let file_system = context.file_system;
