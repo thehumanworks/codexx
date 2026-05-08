@@ -1101,7 +1101,11 @@ mod tests {
     #[test]
     fn review_needed_handler_header_uses_warning_color() {
         assert_eq!(
-            HooksBrowserView::handler_header_lines(HookEventName::PreToolUse, 1)[1].spans[0]
+            HooksBrowserView::handler_header_lines(
+                HookEventName::PreToolUse,
+                /*review_needed_count*/ 1,
+            )[1]
+            .spans[0]
                 .style
                 .fg,
             Some(Color::Yellow)
