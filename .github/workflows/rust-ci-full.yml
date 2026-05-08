@@ -1196,6 +1196,11 @@ jobs:
           archive_file="${RUNNER_TEMP}/windows-arm64-nextest-archive/${WINDOWS_ARM64_ARCHIVE_FILE}"
           workspace_root="$(pwd)"
           extract_dir="${RUNNER_TEMP}/nextest-extract${{ matrix.partition_suffix }}"
+          mkdir_extract_dir="${extract_dir}"
+          if [[ "${RUNNER_OS}" == "Windows" ]] && command -v cygpath >/dev/null 2>&1; then
+            mkdir_extract_dir="$(cygpath -u "${extract_dir}")"
+          fi
+          mkdir -p "${mkdir_extract_dir}"
           if [[ "${RUNNER_OS}" == "Windows" ]] && command -v cygpath >/dev/null 2>&1; then
             archive_file="$(cygpath -w "${archive_file}")"
             workspace_root="$(cygpath -w "${workspace_root}")"
