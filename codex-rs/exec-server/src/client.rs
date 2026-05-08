@@ -981,13 +981,28 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn connect_stdio_command_initializes_json_rpc_client_on_windows() {
+        let script_dir = tempfile::tempdir().expect("tempdir should be created");
+        let script_path = script_dir.path().join("stdio-server.cmd");
+        tokio::fs::write(
+            script_path.as_path(),
+            concat!(
+                "@echo off\r\n",
+                "set /p _line=\r\n",
+                "echo {^\"id^\":1,^\"result^\":{^\"sessionId^\":^\"stdio-test^\"}}\r\n",
+                "set /p _line=\r\n",
+            ),
+        )
+        .await
+        .expect("stdio script should be written");
+
         let client = ExecServerClient::connect_stdio_command(StdioExecServerConnectArgs {
             command: StdioExecServerCommand {
-                program: "powershell".to_string(),
+                program: std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string()),
                 args: vec![
-                    "-NoProfile".to_string(),
-                    "-Command".to_string(),
-                    "$null = [Console]::In.ReadLine(); [Console]::Out.WriteLine('{\"id\":1,\"result\":{\"sessionId\":\"stdio-test\"}}'); $null = [Console]::In.ReadLine(); Start-Sleep -Seconds 60".to_string(),
+                    "/D".to_string(),
+                    "/Q".to_string(),
+                    "/C".to_string(),
+                    script_path.display().to_string(),
                 ],
                 env: HashMap::new(),
                 cwd: None,
