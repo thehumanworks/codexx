@@ -1285,7 +1285,7 @@ impl App {
                 if let Some(service_tier) = service_tier {
                     edits = edits.set_service_tier(Some(service_tier));
                 } else if service_tier_id.is_none() {
-                    edits = edits.set_service_tier(None);
+                    edits = edits.set_service_tier(/*service_tier*/ None);
                     self.config.notices.fast_default_opt_out = Some(true);
                     edits = edits.set_fast_default_opt_out(/*opted_out*/ true);
                 }
