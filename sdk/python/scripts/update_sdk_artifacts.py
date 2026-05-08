@@ -239,9 +239,9 @@ def stage_python_runtime_package(
             out_bin.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         )
     for resource_binary in resource_binaries:
-        # Windows sandbox support needs helper executables next to codex.exe.
-        # The option is generic so release workflows own the platform-specific
-        # list without baking Windows names into the staging script.
+        # Some release targets need helper executables beside the main binary
+        # (for example Linux bwrap or Windows sandbox helpers). Keep this
+        # generic so release workflows own the platform-specific list.
         out_resource = staged_runtime_resource_path(staging_dir, resource_binary)
         shutil.copy2(resource_binary, out_resource)
         if not _is_windows():

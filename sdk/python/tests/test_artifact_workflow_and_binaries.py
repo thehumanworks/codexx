@@ -354,17 +354,17 @@ def test_stage_runtime_release_can_pin_wheel_platform_tag(tmp_path: Path) -> Non
 def test_stage_runtime_release_copies_resource_binaries(tmp_path: Path) -> None:
     script = _load_update_script_module()
     fake_binary = tmp_path / script.runtime_binary_name()
-    command_runner = tmp_path / "codex-command-runner.exe"
-    setup = tmp_path / "codex-windows-sandbox-setup.exe"
+    helper = tmp_path / "helper"
+    fallback = tmp_path / "fallback-helper"
     fake_binary.write_text("fake codex\n")
-    command_runner.write_text("fake command runner\n")
-    setup.write_text("fake setup\n")
+    helper.write_text("fake helper\n")
+    fallback.write_text("fake fallback\n")
 
     staged = script.stage_python_runtime_package(
         tmp_path / "runtime-stage",
         "1.2.3",
         fake_binary,
-        resource_binaries=(command_runner, setup),
+        resource_binaries=(helper, fallback),
     )
 
     assert {
@@ -374,8 +374,8 @@ def test_stage_runtime_release_copies_resource_binaries(tmp_path: Path) -> None:
         for path in (staged / "src" / "codex_cli_bin" / "bin").iterdir()
     } == {
         script.runtime_binary_name(): "fake codex\n",
-        "codex-command-runner.exe": "fake command runner\n",
-        "codex-windows-sandbox-setup.exe": "fake setup\n",
+        "fallback-helper": "fake fallback\n",
+        "helper": "fake helper\n",
     }
 
 
@@ -506,11 +506,11 @@ def test_stage_sdk_rejects_mismatched_legacy_versions(tmp_path: Path) -> None:
 def test_stage_runtime_stages_binary_without_type_generation(tmp_path: Path) -> None:
     script = _load_update_script_module()
     fake_binary = tmp_path / script.runtime_binary_name()
-    command_runner = tmp_path / "codex-command-runner.exe"
-    setup = tmp_path / "codex-windows-sandbox-setup.exe"
+    helper = tmp_path / "helper"
+    fallback = tmp_path / "fallback-helper"
     fake_binary.write_text("fake codex\n")
-    command_runner.write_text("fake command runner\n")
-    setup.write_text("fake setup\n")
+    helper.write_text("fake helper\n")
+    fallback.write_text("fake fallback\n")
     calls: list[str] = []
     args = script.parse_args(
         [
@@ -522,9 +522,9 @@ def test_stage_runtime_stages_binary_without_type_generation(tmp_path: Path) -> 
             "--platform-tag",
             "musllinux_1_1_x86_64",
             "--resource-binary",
-            str(command_runner),
+            str(helper),
             "--resource-binary",
-            str(setup),
+            str(fallback),
         ]
     )
 
@@ -560,8 +560,7 @@ def test_stage_runtime_stages_binary_without_type_generation(tmp_path: Path) -> 
     script.run_command(args, ops)
 
     assert calls == [
-        "stage_runtime:0.116.0a1:musllinux_1_1_x86_64:"
-        "codex-command-runner.exe,codex-windows-sandbox-setup.exe"
+        "stage_runtime:0.116.0a1:musllinux_1_1_x86_64:helper,fallback-helper"
     ]
 
 
