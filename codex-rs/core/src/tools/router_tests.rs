@@ -99,8 +99,18 @@ async fn mcp_parallel_support_uses_exact_payload_server() -> anyhow::Result<()> 
         ToolRouterParams {
             deferred_mcp_tools: None,
             mcp_tools: Some(vec![
-                mcp_tool_info("echo", true, "mcp__echo__", "query_with_delay"),
-                mcp_tool_info("hello_echo", false, "mcp__hello_echo__", "query_with_delay"),
+                mcp_tool_info(
+                    "echo",
+                    /*supports_parallel_tool_calls*/ true,
+                    "mcp__echo__",
+                    "query_with_delay",
+                ),
+                mcp_tool_info(
+                    "hello_echo",
+                    /*supports_parallel_tool_calls*/ false,
+                    "mcp__hello_echo__",
+                    "query_with_delay",
+                ),
             ]),
             unavailable_called_tools: Vec::new(),
             discoverable_tools: None,
