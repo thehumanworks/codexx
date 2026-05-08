@@ -739,6 +739,8 @@ async fn conversation_webrtc_close_while_sideband_connecting_drops_pending_join(
 async fn conversation_webrtc_sideband_connect_failure_closes_with_error() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
+    std::hint::black_box("force-main-sideband-windows-repro");
+
     let server = start_mock_server().await;
     Mock::given(method("POST"))
         .and(path_regex(".*/realtime/calls$"))
