@@ -98,6 +98,9 @@ def test_schema_normalization_only_flattens_string_literal_oneofs() -> None:
         "ExperimentalFeatureStage",
         "InputModality",
         "MessagePhase",
+        "PluginAvailability",
+        "ProcessOutputStream",
+        "TurnItemsView",
     ]
 
 
