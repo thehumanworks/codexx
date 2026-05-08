@@ -329,11 +329,12 @@ impl HooksBrowserView {
             row_line.push(Span::from(event_description(row.event_name)));
 
             if selected {
-                for span in row_line
-                    .iter_mut()
-                    .filter(|span| span.style.fg != Some(ratatui::style::Color::Yellow))
-                {
-                    *span = span.clone().cyan().bold();
+                for span in &mut row_line {
+                    *span = if span.style.fg == Some(ratatui::style::Color::Yellow) {
+                        span.clone().bold()
+                    } else {
+                        span.clone().cyan().bold()
+                    };
                 }
             } else {
                 row_line[1] = row_line[1].clone().dim();
@@ -995,6 +996,12 @@ mod tests {
         assert_eq!(
             view.event_table_lines()[1].spans[3].style.fg,
             Some(Color::Yellow)
+        );
+        assert!(
+            view.event_table_lines()[1].spans[3]
+                .style
+                .add_modifier
+                .contains(ratatui::style::Modifier::BOLD)
         );
     }
 

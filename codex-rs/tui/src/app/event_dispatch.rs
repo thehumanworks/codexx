@@ -1716,7 +1716,7 @@ impl App {
                 self.set_hook_enabled(app_server, key, enabled);
             }
             AppEvent::TrustHooks { updates } => {
-                self.trust_hooks(app_server, updates);
+                self.trust_hooks(app_server, updates).await;
             }
             AppEvent::HookEnabledSet {
                 key,
@@ -1740,11 +1740,6 @@ impl App {
                     if let Err(err) = result {
                         self.chat_widget.add_error_message(err);
                     }
-                }
-            }
-            AppEvent::HookTrusted { result } => {
-                if let Err(err) = result {
-                    self.chat_widget.add_error_message(err);
                 }
             }
             AppEvent::OpenPermissionsPopup => {

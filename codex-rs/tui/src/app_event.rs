@@ -782,11 +782,6 @@ pub(crate) enum AppEvent {
         result: Result<(), String>,
     },
 
-    /// Result of persisting hook trust state.
-    HookTrusted {
-        result: Result<(), String>,
-    },
-
     /// Notify that the manage skills popup was closed.
     ManageSkillsClosed,
 

@@ -324,20 +324,18 @@ impl App {
         });
     }
 
-    pub(super) fn trust_hooks(
+    pub(super) async fn trust_hooks(
         &mut self,
         app_server: &AppServerSession,
         updates: Vec<HookTrustUpdate>,
     ) {
-        let request_handle = app_server.request_handle();
-        let app_event_tx = self.app_event_tx.clone();
-        tokio::spawn(async move {
-            let result = write_hook_trusts(request_handle, updates)
-                .await
-                .map(|_| ())
-                .map_err(|err| format!("Failed to trust hook: {err}"));
-            app_event_tx.send(AppEvent::HookTrusted { result });
-        });
+        let result = write_hook_trusts(app_server.request_handle(), updates)
+            .await
+            .map(|_| ())
+            .map_err(|err| format!("Failed to trust hook: {err}"));
+        if let Err(err) = result {
+            self.chat_widget.add_error_message(err);
+        }
     }
 
     pub(super) fn refresh_plugin_mentions(&mut self) {
