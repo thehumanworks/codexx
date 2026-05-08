@@ -1934,6 +1934,7 @@ impl Session {
             call_id,
             approval_id,
             turn_id: turn_context.sub_id.clone(),
+            started_at_ms: now_unix_timestamp_ms(),
             command,
             cwd,
             reason,
@@ -1980,6 +1981,7 @@ impl Session {
         let event = EventMsg::ApplyPatchApprovalRequest(ApplyPatchApprovalRequestEvent {
             call_id,
             turn_id: turn_context.sub_id.clone(),
+            started_at_ms: now_unix_timestamp_ms(),
             changes,
             reason,
             grant_root,
@@ -2143,6 +2145,7 @@ impl Session {
         let event = EventMsg::RequestPermissions(RequestPermissionsEvent {
             call_id: call_id.clone(),
             turn_id: turn_context.sub_id.clone(),
+            started_at_ms: now_unix_timestamp_ms(),
             reason: args.reason,
             permissions: requested_permissions,
             cwd: Some(cwd),
