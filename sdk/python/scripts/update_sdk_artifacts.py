@@ -61,6 +61,9 @@ def staged_runtime_bin_path(root: Path) -> Path:
 
 
 def staged_runtime_resource_path(root: Path, resource: Path) -> Path:
+    # Runtime wheels include the whole bin/ directory, so helper executables
+    # should be staged beside the main Codex binary instead of changing the
+    # package template for each platform.
     return root / "src" / "codex_cli_bin" / "bin" / resource.name
 
 
@@ -236,6 +239,9 @@ def stage_python_runtime_package(
             out_bin.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
         )
     for resource_binary in resource_binaries:
+        # Windows sandbox support needs helper executables next to codex.exe.
+        # The option is generic so release workflows own the platform-specific
+        # list without baking Windows names into the staging script.
         out_resource = staged_runtime_resource_path(staging_dir, resource_binary)
         shutil.copy2(resource_binary, out_resource)
         if not _is_windows():
