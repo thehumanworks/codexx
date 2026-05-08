@@ -167,6 +167,14 @@ jobs:
             package: codex-exec
             target_args: --test all
             filters: suite::resume::exec_resume_last_appends_to_existing_file
+          - group: exec-server-stdio
+            package: codex-exec-server
+            target_args: ""
+            filters: client::tests::connect_stdio_command_initializes_json_rpc_client_on_windows
+          - group: windows-sandbox-legacy-pwsh
+            package: codex-windows-sandbox
+            target_args: ""
+            filters: session::tests::legacy_capture_powershell_emits_output
           - group: app-thread-fork
             package: codex-app-server
             target_args: --test all
