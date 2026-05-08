@@ -6,7 +6,7 @@ use codex_tools::ResponsesApiTool;
 use serde_json::Value;
 use thiserror::Error;
 
-// TMP
+// TMP while we don't have the fully extracted tools
 #[derive(Clone)]
 pub struct ToolContribution {
     spec: ResponsesApiTool,
