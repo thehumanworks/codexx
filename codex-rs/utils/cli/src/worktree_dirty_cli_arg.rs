@@ -8,4 +8,5 @@ pub enum WorktreeDirtyCliArg {
     Ignore,
     CopyTracked,
     CopyAll,
+    MoveAll,
 }

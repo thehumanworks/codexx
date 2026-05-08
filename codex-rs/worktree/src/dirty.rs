@@ -16,6 +16,7 @@ pub enum DirtyPolicy {
     Ignore,
     CopyTracked,
     CopyAll,
+    MoveAll,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -61,14 +62,14 @@ pub fn validate_dirty_policy_before_create(
         DirtyPolicy::CopyTracked => {
             if state.has_untracked_files {
                 Ok(vec![
-                    "untracked files were left in the source checkout; use --worktree-dirty copy-all to copy them"
+                    "untracked files were left in the source checkout; use --worktree-dirty copy-all or move-all to carry them"
                         .to_string(),
                 ])
             } else {
                 Ok(Vec::new())
             }
         }
-        DirtyPolicy::CopyAll => Ok(Vec::new()),
+        DirtyPolicy::CopyAll | DirtyPolicy::MoveAll => Ok(Vec::new()),
     }
 }
 
@@ -90,12 +91,19 @@ pub fn apply_dirty_policy_after_create(
             copy_untracked_files(source_root, worktree_root)?;
             Ok(())
         }
+        DirtyPolicy::MoveAll => {
+            let untracked_paths = untracked_paths(source_root)?;
+            apply_tracked_diff(source_root, worktree_root)?;
+            copy_untracked_files_at_paths(source_root, worktree_root, &untracked_paths)?;
+            clean_source_after_move(source_root, &untracked_paths)?;
+            Ok(())
+        }
     }
 }
 
 fn bail_for_dirty_source<T>() -> Result<T> {
     anyhow::bail!(
-        "source checkout has uncommitted changes; use --worktree-dirty ignore, copy-tracked, or copy-all"
+        "source checkout has uncommitted changes; use --worktree-dirty ignore, copy-tracked, copy-all, or move-all"
     );
 }
 
@@ -119,18 +127,35 @@ fn apply_tracked_diff(source_root: &Path, worktree_root: &Path) -> Result<()> {
 }
 
 fn copy_untracked_files(source_root: &Path, worktree_root: &Path) -> Result<()> {
+    let paths = untracked_paths(source_root)?;
+    copy_untracked_files_at_paths(source_root, worktree_root, &paths)
+}
+
+fn untracked_paths(source_root: &Path) -> Result<Vec<PathBuf>> {
     let output = git::bytes(
         source_root,
         &["ls-files", "--others", "--exclude-standard", "-z"],
     )?;
-    for raw_path in output
+    output
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
-    {
-        let relative_path = PathBuf::from(String::from_utf8_lossy(raw_path).into_owned());
-        ensure_safe_relative_path(&relative_path)?;
-        let source = source_root.join(&relative_path);
-        let destination = worktree_root.join(&relative_path);
+        .map(|raw_path| {
+            let relative_path = PathBuf::from(String::from_utf8_lossy(raw_path).into_owned());
+            ensure_safe_relative_path(&relative_path)?;
+            Ok(relative_path)
+        })
+        .collect()
+}
+
+fn copy_untracked_files_at_paths(
+    source_root: &Path,
+    worktree_root: &Path,
+    paths: &[PathBuf],
+) -> Result<()> {
+    for relative_path in paths {
+        ensure_safe_relative_path(relative_path)?;
+        let source = source_root.join(relative_path);
+        let destination = worktree_root.join(relative_path);
         let metadata = fs::symlink_metadata(&source)?;
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)?;
@@ -141,6 +166,20 @@ fn copy_untracked_files(source_root: &Path, worktree_root: &Path) -> Result<()> 
         } else if metadata.is_file() {
             fs::copy(&source, &destination)?;
         }
+    }
+    Ok(())
+}
+
+fn clean_source_after_move(source_root: &Path, untracked_paths: &[PathBuf]) -> Result<()> {
+    git::status(source_root, &["reset", "--hard", "HEAD"])
+        .context("failed to clean tracked changes from source checkout after move")?;
+    for relative_path in untracked_paths {
+        fs::remove_file(source_root.join(relative_path)).with_context(|| {
+            format!(
+                "failed to remove moved untracked path {} from source checkout",
+                relative_path.display()
+            )
+        })?;
     }
     Ok(())
 }

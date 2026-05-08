@@ -157,6 +157,56 @@ fn copy_tracked_preserves_staged_and_unstaged_diffs() -> anyhow::Result<()> {
 }
 
 #[test]
+fn move_all_transfers_dirty_state_and_cleans_source_checkout() -> anyhow::Result<()> {
+    let fixture = GitFixture::new()?;
+    fs::write(fixture.repo.path().join(".gitignore"), "ignored.txt\n")?;
+    run_git(fixture.repo.path(), &["add", ".gitignore"])?;
+    run_git(fixture.repo.path(), &["commit", "-m", "ignore fixture"])?;
+    fs::write(fixture.repo.path().join("staged.txt"), "staged changed\n")?;
+    run_git(fixture.repo.path(), &["add", "staged.txt"])?;
+    fs::write(
+        fixture.repo.path().join("unstaged.txt"),
+        "unstaged changed\n",
+    )?;
+    fs::write(fixture.repo.path().join("untracked.txt"), "untracked\n")?;
+    fs::write(fixture.repo.path().join("ignored.txt"), "ignored\n")?;
+
+    let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home: fixture.codex_home.path().to_path_buf(),
+        source_cwd: fixture.repo.path().to_path_buf(),
+        branch: "move-dirty".to_string(),
+        base_ref: /*base_ref*/ None,
+        dirty_policy: DirtyPolicy::MoveAll,
+    })?;
+
+    assert_eq!(
+        git(
+            &resolution.info.worktree_git_root,
+            &["diff", "--cached", "--name-only"]
+        )?,
+        "staged.txt"
+    );
+    assert_eq!(
+        git(&resolution.info.worktree_git_root, &["diff", "--name-only"])?,
+        "unstaged.txt"
+    );
+    assert_eq!(
+        fs::read_to_string(resolution.info.worktree_git_root.join("untracked.txt"))?,
+        "untracked\n"
+    );
+    assert!(
+        !resolution
+            .info
+            .worktree_git_root
+            .join("ignored.txt")
+            .exists()
+    );
+    assert_eq!(git(fixture.repo.path(), &["status", "--short"])?, "");
+    assert!(fixture.repo.path().join("ignored.txt").exists());
+    Ok(())
+}
+
+#[test]
 fn refuses_sibling_path_collision_for_different_branch() -> anyhow::Result<()> {
     let fixture = GitFixture::new()?;
     let resolution = codex_worktree::ensure_worktree(WorktreeRequest {

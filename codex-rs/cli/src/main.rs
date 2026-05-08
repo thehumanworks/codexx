@@ -789,6 +789,7 @@ fn dirty_policy_from_cli(arg: WorktreeDirtyCliArg) -> DirtyPolicy {
         WorktreeDirtyCliArg::Ignore => DirtyPolicy::Ignore,
         WorktreeDirtyCliArg::CopyTracked => DirtyPolicy::CopyTracked,
         WorktreeDirtyCliArg::CopyAll => DirtyPolicy::CopyAll,
+        WorktreeDirtyCliArg::MoveAll => DirtyPolicy::MoveAll,
     }
 }
 
@@ -2416,6 +2417,20 @@ mod tests {
             cli.interactive.worktree_dirty,
             WorktreeDirtyCliArg::CopyTracked
         );
+    }
+
+    #[test]
+    fn top_level_worktree_flags_parse_move_all_dirty_policy() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "--worktree",
+            "parser-fix",
+            "--worktree-dirty",
+            "move-all",
+        ])
+        .expect("worktree flags should parse");
+
+        assert_eq!(cli.interactive.worktree_dirty, WorktreeDirtyCliArg::MoveAll);
     }
 
     #[test]
