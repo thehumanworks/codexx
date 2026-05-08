@@ -474,6 +474,7 @@ unwrap_used = "deny"
 ignored = [
     "codex-agent-graph-store",
     "codex-memories-mcp",
+    "codex-memories",
     "icu_provider",
     "openssl-sys",
     "codex-utils-readiness",
