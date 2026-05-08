@@ -5,34 +5,46 @@
 #[cfg(any(target_os = "windows", test))]
 mod ssh_config_dependencies;
 
-macro_rules! windows_modules {
-    ($($name:ident),+ $(,)?) => {
-        $(#[cfg(target_os = "windows")] mod $name;)+
-    };
-}
-
-windows_modules!(
-    acl,
-    allow,
-    audit,
-    cap,
-    desktop,
-    deny_read_acl,
-    dpapi,
-    env,
-    helper_materialization,
-    hide_users,
-    identity,
-    logging,
-    path_normalization,
-    policy,
-    process,
-    token,
-    wfp,
-    wfp_setup,
-    winutil,
-    workspace_acl
-);
+#[cfg(target_os = "windows")]
+mod acl;
+#[cfg(target_os = "windows")]
+mod allow;
+#[cfg(target_os = "windows")]
+mod audit;
+#[cfg(target_os = "windows")]
+mod cap;
+#[cfg(target_os = "windows")]
+mod deny_read_acl;
+#[cfg(target_os = "windows")]
+mod desktop;
+#[cfg(target_os = "windows")]
+mod dpapi;
+#[cfg(target_os = "windows")]
+mod env;
+#[cfg(target_os = "windows")]
+mod helper_materialization;
+#[cfg(target_os = "windows")]
+mod hide_users;
+#[cfg(target_os = "windows")]
+mod identity;
+#[cfg(target_os = "windows")]
+mod logging;
+#[cfg(target_os = "windows")]
+mod path_normalization;
+#[cfg(target_os = "windows")]
+mod policy;
+#[cfg(target_os = "windows")]
+mod process;
+#[cfg(target_os = "windows")]
+mod token;
+#[cfg(target_os = "windows")]
+mod wfp;
+#[cfg(target_os = "windows")]
+mod wfp_setup;
+#[cfg(target_os = "windows")]
+mod winutil;
+#[cfg(target_os = "windows")]
+mod workspace_acl;
 
 mod deny_read_resolver;
 
