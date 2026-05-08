@@ -155,6 +155,10 @@ jobs:
             package: codex-exec
             target_args: --test all
             filters: suite::resume::exec_resume_accepts_images_after_subcommand
+          - group: exec-resume-global-flags
+            package: codex-exec
+            target_args: --test all
+            filters: suite::resume::exec_resume_accepts_global_flags_after_subcommand
           - group: exec-resume-json
             package: codex-exec
             target_args: --test all
