@@ -745,11 +745,16 @@ impl TestCodex {
             })
             .await?;
 
-        let turn_id = wait_for_event_match(&self.codex, |event| match event {
-            EventMsg::TurnStarted(event) => Some(event.turn_id.clone()),
-            _ => None,
-        })
-        .await;
+        let turn_id = match wait_for_event_with_timeout(
+            &self.codex,
+            |event| matches!(event, EventMsg::TurnStarted(_)),
+            SUBMIT_TURN_COMPLETE_TIMEOUT,
+        )
+        .await
+        {
+            EventMsg::TurnStarted(event) => event.turn_id,
+            _ => unreachable!("predicate only matches TurnStarted"),
+        };
         wait_for_event_with_timeout(
             &self.codex,
             |event| match event {
