@@ -2,7 +2,9 @@ name: rust-ci-full
 run-name: >-
   rust-ci-full${{
     github.event_name == 'workflow_dispatch' &&
-    format(' windows-nextest-{0}', inputs.windows_nextest_threads) ||
+    format(' windows-nextest-{0} arm64-shards-{1}', inputs.windows_nextest_threads || 'default', inputs.windows_arm64_partitions || '1') ||
+    contains(github.ref_name, 'arm64-shards-4') && ' arm64-shards-4' ||
+    contains(github.ref_name, 'arm64-shards-2') && ' arm64-shards-2' ||
     ''
   }}
 on:
@@ -16,6 +18,15 @@ on:
         description: "Optional nextest --test-threads override for Windows test jobs"
         required: false
         type: string
+      windows_arm64_partitions:
+        description: "Number of Windows arm64 nextest partitions"
+        required: false
+        default: "1"
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "4"
 
 # CI builds in debug (dev) for faster signal.
 
@@ -543,8 +554,114 @@ jobs:
             /var/cache/apt
           key: apt-${{ matrix.runner }}-${{ matrix.target }}-v1
 
+  test_matrix:
+    name: Select test matrix
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    env:
+      WINDOWS_ARM64_PARTITIONS: >-
+        ${{
+          github.event_name == 'workflow_dispatch' && inputs.windows_arm64_partitions ||
+          contains(github.ref_name, 'arm64-shards-4') && '4' ||
+          contains(github.ref_name, 'arm64-shards-2') && '2' ||
+          '1'
+        }}
+    steps:
+      - name: Build test matrix
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${WINDOWS_ARM64_PARTITIONS}" in
+            1|2|4) ;;
+            *)
+              echo "Unsupported WINDOWS_ARM64_PARTITIONS=${WINDOWS_ARM64_PARTITIONS}" >&2
+              exit 1
+              ;;
+          esac
+
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import os
+
+          windows_arm64_partitions = int(os.environ["WINDOWS_ARM64_PARTITIONS"])
+
+          def row(runner, target, profile, *, timeout_minutes=None, remote_env=None, runs_on=None, partition_index=None):
+              partition_suffix = ""
+              partition_name = ""
+              nextest_partition = ""
+              if partition_index is not None and windows_arm64_partitions > 1:
+                  partition_suffix = f"-part-{partition_index}-of-{windows_arm64_partitions}"
+                  partition_name = f" (part {partition_index}/{windows_arm64_partitions})"
+                  nextest_partition = f"hash:{partition_index}/{windows_arm64_partitions}"
+
+              entry = {
+                  "runner": runner,
+                  "target": target,
+                  "profile": profile,
+                  "partition_suffix": partition_suffix,
+                  "partition_name": partition_name,
+                  "nextest_partition": nextest_partition,
+              }
+              if timeout_minutes is not None:
+                  entry["timeout_minutes"] = timeout_minutes
+              if remote_env is not None:
+                  entry["remote_env"] = remote_env
+              if runs_on is not None:
+                  entry["runs_on"] = runs_on
+              return entry
+
+          codex_runners = {
+              "linux-x64": {"group": "codex-runners", "labels": "codex-linux-x64"},
+              "linux-arm64": {"group": "codex-runners", "labels": "codex-linux-arm64"},
+              "windows-x64": {"group": "codex-runners", "labels": "codex-windows-x64"},
+              "windows-arm64": {"group": "codex-runners", "labels": "codex-windows-arm64"},
+          }
+
+          include = [
+              row("macos-15-xlarge", "aarch64-apple-darwin", "dev"),
+              row(
+                  "ubuntu-24.04",
+                  "x86_64-unknown-linux-gnu",
+                  "dev",
+                  remote_env="true",
+                  runs_on=codex_runners["linux-x64"],
+              ),
+              row(
+                  "ubuntu-24.04-arm",
+                  "aarch64-unknown-linux-gnu",
+                  "dev",
+                  runs_on=codex_runners["linux-arm64"],
+              ),
+              row(
+                  "windows-x64",
+                  "x86_64-pc-windows-msvc",
+                  "dev",
+                  runs_on=codex_runners["windows-x64"],
+              ),
+          ]
+
+          for partition_index in range(1, windows_arm64_partitions + 1):
+              include.append(
+                  row(
+                      "windows-arm64",
+                      "aarch64-pc-windows-msvc",
+                      "dev",
+                      timeout_minutes=75,
+                      runs_on=codex_runners["windows-arm64"],
+                      partition_index=partition_index,
+                  )
+              )
+
+          print("matrix<<JSON")
+          print(json.dumps({"include": include}, separators=(",", ":")))
+          print("JSON")
+          PY
+
   tests:
-    name: Tests — ${{ matrix.runner }} - ${{ matrix.target }}${{ matrix.remote_env == 'true' && ' (remote)' || '' }}
+    name: Tests — ${{ matrix.runner }} - ${{ matrix.target }}${{ matrix.remote_env == 'true' && ' (remote)' || '' }}${{ matrix.partition_name }}
+    needs: test_matrix
     runs-on: ${{ matrix.runs_on || matrix.runner }}
     # Perhaps we can bring this back down once we finish the cutover from
     # tui_app_server/ to tui/. Incidentally, windows-arm64 was the main offender
@@ -565,37 +682,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: macos-15-xlarge
-            target: aarch64-apple-darwin
-            profile: dev
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            profile: dev
-            remote_env: "true"
-            runs_on:
-              group: codex-runners
-              labels: codex-linux-x64
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
-            profile: dev
-            runs_on:
-              group: codex-runners
-              labels: codex-linux-arm64
-          - runner: windows-x64
-            target: x86_64-pc-windows-msvc
-            profile: dev
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-x64
-          - runner: windows-arm64
-            target: aarch64-pc-windows-msvc
-            profile: dev
-            timeout_minutes: 75
-            runs_on:
-              group: codex-runners
-              labels: codex-windows-arm64
+      matrix: ${{ fromJSON(needs.test_matrix.outputs.matrix) }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -687,8 +774,9 @@ jobs:
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
+          key: sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}${{ matrix.partition_suffix }}-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
           restore-keys: |
+            sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}${{ matrix.partition_suffix }}-${{ steps.lockhash.outputs.hash }}-
             sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}-${{ steps.lockhash.outputs.hash }}-
             sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}-
 
@@ -739,17 +827,21 @@ jobs:
           if [[ "${{ runner.os }}" == "Windows" && -n "${WINDOWS_NEXTEST_THREADS}" ]]; then
             nextest_args+=(--test-threads "${WINDOWS_NEXTEST_THREADS}")
           fi
+          if [[ -n "${NEXTEST_PARTITION}" ]]; then
+            nextest_args+=(--partition "${NEXTEST_PARTITION}")
+          fi
           cargo nextest run "${nextest_args[@]}"
         env:
           RUST_BACKTRACE: 1
           RUST_MIN_STACK: "8388608" # 8 MiB
           NEXTEST_STATUS_LEVEL: leak
+          NEXTEST_PARTITION: ${{ matrix.nextest_partition }}
 
       - name: Upload Cargo timings (nextest)
         if: always()
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
-          name: cargo-timings-rust-ci-nextest-${{ matrix.target }}-${{ matrix.profile }}
+          name: cargo-timings-rust-ci-nextest-${{ matrix.target }}-${{ matrix.profile }}${{ matrix.partition_suffix }}
           path: codex-rs/target/**/cargo-timings/cargo-timing.html
           if-no-files-found: warn
 
@@ -771,7 +863,7 @@ jobs:
         uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
+          key: sccache-${{ matrix.runner }}-${{ matrix.target }}-${{ matrix.profile }}${{ matrix.partition_suffix }}-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
 
       - name: sccache stats
         if: always() && env.USE_SCCACHE == 'true'
@@ -816,6 +908,7 @@ jobs:
         argument_comment_lint_package,
         argument_comment_lint_prebuilt,
         lint_build,
+        test_matrix,
         tests,
       ]
     if: always()
@@ -829,12 +922,14 @@ jobs:
           echo "general: ${{ needs.general.result }}"
           echo "shear  : ${{ needs.cargo_shear.result }}"
           echo "lint   : ${{ needs.lint_build.result }}"
+          echo "matrix : ${{ needs.test_matrix.result }}"
           echo "tests  : ${{ needs.tests.result }}"
           [[ '${{ needs.argument_comment_lint_package.result }}' == 'success' ]] || { echo 'argument_comment_lint_package failed'; exit 1; }
           [[ '${{ needs.argument_comment_lint_prebuilt.result }}' == 'success' ]] || { echo 'argument_comment_lint_prebuilt failed'; exit 1; }
           [[ '${{ needs.general.result }}' == 'success' ]] || { echo 'general failed'; exit 1; }
           [[ '${{ needs.cargo_shear.result }}' == 'success' ]] || { echo 'cargo_shear failed'; exit 1; }
           [[ '${{ needs.lint_build.result }}' == 'success' ]] || { echo 'lint_build failed'; exit 1; }
+          [[ '${{ needs.test_matrix.result }}' == 'success' ]] || { echo 'test_matrix failed'; exit 1; }
           [[ '${{ needs.tests.result }}' == 'success' ]] || { echo 'tests failed'; exit 1; }
 
       - name: sccache summary note
