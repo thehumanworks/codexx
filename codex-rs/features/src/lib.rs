@@ -258,13 +258,6 @@ impl Feature {
         self.info().default_enabled
     }
 
-    pub fn uses_config_table(self) -> bool {
-        matches!(
-            self,
-            Feature::MultiAgentV2 | Feature::AppsMcpPathOverride | Feature::NetworkProxy
-        )
-    }
-
     fn info(self) -> &'static FeatureSpec {
         FEATURES
             .iter()
@@ -578,15 +571,6 @@ pub fn canonical_feature_for_key(key: &str) -> Option<Feature> {
 /// Returns `true` if the provided string matches a known feature toggle key.
 pub fn is_known_feature_key(key: &str) -> bool {
     feature_for_key(key).is_some()
-}
-
-pub fn feature_toggle_override_key(key: &str) -> Option<String> {
-    let feature = feature_for_key(key)?;
-    if feature.uses_config_table() {
-        Some(format!("features.{}.enabled", feature.key()))
-    } else {
-        Some(format!("features.{key}"))
-    }
 }
 
 /// Deserializable features table for TOML.
