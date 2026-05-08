@@ -40,6 +40,7 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
+use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
@@ -770,34 +771,60 @@ async fn conversation_webrtc_sideband_connect_failure_closes_with_error() -> Res
         }))
         .await?;
 
-    let started = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::RealtimeConversationStarted(started) => Some(started.clone()),
-        _ => None,
-    })
+    let realtime_failure_timeout = Duration::from_secs(30);
+    let started = wait_for_event_with_timeout(
+        &test.codex,
+        |msg| matches!(msg, EventMsg::RealtimeConversationStarted(_)),
+        realtime_failure_timeout,
+    )
     .await;
+    let EventMsg::RealtimeConversationStarted(started) = started else {
+        unreachable!("predicate matched RealtimeConversationStarted")
+    };
     assert!(started.realtime_session_id.is_some());
 
-    let sdp = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::RealtimeConversationSdp(created) => Some(created.sdp.clone()),
-        _ => None,
-    })
+    let sdp = wait_for_event_with_timeout(
+        &test.codex,
+        |msg| matches!(msg, EventMsg::RealtimeConversationSdp(_)),
+        realtime_failure_timeout,
+    )
     .await;
+    let EventMsg::RealtimeConversationSdp(created) = sdp else {
+        unreachable!("predicate matched RealtimeConversationSdp")
+    };
+    let sdp = created.sdp;
     assert_eq!(sdp, "v=answer\r\n");
 
-    let err = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
-            payload: RealtimeEvent::Error(message),
-        }) => Some(message.clone()),
-        _ => None,
-    })
+    let err = wait_for_event_with_timeout(
+        &test.codex,
+        |msg| {
+            matches!(
+                msg,
+                EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+                    payload: RealtimeEvent::Error(_),
+                })
+            )
+        },
+        realtime_failure_timeout,
+    )
     .await;
+    let EventMsg::RealtimeConversationRealtime(RealtimeConversationRealtimeEvent {
+        payload: RealtimeEvent::Error(err),
+    }) = err
+    else {
+        unreachable!("predicate matched realtime error")
+    };
     assert!(!err.is_empty());
 
-    let closed = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::RealtimeConversationClosed(closed) => Some(closed.clone()),
-        _ => None,
-    })
+    let closed = wait_for_event_with_timeout(
+        &test.codex,
+        |msg| matches!(msg, EventMsg::RealtimeConversationClosed(_)),
+        realtime_failure_timeout,
+    )
     .await;
+    let EventMsg::RealtimeConversationClosed(closed) = closed else {
+        unreachable!("predicate matched RealtimeConversationClosed")
+    };
     assert_eq!(closed.reason.as_deref(), Some("error"));
 
     test.codex
@@ -805,11 +832,15 @@ async fn conversation_webrtc_sideband_connect_failure_closes_with_error() -> Res
             text: "after sideband failure".to_string(),
         }))
         .await?;
-    let err = wait_for_event_match(&test.codex, |msg| match msg {
-        EventMsg::Error(err) => Some(err.clone()),
-        _ => None,
-    })
+    let err = wait_for_event_with_timeout(
+        &test.codex,
+        |msg| matches!(msg, EventMsg::Error(_)),
+        realtime_failure_timeout,
+    )
     .await;
+    let EventMsg::Error(err) = err else {
+        unreachable!("predicate matched Error")
+    };
     assert_eq!(err.message, "conversation is not running");
 
     Ok(())
