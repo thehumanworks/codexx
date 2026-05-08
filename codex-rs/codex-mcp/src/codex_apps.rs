@@ -41,6 +41,7 @@ pub fn codex_apps_tools_cache_key(auth: Option<&CodexAuth>) -> CodexAppsToolsCac
 pub(crate) struct CodexAppsToolsCacheContext {
     pub(crate) codex_home: PathBuf,
     pub(crate) user_key: CodexAppsToolsCacheKey,
+    pub(crate) allow_openai_connector_ids: bool,
 }
 
 impl CodexAppsToolsCacheContext {
@@ -197,7 +198,10 @@ pub(crate) fn load_cached_codex_apps_tools(
     if cache.schema_version != CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION {
         return CachedCodexAppsToolsLoad::Invalid;
     }
-    CachedCodexAppsToolsLoad::Hit(filter_disallowed_codex_apps_tools(cache.tools))
+    CachedCodexAppsToolsLoad::Hit(filter_disallowed_codex_apps_tools(
+        cache.tools,
+        cache_context.allow_openai_connector_ids,
+    ))
 }
 
 pub(crate) fn write_cached_codex_apps_tools(
@@ -210,7 +214,10 @@ pub(crate) fn write_cached_codex_apps_tools(
     {
         return;
     }
-    let tools = filter_disallowed_codex_apps_tools(tools.to_vec());
+    let tools = filter_disallowed_codex_apps_tools(
+        tools.to_vec(),
+        cache_context.allow_openai_connector_ids,
+    );
     let Ok(bytes) = serde_json::to_vec_pretty(&CodexAppsToolsDiskCache {
         schema_version: CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION,
         tools,
@@ -220,13 +227,16 @@ pub(crate) fn write_cached_codex_apps_tools(
     let _ = std::fs::write(cache_path, bytes);
 }
 
-pub(crate) fn filter_disallowed_codex_apps_tools(tools: Vec<ToolInfo>) -> Vec<ToolInfo> {
+pub(crate) fn filter_disallowed_codex_apps_tools(
+    tools: Vec<ToolInfo>,
+    allow_openai_connector_ids: bool,
+) -> Vec<ToolInfo> {
     tools
         .into_iter()
         .filter(|tool| {
-            tool.connector_id
-                .as_deref()
-                .is_none_or(is_connector_id_allowed)
+            tool.connector_id.as_deref().is_none_or(|connector_id| {
+                is_connector_id_allowed(connector_id, allow_openai_connector_ids)
+            })
         })
         .collect()
 }

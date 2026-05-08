@@ -129,6 +129,7 @@ pub(crate) async fn list_tool_suggest_discoverable_tools_with_auth(
             accessible_connectors,
             &connector_ids,
             originator().value.as_str(),
+            config.apps_allow_openai_connector_ids,
         )
         .into_iter()
         .map(DiscoverableTool::from);
@@ -154,12 +155,8 @@ pub async fn list_cached_accessible_connectors_from_mcp_tools(
         return Some(Vec::new());
     }
     let cache_key = accessible_connectors_cache_key(config, auth.as_ref());
-    read_cached_accessible_connectors(&cache_key).map(|connectors| {
-        codex_connectors::filter::filter_disallowed_connectors(
-            connectors,
-            originator().value.as_str(),
-        )
-    })
+    read_cached_accessible_connectors(&cache_key)
+        .map(|connectors| filter_disallowed_connectors_for_config(connectors, config))
 }
 
 pub(crate) fn refresh_accessible_connectors_cache_from_mcp_tools(
@@ -172,9 +169,9 @@ pub(crate) fn refresh_accessible_connectors_cache_from_mcp_tools(
     }
 
     let cache_key = accessible_connectors_cache_key(config, auth);
-    let accessible_connectors = codex_connectors::filter::filter_disallowed_connectors(
+    let accessible_connectors = filter_disallowed_connectors_for_config(
         accessible_connectors_from_mcp_tools(mcp_tools),
-        originator().value.as_str(),
+        config,
     );
     write_cached_accessible_connectors(cache_key, &accessible_connectors);
 }
@@ -234,10 +231,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
     let tool_plugin_provenance = mcp_manager.tool_plugin_provenance(config).await;
     if !force_refetch && let Some(cached_connectors) = read_cached_accessible_connectors(&cache_key)
     {
-        let cached_connectors = codex_connectors::filter::filter_disallowed_connectors(
-            cached_connectors,
-            originator().value.as_str(),
-        );
+        let cached_connectors = filter_disallowed_connectors_for_config(cached_connectors, config);
         let cached_connectors = with_app_plugin_sources(cached_connectors, &tool_plugin_provenance);
         return Ok(AccessibleConnectorsStatus {
             connectors: cached_connectors,
@@ -280,6 +274,7 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
         McpRuntimeEnvironment::new(environment, config.cwd.to_path_buf()),
         config.codex_home.to_path_buf(),
         codex_apps_tools_cache_key(auth.as_ref()),
+        config.apps_allow_openai_connector_ids,
         host_owned_codex_apps_enabled,
         ToolPluginProvenance::default(),
         auth.as_ref(),
@@ -342,9 +337,9 @@ pub async fn list_accessible_connectors_from_mcp_tools_with_environment_manager(
         cancel_token.cancel();
     }
 
-    let accessible_connectors = codex_connectors::filter::filter_disallowed_connectors(
+    let accessible_connectors = filter_disallowed_connectors_for_config(
         accessible_connectors_from_mcp_tools(&tools),
-        originator().value.as_str(),
+        config,
     );
     if codex_apps_ready || !accessible_connectors.is_empty() {
         write_cached_accessible_connectors(cache_key, &accessible_connectors);
@@ -533,6 +528,17 @@ pub(crate) fn accessible_connectors_from_mcp_tools(mcp_tools: &[ToolInfo]) -> Ve
         })
     });
     codex_connectors::accessible::collect_accessible_connectors(tools)
+}
+
+fn filter_disallowed_connectors_for_config(
+    connectors: Vec<AppInfo>,
+    config: &Config,
+) -> Vec<AppInfo> {
+    codex_connectors::filter::filter_disallowed_connectors(
+        connectors,
+        originator().value.as_str(),
+        config.apps_allow_openai_connector_ids,
+    )
 }
 
 pub fn with_app_enabled_state(mut connectors: Vec<AppInfo>, config: &Config) -> Vec<AppInfo> {

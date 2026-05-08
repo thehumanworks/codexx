@@ -344,6 +344,7 @@ pub(crate) async fn list_tools_for_client_uncached(
     client: &Arc<RmcpClient>,
     timeout: Option<Duration>,
     server_instructions: Option<&str>,
+    allow_openai_connector_ids: bool,
 ) -> Result<Vec<ToolInfo>> {
     let resp = client
         .list_tools_with_connector_ids(/*params*/ None, timeout)
@@ -397,7 +398,10 @@ pub(crate) async fn list_tools_for_client_uncached(
         })
         .collect();
     if server_name == CODEX_APPS_MCP_SERVER_NAME {
-        return Ok(filter_disallowed_codex_apps_tools(tools));
+        return Ok(filter_disallowed_codex_apps_tools(
+            tools,
+            allow_openai_connector_ids,
+        ));
     }
     Ok(tools)
 }
@@ -478,6 +482,9 @@ async fn start_server_task(
         elicitation_requests,
         codex_apps_tools_cache_context,
     } = params;
+    let allow_openai_connector_ids = codex_apps_tools_cache_context
+        .as_ref()
+        .is_some_and(|context| context.allow_openai_connector_ids);
     let elicitation = elicitation_capability_for_server(&server_name);
     let params = InitializeRequestParams {
         meta: None,
@@ -520,6 +527,7 @@ async fn start_server_task(
         &client,
         startup_timeout,
         initialize_result.instructions.as_deref(),
+        allow_openai_connector_ids,
     )
     .await
     .map_err(StartupOutcomeError::from)?;

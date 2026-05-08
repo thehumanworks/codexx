@@ -1121,6 +1121,7 @@ async fn install_host_owned_codex_apps_manager(session: &Session, turn_context: 
         codex_mcp::McpRuntimeEnvironment::new(environment, turn_context.cwd.to_path_buf()),
         turn_context.config.codex_home.to_path_buf(),
         codex_mcp::codex_apps_tools_cache_key(auth.as_ref()),
+        turn_context.config.apps_allow_openai_connector_ids,
         /*host_owned_codex_apps_enabled*/ true,
         codex_mcp::ToolPluginProvenance::default(),
         auth.as_ref(),
@@ -1778,6 +1779,7 @@ async fn persist_codex_app_tool_approval_writes_tool_override() {
     assert_eq!(
         parsed.apps,
         Some(AppsConfigToml {
+            allow_openai_connector_ids: false,
             default: None,
             apps: HashMap::from([(
                 "calendar".to_string(),

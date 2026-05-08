@@ -4237,20 +4237,24 @@ async fn to_mcp_config_preserves_apps_feature_from_config() -> std::io::Result<(
     let plugins_manager = PluginsManager::new(codex_home.path().to_path_buf());
 
     config.apps_mcp_path_override = Some("/custom/mcp".to_string());
+    config.apps_allow_openai_connector_ids = true;
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert!(mcp_config.apps_enabled);
     assert_eq!(
         mcp_config.apps_mcp_path_override.as_deref(),
         Some("/custom/mcp")
     );
+    assert!(mcp_config.apps_allow_openai_connector_ids);
 
     let _ = config.features.disable(Feature::Apps);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert!(!mcp_config.apps_enabled);
+    assert!(mcp_config.apps_allow_openai_connector_ids);
 
     let _ = config.features.enable(Feature::Apps);
     let mcp_config = config.to_mcp_config(&plugins_manager).await;
     assert!(mcp_config.apps_enabled);
+    assert!(mcp_config.apps_allow_openai_connector_ids);
 
     Ok(())
 }
@@ -7032,6 +7036,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             personality: Some(Personality::Pragmatic),
             chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
             apps_mcp_path_override: None,
+            apps_allow_openai_connector_ids: false,
             realtime_audio: RealtimeAudioConfig::default(),
             experimental_realtime_start_instructions: None,
             experimental_realtime_ws_base_url: None,
@@ -7452,6 +7457,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         apps_mcp_path_override: None,
+        apps_allow_openai_connector_ids: false,
         realtime_audio: RealtimeAudioConfig::default(),
         experimental_realtime_start_instructions: None,
         experimental_realtime_ws_base_url: None,
@@ -7610,6 +7616,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         apps_mcp_path_override: None,
+        apps_allow_openai_connector_ids: false,
         realtime_audio: RealtimeAudioConfig::default(),
         experimental_realtime_start_instructions: None,
         experimental_realtime_ws_base_url: None,
@@ -7753,6 +7760,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         personality: Some(Personality::Pragmatic),
         chatgpt_base_url: "https://chatgpt.com/backend-api/".to_string(),
         apps_mcp_path_override: None,
+        apps_allow_openai_connector_ids: false,
         realtime_audio: RealtimeAudioConfig::default(),
         experimental_realtime_start_instructions: None,
         experimental_realtime_ws_base_url: None,
@@ -8419,6 +8427,29 @@ path = "/custom/mcp"
         config.apps_mcp_path_override.as_deref(),
         Some("/custom/mcp")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_loads_apps_allow_openai_connector_ids_from_toml() -> std::io::Result<()> {
+    let codex_home = TempDir::new()?;
+    let toml = r#"
+model = "gpt-5.4"
+
+[apps]
+allow_openai_connector_ids = true
+"#;
+    let cfg: ConfigToml =
+        toml::from_str(toml).expect("TOML deserialization should succeed for apps config");
+
+    let config = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        codex_home.abs(),
+    )
+    .await?;
+
+    assert!(config.apps_allow_openai_connector_ids);
     Ok(())
 }
 

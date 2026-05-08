@@ -1,6 +1,7 @@
 use super::*;
 use crate::codex_apps::CODEX_APPS_TOOLS_CACHE_SCHEMA_VERSION;
 use crate::codex_apps::CodexAppsToolsCacheContext;
+use crate::codex_apps::filter_disallowed_codex_apps_tools;
 use crate::codex_apps::load_startup_cached_codex_apps_tools_snapshot;
 use crate::codex_apps::read_cached_codex_apps_tools;
 use crate::codex_apps::write_cached_codex_apps_tools;
@@ -83,6 +84,7 @@ fn create_codex_apps_tools_cache_context(
             chatgpt_user_id: chatgpt_user_id.map(ToOwned::to_owned),
             is_workspace_account: false,
         },
+        allow_openai_connector_ids: false,
     }
 }
 
@@ -609,6 +611,34 @@ fn codex_apps_tools_cache_filters_disallowed_connectors() {
     assert_eq!(cached.len(), 1);
     assert_eq!(cached[0].callable_name, "allowed_tool");
     assert_eq!(cached[0].connector_id.as_deref(), Some("calendar"));
+}
+
+#[test]
+fn codex_apps_tool_filter_can_allow_openai_prefixed_connectors() {
+    let tools = vec![
+        create_test_tool_with_connector(
+            CODEX_APPS_MCP_SERVER_NAME,
+            "openai_tool",
+            "connector_openai_hidden",
+            Some("Hidden"),
+        ),
+        create_test_tool_with_connector(
+            CODEX_APPS_MCP_SERVER_NAME,
+            "blocked_tool",
+            "asdk_app_6938a94a61d881918ef32cb999ff937c",
+            Some("Blocked"),
+        ),
+    ];
+
+    let filtered =
+        filter_disallowed_codex_apps_tools(tools, /*allow_openai_connector_ids*/ true);
+
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].callable_name, "openai_tool");
+    assert_eq!(
+        filtered[0].connector_id.as_deref(),
+        Some("connector_openai_hidden")
+    );
 }
 
 #[test]

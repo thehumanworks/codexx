@@ -344,6 +344,7 @@ fn accessible_connectors_from_mcp_tools_preserves_description() {
 #[test]
 fn app_tool_policy_uses_global_defaults_for_destructive_hints() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: true,
             destructive_enabled: false,
@@ -372,6 +373,7 @@ fn app_tool_policy_uses_global_defaults_for_destructive_hints() {
 #[test]
 fn app_tool_policy_defaults_missing_destructive_hint_to_true() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: true,
             destructive_enabled: false,
@@ -400,6 +402,7 @@ fn app_tool_policy_defaults_missing_destructive_hint_to_true() {
 #[test]
 fn app_tool_policy_defaults_missing_open_world_hint_to_true() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: true,
             destructive_enabled: true,
@@ -428,6 +431,7 @@ fn app_tool_policy_defaults_missing_open_world_hint_to_true() {
 #[test]
 fn app_is_enabled_uses_default_for_unconfigured_apps() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: false,
             destructive_enabled: true,
@@ -443,6 +447,7 @@ fn app_is_enabled_uses_default_for_unconfigured_apps() {
 #[test]
 fn app_is_enabled_prefers_per_app_override_over_default() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: false,
             destructive_enabled: true,
@@ -468,6 +473,7 @@ fn app_is_enabled_prefers_per_app_override_over_default() {
 #[test]
 fn requirements_disabled_connector_overrides_enabled_connector() {
     let mut effective_apps = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "connector_123123".to_string(),
@@ -500,6 +506,7 @@ fn requirements_disabled_connector_overrides_enabled_connector() {
 #[test]
 fn requirements_enabled_does_not_override_disabled_connector() {
     let mut effective_apps = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "connector_123123".to_string(),
@@ -756,6 +763,7 @@ async fn with_app_enabled_state_preserves_unrelated_disabled_connector() {
 #[test]
 fn app_tool_policy_honors_default_app_enabled_false() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: false,
             destructive_enabled: true,
@@ -786,6 +794,7 @@ fn app_tool_policy_honors_default_app_enabled_false() {
 #[test]
 fn app_tool_policy_allows_per_app_enable_when_default_is_disabled() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: Some(AppsDefaultConfig {
             enabled: false,
             destructive_enabled: true,
@@ -826,6 +835,7 @@ fn app_tool_policy_allows_per_app_enable_when_default_is_disabled() {
 #[test]
 fn app_tool_policy_per_tool_enabled_true_overrides_app_level_disable_flags() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "calendar".to_string(),
@@ -868,6 +878,7 @@ fn app_tool_policy_per_tool_enabled_true_overrides_app_level_disable_flags() {
 #[test]
 fn app_tool_policy_default_tools_enabled_true_overrides_app_level_tool_hints() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "calendar".to_string(),
@@ -902,6 +913,7 @@ fn app_tool_policy_default_tools_enabled_true_overrides_app_level_tool_hints() {
 #[test]
 fn app_tool_policy_default_tools_enabled_false_overrides_app_level_tool_hints() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "calendar".to_string(),
@@ -938,6 +950,7 @@ fn app_tool_policy_default_tools_enabled_false_overrides_app_level_tool_hints() 
 #[test]
 fn app_tool_policy_uses_default_tools_approval_mode() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "calendar".to_string(),
@@ -976,6 +989,7 @@ fn app_tool_policy_uses_default_tools_approval_mode() {
 #[test]
 fn app_tool_policy_matches_prefix_stripped_tool_name_for_tool_config() {
     let apps_config = AppsConfigToml {
+        allow_openai_connector_ids: false,
         default: None,
         apps: HashMap::from([(
             "calendar".to_string(),
@@ -1017,8 +1031,11 @@ fn app_tool_policy_matches_prefix_stripped_tool_name_for_tool_config() {
 
 #[test]
 fn filter_disallowed_connectors_allows_non_disallowed_connectors() {
-    let filtered =
-        filter_disallowed_connectors(vec![app("asdk_app_hidden"), app("alpha")], "codex_cli");
+    let filtered = filter_disallowed_connectors(
+        vec![app("asdk_app_hidden"), app("alpha")],
+        "codex_cli",
+        /*allow_openai_connector_ids*/ false,
+    );
     assert_eq!(filtered, vec![app("asdk_app_hidden"), app("alpha")]);
 }
 
@@ -1031,8 +1048,23 @@ fn filter_disallowed_connectors_filters_openai_prefix() {
             app("gamma"),
         ],
         "codex_cli",
+        /*allow_openai_connector_ids*/ false,
     );
     assert_eq!(filtered, vec![app("gamma")]);
+}
+
+#[test]
+fn filter_disallowed_connectors_can_allow_openai_prefix() {
+    let filtered = filter_disallowed_connectors(
+        vec![
+            app("connector_openai_foo"),
+            app("asdk_app_6938a94a61d881918ef32cb999ff937c"),
+            app("gamma"),
+        ],
+        "codex_cli",
+        /*allow_openai_connector_ids*/ true,
+    );
+    assert_eq!(filtered, vec![app("connector_openai_foo"), app("gamma")]);
 }
 
 #[test]
@@ -1044,6 +1076,7 @@ fn filter_disallowed_connectors_filters_disallowed_connector_ids() {
             app("delta"),
         ],
         "codex_cli",
+        /*allow_openai_connector_ids*/ false,
     );
     assert_eq!(filtered, vec![app("delta")]);
 }
@@ -1057,6 +1090,7 @@ fn first_party_chat_originator_filters_target_and_openai_prefixed_connectors() {
             app("connector_0f9c9d4592e54d0a9a12b3f44a1e2010"),
         ],
         "codex_atlas",
+        /*allow_openai_connector_ids*/ false,
     );
     assert_eq!(
         filtered,
@@ -1143,6 +1177,7 @@ fn filter_tool_suggest_discoverable_connectors_keeps_only_plugin_backed_uninstal
             "connector_68df038e0ba48191908c8434991bbac2".to_string(),
         ]),
         "codex_cli",
+        /*allow_openai_connector_ids*/ false,
     );
 
     assert_eq!(
@@ -1183,6 +1218,7 @@ fn filter_tool_suggest_discoverable_connectors_excludes_accessible_apps_even_whe
             "connector_68df038e0ba48191908c8434991bbac2".to_string(),
         ]),
         "codex_cli",
+        /*allow_openai_connector_ids*/ false,
     );
 
     assert_eq!(filtered, Vec::<AppInfo>::new());

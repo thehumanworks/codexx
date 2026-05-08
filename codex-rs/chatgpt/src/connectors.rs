@@ -87,6 +87,7 @@ pub async fn list_cached_all_connectors(config: &Config) -> Option<Vec<AppInfo>>
     Some(filter_disallowed_connectors(
         connectors,
         originator().value.as_str(),
+        /*allow_openai_connector_ids*/ false,
     ))
 }
 
@@ -123,6 +124,7 @@ pub async fn list_all_connectors_with_options(
     Ok(filter_disallowed_connectors(
         connectors,
         originator().value.as_str(),
+        /*allow_openai_connector_ids*/ false,
     ))
 }
 
@@ -158,10 +160,14 @@ pub fn connectors_for_plugin_apps(
             .iter()
             .map(|connector_id| connector_id.0.clone()),
     );
-    filter_disallowed_connectors(connectors, originator().value.as_str())
-        .into_iter()
-        .filter(|connector| plugin_app_ids.contains(connector.id.as_str()))
-        .collect()
+    filter_disallowed_connectors(
+        connectors,
+        originator().value.as_str(),
+        /*allow_openai_connector_ids*/ false,
+    )
+    .into_iter()
+    .filter(|connector| plugin_app_ids.contains(connector.id.as_str()))
+    .collect()
 }
 
 pub fn merge_connectors_with_accessible(
@@ -182,7 +188,11 @@ pub fn merge_connectors_with_accessible(
         accessible_connectors
     };
     let merged = merge_connectors(connectors, accessible_connectors);
-    filter_disallowed_connectors(merged, originator().value.as_str())
+    filter_disallowed_connectors(
+        merged,
+        originator().value.as_str(),
+        /*allow_openai_connector_ids*/ false,
+    )
 }
 
 #[cfg(test)]

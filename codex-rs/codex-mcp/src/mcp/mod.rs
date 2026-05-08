@@ -108,6 +108,9 @@ pub struct McpConfig {
     pub chatgpt_base_url: String,
     /// Optional path override for the built-in apps MCP server.
     pub apps_mcp_path_override: Option<String>,
+    /// Whether Codex should allow app connector IDs with the `connector_openai_`
+    /// prefix when filtering the built-in apps MCP server.
+    pub apps_allow_openai_connector_ids: bool,
     /// Codex home directory used for MCP OAuth state and app-tool cache files.
     pub codex_home: PathBuf,
     /// Preferred credential store for MCP OAuth tokens.
@@ -280,6 +283,7 @@ pub async fn read_mcp_resource(
         runtime_environment,
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
+        config.apps_allow_openai_connector_ids,
         host_owned_codex_apps_enabled,
         tool_plugin_provenance(config),
         auth,
@@ -348,6 +352,7 @@ pub async fn collect_mcp_server_status_snapshot_with_detail(
         runtime_environment,
         config.codex_home.clone(),
         codex_apps_tools_cache_key(auth),
+        config.apps_allow_openai_connector_ids,
         host_owned_codex_apps_enabled,
         tool_plugin_provenance,
         auth,

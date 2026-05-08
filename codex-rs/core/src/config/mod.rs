@@ -710,6 +710,9 @@ pub struct Config {
     /// Optional path override for the built-in apps MCP server.
     pub apps_mcp_path_override: Option<String>,
 
+    /// Whether app connector IDs with the internal `connector_openai_` prefix are allowed.
+    pub apps_allow_openai_connector_ids: bool,
+
     /// Machine-local realtime audio device preferences used by realtime voice.
     pub realtime_audio: RealtimeAudioConfig,
 
@@ -1122,6 +1125,7 @@ impl Config {
         McpConfig {
             chatgpt_base_url: self.chatgpt_base_url.clone(),
             apps_mcp_path_override: self.apps_mcp_path_override.clone(),
+            apps_allow_openai_connector_ids: self.apps_allow_openai_connector_ids,
             codex_home: self.codex_home.to_path_buf(),
             mcp_oauth_credentials_store_mode: self.mcp_oauth_credentials_store_mode,
             mcp_oauth_callback_port: self.mcp_oauth_callback_port,
@@ -2188,6 +2192,10 @@ impl Config {
             None => ConfigProfile::default(),
         };
         let tool_suggest = resolve_tool_suggest_config(&cfg, &config_layer_stack);
+        let apps_allow_openai_connector_ids = cfg
+            .apps
+            .as_ref()
+            .is_some_and(|apps| apps.allow_openai_connector_ids);
         let feature_overrides = FeatureOverrides {
             include_apply_patch_tool: include_apply_patch_tool_override,
             web_search_request: override_tools_web_search_request,
@@ -3095,6 +3103,7 @@ impl Config {
                 .or(cfg.chatgpt_base_url)
                 .unwrap_or("https://chatgpt.com/backend-api/".to_string()),
             apps_mcp_path_override,
+            apps_allow_openai_connector_ids,
             realtime_audio: cfg
                 .audio
                 .map_or_else(RealtimeAudioConfig::default, |audio| RealtimeAudioConfig {

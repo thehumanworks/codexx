@@ -177,6 +177,7 @@ impl McpConnectionManager {
         runtime_environment: McpRuntimeEnvironment,
         codex_home: PathBuf,
         codex_apps_tools_cache_key: CodexAppsToolsCacheKey,
+        allow_openai_connector_ids: bool,
         host_owned_codex_apps_enabled: bool,
         tool_plugin_provenance: ToolPluginProvenance,
         auth: Option<&CodexAuth>,
@@ -216,6 +217,7 @@ impl McpConnectionManager {
                 Some(CodexAppsToolsCacheContext {
                     codex_home: codex_home.clone(),
                     user_key: codex_apps_tools_cache_key.clone(),
+                    allow_openai_connector_ids,
                 })
             } else {
                 None
@@ -397,6 +399,10 @@ impl McpConnectionManager {
             &managed_client.client,
             managed_client.tool_timeout,
             managed_client.server_instructions.as_deref(),
+            managed_client
+                .codex_apps_tools_cache_context
+                .as_ref()
+                .is_some_and(|context| context.allow_openai_connector_ids),
         )
         .await
         .with_context(|| {

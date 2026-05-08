@@ -194,6 +194,11 @@
             }
           ],
           "description": "Default settings for all apps."
+        },
+        "allow_openai_connector_ids": {
+          "default": false,
+          "description": "Allows app connector IDs with the internal `connector_openai_` prefix.",
+          "type": "boolean"
         }
       },
       "type": "object"

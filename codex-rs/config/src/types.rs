@@ -443,6 +443,10 @@ pub struct AppConfig {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct AppsConfigToml {
+    /// Allows app connector IDs with the internal `connector_openai_` prefix.
+    #[serde(default)]
+    pub allow_openai_connector_ids: bool,
+
     /// Default settings for all apps.
     #[serde(default, rename = "_default", skip_serializing_if = "Option::is_none")]
     pub default: Option<AppsDefaultConfig>,

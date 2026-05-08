@@ -988,6 +988,7 @@ impl Session {
                 mcp_runtime_environment,
                 config.codex_home.to_path_buf(),
                 codex_apps_tools_cache_key(auth),
+                config.apps_allow_openai_connector_ids,
                 host_owned_codex_apps_enabled,
                 tool_plugin_provenance,
                 auth,

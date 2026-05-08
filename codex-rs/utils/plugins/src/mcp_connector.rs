@@ -13,18 +13,26 @@ const FIRST_PARTY_CHAT_DISALLOWED_CONNECTOR_IDS: &[&str] =
     &["connector_0f9c9d4592e54d0a9a12b3f44a1e2010"];
 const DISALLOWED_CONNECTOR_PREFIX: &str = "connector_openai_";
 
-pub fn is_connector_id_allowed(connector_id: &str) -> bool {
-    is_connector_id_allowed_for_originator(connector_id, originator().value.as_str())
+pub fn is_connector_id_allowed(connector_id: &str, allow_openai_connector_ids: bool) -> bool {
+    is_connector_id_allowed_for_originator(
+        connector_id,
+        originator().value.as_str(),
+        allow_openai_connector_ids,
+    )
 }
 
-fn is_connector_id_allowed_for_originator(connector_id: &str, originator_value: &str) -> bool {
+fn is_connector_id_allowed_for_originator(
+    connector_id: &str,
+    originator_value: &str,
+    allow_openai_connector_ids: bool,
+) -> bool {
     let disallowed_connector_ids = if is_first_party_chat_originator(originator_value) {
         FIRST_PARTY_CHAT_DISALLOWED_CONNECTOR_IDS
     } else {
         DISALLOWED_CONNECTOR_IDS
     };
 
-    !connector_id.starts_with(DISALLOWED_CONNECTOR_PREFIX)
+    (allow_openai_connector_ids || !connector_id.starts_with(DISALLOWED_CONNECTOR_PREFIX))
         && !disallowed_connector_ids.contains(&connector_id)
 }
 

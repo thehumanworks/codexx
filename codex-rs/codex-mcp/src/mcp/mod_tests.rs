@@ -19,6 +19,7 @@ fn test_mcp_config(codex_home: PathBuf) -> McpConfig {
     McpConfig {
         chatgpt_base_url: "https://chatgpt.com".to_string(),
         apps_mcp_path_override: None,
+        apps_allow_openai_connector_ids: false,
         codex_home,
         mcp_oauth_credentials_store_mode: OAuthCredentialsStoreMode::default(),
         mcp_oauth_callback_port: None,
