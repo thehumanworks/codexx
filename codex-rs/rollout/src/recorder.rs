@@ -53,6 +53,7 @@ use super::session_index::find_thread_names_by_ids;
 use crate::config::RolloutConfigView;
 use crate::default_client::originator;
 use crate::state_db;
+use crate::state_db::StateDbAccess;
 use crate::state_db::StateDbHandle;
 use codex_git_utils::collect_git_info;
 use codex_protocol::protocol::EventMsg;
@@ -236,7 +237,7 @@ impl RolloutRecorder {
     /// List threads (rollout files) under the provided Codex home directory.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_threads(
-        state_db_ctx: Option<StateDbHandle>,
+        state_db_ctx: StateDbAccess,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -268,7 +269,7 @@ impl RolloutRecorder {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn list_threads_from_state_db(
-        state_db_ctx: Option<StateDbHandle>,
+        state_db_ctx: StateDbAccess,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -301,7 +302,7 @@ impl RolloutRecorder {
     /// List archived threads (rollout files) under the archived sessions directory.
     #[allow(clippy::too_many_arguments)]
     pub async fn list_archived_threads(
-        state_db_ctx: Option<StateDbHandle>,
+        state_db_ctx: StateDbAccess,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -333,7 +334,7 @@ impl RolloutRecorder {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn list_archived_threads_from_state_db(
-        state_db_ctx: Option<StateDbHandle>,
+        state_db_ctx: StateDbAccess,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -365,7 +366,7 @@ impl RolloutRecorder {
 
     #[allow(clippy::too_many_arguments)]
     async fn list_threads_with_db_fallback(
-        state_db_ctx: Option<StateDbHandle>,
+        state_db_ctx: StateDbAccess,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -447,9 +448,14 @@ impl RolloutRecorder {
             }
         };
 
-        if state_db_ctx.is_none() {
+        if !state_db_ctx.is_available() {
             // Keep legacy behavior when SQLite is unavailable: return filesystem results
             // at the requested page size.
+            codex_state::record_db_fallback_metric(
+                state_db_ctx.metrics(),
+                "list_threads",
+                "db_unavailable",
+            );
             return Ok(page_from_filesystem_scan(
                 fs_page,
                 sort_direction,
@@ -558,6 +564,11 @@ impl RolloutRecorder {
                     )
                     .await;
                 }
+                codex_state::record_db_fallback_metric(
+                    state_db_ctx.metrics(),
+                    "list_threads",
+                    "metadata_filter",
+                );
                 let page = page_from_filesystem_scan(fs_page, sort_direction, page_size, sort_key);
                 return Ok(fill_missing_thread_item_metadata_from_state_db(
                     state_db_ctx.as_deref(),
@@ -569,6 +580,11 @@ impl RolloutRecorder {
         }
         if listing_has_metadata_filters {
             let page = page_from_filesystem_scan(fs_page, sort_direction, page_size, sort_key);
+            codex_state::record_db_fallback_metric(
+                state_db_ctx.metrics(),
+                "list_threads",
+                "db_error",
+            );
             return Ok(fill_missing_thread_item_metadata_from_state_db(
                 state_db_ctx.as_deref(),
                 page,
@@ -578,6 +594,7 @@ impl RolloutRecorder {
         // If SQLite listing still fails, return the filesystem page rather than failing the list.
         tracing::error!("Falling back on rollout system");
         tracing::warn!("state db discrepancy during list_threads_with_db_fallback: falling_back");
+        codex_state::record_db_fallback_metric(state_db_ctx.metrics(), "list_threads", "db_error");
         Ok(page_from_filesystem_scan(
             fs_page,
             sort_direction,
@@ -589,7 +606,7 @@ impl RolloutRecorder {
     /// Find the newest recorded thread path, optionally filtering to a matching cwd.
     #[allow(clippy::too_many_arguments)]
     pub async fn find_latest_thread_path(
-        state_db_ctx: Option<StateDbHandle>,
+        state_db_ctx: StateDbAccess,
         config: &impl RolloutConfigView,
         page_size: usize,
         cursor: Option<&Cursor>,
@@ -601,10 +618,11 @@ impl RolloutRecorder {
     ) -> std::io::Result<Option<PathBuf>> {
         let codex_home = config.codex_home();
         let cwd_filter = filter_cwd.map(Path::to_path_buf);
-        if state_db_ctx.is_some() {
+        let mut fallback_reason = (!state_db_ctx.is_available()).then_some("db_unavailable");
+        if state_db_ctx.is_available() {
             let mut db_cursor = cursor.cloned();
             loop {
-                let Some(db_page) = state_db::list_threads_db(
+                let db_page = match state_db::list_threads_db(
                     state_db_ctx.as_deref(),
                     codex_home,
                     page_size,
@@ -618,8 +636,12 @@ impl RolloutRecorder {
                     /*search_term*/ None,
                 )
                 .await
-                else {
-                    break;
+                {
+                    Some(db_page) => db_page,
+                    None => {
+                        fallback_reason = Some("db_error");
+                        break;
+                    }
                 };
                 if let Some(path) =
                     select_resume_path_from_db_page(&db_page, filter_cwd, default_provider).await
@@ -628,9 +650,18 @@ impl RolloutRecorder {
                 }
                 db_cursor = db_page.next_anchor.map(Into::into);
                 if db_cursor.is_none() {
+                    fallback_reason = Some("missing_row");
                     break;
                 }
             }
+        }
+
+        if let Some(reason) = fallback_reason {
+            codex_state::record_db_fallback_metric(
+                state_db_ctx.metrics(),
+                "find_latest_thread_path",
+                reason,
+            );
         }
 
         let mut cursor = cursor.cloned();

@@ -139,7 +139,7 @@ pub(crate) async fn record_completed_response_item(
     }
     mark_thread_memory_mode_polluted_if_external_context(sess, turn_context, item).await;
     let has_memory_citation = record_stage1_output_usage_and_detect_memory_citation(
-        sess.services.state_db.as_ref(),
+        sess.services.state_db_access.as_deref(),
         item,
     )
     .await;
@@ -169,7 +169,7 @@ pub(crate) async fn mark_thread_memory_mode_polluted_if_external_context(
         return;
     }
     state_db::mark_thread_memory_mode_polluted(
-        sess.services.state_db.as_deref(),
+        sess.services.state_db_access.as_deref(),
         sess.conversation_id,
         "record_completed_response_item",
     )
@@ -177,7 +177,7 @@ pub(crate) async fn mark_thread_memory_mode_polluted_if_external_context(
 }
 
 async fn record_stage1_output_usage_and_detect_memory_citation(
-    state_db_ctx: Option<&state_db::StateDbHandle>,
+    state_db_ctx: Option<&codex_state::StateRuntime>,
     item: &ResponseItem,
 ) -> bool {
     let Some(raw_text) = raw_assistant_output_text_from_item(item) else {

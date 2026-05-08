@@ -2,7 +2,6 @@ use super::*;
 
 impl StateRuntime {
     pub async fn get_backfill_state(&self) -> anyhow::Result<crate::BackfillState> {
-        self.ensure_backfill_state_row().await?;
         let row = sqlx::query(
             r#"
 SELECT status, last_watermark, last_success_at
@@ -160,9 +159,13 @@ mod tests {
             .await
             .expect("write numeric");
 
-        let _runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let _runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
 
         for suffix in ["", "-wal", "-shm", "-journal"] {
             let legacy_path = codex_home.join(format!("{unversioned_name}{suffix}"));
@@ -207,9 +210,13 @@ mod tests {
     #[tokio::test]
     async fn backfill_state_persists_progress_and_completion() {
         let codex_home = unique_temp_dir();
-        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
 
         let initial = runtime
             .get_backfill_state()
@@ -260,9 +267,13 @@ mod tests {
     #[tokio::test]
     async fn backfill_claim_is_singleton_until_stale_and_blocked_when_complete() {
         let codex_home = unique_temp_dir();
-        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
 
         let claimed = runtime
             .try_claim_backfill(/*lease_seconds*/ 3600)

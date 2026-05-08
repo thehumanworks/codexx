@@ -64,7 +64,7 @@ impl App {
                         },
                         None => crate::AppServerTarget::Embedded,
                     },
-                    self.state_db.clone(),
+                    self.state_db_access.clone(),
                     self.environment_manager.clone(),
                 )
                 .await

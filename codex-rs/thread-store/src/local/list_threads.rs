@@ -39,7 +39,7 @@ pub(super) async fn list_threads(
         SortDirection::Asc => codex_rollout::SortDirection::Asc,
         SortDirection::Desc => codex_rollout::SortDirection::Desc,
     };
-    let state_db = store.state_db().await;
+    let state_db_access = store.state_db_access();
     let rollout_config = RolloutConfig {
         codex_home: store.config.codex_home.clone(),
         sqlite_home: store.config.sqlite_home.clone(),
@@ -48,7 +48,7 @@ pub(super) async fn list_threads(
         generate_memories: false,
     };
     let page = list_rollout_threads(
-        state_db,
+        state_db_access.clone(),
         &rollout_config,
         store.config.default_model_provider_id.as_str(),
         &params,
@@ -80,7 +80,7 @@ pub(super) async fn list_threads(
         .map(|thread| thread.thread_id)
         .collect::<HashSet<_>>();
     let mut names = HashMap::<ThreadId, String>::with_capacity(thread_ids.len());
-    if let Some(state_db_ctx) = store.state_db().await {
+    if let Some(state_db_ctx) = state_db_access.state_db() {
         for &thread_id in &thread_ids {
             let Ok(Some(metadata)) = state_db_ctx.get_thread(thread_id).await else {
                 continue;
@@ -108,7 +108,7 @@ pub(super) async fn list_threads(
 }
 
 async fn list_rollout_threads(
-    state_db: Option<codex_rollout::StateDbHandle>,
+    state_db_ctx: codex_rollout::StateDbAccess,
     config: &RolloutConfig,
     default_model_provider_id: &str,
     params: &ListThreadsParams,
@@ -118,7 +118,7 @@ async fn list_rollout_threads(
 ) -> ThreadStoreResult<codex_rollout::ThreadsPage> {
     let page = if params.use_state_db_only && params.archived {
         RolloutRecorder::list_archived_threads_from_state_db(
-            state_db,
+            state_db_ctx,
             config,
             params.page_size,
             cursor,
@@ -133,7 +133,7 @@ async fn list_rollout_threads(
         .await
     } else if params.use_state_db_only {
         RolloutRecorder::list_threads_from_state_db(
-            state_db,
+            state_db_ctx,
             config,
             params.page_size,
             cursor,
@@ -148,7 +148,7 @@ async fn list_rollout_threads(
         .await
     } else if params.archived {
         RolloutRecorder::list_archived_threads(
-            state_db,
+            state_db_ctx,
             config,
             params.page_size,
             cursor,
@@ -163,7 +163,7 @@ async fn list_rollout_threads(
         .await
     } else {
         RolloutRecorder::list_threads(
-            state_db,
+            state_db_ctx,
             config,
             params.page_size,
             cursor,
@@ -203,7 +203,10 @@ mod tests {
     #[tokio::test]
     async fn list_threads_uses_default_provider_when_rollout_omits_provider() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let store = LocalThreadStore::new(
+            test_config(home.path()),
+            codex_rollout::StateDbAccess::none(),
+        );
         write_session_file_with(
             home.path(),
             home.path().join("sessions/2025/01/03"),
@@ -246,10 +249,14 @@ mod tests {
         let runtime = codex_state::StateRuntime::init(
             home.path().to_path_buf(),
             config.default_model_provider_id.clone(),
+            /*metrics*/ None,
         )
         .await
         .expect("state db should initialize");
-        let store = LocalThreadStore::new(config.clone(), Some(runtime.clone()));
+        let store = LocalThreadStore::new(
+            config.clone(),
+            codex_rollout::StateDbAccess::new(Some(runtime.clone())),
+        );
         runtime
             .mark_backfill_complete(/*last_watermark*/ None)
             .await
@@ -303,7 +310,10 @@ mod tests {
     #[tokio::test]
     async fn list_threads_selects_active_or_archived_collection() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let store = LocalThreadStore::new(
+            test_config(home.path()),
+            codex_rollout::StateDbAccess::none(),
+        );
         let active_uuid = Uuid::from_u128(105);
         let archived_uuid = Uuid::from_u128(106);
         write_session_file(home.path(), "2025-01-03T12-00-00", active_uuid)
@@ -372,7 +382,7 @@ mod tests {
     async fn list_threads_returns_local_rollout_summary() {
         let home = TempDir::new().expect("temp dir");
         let config = test_config(home.path());
-        let store = LocalThreadStore::new(config, /*state_db*/ None);
+        let store = LocalThreadStore::new(config, codex_rollout::StateDbAccess::none());
         let uuid = Uuid::from_u128(101);
         let path =
             write_session_file(home.path(), "2025-01-03T12-00-00", uuid).expect("session file");
@@ -411,7 +421,10 @@ mod tests {
     #[tokio::test]
     async fn list_threads_rejects_invalid_cursor() {
         let home = TempDir::new().expect("temp dir");
-        let store = LocalThreadStore::new(test_config(home.path()), /*state_db*/ None);
+        let store = LocalThreadStore::new(
+            test_config(home.path()),
+            codex_rollout::StateDbAccess::none(),
+        );
 
         let err = store
             .list_threads(ListThreadsParams {

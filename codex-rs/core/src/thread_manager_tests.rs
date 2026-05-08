@@ -486,14 +486,15 @@ async fn resume_and_fork_do_not_restore_thread_environments_from_rollout() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db_access = StateDbAccess::none();
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, /*state_db*/ None),
-        /*state_db*/ None,
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -601,8 +602,9 @@ async fn explicit_installation_id_skips_codex_home_file() {
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
     let installation_id = uuid::Uuid::new_v4().to_string();
-    let state_db = init_state_db(&config).await;
-    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
+    let thread_store = thread_store_from_config(&config, state_db_access.clone());
     let manager = ThreadManager::new(
         &config,
         auth_manager,
@@ -610,7 +612,7 @@ async fn explicit_installation_id_skips_codex_home_file() {
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
         thread_store,
-        state_db.clone(),
+        state_db_access,
         installation_id.clone(),
         /*attestation_provider*/ None,
     );
@@ -641,14 +643,15 @@ async fn resume_active_thread_from_rollout_returns_running_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db_access = StateDbAccess::none();
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, /*state_db*/ None),
-        /*state_db*/ None,
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -697,14 +700,15 @@ async fn resume_stopped_thread_from_rollout_spawns_new_thread() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db_access = StateDbAccess::none();
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, /*state_db*/ None),
-        /*state_db*/ None,
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -758,8 +762,9 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let state_db = init_state_db(&config).await;
-    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
+    let thread_store = thread_store_from_config(&config, state_db_access.clone());
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
@@ -767,7 +772,7 @@ async fn resume_stopped_thread_from_rollout_preserves_thread_source() {
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
         thread_store,
-        state_db.clone(),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -843,8 +848,9 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let state_db = init_state_db(&config).await;
-    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
+    let thread_store = thread_store_from_config(&config, state_db_access.clone());
     let in_memory_store = thread_store
         .as_any()
         .downcast_ref::<InMemoryThreadStore>()
@@ -856,7 +862,7 @@ async fn rollout_path_resume_and_fork_read_history_through_thread_store() {
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
         thread_store.clone(),
-        state_db,
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -951,14 +957,15 @@ async fn new_uses_active_provider_for_model_refresh() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
+    let state_db_access = StateDbAccess::none();
     let manager = ThreadManager::new(
         &config,
         auth_manager,
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, /*state_db*/ None),
-        /*state_db*/ None,
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -1165,15 +1172,16 @@ async fn interrupted_fork_snapshot_does_not_synthesize_turn_id_for_legacy_histor
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let state_db = init_state_db(&config).await;
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, state_db.clone()),
-        state_db.clone(),
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -1272,15 +1280,16 @@ async fn interrupted_fork_snapshot_preserves_explicit_turn_id() {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let state_db = init_state_db(&config).await;
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, state_db.clone()),
-        state_db.clone(),
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -1368,15 +1377,16 @@ async fn interrupted_fork_snapshot_uses_persisted_mid_turn_history_without_live_
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let state_db = init_state_db(&config).await;
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, state_db.clone()),
-        state_db.clone(),
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );
@@ -1510,15 +1520,16 @@ async fn resumed_thread_keeps_paused_goal_paused() -> anyhow::Result<()> {
 
     let auth_manager =
         AuthManager::from_auth_for_testing(CodexAuth::create_dummy_chatgpt_auth_for_testing());
-    let state_db = init_state_db(&config).await;
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
     let manager = ThreadManager::new(
         &config,
         auth_manager.clone(),
         SessionSource::Exec,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        thread_store_from_config(&config, state_db.clone()),
-        state_db.clone(),
+        thread_store_from_config(&config, state_db_access.clone()),
+        state_db_access,
         TEST_INSTALLATION_ID.to_string(),
         /*attestation_provider*/ None,
     );

@@ -17,7 +17,7 @@ use crate::resolve_installation_id;
 use crate::session::session::Session;
 use crate::session::turn::build_prompt;
 use crate::session::turn::built_tools;
-use crate::state_db_bridge::StateDbHandle;
+use crate::state_db_bridge::StateDbAccess;
 use crate::thread_manager::ThreadManager;
 use crate::thread_manager::thread_store_from_config;
 
@@ -26,7 +26,7 @@ use crate::thread_manager::thread_store_from_config;
 pub async fn build_prompt_input(
     mut config: Config,
     input: Vec<UserInput>,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
 ) -> CodexResult<Vec<ResponseItem>> {
     config.ephemeral = true;
 
@@ -38,7 +38,7 @@ pub async fn build_prompt_input(
         config.codex_linux_sandbox_exe.clone(),
     )?;
 
-    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let thread_store = thread_store_from_config(&config, state_db_access.clone());
     let installation_id = resolve_installation_id(&config.codex_home).await?;
     let thread_manager = ThreadManager::new(
         &config,
@@ -51,7 +51,7 @@ pub async fn build_prompt_input(
         ),
         /*analytics_events_client*/ None,
         thread_store,
-        state_db.clone(),
+        state_db_access,
         installation_id,
         /*attestation_provider*/ None,
     );

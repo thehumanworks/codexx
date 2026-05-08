@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::SystemTime;
 
-use crate::StateDbHandle;
+use crate::StateDbAccess;
 use crate::rollout::list::find_thread_path_by_id_str;
 use crate::shell::Shell;
 use crate::shell::ShellType;
@@ -42,7 +42,7 @@ impl ShellSnapshot {
         session_cwd: AbsolutePathBuf,
         shell: &mut Shell,
         session_telemetry: SessionTelemetry,
-        state_db: Option<StateDbHandle>,
+        state_db_access: StateDbAccess,
     ) -> watch::Sender<Option<Arc<ShellSnapshot>>> {
         let (shell_snapshot_tx, shell_snapshot_rx) = watch::channel(None);
         shell.shell_snapshot = shell_snapshot_rx;
@@ -54,7 +54,7 @@ impl ShellSnapshot {
             shell.clone(),
             shell_snapshot_tx.clone(),
             session_telemetry,
-            state_db,
+            state_db_access,
         );
 
         shell_snapshot_tx
@@ -67,7 +67,7 @@ impl ShellSnapshot {
         shell: Shell,
         shell_snapshot_tx: watch::Sender<Option<Arc<ShellSnapshot>>>,
         session_telemetry: SessionTelemetry,
-        state_db: Option<StateDbHandle>,
+        state_db_access: StateDbAccess,
     ) {
         Self::spawn_snapshot_task(
             codex_home,
@@ -76,7 +76,7 @@ impl ShellSnapshot {
             shell,
             shell_snapshot_tx,
             session_telemetry,
-            state_db,
+            state_db_access,
         );
     }
 
@@ -87,7 +87,7 @@ impl ShellSnapshot {
         snapshot_shell: Shell,
         shell_snapshot_tx: watch::Sender<Option<Arc<ShellSnapshot>>>,
         session_telemetry: SessionTelemetry,
-        state_db: Option<StateDbHandle>,
+        state_db_access: StateDbAccess,
     ) {
         let snapshot_span = info_span!("shell_snapshot", thread_id = %session_id);
         tokio::spawn(
@@ -98,7 +98,7 @@ impl ShellSnapshot {
                     session_id,
                     &session_cwd,
                     &snapshot_shell,
-                    state_db,
+                    state_db_access,
                 )
                 .await
                 .map(Arc::new);
@@ -121,7 +121,7 @@ impl ShellSnapshot {
         session_id: ThreadId,
         session_cwd: &AbsolutePathBuf,
         shell: &Shell,
-        state_db: Option<StateDbHandle>,
+        state_db_access: StateDbAccess,
     ) -> std::result::Result<Self, &'static str> {
         // File to store the snapshot
         let extension = match shell.shell_type {
@@ -144,7 +144,7 @@ impl ShellSnapshot {
         let cleanup_session_id = session_id;
         tokio::spawn(async move {
             if let Err(err) =
-                cleanup_stale_snapshots(&codex_home, cleanup_session_id, state_db).await
+                cleanup_stale_snapshots(&codex_home, cleanup_session_id, state_db_access).await
             {
                 tracing::warn!("Failed to clean up shell snapshots: {err:?}");
             }
@@ -500,7 +500,7 @@ $envVars | ForEach-Object {
 pub async fn cleanup_stale_snapshots(
     codex_home: &AbsolutePathBuf,
     active_session_id: ThreadId,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
 ) -> Result<()> {
     let snapshot_dir = codex_home.join(SNAPSHOT_DIR);
 
@@ -531,7 +531,7 @@ pub async fn cleanup_stale_snapshots(
         }
 
         let rollout_path =
-            find_thread_path_by_id_str(codex_home, session_id, state_db.as_deref()).await?;
+            find_thread_path_by_id_str(codex_home, session_id, &state_db_access).await?;
         let Some(rollout_path) = rollout_path else {
             remove_snapshot_file(&path).await;
             continue;

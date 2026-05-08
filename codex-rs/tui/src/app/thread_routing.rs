@@ -916,8 +916,12 @@ impl App {
         session.model_provider_id = notification.thread.model_provider.clone();
         session.cwd = notification.thread.cwd.clone();
         let rollout_path = notification.thread.path.clone();
-        if let Some(model) =
-            read_session_model(self.state_db.as_deref(), thread_id, rollout_path.as_deref()).await
+        if let Some(model) = read_session_model(
+            self.state_db_access.as_deref(),
+            thread_id,
+            rollout_path.as_deref(),
+        )
+        .await
         {
             session.model = model;
         } else if rollout_path.is_some() {

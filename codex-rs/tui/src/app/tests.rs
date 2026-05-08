@@ -1656,6 +1656,7 @@ fn update_memory_settings_updates_current_thread_memory_mode() -> Result<()> {
         let state_db = codex_state::StateRuntime::init(
             codex_home.path().to_path_buf(),
             app.config.model_provider_id.clone(),
+            /*metrics*/ None,
         )
         .await
         .expect("state db should initialize");
@@ -3867,7 +3868,7 @@ async fn make_test_app() -> App {
         chat_widget,
         workspace_command_runner: None,
         config,
-        state_db: None,
+        state_db_access: StateDbAccess::none(),
         active_profile: None,
         cli_kv_overrides: Vec::new(),
         harness_overrides: ConfigOverrides::default(),
@@ -3930,7 +3931,7 @@ async fn make_test_app_with_channels() -> (
             chat_widget,
             workspace_command_runner: None,
             config,
-            state_db: None,
+            state_db_access: StateDbAccess::none(),
             active_profile: None,
             cli_kv_overrides: Vec::new(),
             harness_overrides: ConfigOverrides::default(),

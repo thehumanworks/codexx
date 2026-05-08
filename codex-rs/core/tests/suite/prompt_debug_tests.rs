@@ -1,4 +1,5 @@
 use anyhow::Result;
+use codex_core::StateDbAccess;
 use codex_core::build_prompt_input;
 use codex_core::config::ConfigBuilder;
 use codex_core::config::ConfigOverrides;
@@ -29,7 +30,7 @@ async fn build_prompt_input_includes_context_and_user_message() -> Result<()> {
             text: "hello from debug prompt".to_string(),
             text_elements: Vec::new(),
         }],
-        /*state_db*/ None,
+        StateDbAccess::none(),
     )
     .await?;
 

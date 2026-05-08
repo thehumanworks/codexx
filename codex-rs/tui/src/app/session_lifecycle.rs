@@ -638,7 +638,7 @@ impl App {
         } else {
             match crate::session_resume::resolve_cwd_for_resume_or_fork(
                 tui,
-                self.state_db.as_deref(),
+                self.state_db_access.as_deref(),
                 &current_cwd,
                 target_session.thread_id,
                 target_session.path.as_deref(),

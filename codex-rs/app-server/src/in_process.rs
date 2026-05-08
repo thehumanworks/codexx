@@ -86,7 +86,9 @@ use codex_exec_server::EnvironmentManager;
 use codex_feedback::CodexFeedback;
 use codex_login::AuthManager;
 use codex_protocol::protocol::SessionSource;
+pub use codex_rollout::StateDbAccess;
 pub use codex_rollout::StateDbHandle;
+pub use codex_state::DbMetricsRecorderHandle;
 pub use codex_state::log_db::LogDbLayer;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -127,8 +129,8 @@ pub struct InProcessStartArgs {
     pub feedback: CodexFeedback,
     /// SQLite tracing layer used to flush recently emitted logs before feedback upload.
     pub log_db: Option<LogDbLayer>,
-    /// Process-wide SQLite state handle shared with embedded app-server consumers.
-    pub state_db: Option<StateDbHandle>,
+    /// Process-wide SQLite access shared with embedded app-server consumers.
+    pub state_db_access: StateDbAccess,
     /// Environment manager used by core execution and filesystem operations.
     pub environment_manager: Arc<EnvironmentManager>,
     /// Startup warnings emitted after initialize succeeds.
@@ -424,7 +426,7 @@ async fn start_uninitialized(args: InProcessStartArgs) -> IoResult<InProcessClie
                 environment_manager: args.environment_manager,
                 feedback: args.feedback,
                 log_db: args.log_db,
-                state_db: args.state_db,
+                state_db_access: args.state_db_access,
                 config_warnings: args.config_warnings,
                 session_source: args.session_source,
                 auth_manager,
@@ -757,7 +759,7 @@ mod tests {
     ) -> InProcessClientHandle {
         let codex_home = TempDir::new().expect("temp dir");
         let config = Arc::new(build_test_config(codex_home.path()).await);
-        let state_db = codex_rollout::state_db::try_init(config.as_ref())
+        let state_db = codex_rollout::state_db::try_init(config.as_ref(), /*metrics*/ None)
             .await
             .expect("state db should initialize for in-process test");
         let args = InProcessStartArgs {
@@ -769,7 +771,7 @@ mod tests {
             thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
             feedback: CodexFeedback::new(),
             log_db: None,
-            state_db: Some(state_db),
+            state_db_access: StateDbAccess::new(Some(state_db)),
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
             config_warnings: Vec::new(),
             session_source,

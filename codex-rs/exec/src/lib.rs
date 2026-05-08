@@ -56,6 +56,7 @@ use codex_cloud_requirements::cloud_requirements_loader_for_storage;
 use codex_config::ConfigLoadError;
 use codex_config::LoaderOverrides;
 use codex_config::format_config_error_with_source;
+use codex_core::StateDbAccess;
 use codex_core::StateDbHandle;
 use codex_core::check_execpolicy_for_warnings;
 use codex_core::config::Config;
@@ -156,6 +157,7 @@ use crate::event_processor::EventProcessor;
 
 const DEFAULT_ANALYTICS_ENABLED: bool = true;
 const EXEC_DEFAULT_LOG_FILTER: &str = "error,opentelemetry_sdk=off,opentelemetry_otlp=off";
+const OTEL_SERVICE_NAME: &str = "codex_exec";
 
 enum InitialOperation {
     UserTurn {
@@ -482,6 +484,9 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
     let otel_logger_layer = otel.as_ref().and_then(|o| o.logger_layer());
 
     let otel_tracing_layer = otel.as_ref().and_then(|o| o.tracing_layer());
+    codex_core::otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
+    let state_db_metrics =
+        codex_core::otel_init::sqlite_metrics_recorder(otel.as_ref(), OTEL_SERVICE_NAME);
 
     let _ = tracing_subscriber::registry()
         .with(fmt_layer)
@@ -507,7 +512,9 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         arg0_paths.codex_self_exe.clone(),
         arg0_paths.codex_linux_sandbox_exe.clone(),
     )?;
-    let state_db = codex_core::init_state_db(&config).await;
+    let state_db = codex_core::init_state_db(&config, state_db_metrics.clone()).await;
+    let state_db_access =
+        StateDbAccess::new(state_db.clone()).with_standalone_metrics(state_db_metrics);
     let environment_manager = if run_loader_overrides.ignore_user_config {
         EnvironmentManager::from_env(local_runtime_paths).await?
     } else {
@@ -521,7 +528,7 @@ pub async fn run_main(cli: Cli, arg0_paths: Arg0DispatchPaths) -> anyhow::Result
         cloud_requirements: run_cloud_requirements,
         feedback: CodexFeedback::new(),
         log_db: None,
-        state_db: state_db.clone(),
+        state_db_access,
         environment_manager: std::sync::Arc::new(environment_manager),
         config_warnings,
         session_source: SessionSource::Exec,
@@ -1398,9 +1405,12 @@ async fn resolve_resume_thread_id(
         if let Some(thread) = resolved {
             return Ok(Some(thread.id.to_string()));
         }
-        if let Some((_, session_meta)) =
-            find_thread_meta_by_name_str(&config.codex_home, session_id, Some(state_db.as_ref()))
-                .await?
+        if let Some((_, session_meta)) = find_thread_meta_by_name_str(
+            &config.codex_home,
+            session_id,
+            &StateDbAccess::new(Some((*state_db).clone())),
+        )
+        .await?
             && (args.all || cwds_match(config.cwd.as_path(), &session_meta.meta.cwd))
         {
             return Ok(Some(session_meta.meta.id.to_string()));

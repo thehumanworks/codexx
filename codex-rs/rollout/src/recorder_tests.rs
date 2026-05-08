@@ -18,11 +18,14 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::TurnContextItem;
 use codex_protocol::protocol::UserMessageEvent;
 use pretty_assertions::assert_eq;
+use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::Duration;
 use tempfile::TempDir;
 use uuid::Uuid;
@@ -35,6 +38,45 @@ fn test_config(codex_home: &Path) -> RolloutConfig {
         model_provider_id: "test-provider".to_string(),
         generate_memories: true,
     }
+}
+
+#[derive(Default)]
+struct TestMetrics {
+    events: Mutex<Vec<MetricEvent>>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct MetricEvent {
+    name: String,
+    tags: BTreeMap<String, String>,
+}
+
+impl TestMetrics {
+    fn has_fallback(&self, caller: &str, reason: &str) -> bool {
+        self.events
+            .lock()
+            .expect("metrics lock")
+            .iter()
+            .any(|event| {
+                event.name == codex_state::DB_FALLBACK_METRIC
+                    && event.tags.get("caller").map(String::as_str) == Some(caller)
+                    && event.tags.get("reason").map(String::as_str) == Some(reason)
+            })
+    }
+}
+
+impl codex_state::DbMetricsRecorder for TestMetrics {
+    fn counter(&self, name: &str, _inc: i64, tags: &[(&str, &str)]) {
+        self.events.lock().expect("metrics lock").push(MetricEvent {
+            name: name.to_string(),
+            tags: tags
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect(),
+        });
+    }
+
+    fn record_duration(&self, _name: &str, _duration: Duration, _tags: &[(&str, &str)]) {}
 }
 
 fn write_session_file(root: &Path, ts: &str, uuid: Uuid) -> std::io::Result<PathBuf> {
@@ -124,7 +166,7 @@ async fn state_db_init_backfills_before_returning() -> anyhow::Result<()> {
         .join("\n");
     fs::write(&rollout_path, format!("{jsonl}\n"))?;
 
-    let runtime = crate::state_db::init(&test_config(home.path()))
+    let runtime = crate::state_db::init(&test_config(home.path()), /*metrics*/ None)
         .await
         .expect("state db should initialize");
 
@@ -535,9 +577,13 @@ async fn metadata_irrelevant_events_coalesce_state_db_updated_at() -> std::io::R
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
 
-    let state_db = StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
-        .await
-        .expect("state db should initialize");
+    let state_db = StateRuntime::init(
+        home.path().to_path_buf(),
+        config.model_provider_id.clone(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("state db should initialize");
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -639,9 +685,13 @@ async fn shutdown_flushes_pending_metadata_irrelevant_updated_at() -> std::io::R
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
 
-    let state_db = StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
-        .await
-        .expect("state db should initialize");
+    let state_db = StateRuntime::init(
+        home.path().to_path_buf(),
+        config.model_provider_id.clone(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("state db should initialize");
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -699,9 +749,13 @@ async fn metadata_irrelevant_events_fall_back_to_upsert_when_thread_missing() ->
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
 
-    let state_db = StateRuntime::init(home.path().to_path_buf(), config.model_provider_id.clone())
-        .await
-        .expect("state db should initialize");
+    let state_db = StateRuntime::init(
+        home.path().to_path_buf(),
+        config.model_provider_id.clone(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("state db should initialize");
     let thread_id = ThreadId::new();
     let rollout_path = home.path().join("rollout.jsonl");
     let builder = ThreadMetadataBuilder::new(
@@ -751,7 +805,7 @@ async fn list_threads_db_disabled_does_not_skip_paginated_items() -> std::io::Re
 
     let default_provider = config.model_provider_id.clone();
     let page1 = RolloutRecorder::list_threads(
-        /*state_db_ctx*/ None,
+        StateDbAccess::none(),
         &config,
         /*page_size*/ 1,
         /*cursor*/ None,
@@ -769,7 +823,7 @@ async fn list_threads_db_disabled_does_not_skip_paginated_items() -> std::io::Re
     let cursor = page1.next_cursor.clone().expect("cursor should be present");
 
     let page2 = RolloutRecorder::list_threads(
-        /*state_db_ctx*/ None,
+        StateDbAccess::none(),
         &config,
         /*page_size*/ 1,
         Some(&cursor),
@@ -788,6 +842,62 @@ async fn list_threads_db_disabled_does_not_skip_paginated_items() -> std::io::Re
 }
 
 #[tokio::test]
+async fn list_threads_records_db_unavailable_fallback_metric() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let _path = write_session_file(home.path(), "2025-01-03T12-00-00", Uuid::from_u128(9101))?;
+    let metrics = Arc::new(TestMetrics::default());
+    let metrics_handle: codex_state::DbMetricsRecorderHandle = metrics.clone();
+    let state_db_ctx = StateDbAccess::none().with_standalone_metrics(Some(metrics_handle));
+
+    let page = RolloutRecorder::list_threads(
+        state_db_ctx,
+        &config,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        SortDirection::Desc,
+        &[],
+        /*model_providers*/ None,
+        /*cwd_filters*/ None,
+        config.model_provider_id.as_str(),
+        /*search_term*/ None,
+    )
+    .await?;
+
+    assert_eq!(page.items.len(), 1);
+    assert!(metrics.has_fallback("list_threads", "db_unavailable"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn find_latest_thread_path_records_db_unavailable_fallback_metric() -> std::io::Result<()> {
+    let home = TempDir::new().expect("temp dir");
+    let config = test_config(home.path());
+    let path = write_session_file(home.path(), "2025-01-03T12-00-00", Uuid::from_u128(9103))?;
+    let metrics = Arc::new(TestMetrics::default());
+    let metrics_handle: codex_state::DbMetricsRecorderHandle = metrics.clone();
+    let state_db_ctx = StateDbAccess::none().with_standalone_metrics(Some(metrics_handle));
+
+    let found = RolloutRecorder::find_latest_thread_path(
+        state_db_ctx,
+        &config,
+        /*page_size*/ 10,
+        /*cursor*/ None,
+        ThreadSortKey::CreatedAt,
+        &[],
+        /*model_providers*/ None,
+        config.model_provider_id.as_str(),
+        /*filter_cwd*/ None,
+    )
+    .await?;
+
+    assert_eq!(found, Some(path));
+    assert!(metrics.has_fallback("find_latest_thread_path", "db_unavailable"));
+    Ok(())
+}
+
+#[tokio::test]
 async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Result<()> {
     let home = TempDir::new().expect("temp dir");
     let config = test_config(home.path());
@@ -801,6 +911,7 @@ async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Resul
     let runtime = codex_state::StateRuntime::init(
         home.path().to_path_buf(),
         config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await
     .expect("state db should initialize");
@@ -829,7 +940,7 @@ async fn list_threads_db_enabled_drops_missing_rollout_paths() -> std::io::Resul
 
     let default_provider = config.model_provider_id.clone();
     let page = RolloutRecorder::list_threads(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -866,6 +977,7 @@ async fn list_threads_db_enabled_repairs_stale_rollout_paths() -> std::io::Resul
     let runtime = codex_state::StateRuntime::init(
         home.path().to_path_buf(),
         config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await
     .expect("state db should initialize");
@@ -894,7 +1006,7 @@ async fn list_threads_db_enabled_repairs_stale_rollout_paths() -> std::io::Resul
 
     let default_provider = config.model_provider_id.clone();
     let page = RolloutRecorder::list_threads(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 1,
         /*cursor*/ None,
@@ -926,6 +1038,7 @@ async fn list_threads_state_db_only_skips_jsonl_repair_scan() -> std::io::Result
     let runtime = codex_state::StateRuntime::init(
         home.path().to_path_buf(),
         config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await
     .expect("state db should initialize");
@@ -967,7 +1080,7 @@ async fn list_threads_state_db_only_skips_jsonl_repair_scan() -> std::io::Result
 
     let cwd_filters = [home.path().to_path_buf()];
     let state_db_only_page = RolloutRecorder::list_threads_from_state_db(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -983,7 +1096,7 @@ async fn list_threads_state_db_only_skips_jsonl_repair_scan() -> std::io::Result
     assert_eq!(state_db_only_page.items.len(), 0);
 
     let repaired_page = RolloutRecorder::list_threads(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -999,7 +1112,7 @@ async fn list_threads_state_db_only_skips_jsonl_repair_scan() -> std::io::Result
     assert_eq!(repaired_page.items.len(), 1);
 
     let repaired_state_db_only_page = RolloutRecorder::list_threads_from_state_db(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1029,6 +1142,7 @@ async fn list_threads_default_filter_returns_filesystem_scan_results() -> std::i
     let runtime = codex_state::StateRuntime::init(
         home.path().to_path_buf(),
         config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await
     .expect("state db should initialize");
@@ -1057,7 +1171,7 @@ async fn list_threads_default_filter_returns_filesystem_scan_results() -> std::i
 
     let cwd_filters = [stale_cwd];
     let state_db_only_page = RolloutRecorder::list_threads_from_state_db(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1073,7 +1187,7 @@ async fn list_threads_default_filter_returns_filesystem_scan_results() -> std::i
     assert_eq!(state_db_only_page.items.len(), 1);
 
     let scanned_page = RolloutRecorder::list_threads(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1089,7 +1203,7 @@ async fn list_threads_default_filter_returns_filesystem_scan_results() -> std::i
     assert_eq!(scanned_page.items.len(), 0);
 
     let repaired_state_db_only_page = RolloutRecorder::list_threads_from_state_db(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1118,6 +1232,7 @@ async fn list_threads_metadata_filter_overlays_state_db_list_metadata() -> std::
     let runtime = codex_state::StateRuntime::init(
         home.path().to_path_buf(),
         config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await
     .expect("state db should initialize");
@@ -1148,7 +1263,7 @@ async fn list_threads_metadata_filter_overlays_state_db_list_metadata() -> std::
         .expect("state db upsert should succeed");
 
     let page = RolloutRecorder::list_threads(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1247,6 +1362,7 @@ async fn list_threads_search_repairs_stale_state_db_hits_before_returning() -> s
     let runtime = codex_state::StateRuntime::init(
         home.path().to_path_buf(),
         config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await
     .expect("state db should initialize");
@@ -1275,7 +1391,7 @@ async fn list_threads_search_repairs_stale_state_db_hits_before_returning() -> s
         .expect("state db upsert should succeed");
 
     let stale_state_db_only_page = RolloutRecorder::list_threads_from_state_db(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1291,7 +1407,7 @@ async fn list_threads_search_repairs_stale_state_db_hits_before_returning() -> s
     assert_eq!(stale_state_db_only_page.items.len(), 1);
 
     let scanned_page = RolloutRecorder::list_threads(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -1307,7 +1423,7 @@ async fn list_threads_search_repairs_stale_state_db_hits_before_returning() -> s
     assert_eq!(scanned_page.items.len(), 0);
 
     let repaired_state_db_only_page = RolloutRecorder::list_threads_from_state_db(
-        Some(runtime.clone()),
+        StateDbAccess::new(Some(runtime.clone())),
         &config,
         /*page_size*/ 10,
         /*cursor*/ None,

@@ -174,10 +174,11 @@ mod tests {
             .await?;
 
         let auth_manager = AuthManager::from_auth_for_testing(CodexAuth::from_api_key("dummy"));
-        let state_db = init_state_db(&good_config)
+        let state_db = init_state_db(&good_config, /*metrics*/ None)
             .await
             .expect("refresh tests require state db");
-        let thread_store = thread_store_from_config(&good_config, Some(state_db.clone()));
+        let state_db_access = codex_core::StateDbAccess::new(Some(state_db.clone()));
+        let thread_store = thread_store_from_config(&good_config, state_db_access.clone());
         let thread_manager = Arc::new(ThreadManager::new(
             &good_config,
             auth_manager,
@@ -185,7 +186,7 @@ mod tests {
             Arc::new(EnvironmentManager::default_for_tests()),
             /*analytics_events_client*/ None,
             thread_store,
-            Some(state_db.clone()),
+            state_db_access,
             "11111111-1111-4111-8111-111111111111".to_string(),
             /*attestation_provider*/ None,
         ));

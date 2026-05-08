@@ -42,6 +42,7 @@ use codex_core_api::RealtimeConfig;
 use codex_core_api::SessionPickerViewMode;
 use codex_core_api::SessionSource;
 use codex_core_api::ShellEnvironmentPolicy;
+use codex_core_api::StateDbAccess;
 use codex_core_api::TerminalResizeReflowConfig;
 use codex_core_api::ThreadManager;
 use codex_core_api::ThreadStoreConfig;
@@ -104,7 +105,8 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     };
 
     let config = new_config(args.model, arg0_paths)?;
-    let state_db = init_state_db(&config).await;
+    let state_db = init_state_db(&config, /*metrics*/ None).await;
+    let state_db_access = StateDbAccess::new(state_db.clone());
 
     let auth_manager =
         AuthManager::shared_from_config(&config, /*enable_codex_api_key_env*/ false).await;
@@ -112,7 +114,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         config.codex_self_exe.clone(),
         config.codex_linux_sandbox_exe.clone(),
     )?;
-    let thread_store = thread_store_from_config(&config, state_db.clone());
+    let thread_store = thread_store_from_config(&config, state_db_access.clone());
     let environment_manager = Arc::new(
         EnvironmentManager::from_codex_home(config.codex_home.clone(), local_runtime_paths).await?,
     );
@@ -124,7 +126,7 @@ async fn run_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
         environment_manager,
         /*analytics_events_client*/ None,
         Arc::clone(&thread_store),
-        state_db,
+        state_db_access,
         installation_id,
         /*attestation_provider*/ None,
     );

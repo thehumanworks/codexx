@@ -1440,7 +1440,8 @@ async fn run_debug_prompt_input_command(
         });
     }
 
-    let prompt_input = codex_core::build_prompt_input(config, input, /*state_db*/ None).await?;
+    let prompt_input =
+        codex_core::build_prompt_input(config, input, codex_core::StateDbAccess::none()).await?;
     println!("{}", serde_json::to_string_pretty(&prompt_input)?);
 
     Ok(())
@@ -1487,9 +1488,12 @@ async fn run_debug_clear_memories_command(
     let state_path = state_db_path(config.sqlite_home.as_path());
     let mut cleared_state_db = false;
     if tokio::fs::try_exists(&state_path).await? {
-        let state_db =
-            StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
-                .await?;
+        let state_db = StateRuntime::init(
+            config.sqlite_home.clone(),
+            config.model_provider_id.clone(),
+            /*metrics*/ None,
+        )
+        .await?;
         state_db.clear_memory_data().await?;
         cleared_state_db = true;
     }

@@ -132,7 +132,6 @@ use codex_terminal_detection::user_agent;
 use codex_thread_store::CreateThreadParams;
 use codex_thread_store::LiveThread;
 use codex_thread_store::LiveThreadInitGuard;
-use codex_thread_store::LocalThreadStore;
 use codex_thread_store::ReadThreadParams;
 use codex_thread_store::ResumeThreadParams;
 use codex_thread_store::ThreadEventPersistenceMode;
@@ -273,6 +272,7 @@ use crate::SkillLoadOutcome;
 #[cfg(test)]
 use crate::SkillMetadata;
 use crate::SkillsManager;
+use crate::StateDbAccess;
 use crate::agents_md::AgentsMdManager;
 use crate::context::UserInstructions;
 use crate::exec_policy::ExecPolicyUpdateError;
@@ -414,6 +414,7 @@ pub(crate) struct CodexSpawnArgs {
     pub(crate) analytics_events_client: Option<AnalyticsEventsClient>,
     pub(crate) thread_store: Arc<dyn ThreadStore>,
     pub(crate) attestation_provider: Option<Arc<dyn AttestationProvider>>,
+    pub(crate) state_db_access: StateDbAccess,
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
@@ -474,6 +475,7 @@ impl Codex {
             analytics_events_client,
             thread_store,
             attestation_provider,
+            state_db_access,
         } = args;
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
@@ -563,12 +565,8 @@ impl Codex {
                 Some(thread_id) => {
                     let state_db_ctx = if config.ephemeral {
                         None
-                    } else if let Some(local_store) =
-                        thread_store.as_any().downcast_ref::<LocalThreadStore>()
-                    {
-                        local_store.state_db().await
                     } else {
-                        None
+                        state_db_access.state_db()
                     };
                     state_db::get_dynamic_tools(state_db_ctx.as_deref(), thread_id, "codex_spawn")
                         .await
@@ -660,6 +658,7 @@ impl Codex {
             thread_store,
             parent_rollout_thread_trace,
             attestation_provider,
+            state_db_access,
         )
         .await
         .map_err(|e| {
@@ -1049,7 +1048,7 @@ impl Session {
     }
 
     pub(crate) fn state_db(&self) -> Option<state_db::StateDbHandle> {
-        self.services.state_db.clone()
+        self.services.state_db_access.state_db()
     }
 
     pub(crate) fn live_thread_for_persistence(
@@ -1328,7 +1327,7 @@ impl Session {
             self.services.user_shell.as_ref().clone(),
             self.services.shell_snapshot_tx.clone(),
             self.services.session_telemetry.clone(),
-            self.services.state_db.clone(),
+            self.services.state_db_access.clone(),
         );
     }
 

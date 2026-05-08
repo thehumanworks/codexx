@@ -187,9 +187,13 @@ async fn backfill_sessions_resumes_from_watermark_and_marks_complete() {
         /*git*/ None,
     );
 
-    let runtime = codex_state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-        .await
-        .expect("initialize runtime");
+    let runtime = codex_state::StateRuntime::init(
+        codex_home.clone(),
+        "test-provider".to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("initialize runtime");
     let first_watermark = backfill_watermark_for_path(codex_home.as_path(), first_path.as_path());
     runtime.mark_backfill_running().await.expect("mark running");
     runtime
@@ -252,9 +256,13 @@ async fn backfill_sessions_preserves_existing_git_branch_and_fills_missing_git_f
         }),
     );
 
-    let runtime = codex_state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-        .await
-        .expect("initialize runtime");
+    let runtime = codex_state::StateRuntime::init(
+        codex_home.clone(),
+        "test-provider".to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("initialize runtime");
     let thread_id = ThreadId::from_string(&thread_uuid.to_string()).expect("thread id");
     let mut existing = extract_metadata_from_rollout(&rollout_path, "test-provider")
         .await
@@ -298,9 +306,13 @@ async fn backfill_sessions_normalizes_cwd_before_upsert() {
         /*git*/ None,
     );
 
-    let runtime = codex_state::StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-        .await
-        .expect("initialize runtime");
+    let runtime = codex_state::StateRuntime::init(
+        codex_home.clone(),
+        "test-provider".to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("initialize runtime");
 
     backfill_sessions(runtime.as_ref(), codex_home.as_path(), "test-provider").await;
 

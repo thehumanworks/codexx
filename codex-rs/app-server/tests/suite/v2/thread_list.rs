@@ -600,9 +600,12 @@ sqlite = true
     // `thread/list` applies `search_term` on the sqlite fast path. This test creates
     // rollouts manually, so mark the DB backfill complete and then run an unsearched
     // list large enough to repair every rollout the searched list should find.
-    let state_db =
-        codex_state::StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into())
-            .await?;
+    let state_db = codex_state::StateRuntime::init(
+        codex_home.path().to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;
@@ -614,7 +617,7 @@ sqlite = true
         generate_memories: false,
     };
     let repaired_page = codex_core::RolloutRecorder::list_threads(
-        Some(state_db.clone()),
+        codex_core::StateDbAccess::new(Some(state_db.clone())),
         &rollout_config,
         /*page_size*/ 10,
         /*cursor*/ None,
@@ -683,9 +686,12 @@ sqlite = true
         Some("mock_provider"),
         /*git_info*/ None,
     )?;
-    let state_db =
-        codex_state::StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into())
-            .await?;
+    let state_db = codex_state::StateRuntime::init(
+        codex_home.path().to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;

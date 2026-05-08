@@ -103,7 +103,12 @@ async fn thread_memory_mode_set_updates_stored_thread_state() -> Result<()> {
 }
 
 async fn init_state_db(codex_home: &Path) -> Result<Arc<StateRuntime>> {
-    let state_db = StateRuntime::init(codex_home.to_path_buf(), "mock_provider".into()).await?;
+    let state_db = StateRuntime::init(
+        codex_home.to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;

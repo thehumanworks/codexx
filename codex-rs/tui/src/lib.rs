@@ -42,13 +42,14 @@ use codex_config::format_config_error_with_source;
 use codex_exec_server::EnvironmentManager;
 use codex_exec_server::ExecServerRuntimePaths;
 use codex_login::AuthConfig;
+use codex_login::default_client::originator;
 use codex_login::default_client::set_default_client_residency_requirement;
 use codex_login::enforce_login_restrictions;
 use codex_protocol::ThreadId;
 use codex_protocol::config_types::AltScreenMode;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::config_types::WindowsSandboxLevel;
-use codex_rollout::StateDbHandle;
+use codex_rollout::StateDbAccess;
 use codex_rollout::state_db;
 use codex_state::log_db;
 use codex_terminal_detection::terminal_info;
@@ -273,7 +274,7 @@ async fn start_embedded_app_server(
     cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<InProcessAppServerClient> {
     start_embedded_app_server_with(
@@ -284,7 +285,7 @@ async fn start_embedded_app_server(
         cloud_requirements,
         feedback,
         log_db,
-        state_db,
+        state_db_access,
         environment_manager,
         InProcessAppServerClient::start,
     )
@@ -402,7 +403,7 @@ async fn start_app_server(
     cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<AppServerClient> {
     match target {
@@ -414,7 +415,7 @@ async fn start_app_server(
             cloud_requirements,
             feedback,
             log_db,
-            state_db,
+            state_db_access,
             environment_manager,
         )
         .await
@@ -429,7 +430,7 @@ async fn start_app_server(
 pub(crate) async fn start_app_server_for_picker(
     config: &Config,
     target: &AppServerTarget,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<AppServerSession> {
     let app_server = start_app_server(
@@ -441,7 +442,7 @@ pub(crate) async fn start_app_server_for_picker(
         CloudRequirementsLoader::default(),
         codex_feedback::CodexFeedback::new(),
         /*log_db*/ None,
-        state_db,
+        state_db_access,
         environment_manager,
     )
     .await?;
@@ -452,11 +453,11 @@ pub(crate) async fn start_app_server_for_picker(
 pub(crate) async fn start_embedded_app_server_for_picker(
     config: &Config,
 ) -> color_eyre::Result<AppServerSession> {
-    let state_db = state_db::init(config).await;
+    let state_db = state_db::init(config, /*metrics*/ None).await;
     start_app_server_for_picker(
         config,
         &AppServerTarget::Embedded,
-        state_db,
+        StateDbAccess::new(state_db),
         Arc::new(EnvironmentManager::default_for_tests()),
     )
     .await
@@ -471,7 +472,7 @@ async fn start_embedded_app_server_with<F, Fut>(
     cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
     environment_manager: Arc<EnvironmentManager>,
     start_client: F,
 ) -> color_eyre::Result<InProcessAppServerClient>
@@ -497,7 +498,7 @@ where
         cloud_requirements,
         feedback,
         log_db,
-        state_db,
+        state_db_access,
         environment_manager,
         config_warnings,
         session_source: serde_json::from_value(serde_json::json!("cli"))
@@ -887,10 +888,45 @@ pub async fn run_main(
     )
     .await;
 
-    let state_db = match &app_server_target {
-        AppServerTarget::Embedded => state_db::init(&config).await,
-        AppServerTarget::Remote { .. } => state_db::get_state_db(&config).await,
+    let otel_originator = originator().value;
+    let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::legacy_core::otel_init::build_provider(
+            &config,
+            env!("CARGO_PKG_VERSION"),
+            /*service_name_override*/ None,
+            /*default_analytics_enabled*/ true,
+        )
+    })) {
+        Ok(Ok(otel)) => otel,
+        Ok(Err(e)) => {
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("Could not create otel exporter: {e}");
+            }
+            None
+        }
+        Err(_) => {
+            #[allow(clippy::print_stderr)]
+            {
+                eprintln!("Could not create otel exporter: panicked during initialization");
+            }
+            None
+        }
     };
+    crate::legacy_core::otel_init::record_process_start(otel.as_ref(), otel_originator.as_str());
+    let state_db_metrics = crate::legacy_core::otel_init::sqlite_metrics_recorder(
+        otel.as_ref(),
+        otel_originator.as_str(),
+    );
+
+    let state_db = match &app_server_target {
+        AppServerTarget::Embedded => state_db::init(&config, state_db_metrics.clone()).await,
+        AppServerTarget::Remote { .. } => {
+            state_db::get_state_db(&config, state_db_metrics.clone()).await
+        }
+    };
+    let state_db_access =
+        StateDbAccess::new(state_db.clone()).with_standalone_metrics(state_db_metrics.clone());
 
     let effective_toml = config.config_layer_stack.effective_config();
     match effective_toml.try_into() {
@@ -898,7 +934,7 @@ pub async fn run_main(
             match crate::legacy_core::personality_migration::maybe_migrate_personality(
                 &config.codex_home,
                 &config_toml,
-                state_db.clone(),
+                state_db_access.clone(),
             )
             .await
             {
@@ -1029,31 +1065,6 @@ pub async fn run_main(
         ensure_oss_provider_ready(provider_id, &config).await?;
     }
 
-    let otel = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::legacy_core::otel_init::build_provider(
-            &config,
-            env!("CARGO_PKG_VERSION"),
-            /*service_name_override*/ None,
-            /*default_analytics_enabled*/ true,
-        )
-    })) {
-        Ok(Ok(otel)) => otel,
-        Ok(Err(e)) => {
-            #[allow(clippy::print_stderr)]
-            {
-                eprintln!("Could not create otel exporter: {e}");
-            }
-            None
-        }
-        Err(_) => {
-            #[allow(clippy::print_stderr)]
-            {
-                eprintln!("Could not create otel exporter: panicked during initialization");
-            }
-            None
-        }
-    };
-
     let otel_logger_layer = otel.as_ref().and_then(|o| o.logger_layer());
 
     let otel_tracing_layer = otel.as_ref().and_then(|o| o.tracing_layer());
@@ -1084,7 +1095,7 @@ pub async fn run_main(
         cloud_requirements,
         feedback,
         log_db,
-        state_db,
+        state_db_access,
         remote_url,
         remote_auth_token,
         environment_manager,
@@ -1106,7 +1117,7 @@ async fn run_ratatui_app(
     mut cloud_requirements: CloudRequirementsLoader,
     feedback: codex_feedback::CodexFeedback,
     log_db: Option<log_db::LogDbLayer>,
-    state_db: Option<StateDbHandle>,
+    state_db_access: StateDbAccess,
     remote_url: Option<String>,
     remote_auth_token: Option<String>,
     environment_manager: Arc<EnvironmentManager>,
@@ -1166,7 +1177,7 @@ async fn run_ratatui_app(
             cloud_requirements.clone(),
             feedback.clone(),
             log_db.clone(),
-            state_db.clone(),
+            state_db_access.clone(),
             environment_manager.clone(),
         )
         .await
@@ -1414,7 +1425,7 @@ async fn run_ratatui_app(
             } else {
                 match resolve_cwd_for_resume_or_fork(
                     &mut tui,
-                    state_db.as_deref(),
+                    state_db_access.as_deref(),
                     &current_cwd,
                     target_session.thread_id,
                     target_session.path.as_deref(),
@@ -1505,7 +1516,7 @@ async fn run_ratatui_app(
             cloud_requirements.clone(),
             feedback.clone(),
             log_db.clone(),
-            state_db.clone(),
+            state_db_access.clone(),
             environment_manager.clone(),
         )
         .await
@@ -1536,7 +1547,7 @@ async fn run_ratatui_app(
         should_prompt_windows_sandbox_nux_at_startup,
         remote_url,
         remote_auth_token,
-        state_db,
+        state_db_access,
         environment_manager,
     )
     .await;
@@ -1741,7 +1752,7 @@ mod tests {
     async fn start_test_embedded_app_server(
         config: Config,
     ) -> color_eyre::Result<InProcessAppServerClient> {
-        let state_db = state_db::init(&config).await;
+        let state_db = state_db::init(&config, /*metrics*/ None).await;
         start_embedded_app_server(
             Arg0DispatchPaths::default(),
             config,
@@ -1750,7 +1761,7 @@ mod tests {
             CloudRequirementsLoader::default(),
             codex_feedback::CodexFeedback::new(),
             /*log_db*/ None,
-            state_db,
+            StateDbAccess::new(state_db),
             Arc::new(EnvironmentManager::default_for_tests()),
         )
         .await
@@ -2214,6 +2225,7 @@ mod tests {
             let state_runtime = codex_state::StateRuntime::init(
                 config.codex_home.to_path_buf(),
                 config.model_provider_id.clone(),
+                /*metrics*/ None,
             )
             .await
             .map_err(std::io::Error::other)?;
@@ -2272,7 +2284,7 @@ mod tests {
             CloudRequirementsLoader::default(),
             codex_feedback::CodexFeedback::new(),
             /*log_db*/ None,
-            /*state_db*/ None,
+            StateDbAccess::none(),
             Arc::new(EnvironmentManager::default_for_tests()),
             |_args| async { Err(std::io::Error::other("boom")) },
         )

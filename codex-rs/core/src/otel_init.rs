@@ -2,7 +2,6 @@ use crate::config::Config;
 use codex_config::types::OtelExporterKind as Kind;
 use codex_config::types::OtelHttpProtocol as Protocol;
 use codex_features::Feature;
-use codex_login::default_client::originator;
 use codex_otel::OtelExporter;
 use codex_otel::OtelHttpProtocol;
 use codex_otel::OtelProvider;
@@ -76,7 +75,7 @@ pub fn build_provider(
         OtelExporter::None
     };
 
-    let originator = originator();
+    let originator = codex_login::default_client::originator();
     let service_name = service_name_override.unwrap_or(originator.value.as_str());
     let runtime_metrics = config.features.enabled(Feature::RuntimeMetrics);
 
@@ -92,6 +91,35 @@ pub fn build_provider(
         span_attributes: config.otel.span_attributes.clone(),
         tracestate: config.otel.tracestate.clone(),
     })
+}
+
+/// Record the process-start denominator using the caller's explicit process identity.
+pub fn record_process_start(provider: Option<&OtelProvider>, originator: &str) {
+    if let Some(provider) = provider
+        && let Some(metrics) = provider.metrics()
+    {
+        let _ = codex_otel::record_process_start_once(metrics, originator);
+    }
+}
+
+/// Build a SQLite metrics recorder from the caller's explicit process identity.
+pub fn sqlite_metrics_recorder(
+    provider: Option<&OtelProvider>,
+    originator: &str,
+) -> Option<codex_state::DbMetricsRecorderHandle> {
+    provider.and_then(|provider| {
+        provider.metrics().map(|metrics| {
+            codex_rollout::state_db::otel_db_metrics_recorder(metrics.clone(), originator)
+        })
+    })
+}
+
+/// Build a SQLite metrics recorder from the process-global OTEL metrics client.
+pub fn sqlite_metrics_recorder_from_global(
+    originator: &str,
+) -> Option<codex_state::DbMetricsRecorderHandle> {
+    codex_otel::global()
+        .map(|metrics| codex_rollout::state_db::otel_db_metrics_recorder(metrics, originator))
 }
 
 /// Filter predicate for exporting only Codex-owned events via OTEL.

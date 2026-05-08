@@ -547,9 +547,13 @@ mod tests {
     #[tokio::test]
     async fn sqlite_feedback_logs_match_feedback_formatter_shape() {
         let codex_home = temp_codex_home();
-        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
         let writer = SharedWriter::default();
         let layer = start(runtime.clone());
 
@@ -605,9 +609,13 @@ mod tests {
     #[tokio::test]
     async fn flush_persists_logs_for_query() {
         let codex_home = temp_codex_home();
-        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
         let layer = start(runtime.clone());
 
         let guard = tracing_subscriber::registry()
@@ -636,9 +644,13 @@ mod tests {
     #[tokio::test]
     async fn configured_batch_size_flushes_without_explicit_flush() {
         let codex_home = temp_codex_home();
-        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
         let layer = LogDbLayer::start_with_config(
             runtime.clone(),
             LogSinkQueueConfig {
@@ -685,9 +697,13 @@ mod tests {
     #[tokio::test]
     async fn configured_flush_interval_persists_buffered_logs() {
         let codex_home = temp_codex_home();
-        let runtime = StateRuntime::init(codex_home.clone(), "test-provider".to_string())
-            .await
-            .expect("initialize runtime");
+        let runtime = StateRuntime::init(
+            codex_home.clone(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("initialize runtime");
         let layer = LogDbLayer::start_with_config(
             runtime.clone(),
             LogSinkQueueConfig {

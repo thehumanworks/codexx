@@ -19,6 +19,7 @@ use time::macros::format_description;
 use uuid::Uuid;
 
 use crate::INTERACTIVE_SESSION_SOURCES;
+use crate::StateDbAccess;
 use crate::find_thread_path_by_id_str;
 use crate::list::Cursor;
 use crate::list::ThreadItem;
@@ -59,9 +60,13 @@ async fn insert_state_db_thread(
     rollout_path: &Path,
     archived: bool,
 ) -> crate::state_db::StateDbHandle {
-    let runtime = codex_state::StateRuntime::init(home.to_path_buf(), TEST_PROVIDER.to_string())
-        .await
-        .expect("state db should initialize");
+    let runtime = codex_state::StateRuntime::init(
+        home.to_path_buf(),
+        TEST_PROVIDER.to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -245,9 +250,13 @@ async fn find_thread_path_falls_back_when_db_path_is_stale() {
     )
     .await;
 
-    let found = find_thread_path_by_id_str(home, &uuid.to_string(), Some(runtime.as_ref()))
-        .await
-        .expect("lookup should succeed");
+    let found = find_thread_path_by_id_str(
+        home,
+        &uuid.to_string(),
+        &StateDbAccess::new(Some(runtime.clone())),
+    )
+    .await
+    .expect("lookup should succeed");
     assert_eq!(found, Some(fs_rollout_path.clone()));
     assert_state_db_rollout_path(home, thread_id, Some(fs_rollout_path.as_path())).await;
 }
@@ -290,9 +299,13 @@ async fn find_thread_path_falls_back_when_db_path_points_to_another_thread() {
     )
     .await;
 
-    let found = find_thread_path_by_id_str(home, &uuid.to_string(), Some(runtime.as_ref()))
-        .await
-        .expect("lookup should succeed");
+    let found = find_thread_path_by_id_str(
+        home,
+        &uuid.to_string(),
+        &StateDbAccess::new(Some(runtime.clone())),
+    )
+    .await
+    .expect("lookup should succeed");
     assert_eq!(found, Some(fs_rollout_path.clone()));
     assert_state_db_rollout_path(home, thread_id, Some(fs_rollout_path.as_path())).await;
 }
@@ -315,17 +328,25 @@ async fn find_thread_path_repairs_missing_db_row_after_filesystem_fallback() {
     let fs_rollout_path = home.join(format!("sessions/2025/01/03/rollout-{ts}-{uuid}.jsonl"));
 
     // Create an empty state DB so lookup takes the DB-first path and then falls back to files.
-    let runtime = codex_state::StateRuntime::init(home.to_path_buf(), TEST_PROVIDER.to_string())
-        .await
-        .expect("state db should initialize");
+    let runtime = codex_state::StateRuntime::init(
+        home.to_path_buf(),
+        TEST_PROVIDER.to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("state db should initialize");
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
         .expect("backfill should be complete");
 
-    let found = find_thread_path_by_id_str(home, &uuid.to_string(), Some(runtime.as_ref()))
-        .await
-        .expect("lookup should succeed");
+    let found = find_thread_path_by_id_str(
+        home,
+        &uuid.to_string(),
+        &StateDbAccess::new(Some(runtime.clone())),
+    )
+    .await
+    .expect("lookup should succeed");
     assert_eq!(found, Some(fs_rollout_path.clone()));
     assert_state_db_rollout_path(home, thread_id, Some(fs_rollout_path.as_path())).await;
 }
@@ -347,9 +368,13 @@ async fn find_thread_path_accepts_existing_state_db_path_without_canonical_filen
     )
     .await;
 
-    let found = find_thread_path_by_id_str(home, &uuid.to_string(), Some(runtime.as_ref()))
-        .await
-        .expect("lookup should succeed");
+    let found = find_thread_path_by_id_str(
+        home,
+        &uuid.to_string(),
+        &StateDbAccess::new(Some(runtime.clone())),
+    )
+    .await
+    .expect("lookup should succeed");
     assert_eq!(found, Some(db_rollout_path));
 }
 
@@ -368,9 +393,13 @@ async fn assert_state_db_rollout_path(
     thread_id: ThreadId,
     expected_path: Option<&Path>,
 ) {
-    let runtime = codex_state::StateRuntime::init(home.to_path_buf(), TEST_PROVIDER.to_string())
-        .await
-        .expect("state db should initialize");
+    let runtime = codex_state::StateRuntime::init(
+        home.to_path_buf(),
+        TEST_PROVIDER.to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .expect("state db should initialize");
     let path = runtime
         .find_rollout_path_by_id(thread_id, Some(false))
         .await

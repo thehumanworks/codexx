@@ -1,4 +1,5 @@
 use super::*;
+use crate::StateDbAccess;
 use crate::goals::GoalRuntimeState;
 use codex_protocol::SessionId;
 use codex_protocol::config_types::ServiceTier;
@@ -371,6 +372,7 @@ impl Session {
         thread_store: Arc<dyn ThreadStore>,
         parent_rollout_thread_trace: ThreadTraceContext,
         attestation_provider: Option<Arc<dyn AttestationProvider>>,
+        state_db_access: StateDbAccess,
     ) -> anyhow::Result<Arc<Self>> {
         debug!(
             "Configuring session: model={}; provider={:?}",
@@ -471,12 +473,8 @@ impl Session {
         let state_db_fut = async {
             if config.ephemeral {
                 None
-            } else if let Some(local_store) =
-                thread_store.as_any().downcast_ref::<LocalThreadStore>()
-            {
-                local_store.state_db().await
             } else {
-                None
+                state_db_access.state_db()
             }
         }
         .instrument(info_span!(
@@ -507,7 +505,7 @@ impl Session {
         ));
 
         // Join all independent futures.
-        let (thread_persistence_result, state_db_ctx, (auth, mcp_servers, auth_statuses)) =
+        let (thread_persistence_result, _state_db_ctx, (auth, mcp_servers, auth_statuses)) =
             tokio::join!(thread_persistence_fut, state_db_fut, auth_and_mcp_fut);
 
         let mut live_thread_init =
@@ -709,7 +707,7 @@ impl Session {
                         session_configuration.cwd.clone(),
                         &mut default_shell,
                         session_telemetry.clone(),
-                        state_db_ctx.clone(),
+                        state_db_access.clone(),
                     )
                 }
             } else {
@@ -850,7 +848,7 @@ impl Session {
                 agent_control,
                 network_proxy,
                 network_approval: Arc::clone(&network_approval),
-                state_db: state_db_ctx.clone(),
+                state_db_access: state_db_access.clone(),
                 live_thread: live_thread_init.as_ref().cloned(),
                 thread_store: Arc::clone(&thread_store),
                 attestation_provider: attestation_provider.clone(),

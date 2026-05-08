@@ -63,9 +63,13 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
         rollout_path.display()
     );
     assert!(
-        find_thread_path_by_id_str(codex_home.path(), &thread.id, /*state_db_ctx*/ None)
-            .await?
-            .is_none(),
+        find_thread_path_by_id_str(
+            codex_home.path(),
+            &thread.id,
+            &codex_core::StateDbAccess::none()
+        )
+        .await?
+        .is_none(),
         "thread id should not be discoverable before rollout materialization"
     );
 
@@ -118,10 +122,13 @@ async fn thread_archive_requires_materialized_rollout() -> Result<()> {
         rollout_path.display()
     );
 
-    let discovered_path =
-        find_thread_path_by_id_str(codex_home.path(), &thread.id, /*state_db_ctx*/ None)
-            .await?
-            .expect("expected rollout path for thread id to exist after materialization");
+    let discovered_path = find_thread_path_by_id_str(
+        codex_home.path(),
+        &thread.id,
+        &codex_core::StateDbAccess::none(),
+    )
+    .await?
+    .expect("expected rollout path for thread id to exist after materialization");
     assert_paths_match_on_disk(&discovered_path, &rollout_path)?;
 
     let archive_id = mcp
@@ -200,8 +207,12 @@ async fn thread_archive_archives_spawned_descendants() -> Result<()> {
     let parent_thread_id = ThreadId::from_string(&parent_id)?;
     let child_thread_id = ThreadId::from_string(&child_id)?;
     let grandchild_thread_id = ThreadId::from_string(&grandchild_id)?;
-    let state_db =
-        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let state_db = StateRuntime::init(
+        codex_home.path().to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;
@@ -256,7 +267,7 @@ async fn thread_archive_archives_spawned_descendants() -> Result<()> {
             find_thread_path_by_id_str(
                 codex_home.path(),
                 &thread_id.to_string(),
-                /*state_db_ctx*/ None,
+                &codex_core::StateDbAccess::none(),
             )
             .await?
             .is_none(),
@@ -266,7 +277,7 @@ async fn thread_archive_archives_spawned_descendants() -> Result<()> {
             find_archived_thread_path_by_id_str(
                 codex_home.path(),
                 &thread_id.to_string(),
-                /*state_db_ctx*/ None,
+                &codex_core::StateDbAccess::none(),
             )
             .await?
             .is_some(),
@@ -311,8 +322,12 @@ async fn thread_archive_succeeds_when_descendant_archive_fails() -> Result<()> {
     let parent_thread_id = ThreadId::from_string(&parent_id)?;
     let child_thread_id = ThreadId::from_string(&child_id)?;
     let grandchild_thread_id = ThreadId::from_string(&grandchild_id)?;
-    let state_db =
-        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let state_db = StateRuntime::init(
+        codex_home.path().to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;
@@ -331,10 +346,13 @@ async fn thread_archive_succeeds_when_descendant_archive_fails() -> Result<()> {
         )
         .await?;
 
-    let child_rollout_path =
-        find_thread_path_by_id_str(codex_home.path(), &child_id, /*state_db_ctx*/ None)
-            .await?
-            .expect("child rollout path");
+    let child_rollout_path = find_thread_path_by_id_str(
+        codex_home.path(),
+        &child_id,
+        &codex_core::StateDbAccess::none(),
+    )
+    .await?
+    .expect("child rollout path");
     let archived_child_path = codex_home
         .path()
         .join(ARCHIVED_SESSIONS_SUBDIR)
@@ -394,7 +412,7 @@ async fn thread_archive_succeeds_when_descendant_archive_fails() -> Result<()> {
             find_thread_path_by_id_str(
                 codex_home.path(),
                 &thread_id.to_string(),
-                /*state_db_ctx*/ None,
+                &codex_core::StateDbAccess::none(),
             )
             .await?
             .is_none(),
@@ -404,7 +422,7 @@ async fn thread_archive_succeeds_when_descendant_archive_fails() -> Result<()> {
             find_archived_thread_path_by_id_str(
                 codex_home.path(),
                 &thread_id.to_string(),
-                /*state_db_ctx*/ None,
+                &codex_core::StateDbAccess::none(),
             )
             .await?
             .is_some(),
@@ -432,8 +450,12 @@ async fn thread_archive_succeeds_when_spawned_descendant_is_missing() -> Result<
     let parent_thread_id = ThreadId::from_string(&parent_id)?;
     let missing_child_thread_id = ThreadId::from_string("00000000-0000-0000-0000-000000000901")?;
 
-    let state_db =
-        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let state_db = StateRuntime::init(
+        codex_home.path().to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;
@@ -473,16 +495,20 @@ async fn thread_archive_succeeds_when_spawned_descendant_is_missing() -> Result<
     assert_eq!(archived_notification.thread_id, parent_id);
 
     assert!(
-        find_thread_path_by_id_str(codex_home.path(), &parent_id, /*state_db_ctx*/ None)
-            .await?
-            .is_none(),
+        find_thread_path_by_id_str(
+            codex_home.path(),
+            &parent_id,
+            &codex_core::StateDbAccess::none()
+        )
+        .await?
+        .is_none(),
         "parent should be archived even when a descendant is missing"
     );
     assert!(
         find_archived_thread_path_by_id_str(
             codex_home.path(),
             &parent_id,
-            /*state_db_ctx*/ None,
+            &codex_core::StateDbAccess::none(),
         )
         .await?
         .is_some(),

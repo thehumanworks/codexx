@@ -125,10 +125,13 @@ mod tests {
 
     async fn state_runtime() -> TestRuntime {
         let codex_home = TempDir::new().expect("tempdir should be created");
-        let state_db =
-            StateRuntime::init(codex_home.path().to_path_buf(), "test-provider".to_string())
-                .await
-                .expect("state db should initialize");
+        let state_db = StateRuntime::init(
+            codex_home.path().to_path_buf(),
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("state db should initialize");
         TestRuntime {
             state_db,
             _codex_home: codex_home,

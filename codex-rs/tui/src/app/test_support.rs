@@ -21,7 +21,7 @@ pub(super) async fn make_test_app() -> App {
         chat_widget,
         workspace_command_runner: None,
         config,
-        state_db: None,
+        state_db_access: StateDbAccess::none(),
         active_profile: None,
         cli_kv_overrides: Vec::new(),
         harness_overrides: ConfigOverrides::default(),

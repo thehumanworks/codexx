@@ -66,9 +66,13 @@ async fn upsert_thread_metadata(
     thread_id: ThreadId,
     rollout_path: PathBuf,
 ) -> StateDbHandle {
-    let runtime = StateRuntime::init(codex_home.to_path_buf(), "test-provider".to_string())
-        .await
-        .unwrap();
+    let runtime = StateRuntime::init(
+        codex_home.to_path_buf(),
+        "test-provider".to_string(),
+        /*metrics*/ None,
+    )
+    .await
+    .unwrap();
     runtime
         .mark_backfill_complete(/*last_watermark*/ None)
         .await
@@ -91,10 +95,13 @@ async fn find_locates_rollout_file_by_id() {
     let id = Uuid::new_v4();
     let expected = write_minimal_rollout_with_id(home.path(), id);
 
-    let found =
-        find_thread_path_by_id_str(home.path(), &id.to_string(), /*state_db_ctx*/ None)
-            .await
-            .unwrap();
+    let found = find_thread_path_by_id_str(
+        home.path(),
+        &id.to_string(),
+        &codex_core::StateDbAccess::none(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(found.unwrap(), expected);
 }
@@ -108,10 +115,13 @@ async fn find_handles_gitignore_covering_codex_home_directory() {
     let id = Uuid::new_v4();
     let expected = write_minimal_rollout_with_id(&codex_home, id);
 
-    let found =
-        find_thread_path_by_id_str(&codex_home, &id.to_string(), /*state_db_ctx*/ None)
-            .await
-            .unwrap();
+    let found = find_thread_path_by_id_str(
+        &codex_home,
+        &id.to_string(),
+        &codex_core::StateDbAccess::none(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(found, Some(expected));
 }
@@ -129,9 +139,13 @@ async fn find_prefers_sqlite_path_by_id() {
     write_minimal_rollout_with_id(home.path(), id);
     let state_db = upsert_thread_metadata(home.path(), thread_id, db_path.clone()).await;
 
-    let found = find_thread_path_by_id_str(home.path(), &id.to_string(), Some(&state_db))
-        .await
-        .unwrap();
+    let found = find_thread_path_by_id_str(
+        home.path(),
+        &id.to_string(),
+        &codex_core::StateDbAccess::new(Some(state_db.clone())),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(found, Some(db_path));
 }
@@ -148,9 +162,13 @@ async fn find_falls_back_to_filesystem_when_sqlite_has_no_match() {
         .join("sessions/2030/12/30/rollout-2030-12-30T00-00-00-unrelated.jsonl");
     let state_db = upsert_thread_metadata(home.path(), unrelated_thread_id, unrelated_path).await;
 
-    let found = find_thread_path_by_id_str(home.path(), &id.to_string(), Some(&state_db))
-        .await
-        .unwrap();
+    let found = find_thread_path_by_id_str(
+        home.path(),
+        &id.to_string(),
+        &codex_core::StateDbAccess::new(Some(state_db.clone())),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(found, Some(expected));
 }
@@ -162,10 +180,13 @@ async fn find_ignores_granular_gitignore_rules() {
     let expected = write_minimal_rollout_with_id(home.path(), id);
     std::fs::write(home.path().join("sessions/.gitignore"), "*.jsonl\n").unwrap();
 
-    let found =
-        find_thread_path_by_id_str(home.path(), &id.to_string(), /*state_db_ctx*/ None)
-            .await
-            .unwrap();
+    let found = find_thread_path_by_id_str(
+        home.path(),
+        &id.to_string(),
+        &codex_core::StateDbAccess::none(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(found, Some(expected));
 }
@@ -212,7 +233,8 @@ async fn find_locates_rollout_file_written_by_recorder() -> std::io::Result<()> 
     )?;
 
     let found =
-        find_thread_meta_by_name_str(home.path(), thread_name, /*state_db_ctx*/ None).await?;
+        find_thread_meta_by_name_str(home.path(), thread_name, &codex_core::StateDbAccess::none())
+            .await?;
 
     let (path, session_meta) = found.expect("expected rollout path to be found");
     assert_eq!(session_meta.meta.id, thread_id);
@@ -232,7 +254,7 @@ async fn find_archived_locates_rollout_file_by_id() {
     let found = find_archived_thread_path_by_id_str(
         home.path(),
         &id.to_string(),
-        /*state_db_ctx*/ None,
+        &codex_core::StateDbAccess::none(),
     )
     .await
     .unwrap();

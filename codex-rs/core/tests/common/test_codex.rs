@@ -66,6 +66,7 @@ type WorkspaceSetup = dyn FnOnce(AbsolutePathBuf, Arc<dyn ExecutorFileSystem>) -
     + Send;
 const TEST_MODEL_WITH_EXPERIMENTAL_TOOLS: &str = "test-gpt-5.1-codex";
 const REMOTE_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_TEST_REMOTE_EXEC_SERVER_URL";
+const OTEL_SERVICE_NAME: &str = "codex_exec";
 static REMOTE_TEST_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(0);
 const SUBMIT_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -423,8 +424,12 @@ impl TestCodexBuilder {
         environment_manager: Arc<codex_exec_server::EnvironmentManager>,
     ) -> anyhow::Result<TestCodex> {
         let auth = self.auth.clone();
-        let state_db = codex_core::init_state_db(&config).await;
-        let thread_store = thread_store_from_config(&config, state_db.clone());
+        let state_db_metrics =
+            codex_core::otel_init::sqlite_metrics_recorder_from_global(OTEL_SERVICE_NAME);
+        let state_db = codex_core::init_state_db(&config, state_db_metrics.clone()).await;
+        let state_db_access = codex_core::StateDbAccess::new(state_db.clone())
+            .with_standalone_metrics(state_db_metrics);
+        let thread_store = thread_store_from_config(&config, state_db_access.clone());
         let installation_id = resolve_installation_id(&config.codex_home).await?;
         let thread_manager = ThreadManager::new(
             &config,
@@ -433,7 +438,7 @@ impl TestCodexBuilder {
             Arc::clone(&environment_manager),
             /*analytics_events_client*/ None,
             thread_store,
-            state_db.clone(),
+            state_db_access,
             installation_id,
             /*attestation_provider*/ None,
         );

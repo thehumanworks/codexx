@@ -615,7 +615,12 @@ mod tests {
     #[tokio::test]
     async fn report_agent_job_item_result_completes_item_atomically() -> anyhow::Result<()> {
         let codex_home = unique_temp_dir();
-        let runtime = StateRuntime::init(codex_home, "test-provider".to_string()).await?;
+        let runtime = StateRuntime::init(
+            codex_home,
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await?;
         let (job_id, item_id, thread_id) = create_running_single_item_job(runtime.as_ref()).await?;
 
         let accepted = runtime
@@ -655,7 +660,12 @@ mod tests {
     #[tokio::test]
     async fn report_agent_job_item_result_rejects_late_reports() -> anyhow::Result<()> {
         let codex_home = unique_temp_dir();
-        let runtime = StateRuntime::init(codex_home, "test-provider".to_string()).await?;
+        let runtime = StateRuntime::init(
+            codex_home,
+            "test-provider".to_string(),
+            /*metrics*/ None,
+        )
+        .await?;
         let (job_id, item_id, thread_id) = create_running_single_item_job(runtime.as_ref()).await?;
 
         let marked_failed = runtime

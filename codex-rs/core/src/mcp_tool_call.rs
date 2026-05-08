@@ -770,7 +770,7 @@ async fn maybe_mark_thread_memory_mode_polluted(
         return;
     }
     state_db::mark_thread_memory_mode_polluted(
-        sess.services.state_db.as_deref(),
+        sess.services.state_db_access.as_deref(),
         sess.conversation_id,
         "mcp_tool_call",
     )

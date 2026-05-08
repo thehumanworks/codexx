@@ -100,10 +100,13 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
     )
     .await??;
 
-    let found_rollout_path =
-        find_thread_path_by_id_str(codex_home.path(), &thread.id, /*state_db_ctx*/ None)
-            .await?
-            .expect("expected rollout path for thread id to exist");
+    let found_rollout_path = find_thread_path_by_id_str(
+        codex_home.path(),
+        &thread.id,
+        &codex_core::StateDbAccess::none(),
+    )
+    .await?
+    .expect("expected rollout path for thread id to exist");
     assert_paths_match_on_disk(&found_rollout_path, &rollout_path)?;
 
     let archive_id = mcp
@@ -121,7 +124,7 @@ async fn thread_unarchive_moves_rollout_back_into_sessions_directory() -> Result
     let archived_path = find_archived_thread_path_by_id_str(
         codex_home.path(),
         &thread.id,
-        /*state_db_ctx*/ None,
+        &codex_core::StateDbAccess::none(),
     )
     .await?
     .expect("expected archived rollout path for thread id to exist");
@@ -249,7 +252,7 @@ async fn thread_unarchive_preserves_pathless_store_metadata() -> Result<()> {
         thread_config_loader: Arc::new(codex_config::NoopThreadConfigLoader),
         feedback: CodexFeedback::new(),
         log_db: None,
-        state_db: None,
+        state_db_access: in_process::StateDbAccess::none(),
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         config_warnings: Vec::new(),
         session_source: SessionSource::Cli,

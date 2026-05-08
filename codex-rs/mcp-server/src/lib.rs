@@ -74,19 +74,6 @@ pub async fn run_main(
             std::io::Error::new(ErrorKind::InvalidData, format!("error loading config: {e}"))
         })?;
     set_default_client_residency_requirement(config.enforce_residency.value());
-    let state_db = codex_core::init_state_db(&config).await;
-    let environment_manager = Arc::new(
-        EnvironmentManager::from_codex_home(
-            config.codex_home.clone(),
-            ExecServerRuntimePaths::from_optional_paths(
-                arg0_paths.codex_self_exe.clone(),
-                arg0_paths.codex_linux_sandbox_exe.clone(),
-            )?,
-        )
-        .await
-        .map_err(std::io::Error::other)?,
-    );
-
     let otel = codex_core::otel_init::build_provider(
         &config,
         env!("CARGO_PKG_VERSION"),
@@ -99,6 +86,23 @@ pub async fn run_main(
             format!("error loading otel config: {e}"),
         )
     })?;
+    codex_core::otel_init::record_process_start(otel.as_ref(), OTEL_SERVICE_NAME);
+    let state_db_metrics =
+        codex_core::otel_init::sqlite_metrics_recorder(otel.as_ref(), OTEL_SERVICE_NAME);
+    let state_db = codex_core::init_state_db(&config, state_db_metrics.clone()).await;
+    let state_db_access =
+        codex_core::StateDbAccess::new(state_db.clone()).with_standalone_metrics(state_db_metrics);
+    let environment_manager = Arc::new(
+        EnvironmentManager::from_codex_home(
+            config.codex_home.clone(),
+            ExecServerRuntimePaths::from_optional_paths(
+                arg0_paths.codex_self_exe.clone(),
+                arg0_paths.codex_linux_sandbox_exe.clone(),
+            )?,
+        )
+        .await
+        .map_err(std::io::Error::other)?,
+    );
 
     let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
@@ -148,7 +152,7 @@ pub async fn run_main(
             arg0_paths,
             Arc::new(config),
             environment_manager,
-            state_db,
+            state_db_access,
             installation_id,
         )
         .await;
@@ -201,10 +205,15 @@ pub async fn run_main(
 mod tests {
     use super::*;
     use codex_config::types::OtelExporterKind;
+    use codex_config::types::OtelHttpProtocol;
     use codex_core::config::ConfigBuilder;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
     use tempfile::TempDir;
+    use wiremock::Mock;
+    use wiremock::MockServer;
+    use wiremock::ResponseTemplate;
+    use wiremock::matchers::method;
 
     #[test]
     fn mcp_server_defaults_analytics_to_enabled() {
@@ -213,14 +222,21 @@ mod tests {
 
     #[tokio::test]
     async fn mcp_server_builds_otel_provider_with_logs_traces_and_metrics() -> anyhow::Result<()> {
+        let collector = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&collector)
+            .await;
+
         let codex_home = TempDir::new()?;
         let mut config = ConfigBuilder::default()
             .codex_home(codex_home.path().to_path_buf())
             .build()
             .await?;
-        let exporter = OtelExporterKind::OtlpGrpc {
-            endpoint: "http://localhost:4317".to_string(),
+        let exporter = OtelExporterKind::OtlpHttp {
+            endpoint: collector.uri(),
             headers: HashMap::new(),
+            protocol: OtelHttpProtocol::Binary,
             tls: None,
         };
         config.otel.exporter = exporter.clone();

@@ -3731,10 +3731,11 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            /*state_db*/ None,
+            crate::StateDbAccess::none(),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
+        crate::StateDbAccess::none(),
     )
     .await;
 
@@ -3877,11 +3878,11 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         agent_control,
         network_proxy: None,
         network_approval: Arc::clone(&network_approval),
-        state_db: None,
+        state_db_access: crate::StateDbAccess::none(),
         live_thread: None,
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            /*state_db*/ None,
+            crate::StateDbAccess::none(),
         )),
         attestation_provider: None,
         model_client: ModelClient::new(
@@ -4070,10 +4071,11 @@ async fn make_session_with_config_and_rx(
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            /*state_db*/ None,
+            crate::StateDbAccess::none(),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
+        crate::StateDbAccess::none(),
     )
     .await?;
 
@@ -4153,6 +4155,16 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         /*bundled_skills_enabled*/ true,
     ));
 
+    let state_db_access = crate::StateDbAccess::new(Some(
+        codex_state::StateRuntime::init(
+            config.sqlite_home.clone(),
+            config.model_provider_id.clone(),
+            /*metrics*/ None,
+        )
+        .await
+        .expect("state db should initialize"),
+    ));
+
     let session = Session::new(
         session_configuration,
         Arc::clone(&config),
@@ -4173,17 +4185,11 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         /*analytics_events_client*/ None,
         Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            Some(
-                codex_state::StateRuntime::init(
-                    config.sqlite_home.clone(),
-                    config.model_provider_id.clone(),
-                )
-                .await
-                .expect("state db should initialize"),
-            ),
+            state_db_access.clone(),
         )),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
+        state_db_access,
     )
     .await?;
 
@@ -5463,6 +5469,7 @@ where
             codex_state::StateRuntime::init(
                 config.sqlite_home.clone(),
                 config.model_provider_id.clone(),
+                /*metrics*/ None,
             )
             .await
             .expect("goal tests should initialize sqlite state db"),
@@ -5470,6 +5477,7 @@ where
     } else {
         None
     };
+    let state_db_access = crate::StateDbAccess::new(state_db.clone());
     let config = Arc::new(config);
     let thread_id = ThreadId::default();
     let auth_manager = AuthManager::from_auth_for_testing(auth);
@@ -5596,11 +5604,11 @@ where
         agent_control,
         network_proxy: None,
         network_approval: Arc::clone(&network_approval),
-        state_db: state_db.clone(),
+        state_db_access: state_db_access.clone(),
         live_thread: None,
         thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
             codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            state_db,
+            state_db_access,
         )),
         attestation_provider: None,
         model_client: ModelClient::new(
@@ -7846,8 +7854,12 @@ async fn goal_test_state_db(sess: &Session) -> anyhow::Result<crate::StateDbHand
         return Ok(state_db);
     }
     let config = sess.get_config().await;
-    codex_state::StateRuntime::init(config.sqlite_home.clone(), config.model_provider_id.clone())
-        .await
+    codex_state::StateRuntime::init(
+        config.sqlite_home.clone(),
+        config.model_provider_id.clone(),
+        /*metrics*/ None,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -8161,6 +8173,7 @@ async fn completed_goal_accounts_current_turn_tokens_before_tool_response() -> a
     let state_db = codex_state::StateRuntime::init(
         test.config.sqlite_home.clone(),
         test.config.model_provider_id.clone(),
+        /*metrics*/ None,
     )
     .await?;
     let persisted_goal = state_db

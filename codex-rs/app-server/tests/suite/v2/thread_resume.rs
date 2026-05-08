@@ -1223,8 +1223,12 @@ stream_max_retries = 0
         .join("\n")
             + "\n",
     )?;
-    let state_db =
-        StateRuntime::init(codex_home.path().to_path_buf(), "mock_provider".into()).await?;
+    let state_db = StateRuntime::init(
+        codex_home.path().to_path_buf(),
+        "mock_provider".into(),
+        /*metrics*/ None,
+    )
+    .await?;
     state_db
         .mark_backfill_complete(/*last_watermark*/ None)
         .await?;

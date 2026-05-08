@@ -258,7 +258,7 @@ async fn build_test_processor(
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         feedback: CodexFeedback::new(),
         log_db: None,
-        state_db: None,
+        state_db_access: codex_rollout::StateDbAccess::none(),
         config_warnings: Vec::new(),
         session_source: SessionSource::VSCode,
         auth_manager,

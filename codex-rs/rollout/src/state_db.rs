@@ -4,6 +4,7 @@ use crate::list::Cursor;
 use crate::list::SortDirection;
 use crate::list::ThreadSortKey;
 use crate::metadata;
+use crate::sqlite_metrics;
 use chrono::DateTime;
 use chrono::Utc;
 use codex_protocol::ThreadId;
@@ -25,6 +26,61 @@ use tracing::warn;
 /// Core-facing handle to the SQLite-backed state runtime.
 pub type StateDbHandle = Arc<codex_state::StateRuntime>;
 
+/// Access to SQLite-backed state plus fallback telemetry for local rollout operations.
+///
+/// Some fallback metrics need to be recorded after SQLite initialization fails,
+/// so callers must carry the metrics sink independently from the runtime handle.
+#[derive(Clone)]
+pub struct StateDbAccess {
+    state_db: Option<StateDbHandle>,
+    standalone_metrics: Option<codex_state::DbMetricsRecorderHandle>,
+}
+
+impl StateDbAccess {
+    /// Construct an access bundle with no DB handle and no fallback metrics recorder.
+    pub fn none() -> Self {
+        Self {
+            state_db: None,
+            standalone_metrics: None,
+        }
+    }
+
+    pub fn new(state_db: Option<StateDbHandle>) -> Self {
+        Self {
+            state_db,
+            standalone_metrics: None,
+        }
+    }
+
+    pub fn with_standalone_metrics(
+        mut self,
+        standalone_metrics: Option<codex_state::DbMetricsRecorderHandle>,
+    ) -> Self {
+        self.standalone_metrics = standalone_metrics;
+        self
+    }
+
+    pub fn state_db(&self) -> Option<StateDbHandle> {
+        self.state_db.clone()
+    }
+
+    pub fn as_deref(&self) -> Option<&codex_state::StateRuntime> {
+        self.state_db.as_deref()
+    }
+
+    pub fn is_available(&self) -> bool {
+        self.state_db.is_some()
+    }
+
+    pub fn metrics(&self) -> Option<&dyn codex_state::DbMetricsRecorder> {
+        self.standalone_metrics.as_deref().or_else(|| {
+            self.state_db
+                .as_deref()
+                .and_then(codex_state::StateRuntime::metrics)
+        })
+    }
+}
+
 #[cfg(not(test))]
 const STARTUP_BACKFILL_POLL_INTERVAL: Duration = Duration::from_secs(1);
 #[cfg(test)]
@@ -39,12 +95,16 @@ const STARTUP_BACKFILL_WAIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// This is the process entry point for local state: it opens the SQLite-backed
 /// runtime, applies rollout metadata backfills as needed, and returns the
 /// initialized handle.
-pub async fn init(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
+pub async fn init(
+    config: &impl RolloutConfigView,
+    metrics: Option<codex_state::DbMetricsRecorderHandle>,
+) -> Option<StateDbHandle> {
     let config = RolloutConfig::from_view(config);
     match try_init_with_roots(
         config.codex_home,
         config.sqlite_home,
         config.model_provider_id,
+        metrics,
     )
     .await
     {
@@ -60,12 +120,16 @@ pub async fn init(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
 ///
 /// Prefer [`init`] unless the caller needs to surface the exact failure after
 /// tracing or UI setup has completed.
-pub async fn try_init(config: &impl RolloutConfigView) -> anyhow::Result<StateDbHandle> {
+pub async fn try_init(
+    config: &impl RolloutConfigView,
+    metrics: Option<codex_state::DbMetricsRecorderHandle>,
+) -> anyhow::Result<StateDbHandle> {
     let config = RolloutConfig::from_view(config);
     try_init_with_roots(
         config.codex_home,
         config.sqlite_home,
         config.model_provider_id,
+        metrics,
     )
     .await
 }
@@ -74,11 +138,13 @@ async fn try_init_with_roots(
     codex_home: PathBuf,
     sqlite_home: PathBuf,
     default_model_provider_id: String,
+    metrics: Option<codex_state::DbMetricsRecorderHandle>,
 ) -> anyhow::Result<StateDbHandle> {
     try_init_with_roots_inner(
         codex_home,
         sqlite_home,
         default_model_provider_id,
+        metrics,
         /*backfill_lease_seconds*/ None,
     )
     .await
@@ -95,6 +161,7 @@ async fn try_init_with_roots_and_backfill_lease(
         codex_home,
         sqlite_home,
         default_model_provider_id,
+        /*metrics*/ None,
         Some(backfill_lease_seconds),
     )
     .await
@@ -104,54 +171,82 @@ async fn try_init_with_roots_inner(
     codex_home: PathBuf,
     sqlite_home: PathBuf,
     default_model_provider_id: String,
+    metrics: Option<codex_state::DbMetricsRecorderHandle>,
     backfill_lease_seconds: Option<i64>,
 ) -> anyhow::Result<StateDbHandle> {
-    let runtime =
-        codex_state::StateRuntime::init(sqlite_home.clone(), default_model_provider_id.clone())
-            .await
-            .map_err(|err| {
-                anyhow::anyhow!(
-                    "failed to initialize state runtime at {}: {err}",
-                    sqlite_home.display()
-                )
-            })?;
+    let runtime = codex_state::StateRuntime::init(
+        sqlite_home.clone(),
+        default_model_provider_id.clone(),
+        metrics.clone(),
+    )
+    .await
+    .map_err(|err| {
+        anyhow::anyhow!(
+            "failed to initialize state runtime at {}: {err}",
+            sqlite_home.display()
+        )
+    })?;
+    let backfill_gate_started = Instant::now();
+    let backfill_gate_result = wait_for_startup_backfill(
+        runtime.as_ref(),
+        codex_home.as_path(),
+        default_model_provider_id.as_str(),
+        backfill_lease_seconds,
+    )
+    .await;
+    codex_state::record_db_init_backfill_gate_metric(
+        metrics.as_deref(),
+        backfill_gate_started.elapsed(),
+        &backfill_gate_result,
+    );
+    backfill_gate_result?;
+    Ok(runtime)
+}
+
+async fn wait_for_startup_backfill(
+    runtime: &codex_state::StateRuntime,
+    codex_home: &Path,
+    default_model_provider_id: &str,
+    backfill_lease_seconds: Option<i64>,
+) -> anyhow::Result<()> {
     let wait_started = Instant::now();
     let mut reported_wait = false;
     loop {
-        let backfill_state = runtime.get_backfill_state().await.map_err(|err| {
-            anyhow::anyhow!(
-                "failed to read backfill state at {}: {err}",
-                codex_home.display()
-            )
-        })?;
+        let backfill_state = match runtime.get_backfill_state().await {
+            Ok(state) => state,
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "failed to read backfill state at {}: {err}",
+                    codex_home.display()
+                ));
+            }
+        };
         if backfill_state.status == codex_state::BackfillStatus::Complete {
-            return Ok(runtime);
+            return Ok(());
         }
 
         if let Some(backfill_lease_seconds) = backfill_lease_seconds {
             metadata::backfill_sessions_with_lease(
-                runtime.as_ref(),
-                codex_home.as_path(),
-                default_model_provider_id.as_str(),
+                runtime,
+                codex_home,
+                default_model_provider_id,
                 backfill_lease_seconds,
             )
             .await;
         } else {
-            metadata::backfill_sessions(
-                runtime.as_ref(),
-                codex_home.as_path(),
-                default_model_provider_id.as_str(),
-            )
-            .await;
+            metadata::backfill_sessions(runtime, codex_home, default_model_provider_id).await;
         }
-        let backfill_state = runtime.get_backfill_state().await.map_err(|err| {
-            anyhow::anyhow!(
-                "failed to read backfill state at {} after startup backfill: {err}",
-                codex_home.display()
-            )
-        })?;
+        let backfill_state = match runtime.get_backfill_state().await {
+            Ok(state) => state,
+            Err(err) => {
+                return Err(anyhow::anyhow!(
+                    "failed to read backfill state at {} after startup backfill: {err}",
+                    codex_home.display()
+                ));
+            }
+        };
         if backfill_state.status == codex_state::BackfillStatus::Complete {
-            return Ok(runtime);
+            return Ok(());
         }
         if wait_started.elapsed() >= STARTUP_BACKFILL_WAIT_TIMEOUT {
             return Err(anyhow::anyhow!(
@@ -192,39 +287,65 @@ fn emit_startup_warning(message: &str) {
 ///
 /// Unlike [`init`], this helper does not run rollout backfill. It is for
 /// optional local reads from non-owning contexts such as remote app-server mode.
-pub async fn get_state_db(config: &impl RolloutConfigView) -> Option<StateDbHandle> {
+pub async fn get_state_db(
+    config: &impl RolloutConfigView,
+    metrics: Option<codex_state::DbMetricsRecorderHandle>,
+) -> Option<StateDbHandle> {
     let state_path = codex_state::state_db_path(config.sqlite_home());
     if !tokio::fs::try_exists(&state_path).await.unwrap_or(false) {
+        codex_state::record_db_fallback_metric(
+            metrics.as_deref(),
+            "get_state_db",
+            "db_unavailable",
+        );
         return None;
     }
-    let runtime = codex_state::StateRuntime::init(
+    let runtime = match codex_state::StateRuntime::init(
         config.sqlite_home().to_path_buf(),
         config.model_provider_id().to_string(),
+        metrics.clone(),
     )
     .await
-    .ok()?;
-    require_backfill_complete(runtime, config.sqlite_home()).await
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            codex_state::record_db_fallback_metric(metrics.as_deref(), "get_state_db", "db_error");
+            return None;
+        }
+    };
+    require_backfill_complete(runtime, config.sqlite_home(), metrics.as_deref()).await
+}
+
+/// Build a SQLite metrics recorder backed by an OTEL metrics client.
+pub fn otel_db_metrics_recorder(
+    metrics: codex_otel::MetricsClient,
+    originator: &str,
+) -> codex_state::DbMetricsRecorderHandle {
+    sqlite_metrics::recorder(metrics, originator)
 }
 
 async fn require_backfill_complete(
     runtime: StateDbHandle,
-    codex_home: &Path,
+    sqlite_home: &Path,
+    metrics: Option<&dyn codex_state::DbMetricsRecorder>,
 ) -> Option<StateDbHandle> {
     match runtime.get_backfill_state().await {
         Ok(state) if state.status == codex_state::BackfillStatus::Complete => Some(runtime),
         Ok(state) => {
             warn!(
                 "state db backfill not complete at {} (status: {})",
-                codex_home.display(),
+                sqlite_home.display(),
                 state.status.as_str()
             );
+            codex_state::record_db_fallback_metric(metrics, "get_state_db", "backfill_incomplete");
             None
         }
         Err(err) => {
             warn!(
                 "failed to read backfill state at {}: {err}",
-                codex_home.display()
+                sqlite_home.display()
             );
+            codex_state::record_db_fallback_metric(metrics, "get_state_db", "db_error");
             None
         }
     }
