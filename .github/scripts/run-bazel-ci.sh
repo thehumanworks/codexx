@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/load-bazel-ci-config.sh"
+load_bazel_ci_config
+
 print_failed_bazel_test_logs=0
 print_failed_bazel_action_summary=0
 remote_download_toplevel=0

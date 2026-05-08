@@ -21,6 +21,9 @@ outputs:
   repository-cache-hit:
     description: Whether the Bazel repository cache restore found an exact key match.
     value: ${{ steps.cache_bazel_repository_restore.outputs.cache-hit }}
+  bazel-ci-config-path:
+    description: Tab-delimited Bazel CI config consumed by the Bazel wrapper scripts.
+    value: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
 
 runs:
   using: composite
@@ -59,6 +62,9 @@ runs:
 
     - name: Set up Bazel execution logs
       shell: bash
+      env:
+        BAZEL_CI_CONFIG_PATH: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
       run: |
         mkdir -p "${RUNNER_TEMP}/bazel-execution-logs"
-        echo "CODEX_BAZEL_EXECUTION_LOG_COMPACT_DIR=${RUNNER_TEMP}/bazel-execution-logs" >> "${GITHUB_ENV}"
+        printf 'CODEX_BAZEL_EXECUTION_LOG_COMPACT_DIR\t%s\n' \
+          "${RUNNER_TEMP}/bazel-execution-logs" >> "${BAZEL_CI_CONFIG_PATH}"

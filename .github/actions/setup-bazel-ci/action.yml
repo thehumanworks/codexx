@@ -12,6 +12,9 @@ outputs:
   repository-cache-path:
     description: Filesystem path used for the Bazel repository cache.
     value: ${{ steps.configure_bazel_repository_cache.outputs.repository-cache-path }}
+  bazel-ci-config-path:
+    description: Tab-delimited Bazel CI config consumed by the Bazel wrapper scripts.
+    value: ${{ steps.configure_bazel_ci_config.outputs.config-path }}
 
 runs:
   using: composite
@@ -44,11 +47,22 @@ runs:
         # returns HTTP 400 for that path in the Windows clippy job.
         $repositoryCachePath = Join-Path $HOME '.cache/bazel-repo-cache'
         "repository-cache-path=$repositoryCachePath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-        "BAZEL_REPOSITORY_CACHE=$repositoryCachePath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+    - name: Configure Bazel CI config
+      id: configure_bazel_ci_config
+      shell: pwsh
+      env:
+        REPOSITORY_CACHE_PATH: ${{ steps.configure_bazel_repository_cache.outputs.repository-cache-path }}
+      run: |
+        $configPath = Join-Path $env:RUNNER_TEMP "bazel-ci-config-$env:GITHUB_RUN_ID-$env:GITHUB_JOB.tsv"
+        "BAZEL_REPOSITORY_CACHE`t$env:REPOSITORY_CACHE_PATH" | Out-File -FilePath $configPath -Encoding utf8NoBOM
+        "config-path=$configPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
     - name: Configure Bazel output root (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
+      env:
+        BAZEL_CI_CONFIG_PATH: ${{ steps.configure_bazel_ci_config.outputs.config-path }}
       run: |
         # Use the shortest available drive to reduce argv/path length issues,
         # but avoid the drive root because some Windows test launchers mis-handle
@@ -56,12 +70,14 @@ runs:
         $hasDDrive = Test-Path 'D:\'
         $bazelOutputUserRoot = if ($hasDDrive) { 'D:\b' } else { 'C:\b' }
         $repoContentsCache = Join-Path $env:RUNNER_TEMP "bazel-repo-contents-cache-$env:GITHUB_RUN_ID-$env:GITHUB_JOB"
-        "BAZEL_OUTPUT_USER_ROOT=$bazelOutputUserRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-        "BAZEL_REPO_CONTENTS_CACHE=$repoContentsCache" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        "BAZEL_OUTPUT_USER_ROOT`t$bazelOutputUserRoot" | Out-File -FilePath $env:BAZEL_CI_CONFIG_PATH -Encoding utf8NoBOM -Append
+        "BAZEL_REPO_CONTENTS_CACHE`t$repoContentsCache" | Out-File -FilePath $env:BAZEL_CI_CONFIG_PATH -Encoding utf8NoBOM -Append
 
-    - name: Expose MSVC SDK environment (Windows)
+    - name: Configure MSVC SDK environment (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
+      env:
+        BAZEL_CI_CONFIG_PATH: ${{ steps.configure_bazel_ci_config.outputs.config-path }}
       run: |
         # Bazel exec-side Rust build scripts do not reliably inherit the MSVC developer
         # shell on GitHub-hosted Windows runners, so discover the latest VS install and
@@ -101,8 +117,8 @@ runs:
         )
 
         # `VsDevCmd.bat` is a batch file, so invoke it under `cmd.exe`, suppress its
-        # banner, then dump the resulting environment with `set`. Re-export only the
-        # approved keys into `GITHUB_ENV` so later steps inherit the same MSVC context.
+        # banner, then dump the resulting environment with `set`. Capture only the
+        # approved keys in the Bazel CI config for later wrapper invocations.
         $envLines = & cmd.exe /c ('"{0}" -no_logo -arch=x64 -host_arch=x64 >nul && set' -f $vsDevCmd)
         foreach ($line in $envLines) {
           if ($line -notmatch '^(.*?)=(.*)$') {
@@ -112,14 +128,15 @@ runs:
           $name = $matches[1]
           $value = $matches[2]
           if ($varsToExport -contains $name) {
-            "$name=$value" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+            Set-Item -Path "Env:$name" -Value $value
+            if ($name -ne 'PATH') {
+              "$name`t$value" | Out-File -FilePath $env:BAZEL_CI_CONFIG_PATH -Encoding utf8NoBOM -Append
+            }
           }
         }
 
-    - name: Compute cache-stable Windows Bazel PATH
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: ./.github/scripts/compute-bazel-windows-path.ps1
+        $stablePath = ./.github/scripts/compute-bazel-windows-path.ps1
+        "CODEX_BAZEL_WINDOWS_PATH`t$stablePath" | Out-File -FilePath $env:BAZEL_CI_CONFIG_PATH -Encoding utf8NoBOM -Append
 
     - name: Enable Git long paths (Windows)
       if: runner.os == 'Windows'

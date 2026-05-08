@@ -256,15 +256,23 @@ jobs:
 
       - if: ${{ matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl' }}
         name: Configure musl rusty_v8 artifact overrides and verify checksums
+        id: setup_rusty_v8_musl
         uses: ./.github/actions/setup-rusty-v8-musl
         with:
           target: ${{ matrix.target }}
 
       - if: ${{ contains(matrix.target, 'linux') && matrix.bundle == 'primary' }}
         name: Build bwrap and export digest
+        env:
+          RUSTY_V8_ARCHIVE_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.archive-path }}
+          RUSTY_V8_SRC_BINDING_PATH_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.src-binding-path }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "${RUSTY_V8_ARCHIVE_OVERRIDE:-}" ]]; then
+            export RUSTY_V8_ARCHIVE="${RUSTY_V8_ARCHIVE_OVERRIDE}"
+            export RUSTY_V8_SRC_BINDING_PATH="${RUSTY_V8_SRC_BINDING_PATH_OVERRIDE}"
+          fi
           target="${{ matrix.target }}"
           cargo build --target "$target" --release --timings --bin bwrap
 
@@ -279,8 +287,15 @@ jobs:
           echo "Built bwrap ${bwrap_path} with sha256:${digest}"
 
       - name: Cargo build
+        env:
+          RUSTY_V8_ARCHIVE_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.archive-path }}
+          RUSTY_V8_SRC_BINDING_PATH_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.src-binding-path }}
         shell: bash
         run: |
+          if [[ -n "${RUSTY_V8_ARCHIVE_OVERRIDE:-}" ]]; then
+            export RUSTY_V8_ARCHIVE="${RUSTY_V8_ARCHIVE_OVERRIDE}"
+            export RUSTY_V8_SRC_BINDING_PATH="${RUSTY_V8_SRC_BINDING_PATH_OVERRIDE}"
+          fi
           build_args=()
           for binary in ${{ matrix.binaries }}; do
             build_args+=(--bin "$binary")

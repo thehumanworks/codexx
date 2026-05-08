@@ -82,6 +82,7 @@ jobs:
       - name: bazel test //...
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.prepare_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           bazel_targets=(
@@ -165,6 +166,7 @@ jobs:
       - name: bazel test //...
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.prepare_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           bazel_targets=(
@@ -249,6 +251,7 @@ jobs:
       - name: bazel build --config=clippy lint targets
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.prepare_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           bazel_clippy_args=(
@@ -338,6 +341,7 @@ jobs:
       - name: bazel build verify-release-build targets
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.prepare_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           # This job exists to compile Rust code behind
@@ -383,6 +387,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.prepare_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           ./.github/scripts/run-bazel-ci.sh \

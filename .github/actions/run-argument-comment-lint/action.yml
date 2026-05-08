@@ -13,7 +13,8 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: ./.github/actions/setup-bazel-ci
+    - id: setup_bazel
+      uses: ./.github/actions/setup-bazel-ci
       with:
         target: ${{ inputs.target }}
         install-test-prereqs: true
@@ -29,6 +30,7 @@ runs:
       if: ${{ runner.os != 'Windows' }}
       env:
         BUILDBUDDY_API_KEY: ${{ inputs.buildbuddy-api-key }}
+        CODEX_BAZEL_CI_CONFIG: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
       shell: bash
       run: |
         bazel_targets="$(./tools/argument-comment-lint/list-bazel-targets.sh)"
@@ -45,6 +47,7 @@ runs:
       if: ${{ runner.os == 'Windows' }}
       env:
         BUILDBUDDY_API_KEY: ${{ inputs.buildbuddy-api-key }}
+        CODEX_BAZEL_CI_CONFIG: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
       shell: bash
       run: |
         ./.github/scripts/run-argument-comment-lint-bazel.sh \

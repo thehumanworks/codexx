@@ -110,7 +110,8 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-bazel-ci
+      - id: setup_bazel
+        uses: ./.github/actions/setup-bazel-ci
         with:
           target: ${{ runner.os }}
           install-test-prereqs: true
@@ -124,6 +125,7 @@ jobs:
         if: ${{ runner.os != 'Windows' }}
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           bazel_targets="$(./tools/argument-comment-lint/list-bazel-targets.sh)"
@@ -139,6 +141,7 @@ jobs:
         if: ${{ runner.os == 'Windows' }}
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           ./.github/scripts/run-argument-comment-lint-bazel.sh \
@@ -438,6 +441,7 @@ jobs:
 
       - if: ${{ matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl' }}
         name: Configure musl rusty_v8 artifact overrides and verify checksums
+        id: setup_rusty_v8_musl
         uses: ./.github/actions/setup-rusty-v8-musl
         with:
           target: ${{ matrix.target }}
@@ -451,15 +455,32 @@ jobs:
 
       - name: Pre-warm dependency cache (cargo-chef)
         if: ${{ matrix.profile == 'release' }}
+        env:
+          RUSTY_V8_ARCHIVE_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.archive-path }}
+          RUSTY_V8_SRC_BINDING_PATH_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.src-binding-path }}
         shell: bash
         run: |
           set -euo pipefail
+          if [[ -n "${RUSTY_V8_ARCHIVE_OVERRIDE:-}" ]]; then
+            export RUSTY_V8_ARCHIVE="${RUSTY_V8_ARCHIVE_OVERRIDE}"
+            export RUSTY_V8_SRC_BINDING_PATH="${RUSTY_V8_SRC_BINDING_PATH_OVERRIDE}"
+          fi
           RECIPE="${RUNNER_TEMP}/chef-recipe.json"
           cargo chef prepare --recipe-path "$RECIPE"
           cargo chef cook --recipe-path "$RECIPE" --target ${{ matrix.target }} --release
 
       - name: cargo clippy
-        run: cargo clippy --target ${{ matrix.target }} --tests --profile ${{ matrix.profile }} --timings -- -D warnings
+        env:
+          RUSTY_V8_ARCHIVE_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.archive-path }}
+          RUSTY_V8_SRC_BINDING_PATH_OVERRIDE: ${{ steps.setup_rusty_v8_musl.outputs.src-binding-path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${RUSTY_V8_ARCHIVE_OVERRIDE:-}" ]]; then
+            export RUSTY_V8_ARCHIVE="${RUSTY_V8_ARCHIVE_OVERRIDE}"
+            export RUSTY_V8_SRC_BINDING_PATH="${RUSTY_V8_SRC_BINDING_PATH_OVERRIDE}"
+          fi
+          cargo clippy --target ${{ matrix.target }} --tests --profile ${{ matrix.profile }} --timings -- -D warnings
 
       - name: Upload Cargo timings (clippy)
         if: always()

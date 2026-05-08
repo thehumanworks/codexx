@@ -44,6 +44,7 @@ jobs:
       - name: Build codex with Bazel
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+          CODEX_BAZEL_CI_CONFIG: ${{ steps.setup_bazel.outputs.bazel-ci-config-path }}
         shell: bash
         run: |
           set -euo pipefail

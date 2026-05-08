@@ -4,11 +4,19 @@ inputs:
   target:
     description: Rust musl target triple.
     required: true
+outputs:
+  archive-path:
+    description: Downloaded rusty_v8 archive path for Cargo builds.
+    value: ${{ steps.configure_rusty_v8.outputs.archive-path }}
+  src-binding-path:
+    description: Downloaded rusty_v8 binding source path for Cargo builds.
+    value: ${{ steps.configure_rusty_v8.outputs.src-binding-path }}
 
 runs:
   using: composite
   steps:
     - name: Configure musl rusty_v8 artifact overrides and verify checksums
+      id: configure_rusty_v8
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
@@ -45,5 +53,5 @@ runs:
         fi
 
         (cd "${binding_dir}" && sha256sum -c "${checksums_path}")
-        echo "RUSTY_V8_ARCHIVE=${archive_path}" >> "${GITHUB_ENV}"
-        echo "RUSTY_V8_SRC_BINDING_PATH=${binding_path}" >> "${GITHUB_ENV}"
+        echo "archive-path=${archive_path}" >> "${GITHUB_OUTPUT}"
+        echo "src-binding-path=${binding_path}" >> "${GITHUB_OUTPUT}"

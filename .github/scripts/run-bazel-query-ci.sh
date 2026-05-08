@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+source "$(dirname "${BASH_SOURCE[0]}")/load-bazel-ci-config.sh"
+load_bazel_ci_config
+
 # Run Bazel queries with the same CI startup settings as the main build/test
 # invocation so target-discovery queries can reuse the same Bazel server.
 

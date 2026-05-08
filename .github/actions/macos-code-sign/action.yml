@@ -34,6 +34,7 @@ runs:
   using: composite
   steps:
     - name: Configure Apple code signing
+      id: configure_code_signing
       shell: bash
       env:
         KEYCHAIN_PASSWORD: actions
@@ -113,8 +114,8 @@ runs:
 
         rm -f "$cert_path"
 
-        echo "APPLE_CODESIGN_IDENTITY=$APPLE_CODESIGN_IDENTITY" >> "$GITHUB_ENV"
-        echo "APPLE_CODESIGN_KEYCHAIN=$keychain_path" >> "$GITHUB_ENV"
+        echo "codesign-identity=$APPLE_CODESIGN_IDENTITY" >> "$GITHUB_OUTPUT"
+        echo "keychain-path=$keychain_path" >> "$GITHUB_OUTPUT"
         echo "::add-mask::$APPLE_CODESIGN_IDENTITY"
 
     - name: Sign macOS binaries
@@ -123,6 +124,8 @@ runs:
       env:
         TARGET: ${{ inputs.target }}
         BINARIES: ${{ inputs.binaries }}
+        APPLE_CODESIGN_IDENTITY: ${{ steps.configure_code_signing.outputs.codesign-identity }}
+        APPLE_CODESIGN_KEYCHAIN: ${{ steps.configure_code_signing.outputs.keychain-path }}
       run: |
         set -euo pipefail
 
@@ -196,6 +199,8 @@ runs:
       shell: bash
       env:
         TARGET: ${{ inputs.target }}
+        APPLE_CODESIGN_IDENTITY: ${{ steps.configure_code_signing.outputs.codesign-identity }}
+        APPLE_CODESIGN_KEYCHAIN: ${{ steps.configure_code_signing.outputs.keychain-path }}
         APPLE_NOTARIZATION_KEY_P8: ${{ inputs.apple-notarization-key-p8 }}
         APPLE_NOTARIZATION_KEY_ID: ${{ inputs.apple-notarization-key-id }}
         APPLE_NOTARIZATION_ISSUER_ID: ${{ inputs.apple-notarization-issuer-id }}
@@ -239,7 +244,7 @@ runs:
       if: ${{ always() }}
       shell: bash
       env:
-        APPLE_CODESIGN_KEYCHAIN: ${{ env.APPLE_CODESIGN_KEYCHAIN }}
+        APPLE_CODESIGN_KEYCHAIN: ${{ steps.configure_code_signing.outputs.keychain-path }}
       run: |
         set -euo pipefail
         if [[ -n "${APPLE_CODESIGN_KEYCHAIN:-}" ]]; then
