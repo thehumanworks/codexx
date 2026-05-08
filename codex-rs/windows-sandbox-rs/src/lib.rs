@@ -106,8 +106,6 @@ pub use conpty::ConptyInstance;
 #[cfg(target_os = "windows")]
 pub use conpty::spawn_conpty_process_as_user;
 #[cfg(target_os = "windows")]
-pub use desktop::LaunchDesktop;
-#[cfg(target_os = "windows")]
 pub use deny_read_acl::DenyReadAclRecordKind;
 #[cfg(target_os = "windows")]
 pub use deny_read_acl::apply_deny_read_acls;
@@ -118,6 +116,8 @@ pub use deny_read_acl::plan_deny_read_acl_paths;
 #[cfg(target_os = "windows")]
 pub use deny_read_acl::write_persistent_deny_read_acl_record;
 pub use deny_read_resolver::resolve_windows_deny_read_paths;
+#[cfg(target_os = "windows")]
+pub use desktop::LaunchDesktop;
 #[cfg(target_os = "windows")]
 pub use dpapi::protect as dpapi_protect;
 #[cfg(target_os = "windows")]

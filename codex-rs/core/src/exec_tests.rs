@@ -678,7 +678,6 @@ fn windows_restricted_token_supports_unreadable_split_carveouts() {
     std::fs::create_dir_all(blocked.as_path()).expect("create blocked");
     let policy = SandboxPolicy::WorkspaceWrite {
         writable_roots: vec![],
-        read_only_access: codex_protocol::protocol::ReadOnlyAccess::FullAccess,
         network_access: false,
         exclude_tmpdir_env_var: true,
         exclude_slash_tmp: true,
@@ -692,7 +691,9 @@ fn windows_restricted_token_supports_unreadable_split_carveouts() {
         },
         codex_protocol::permissions::FileSystemSandboxEntry {
             path: codex_protocol::permissions::FileSystemPath::Special {
-                value: codex_protocol::permissions::FileSystemSpecialPath::CurrentWorkingDirectory,
+                value: codex_protocol::permissions::FileSystemSpecialPath::project_roots(
+                    /*subpath*/ None,
+                ),
             },
             access: codex_protocol::permissions::FileSystemAccessMode::Write,
         },
@@ -715,6 +716,7 @@ fn windows_restricted_token_supports_unreadable_split_carveouts() {
         ),
         Ok(Some(WindowsSandboxFilesystemOverrides {
             read_roots_override: None,
+            read_roots_include_platform_defaults: false,
             write_roots_override: None,
             additional_deny_read_paths: vec![blocked.clone()],
             additional_deny_write_paths: vec![blocked],
@@ -865,6 +867,7 @@ fn windows_elevated_supports_unreadable_split_carveouts() {
         ),
         Ok(Some(WindowsSandboxFilesystemOverrides {
             read_roots_override: None,
+            read_roots_include_platform_defaults: false,
             write_roots_override: None,
             additional_deny_read_paths: vec![
                 codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(
@@ -926,6 +929,7 @@ fn windows_elevated_supports_unreadable_globs() {
         ),
         Ok(Some(WindowsSandboxFilesystemOverrides {
             read_roots_override: None,
+            read_roots_include_platform_defaults: false,
             write_roots_override: None,
             additional_deny_read_paths: vec![
                 codex_utils_absolute_path::AbsolutePathBuf::from_absolute_path(secret)

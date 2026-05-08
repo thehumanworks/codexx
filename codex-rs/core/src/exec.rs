@@ -1198,12 +1198,6 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         .needs_direct_runtime_enforcement(network_sandbox_policy, sandbox_policy_cwd);
     let normalize_path = |path: PathBuf| dunce::canonicalize(&path).unwrap_or(path);
     let legacy_writable_roots = sandbox_policy.get_writable_roots_with_cwd(sandbox_policy_cwd);
-    let legacy_readable_root_set: BTreeSet<PathBuf> = sandbox_policy
-        .get_readable_roots_with_cwd(sandbox_policy_cwd)
-        .into_iter()
-        .map(codex_utils_absolute_path::AbsolutePathBuf::into_path_buf)
-        .map(&normalize_path)
-        .collect();
     let legacy_root_paths: BTreeSet<PathBuf> = legacy_writable_roots
         .iter()
         .map(|root| normalize_path(root.root.to_path_buf()))
@@ -1214,7 +1208,6 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
         .map(codex_utils_absolute_path::AbsolutePathBuf::into_path_buf)
         .map(&normalize_path)
         .collect();
-    let split_readable_root_set: BTreeSet<PathBuf> = split_readable_roots.iter().cloned().collect();
     let split_root_paths: Vec<PathBuf> = split_writable_roots
         .iter()
         .map(|root| normalize_path(root.root.to_path_buf()))
@@ -1227,11 +1220,7 @@ pub(crate) fn resolve_windows_elevated_filesystem_overrides(
     // additional deny ACLs layered on top.
     let split_has_root_read_access =
         windows_policy_has_root_read_access(file_system_sandbox_policy, sandbox_policy_cwd);
-    let matches_legacy_read_access =
-        split_has_root_read_access == sandbox_policy.has_full_disk_read_access();
-    let read_roots_override = if matches_legacy_read_access
-        && (split_has_root_read_access || split_readable_root_set == legacy_readable_root_set)
-    {
+    let read_roots_override = if split_has_root_read_access {
         None
     } else {
         Some(split_readable_roots)
