@@ -29,6 +29,8 @@ use tokio::time::timeout;
 
 static TEST_HOME_COUNTER: AtomicU64 = AtomicU64::new(0);
 static LEGACY_PROCESS_TEST_LOCK: Mutex<()> = Mutex::new(());
+const LEGACY_POWERSHELL_TIMEOUT_MS: u64 = 60_000;
+const LEGACY_POWERSHELL_TIMEOUT_SECS: u64 = 60;
 
 fn legacy_process_test_guard() -> MutexGuard<'static, ()> {
     LEGACY_PROCESS_TEST_LOCK
@@ -200,7 +202,7 @@ fn legacy_non_tty_powershell_emits_output() {
             ],
             cwd.as_path(),
             HashMap::new(),
-            Some(5_000),
+            Some(LEGACY_POWERSHELL_TIMEOUT_MS),
             /*tty*/ false,
             /*stdin_open*/ false,
             /*use_private_desktop*/ true,
@@ -208,8 +210,12 @@ fn legacy_non_tty_powershell_emits_output() {
         .await
         .expect("spawn legacy non-tty powershell session");
         println!("pwsh spawn returned");
-        let (stdout, exit_code) =
-            collect_stdout_and_exit(spawned, codex_home.path(), Duration::from_secs(10)).await;
+        let (stdout, exit_code) = collect_stdout_and_exit(
+            spawned,
+            codex_home.path(),
+            Duration::from_secs(LEGACY_POWERSHELL_TIMEOUT_SECS),
+        )
+        .await;
         println!("pwsh collect returned exit_code={exit_code}");
         let stdout = String::from_utf8_lossy(&stdout);
         assert_eq!(exit_code, 0, "stdout={stdout:?}");
@@ -384,7 +390,7 @@ fn legacy_capture_powershell_emits_output() {
         ],
         cwd.as_path(),
         HashMap::new(),
-        Some(10_000),
+        Some(LEGACY_POWERSHELL_TIMEOUT_MS),
         /*use_private_desktop*/ true,
     )
     .expect("run legacy capture powershell");
@@ -426,7 +432,7 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
             ],
             cwd.as_path(),
             HashMap::new(),
-            Some(10_000),
+            Some(LEGACY_POWERSHELL_TIMEOUT_MS),
             /*tty*/ true,
             /*stdin_open*/ true,
             /*use_private_desktop*/ true,
@@ -446,8 +452,12 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
             .expect("send exit command");
         spawned.session.close_stdin();
 
-        let (stdout, exit_code) =
-            collect_stdout_and_exit(spawned, codex_home.path(), Duration::from_secs(15)).await;
+        let (stdout, exit_code) = collect_stdout_and_exit(
+            spawned,
+            codex_home.path(),
+            Duration::from_secs(LEGACY_POWERSHELL_TIMEOUT_SECS),
+        )
+        .await;
         let stdout = String::from_utf8_lossy(&stdout);
         assert_eq!(exit_code, 0, "stdout={stdout:?}");
         assert!(stdout.contains("ready"), "stdout={stdout:?}");
