@@ -1,5 +1,3 @@
-#![cfg(target_os = "windows")]
-
 use codex_core::exec::ExecCapturePolicy;
 use codex_core::exec::ExecParams;
 use codex_core::exec::process_exec_tool_call;
@@ -51,10 +49,10 @@ async fn windows_restricted_token_enforces_exact_and_glob_deny_read_policy() -> 
     let temp_home = TempDir::new()?;
     let _codex_home_guard = EnvVarGuard::set("CODEX_HOME", temp_home.path().as_os_str());
     let workspace = TempDir::new()?;
-    let cwd = workspace.path().abs();
-    let secret = workspace.path().join("secret.env");
+    let cwd = dunce::canonicalize(workspace.path())?.abs();
+    let secret = cwd.join("secret.env");
     let future_secret = cwd.join("future.env");
-    let public = workspace.path().join("public.txt");
+    let public = cwd.join("public.txt");
     std::fs::write(&secret, "glob secret\n")?;
     std::fs::write(&public, "public ok\n")?;
 
