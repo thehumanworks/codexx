@@ -1729,6 +1729,12 @@ impl ChatWidget {
             ..Default::default()
         });
         items.push(SelectionItem {
+            name: "Hooks".to_string(),
+            description: Some(plugin_hook_summary(plugin)),
+            is_disabled: true,
+            ..Default::default()
+        });
+        items.push(SelectionItem {
             name: "Apps".to_string(),
             description: Some(plugin_app_summary(plugin)),
             is_disabled: true,
@@ -2017,7 +2023,7 @@ fn marketplace_is_user_configured(config: &Config, marketplace_name: &str) -> bo
 fn marketplace_is_user_configured_git(config: &Config, marketplace_name: &str) -> bool {
     config
         .config_layer_stack
-        .get_user_layer()
+        .get_active_user_layer()
         .and_then(|user_layer| user_layer.config.get("marketplaces"))
         .and_then(toml::Value::as_table)
         .and_then(|marketplaces| marketplaces.get(marketplace_name))
@@ -2138,6 +2144,29 @@ fn plugin_app_summary(plugin: &PluginDetail) -> String {
             .apps
             .iter()
             .map(|app| app.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn plugin_hook_summary(plugin: &PluginDetail) -> String {
+    if plugin.hooks.is_empty() {
+        "No plugin hooks.".to_string()
+    } else {
+        let mut event_counts = Vec::<(codex_app_server_protocol::HookEventName, usize)>::new();
+        for hook in &plugin.hooks {
+            if let Some((_, handler_count)) = event_counts
+                .iter_mut()
+                .find(|(event_name, _)| *event_name == hook.event_name)
+            {
+                *handler_count += 1;
+            } else {
+                event_counts.push((hook.event_name, 1));
+            }
+        }
+        event_counts
+            .into_iter()
+            .map(|(event_name, handler_count)| format!("{event_name:?} ({handler_count})"))
             .collect::<Vec<_>>()
             .join(", ")
     }

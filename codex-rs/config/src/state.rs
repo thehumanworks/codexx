@@ -354,6 +354,48 @@ impl ConfigLayerStack {
         }
     }
 
+    /// Returns a new stack with the user layer copied from `other`, preserving
+    /// every non-user layer already present in this stack.
+    pub fn with_user_layer_from(&self, other: &Self) -> Self {
+        let user_layers = other
+            .layers
+            .iter()
+            .filter(|layer| matches!(layer.name, ConfigLayerSource::User { .. }))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut layers = self
+            .layers
+            .iter()
+            .filter(|layer| !matches!(layer.name, ConfigLayerSource::User { .. }))
+            .cloned()
+            .collect::<Vec<_>>();
+        for user_layer in user_layers {
+            match layers
+                .iter()
+                .position(|layer| layer.name.precedence() > user_layer.name.precedence())
+            {
+                Some(index) => layers.insert(index, user_layer),
+                None => layers.push(user_layer),
+            }
+        }
+        let user_layer_index = layers.iter().enumerate().rev().find_map(|(index, layer)| {
+            if matches!(layer.name, ConfigLayerSource::User { .. }) {
+                Some(index)
+            } else {
+                None
+            }
+        });
+        Self {
+            layers,
+            user_layer_index,
+            requirements: self.requirements.clone(),
+            requirements_toml: self.requirements_toml.clone(),
+            ignore_user_and_project_exec_policy_rules: self
+                .ignore_user_and_project_exec_policy_rules,
+            startup_warnings: self.startup_warnings.clone(),
+        }
+    }
+
     /// Returns the merged config-layer view.
     ///
     /// This only merges ordinary config layers and does not apply requirements
