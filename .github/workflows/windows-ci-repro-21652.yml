@@ -138,7 +138,7 @@ jobs:
           - group: core-cli-stream
             package: codex-core
             target_args: --test all
-            filters: suite::cli_stream::integration_creates_and_checks_session_file
+            filters: suite::cli_stream::integration_
           - group: exec-resume
             package: codex-exec
             target_args: --test all
