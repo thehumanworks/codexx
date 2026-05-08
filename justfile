@@ -44,6 +44,11 @@ install:
     rustup show active-toolchain
     cargo fetch
 
+cargo-lock-check:
+    cargo metadata --locked --format-version 1 >/dev/null
+
+lock-check: cargo-lock-check bazel-lock-check
+
 # Run `cargo nextest` since it's faster than `cargo test`, though including
 # --no-fail-fast is important to ensure all tests are run.
 #

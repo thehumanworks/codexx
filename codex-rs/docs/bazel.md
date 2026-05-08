@@ -32,10 +32,10 @@ just bazel-lock-update
 This runs `bazel mod deps --lockfile_mode=update` and updates `MODULE.bazel.lock` if needed.
 Commit the lockfile changes along with your Cargo lockfile update.
 
-To verify lockfile alignment locally (the same check CI runs), use:
+To verify lockfile alignment locally (the same checks CI runs), use:
 
 ```bash
-just bazel-lock-check
+just lock-check
 ```
 
 In some cases, an upstream crate may need a patch or a `crate.annotation` in `../MODULE.bzl`

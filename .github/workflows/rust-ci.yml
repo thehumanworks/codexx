@@ -65,6 +65,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
         with:
           components: rustfmt
+      - name: Check Cargo.lock is up to date
+        run: cargo metadata --locked --format-version 1 >/dev/null
       - name: cargo fmt
         run: cargo fmt -- --config imports_granularity=Item --check
 
