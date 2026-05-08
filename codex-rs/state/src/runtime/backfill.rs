@@ -2,16 +2,20 @@ use super::*;
 
 impl StateRuntime {
     pub async fn get_backfill_state(&self) -> anyhow::Result<crate::BackfillState> {
-        let row = sqlx::query(
-            r#"
+        self.state_db
+            .read(DbOperation::GetBackfillState, |pool| async move {
+                let row = sqlx::query(
+                    r#"
 SELECT status, last_watermark, last_success_at
 FROM backfill_state
 WHERE id = 1
             "#,
-        )
-        .fetch_one(self.pool.as_ref())
-        .await?;
-        crate::BackfillState::try_from_row(&row)
+                )
+                .fetch_one(&pool)
+                .await?;
+                crate::BackfillState::try_from_row(&row)
+            })
+            .await
     }
 
     /// Attempt to claim ownership of rollout metadata backfill.
@@ -20,69 +24,83 @@ WHERE id = 1
     /// Returns `false` if backfill is already complete or currently owned by a
     /// non-expired worker.
     pub async fn try_claim_backfill(&self, lease_seconds: i64) -> anyhow::Result<bool> {
-        self.ensure_backfill_state_row().await?;
-        let now = Utc::now().timestamp();
-        let lease_cutoff = now.saturating_sub(lease_seconds.max(0));
-        let result = sqlx::query(
-            r#"
+        self.state_db
+            .write(DbOperation::TryClaimBackfill, |pool| async move {
+                ensure_backfill_state_row_in_pool(&pool).await?;
+                let now = Utc::now().timestamp();
+                let lease_cutoff = now.saturating_sub(lease_seconds.max(0));
+                let result = sqlx::query(
+                    r#"
 UPDATE backfill_state
 SET status = ?, updated_at = ?
 WHERE id = 1
   AND status != ?
   AND (status != ? OR updated_at <= ?)
             "#,
-        )
-        .bind(crate::BackfillStatus::Running.as_str())
-        .bind(now)
-        .bind(crate::BackfillStatus::Complete.as_str())
-        .bind(crate::BackfillStatus::Running.as_str())
-        .bind(lease_cutoff)
-        .execute(self.pool.as_ref())
-        .await?;
-        Ok(result.rows_affected() == 1)
+                )
+                .bind(crate::BackfillStatus::Running.as_str())
+                .bind(now)
+                .bind(crate::BackfillStatus::Complete.as_str())
+                .bind(crate::BackfillStatus::Running.as_str())
+                .bind(lease_cutoff)
+                .execute(&pool)
+                .await?;
+                Ok(result.rows_affected() == 1)
+            })
+            .await
     }
 
     /// Mark rollout metadata backfill as running.
     pub async fn mark_backfill_running(&self) -> anyhow::Result<()> {
-        self.ensure_backfill_state_row().await?;
-        sqlx::query(
-            r#"
+        self.state_db
+            .write(DbOperation::MarkBackfillRunning, |pool| async move {
+                ensure_backfill_state_row_in_pool(&pool).await?;
+                sqlx::query(
+                    r#"
 UPDATE backfill_state
 SET status = ?, updated_at = ?
 WHERE id = 1
             "#,
-        )
-        .bind(crate::BackfillStatus::Running.as_str())
-        .bind(Utc::now().timestamp())
-        .execute(self.pool.as_ref())
-        .await?;
-        Ok(())
+                )
+                .bind(crate::BackfillStatus::Running.as_str())
+                .bind(Utc::now().timestamp())
+                .execute(&pool)
+                .await?;
+                Ok(())
+            })
+            .await
     }
 
     /// Persist rollout metadata backfill progress.
     pub async fn checkpoint_backfill(&self, watermark: &str) -> anyhow::Result<()> {
-        self.ensure_backfill_state_row().await?;
-        sqlx::query(
-            r#"
+        self.state_db
+            .write(DbOperation::CheckpointBackfill, |pool| async move {
+                ensure_backfill_state_row_in_pool(&pool).await?;
+                sqlx::query(
+                    r#"
 UPDATE backfill_state
 SET status = ?, last_watermark = ?, updated_at = ?
 WHERE id = 1
             "#,
-        )
-        .bind(crate::BackfillStatus::Running.as_str())
-        .bind(watermark)
-        .bind(Utc::now().timestamp())
-        .execute(self.pool.as_ref())
-        .await?;
-        Ok(())
+                )
+                .bind(crate::BackfillStatus::Running.as_str())
+                .bind(watermark)
+                .bind(Utc::now().timestamp())
+                .execute(&pool)
+                .await?;
+                Ok(())
+            })
+            .await
     }
 
     /// Mark rollout metadata backfill as complete.
     pub async fn mark_backfill_complete(&self, last_watermark: Option<&str>) -> anyhow::Result<()> {
-        self.ensure_backfill_state_row().await?;
-        let now = Utc::now().timestamp();
-        sqlx::query(
-            r#"
+        self.state_db
+            .write(DbOperation::MarkBackfillComplete, |pool| async move {
+                ensure_backfill_state_row_in_pool(&pool).await?;
+                let now = Utc::now().timestamp();
+                sqlx::query(
+                    r#"
 UPDATE backfill_state
 SET
     status = ?,
@@ -91,30 +109,16 @@ SET
     updated_at = ?
 WHERE id = 1
             "#,
-        )
-        .bind(crate::BackfillStatus::Complete.as_str())
-        .bind(last_watermark)
-        .bind(now)
-        .bind(now)
-        .execute(self.pool.as_ref())
-        .await?;
-        Ok(())
-    }
-
-    async fn ensure_backfill_state_row(&self) -> anyhow::Result<()> {
-        sqlx::query(
-            r#"
-INSERT INTO backfill_state (id, status, last_watermark, last_success_at, updated_at)
-VALUES (?, ?, NULL, NULL, ?)
-ON CONFLICT(id) DO NOTHING
-            "#,
-        )
-        .bind(1_i64)
-        .bind(crate::BackfillStatus::Pending.as_str())
-        .bind(Utc::now().timestamp())
-        .execute(self.pool.as_ref())
-        .await?;
-        Ok(())
+                )
+                .bind(crate::BackfillStatus::Complete.as_str())
+                .bind(last_watermark)
+                .bind(now)
+                .bind(now)
+                .execute(&pool)
+                .await?;
+                Ok(())
+            })
+            .await
     }
 }
 
@@ -285,7 +289,7 @@ WHERE id = 1
         )
         .bind(crate::BackfillStatus::Running.as_str())
         .bind(stale_updated_at)
-        .execute(runtime.pool.as_ref())
+        .execute(runtime.state_db.pool())
         .await
         .expect("force stale backfill lease");
 

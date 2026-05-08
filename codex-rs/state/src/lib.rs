@@ -78,8 +78,14 @@ pub const DB_METRIC_BACKFILL_DURATION_MS: &str = "codex.db.backfill.duration_ms"
 pub const DB_INIT_METRIC: &str = "codex.sqlite.init.count";
 /// SQLite startup initialization duration. Tags: [status, phase, db, error]
 pub const DB_INIT_DURATION_METRIC: &str = "codex.sqlite.init.duration_ms";
+/// SQLite logical operation attempts. Tags: [status, db, operation, access, error]
+pub const DB_OPERATION_METRIC: &str = "codex.sqlite.operation.count";
+/// SQLite logical operation duration. Tags: [status, db, operation, access, error]
+pub const DB_OPERATION_DURATION_METRIC: &str = "codex.sqlite.operation.duration_ms";
 /// Filesystem fallback after SQLite could not serve a request. Tags: [caller, reason]
 pub const DB_FALLBACK_METRIC: &str = "codex.sqlite.fallback.count";
+/// SQLite log queue loss or flush failure. Tags: [event, reason]
+pub const DB_LOG_QUEUE_METRIC: &str = "codex.sqlite.log_queue.count";
 
 pub fn record_db_fallback_metric(
     metrics: Option<&dyn DbMetricsRecorder>,

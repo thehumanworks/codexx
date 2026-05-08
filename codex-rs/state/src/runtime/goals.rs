@@ -42,7 +42,7 @@ WHERE thread_id = ?
             "#,
         )
         .bind(thread_id.to_string())
-        .fetch_optional(self.pool.as_ref())
+        .fetch_optional(self.state_db.pool())
         .await?;
 
         row.map(|row| thread_goal_from_row(&row)).transpose()
@@ -99,7 +99,7 @@ RETURNING
         .bind(token_budget)
         .bind(now_ms)
         .bind(now_ms)
-        .fetch_one(self.pool.as_ref())
+        .fetch_one(self.state_db.pool())
         .await?;
 
         thread_goal_from_row(&row)
@@ -148,7 +148,7 @@ RETURNING
         .bind(token_budget)
         .bind(now_ms)
         .bind(now_ms)
-        .fetch_optional(self.pool.as_ref())
+        .fetch_optional(self.state_db.pool())
         .await?;
 
         row.map(|row| thread_goal_from_row(&row)).transpose()
@@ -196,7 +196,7 @@ WHERE thread_id = ?
                 .bind(thread_id.to_string())
                 .bind(expected_goal_id)
                 .bind(expected_goal_id)
-                .execute(self.pool.as_ref())
+                .execute(self.state_db.pool())
                 .await?
             }
             (Some(status), None) => {
@@ -224,7 +224,7 @@ WHERE thread_id = ?
                 .bind(thread_id.to_string())
                 .bind(expected_goal_id)
                 .bind(expected_goal_id)
-                .execute(self.pool.as_ref())
+                .execute(self.state_db.pool())
                 .await?
             }
             (None, Some(token_budget)) => {
@@ -250,7 +250,7 @@ WHERE thread_id = ?
                 .bind(thread_id.to_string())
                 .bind(expected_goal_id)
                 .bind(expected_goal_id)
-                .execute(self.pool.as_ref())
+                .execute(self.state_db.pool())
                 .await?
             }
             (None, None) => {
@@ -289,7 +289,7 @@ WHERE thread_id = ?
         .bind(crate::ThreadGoalStatus::Paused.as_str())
         .bind(now_ms)
         .bind(thread_id.to_string())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
 
         if result.rows_affected() == 0 {
@@ -307,7 +307,7 @@ WHERE thread_id = ?
             "#,
         )
         .bind(thread_id.to_string())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
 
         Ok(result.rows_affected() > 0)
@@ -392,7 +392,7 @@ RETURNING
             query = query.bind(expected_goal_id);
         }
 
-        let row = query.fetch_optional(self.pool.as_ref()).await?;
+        let row = query.fetch_optional(self.state_db.pool()).await?;
 
         let Some(row) = row else {
             return Ok(ThreadGoalAccountingOutcome::Unchanged(

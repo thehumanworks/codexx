@@ -5,6 +5,9 @@ use std::time::Duration;
 use crate::DB_FALLBACK_METRIC;
 use crate::DB_INIT_DURATION_METRIC;
 use crate::DB_INIT_METRIC;
+use crate::DB_LOG_QUEUE_METRIC;
+use crate::DB_OPERATION_DURATION_METRIC;
+use crate::DB_OPERATION_METRIC;
 
 /// Low-cardinality metrics sink used by the SQLite state runtime.
 ///
@@ -18,7 +21,7 @@ pub trait DbMetricsRecorder: Send + Sync + 'static {
     fn record_duration(&self, name: &str, duration: Duration, tags: &[(&str, &str)]);
 }
 
-/// Shared recorder handle stored by rollout SQLite telemetry plumbing.
+/// Shared recorder handle stored by `StateRuntime` and cloned by log layers.
 pub type DbMetricsRecorderHandle = Arc<dyn DbMetricsRecorder>;
 
 #[derive(Clone, Copy)]
@@ -32,6 +35,25 @@ impl DbKind {
         match self {
             Self::State => "state",
             Self::Logs => "logs",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum DbAccess {
+    Read,
+    Write,
+    Transaction,
+    Maintenance,
+}
+
+impl DbAccess {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Transaction => "transaction",
+            Self::Maintenance => "maintenance",
         }
     }
 }
@@ -71,6 +93,15 @@ pub fn record_init_backfill_gate(
     record_init_result(metrics, DbKind::State, "backfill_gate", duration, result);
 }
 
+pub(crate) fn record_log_queue(
+    metrics: Option<&dyn DbMetricsRecorder>,
+    event: &'static str,
+    reason: &'static str,
+) {
+    let tags = [("event", event), ("reason", reason)];
+    record_counter(metrics, DB_LOG_QUEUE_METRIC, &tags);
+}
+
 pub(crate) fn classify_error(err: &anyhow::Error) -> &'static str {
     for cause in err.chain() {
         if let Some(sqlx_err) = cause.downcast_ref::<sqlx::Error>() {
@@ -107,6 +138,26 @@ pub(crate) fn classify_sqlite_code(code: &str) -> &'static str {
         Some(17) => "schema",
         _ => "unknown",
     }
+}
+
+pub(crate) fn record_operation_result<T>(
+    metrics: Option<&dyn DbMetricsRecorder>,
+    db: DbKind,
+    operation: &'static str,
+    access: DbAccess,
+    duration: Duration,
+    result: &anyhow::Result<T>,
+) {
+    let outcome = DbOutcomeTags::from_result(result);
+    let tags = [
+        ("status", outcome.status),
+        ("db", db.as_str()),
+        ("operation", operation),
+        ("access", access.as_str()),
+        ("error", outcome.error),
+    ];
+    record_counter(metrics, DB_OPERATION_METRIC, &tags);
+    record_duration(metrics, DB_OPERATION_DURATION_METRIC, duration, &tags);
 }
 
 struct DbOutcomeTags {
@@ -167,6 +218,7 @@ fn record_duration(
 mod tests {
     use super::*;
     use crate::DB_FALLBACK_METRIC;
+    use crate::DB_OPERATION_METRIC;
     use pretty_assertions::assert_eq;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
@@ -239,6 +291,35 @@ mod tests {
     fn classifies_sqlx_pool_timeout() {
         let err = anyhow::Error::new(sqlx::Error::PoolTimedOut);
         assert_eq!(classify_error(&err), "pool_timeout");
+    }
+
+    #[test]
+    fn records_operation_metric_with_stable_tags() {
+        let metrics = TestMetrics::default();
+        let result: anyhow::Result<()> = Ok(());
+
+        record_operation_result(
+            Some(&metrics),
+            DbKind::State,
+            "list_threads",
+            DbAccess::Read,
+            Duration::from_millis(3),
+            &result,
+        );
+
+        assert_eq!(
+            metrics.events(),
+            vec![MetricEvent {
+                name: DB_OPERATION_METRIC.to_string(),
+                tags: BTreeMap::from([
+                    ("access".to_string(), "read".to_string()),
+                    ("db".to_string(), "state".to_string()),
+                    ("error".to_string(), "none".to_string()),
+                    ("operation".to_string(), "list_threads".to_string()),
+                    ("status".to_string(), "success".to_string()),
+                ]),
+            }]
+        );
     }
 
     #[test]

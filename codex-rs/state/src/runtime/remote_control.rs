@@ -44,7 +44,7 @@ WHERE websocket_url = ? AND account_id = ? AND app_server_client_name = ?
         .bind(remote_control_app_server_client_name_key(
             app_server_client_name,
         ))
-        .fetch_optional(self.pool.as_ref())
+        .fetch_optional(self.state_db.pool())
         .await?;
 
         row.map(|row| {
@@ -92,7 +92,7 @@ ON CONFLICT(websocket_url, account_id, app_server_client_name) DO UPDATE SET
         .bind(&enrollment.environment_id)
         .bind(&enrollment.server_name)
         .bind(Utc::now().timestamp())
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(())
     }
@@ -114,7 +114,7 @@ WHERE websocket_url = ? AND account_id = ? AND app_server_client_name = ?
         .bind(remote_control_app_server_client_name_key(
             app_server_client_name,
         ))
-        .execute(self.pool.as_ref())
+        .execute(self.state_db.pool())
         .await?;
         Ok(result.rows_affected())
     }

@@ -27,6 +27,7 @@ use crate::model::datetime_to_epoch_millis;
 use crate::model::datetime_to_epoch_seconds;
 use crate::model::epoch_millis_to_datetime;
 use crate::paths::file_modified_time_utc;
+use crate::telemetry::DbAccess;
 use crate::telemetry::DbKind;
 use crate::telemetry::DbMetricsRecorder;
 use crate::telemetry::DbMetricsRecorderHandle;
@@ -60,6 +61,7 @@ use tracing::warn;
 
 mod agent_jobs;
 mod backfill;
+mod db;
 mod goals;
 mod logs;
 mod memories;
@@ -74,6 +76,9 @@ pub use goals::ThreadGoalUpdate;
 pub use remote_control::RemoteControlEnrollmentRecord;
 pub use threads::ThreadFilterOptions;
 
+use db::DbOperation;
+use db::InstrumentedDb;
+
 // "Partition" is the retained-log-content bucket we cap at 10 MiB:
 // - one bucket per non-null thread_id
 // - one bucket per threadless (thread_id IS NULL) non-null process_uuid
@@ -87,8 +92,8 @@ const LOG_PARTITION_ROW_LIMIT: i64 = 1_000;
 pub struct StateRuntime {
     codex_home: PathBuf,
     default_provider: String,
-    pool: Arc<sqlx::SqlitePool>,
-    logs_pool: Arc<sqlx::SqlitePool>,
+    state_db: InstrumentedDb,
+    logs_db: InstrumentedDb,
     thread_updated_at_millis: Arc<AtomicI64>,
 }
 
@@ -171,8 +176,8 @@ impl StateRuntime {
         let thread_updated_at_millis = thread_updated_at_millis_result?;
         let thread_updated_at_millis = thread_updated_at_millis.unwrap_or(0);
         let runtime = Arc::new(Self {
-            pool,
-            logs_pool,
+            state_db: InstrumentedDb::new(pool, DbKind::State, metrics.clone()),
+            logs_db: InstrumentedDb::new(logs_pool, DbKind::Logs, metrics),
             codex_home,
             default_provider,
             thread_updated_at_millis: Arc::new(AtomicI64::new(thread_updated_at_millis)),
@@ -189,6 +194,14 @@ impl StateRuntime {
     /// Return the configured Codex home directory for this runtime.
     pub fn codex_home(&self) -> &Path {
         self.codex_home.as_path()
+    }
+
+    pub(crate) fn metrics(&self) -> Option<&dyn DbMetricsRecorder> {
+        self.state_db.metrics()
+    }
+
+    pub(crate) fn metrics_handle(&self) -> Option<DbMetricsRecorderHandle> {
+        self.state_db.metrics_handle()
     }
 }
 
