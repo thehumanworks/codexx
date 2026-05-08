@@ -3,7 +3,11 @@ use base64::engine::general_purpose::STANDARD;
 use codex_app_server_protocol::JSONRPCErrorError;
 use serde::Deserialize;
 use serde::Serialize;
+use std::path::PathBuf;
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::Ordering;
 use tokio::io;
+use tokio::io::AsyncWriteExt;
 
 use crate::CopyOptions;
 use crate::CreateDirectoryOptions;
@@ -37,6 +41,7 @@ use crate::rpc::invalid_request;
 use crate::rpc::not_found;
 
 pub const CODEX_FS_HELPER_ARG1: &str = "--codex-run-as-fs-helper";
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "operation", content = "params")]
@@ -185,8 +190,7 @@ pub(crate) async fn run_direct_request(
                     "{FS_WRITE_FILE_METHOD} requires valid base64 dataBase64: {err}"
                 ))
             })?;
-            file_system
-                .write_file(&params.path, bytes, /*sandbox*/ None)
+            write_file_by_replacing_path(&params.path, bytes)
                 .await
                 .map_err(map_fs_error)?;
             Ok(FsHelperPayload::WriteFile(FsWriteFileResponse {}))
@@ -263,6 +267,90 @@ pub(crate) async fn run_direct_request(
                 .map_err(map_fs_error)?;
             Ok(FsHelperPayload::Copy(FsCopyResponse {}))
         }
+    }
+}
+
+/// The helper is already running inside the platform sandbox, but the sandbox
+/// checks the path being opened. If a writable workspace path is itself a
+/// symlink or a hard link to a file outside the sandbox, opening that path for
+/// writing can either follow the symlink or mutate the shared hard-link inode.
+///
+/// Create a fresh file in the destination directory and rename it into place
+/// instead. The sandbox still has to allow creating and renaming inside the
+/// writable directory, but any existing final-path link is replaced rather than
+/// used as the write target.
+async fn write_file_by_replacing_path(
+    path: &codex_utils_absolute_path::AbsolutePathBuf,
+    bytes: Vec<u8>,
+) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
+    if path.as_path().file_name().is_none() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "path has no file name",
+        ));
+    }
+
+    let (temp_path, mut temp_file) = loop {
+        let counter = TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp_name = format!(".codex-write-{}-{counter}.tmp", std::process::id());
+        let temp_path = parent.join(PathBuf::from(temp_name));
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(temp_path.as_path())
+            .await
+        {
+            Ok(file) => break (temp_path, file),
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err),
+        }
+    };
+
+    let write_result = async {
+        temp_file.write_all(&bytes).await?;
+        temp_file.flush().await
+    }
+    .await;
+    drop(temp_file);
+    if let Err(err) = write_result {
+        let _ = tokio::fs::remove_file(temp_path.as_path()).await;
+        return Err(err);
+    }
+
+    if let Ok(metadata) = tokio::fs::metadata(path.as_path()).await {
+        let _ = tokio::fs::set_permissions(temp_path.as_path(), metadata.permissions()).await;
+    }
+
+    if let Err(err) = replace_with_temp_file(&temp_path, path).await {
+        let _ = tokio::fs::remove_file(temp_path.as_path()).await;
+        return Err(err);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+async fn replace_with_temp_file(
+    temp_path: &codex_utils_absolute_path::AbsolutePathBuf,
+    path: &codex_utils_absolute_path::AbsolutePathBuf,
+) -> io::Result<()> {
+    tokio::fs::rename(temp_path.as_path(), path.as_path()).await
+}
+
+#[cfg(windows)]
+async fn replace_with_temp_file(
+    temp_path: &codex_utils_absolute_path::AbsolutePathBuf,
+    path: &codex_utils_absolute_path::AbsolutePathBuf,
+) -> io::Result<()> {
+    match tokio::fs::rename(temp_path.as_path(), path.as_path()).await {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+            tokio::fs::remove_file(path.as_path()).await?;
+            tokio::fs::rename(temp_path.as_path(), path.as_path()).await
+        }
+        Err(err) => Err(err),
     }
 }
 
