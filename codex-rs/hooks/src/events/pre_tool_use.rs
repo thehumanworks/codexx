@@ -122,10 +122,7 @@ pub(crate) async fn run(
     let updated_input = if should_block {
         None
     } else {
-        results
-            .iter()
-            .rev()
-            .find_map(|result| result.data.updated_input.clone())
+        latest_updated_input(&results)
     };
 
     PreToolUseOutcome {
@@ -140,6 +137,26 @@ pub(crate) async fn run(
         additional_contexts,
         updated_input,
     }
+}
+
+/// Chooses the rewrite from the hook that actually finished last.
+///
+/// Hook results stay in configured order for stable reporting, but the
+/// `PreToolUse` contract resolves competing rewrites by completion order.
+fn latest_updated_input(
+    results: &[dispatcher::ParsedHandler<PreToolUseHandlerData>],
+) -> Option<Value> {
+    results
+        .iter()
+        .filter_map(|result| {
+            result
+                .data
+                .updated_input
+                .clone()
+                .map(|updated_input| (result.completion_order, updated_input))
+        })
+        .max_by_key(|(completion_order, _)| *completion_order)
+        .map(|(_, updated_input)| updated_input)
 }
 
 /// Serializes command stdin for a selected `PreToolUse` hook.
@@ -276,6 +293,7 @@ fn parse_completed(
             additional_contexts_for_model,
             updated_input,
         },
+        completion_order: 0,
     }
 }
 
@@ -302,6 +320,7 @@ mod tests {
 
     use super::PreToolUseHandlerData;
     use super::command_input_json;
+    use super::latest_updated_input;
     use super::parse_completed;
     use super::preview;
     use crate::engine::ConfiguredHandler;
@@ -374,6 +393,66 @@ mod tests {
         );
         assert_eq!(parsed.completed.run.status, HookRunStatus::Completed);
         assert_eq!(parsed.completed.run.entries, vec![]);
+    }
+
+    #[test]
+    fn last_completed_updated_input_wins() {
+        let mut later_configured = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"echo configured later"}}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+        later_configured.completion_order = 0;
+        let mut earlier_configured = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"echo finished later"}}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+        earlier_configured.completion_order = 1;
+
+        assert_eq!(
+            latest_updated_input(&[later_configured, earlier_configured]),
+            Some(serde_json::json!({ "command": "echo finished later" }))
+        );
+    }
+
+    #[test]
+    fn permission_decision_allow_without_updated_input_fails_open() {
+        let parsed = parse_completed(
+            &handler(),
+            run_result(
+                Some(0),
+                r#"{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}"#,
+                "",
+            ),
+            Some("turn-1".to_string()),
+        );
+
+        assert_eq!(
+            parsed.data,
+            PreToolUseHandlerData {
+                should_block: false,
+                block_reason: None,
+                additional_contexts_for_model: Vec::new(),
+                updated_input: None,
+            }
+        );
+        assert_eq!(parsed.completed.run.status, HookRunStatus::Failed);
+        assert_eq!(
+            parsed.completed.run.entries,
+            vec![HookOutputEntry {
+                kind: HookOutputEntryKind::Error,
+                text: "PreToolUse hook returned unsupported permissionDecision:allow".to_string(),
+            }]
+        );
     }
 
     #[test]

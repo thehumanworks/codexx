@@ -38,6 +38,10 @@ pub(crate) struct PreToolUsePayload {
 /// - MCP tools already use arbitrary JSON argument objects, so hooks see those
 ///   arguments directly rather than through a compatibility shape.
 pub(crate) fn pre_tool_use_payload(invocation: &ToolInvocation) -> Option<PreToolUsePayload> {
+    if matches!(invocation.payload, ToolPayload::Mcp { .. }) {
+        return mcp_payload(invocation);
+    }
+
     match invocation.tool_name.name.as_str() {
         "shell" | "container.exec" => {
             shell_function_payload_command(&invocation.payload).map(bash_payload)
@@ -66,6 +70,11 @@ pub(crate) fn apply_updated_input(
     invocation: ToolInvocation,
     updated_input: Value,
 ) -> Result<ToolInvocation, FunctionCallError> {
+    // MCP tool names can share builtin basenames, so payload kind is authoritative here.
+    if matches!(invocation.payload, ToolPayload::Mcp { .. }) {
+        return rewrite_mcp_updated_input(invocation, updated_input);
+    }
+
     match invocation.tool_name.name.as_str() {
         "shell" => rewrite_shell_function_updated_input(invocation, updated_input, "shell"),
         "container.exec" => {
@@ -75,7 +84,10 @@ pub(crate) fn apply_updated_input(
         "shell_command" => rewrite_shell_command_updated_input(invocation, updated_input),
         "exec_command" => rewrite_exec_command_updated_input(invocation, updated_input),
         "apply_patch" => rewrite_apply_patch_updated_input(invocation, updated_input),
-        _ => rewrite_mcp_updated_input(invocation, updated_input),
+        _ => Err(FunctionCallError::RespondToModel(format!(
+            "tool {} does not support hook input rewriting",
+            invocation.tool_name.display()
+        ))),
     }
 }
 
