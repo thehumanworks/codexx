@@ -582,7 +582,6 @@ async fn skills_changed_notification_is_emitted_after_skill_change() -> Result<(
         .send_skills_list_request(SkillsListParams {
             cwds: vec![codex_home.path().to_path_buf()],
             force_reload: true,
-            per_cwd_extra_user_roots: None,
         })
         .await?;
     let initial_skills_response: JSONRPCResponse = timeout(
@@ -655,7 +654,6 @@ async fn skills_changed_notification_is_emitted_after_skill_change() -> Result<(
         .send_skills_list_request(SkillsListParams {
             cwds: vec![codex_home.path().to_path_buf()],
             force_reload: false,
-            per_cwd_extra_user_roots: None,
         })
         .await?;
     let updated_skills_response: JSONRPCResponse = timeout(
