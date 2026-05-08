@@ -937,11 +937,29 @@ async fn find_project_root(
                 .await
                 .is_ok()
             {
+                if marker == ".git" && is_world_writable_sticky_dir(ancestor.as_path()) {
+                    continue;
+                }
                 return Ok(ancestor);
             }
         }
     }
     Ok(cwd.clone())
+}
+
+#[cfg(unix)]
+fn is_world_writable_sticky_dir(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    dir.metadata().is_ok_and(|metadata| {
+        let mode = metadata.mode();
+        mode & 0o002 != 0 && mode & 0o1000 != 0
+    })
+}
+
+#[cfg(not(unix))]
+fn is_world_writable_sticky_dir(_dir: &Path) -> bool {
+    false
 }
 
 struct LoadedProjectLayers {

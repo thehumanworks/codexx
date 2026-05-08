@@ -760,7 +760,7 @@ fn find_ancestor_git_entry(base_dir: &Path) -> Option<(PathBuf, PathBuf)> {
 
     loop {
         let dot_git = dir.join(".git");
-        if dot_git.exists() {
+        if dot_git.exists() && !is_world_writable_sticky_dir(&dir) {
             return Some((dir, dot_git));
         }
 
@@ -774,13 +774,30 @@ fn find_ancestor_git_entry(base_dir: &Path) -> Option<(PathBuf, PathBuf)> {
     None
 }
 
+#[cfg(unix)]
+fn is_world_writable_sticky_dir(dir: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    dir.metadata().is_ok_and(|metadata| {
+        let mode = metadata.mode();
+        mode & 0o002 != 0 && mode & 0o1000 != 0
+    })
+}
+
+#[cfg(not(unix))]
+fn is_world_writable_sticky_dir(_dir: &Path) -> bool {
+    false
+}
+
 async fn find_ancestor_git_entry_with_fs(
     fs: &dyn ExecutorFileSystem,
     base_dir: &AbsolutePathBuf,
 ) -> Option<(AbsolutePathBuf, AbsolutePathBuf)> {
     for dir in base_dir.ancestors() {
         let dot_git = dir.join(".git");
-        if fs.get_metadata(&dot_git, /*sandbox*/ None).await.is_ok() {
+        if fs.get_metadata(&dot_git, /*sandbox*/ None).await.is_ok()
+            && !is_world_writable_sticky_dir(dir.as_path())
+        {
             return Some((dir, dot_git));
         }
     }
@@ -831,6 +848,34 @@ pub async fn current_branch_name(cwd: &Path) -> Option<String> {
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
+
+    #[cfg(unix)]
+    #[test]
+    fn get_git_repo_root_ignores_sticky_tmp_root_git_marker() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp_root = tempfile::tempdir().expect("tempdir");
+        let mut permissions = fs::metadata(tmp_root.path())
+            .expect("metadata")
+            .permissions();
+        permissions.set_mode(0o1777);
+        fs::set_permissions(tmp_root.path(), permissions).expect("set sticky permissions");
+        fs::write(tmp_root.path().join(".git"), "gitdir: fake\n").expect("write .git marker");
+
+        let non_repo_cwd = tmp_root.path().join("child");
+        fs::create_dir_all(&non_repo_cwd).expect("create non-repo cwd");
+        assert_eq!(get_git_repo_root(&non_repo_cwd), None);
+
+        let repo_cwd = tmp_root.path().join("repo").join("nested");
+        fs::create_dir_all(&repo_cwd).expect("create repo cwd");
+        fs::write(tmp_root.path().join("repo").join(".git"), "gitdir: fake\n")
+            .expect("write nested .git marker");
+        assert_eq!(
+            get_git_repo_root(&repo_cwd),
+            Some(tmp_root.path().join("repo"))
+        );
+    }
 
     #[test]
     fn canonicalize_git_remote_url_normalizes_github_variants() {
