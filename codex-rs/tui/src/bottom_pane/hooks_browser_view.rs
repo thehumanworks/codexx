@@ -247,10 +247,10 @@ impl HooksBrowserView {
                     .dim()
                     .into(),
             ),
-            1 => lines.push("1 hook needs review before it can run.".dim().into()),
+            1 => lines.push("1 hook needs review before it can run.".yellow().into()),
             count => lines.push(
                 format!("{count} hooks need review before they can run.")
-                    .dim()
+                    .yellow()
                     .into(),
             ),
         }
@@ -278,30 +278,40 @@ impl HooksBrowserView {
         header.push("Description".into());
         lines.push(Line::from(header));
         for (idx, row) in rows.into_iter().enumerate() {
+            let needs_review = row.needs_review > 0;
             if self.state.selected_idx == Some(idx) {
                 let mut row_line = vec![
                     Span::from(format!(
                         "{:<EVENT_COLUMN_WIDTH$}",
                         event_label(row.event_name)
-                    ))
-                    .cyan()
-                    .bold(),
-                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.installed))
-                        .cyan()
-                        .bold(),
-                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.active))
-                        .cyan()
-                        .bold(),
+                    )),
+                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.installed)),
+                    Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.active)),
                 ];
                 if show_review {
-                    row_line.push(
-                        Span::from(format!("{:<COUNT_COLUMN_WIDTH$}", row.needs_review))
-                            .cyan()
-                            .bold(),
-                    );
+                    row_line.push(Span::from(format!(
+                        "{:<COUNT_COLUMN_WIDTH$}",
+                        row.needs_review
+                    )));
                 }
-                row_line.push(Span::from(event_description(row.event_name)).cyan().bold());
-                lines.push(Line::from(row_line));
+                row_line.push(Span::from(event_description(row.event_name)));
+                let line = if needs_review {
+                    Line::from(row_line).yellow().bold()
+                } else {
+                    Line::from(row_line).cyan().bold()
+                };
+                lines.push(line);
+            } else if needs_review {
+                let mut row_line = vec![
+                    format!("{:<EVENT_COLUMN_WIDTH$}", event_label(row.event_name)).into(),
+                    format!("{:<COUNT_COLUMN_WIDTH$}", row.installed).into(),
+                    format!("{:<COUNT_COLUMN_WIDTH$}", row.active).into(),
+                ];
+                if show_review {
+                    row_line.push(format!("{:<COUNT_COLUMN_WIDTH$}", row.needs_review).into());
+                }
+                row_line.push(event_description(row.event_name).into());
+                lines.push(Line::from(row_line).yellow());
             } else {
                 let mut row_line = vec![
                     Span::from(format!(
@@ -379,11 +389,17 @@ impl HooksBrowserView {
                 };
                 let mut line = Line::from(row);
                 line = truncate_line_with_ellipsis_if_overflow(line, width);
-                if hook.is_managed {
-                    line = line.dim();
-                }
+                let needs_review = hook_needs_review(hook);
                 if self.state.selected_idx == Some(idx) {
-                    line = line.cyan().bold();
+                    if needs_review {
+                        line = line.yellow().bold();
+                    } else {
+                        line = line.cyan().bold();
+                    }
+                } else if needs_review {
+                    line = line.yellow();
+                } else if hook.is_managed {
+                    line = line.dim();
                 }
                 line
             })
@@ -797,6 +813,7 @@ mod tests {
     use insta::assert_snapshot;
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
+    use ratatui::style::Color;
     use tokio::sync::mpsc::unbounded_channel;
 
     fn render_lines(view: &HooksBrowserView, width: u16) -> String {
@@ -933,6 +950,7 @@ mod tests {
             "hooks_browser_events_with_review_column",
             render_lines(&view, /*width*/ 112)
         );
+        assert_eq!(view.event_table_lines()[1].style.fg, Some(Color::Yellow));
     }
 
     #[test]
@@ -986,6 +1004,58 @@ mod tests {
         assert_snapshot!(
             "hooks_browser_untrusted_enabled_handler",
             render_lines(&view, /*width*/ 112)
+        );
+    }
+
+    #[test]
+    fn review_needed_handler_rows_use_warning_color() {
+        let (tx_raw, _rx) = unbounded_channel::<AppEvent>();
+        let mut untrusted_hook = hook(
+            "path:untrusted",
+            HookEventName::PreToolUse,
+            HookSource::User,
+            /*plugin_id*/ None,
+            "~/bin/untrusted.sh",
+            /*enabled*/ false,
+            /*is_managed*/ false,
+            /*display_order*/ 1,
+        );
+        untrusted_hook.trust_status = HookTrustStatus::Untrusted;
+        let mut view = HooksBrowserView::new(
+            vec![
+                hook(
+                    "path:trusted",
+                    HookEventName::PreToolUse,
+                    HookSource::User,
+                    /*plugin_id*/ None,
+                    "~/bin/trusted.sh",
+                    /*enabled*/ true,
+                    /*is_managed*/ false,
+                    /*display_order*/ 0,
+                ),
+                untrusted_hook,
+            ],
+            Vec::new(),
+            Vec::new(),
+            AppEventSender::new(tx_raw),
+        );
+        view.handle_key_event(KeyEvent::from(KeyCode::Enter));
+
+        assert_eq!(
+            view.handler_row_lines(HookEventName::PreToolUse, /*width*/ 112)[1]
+                .style
+                .fg,
+            Some(Color::Yellow)
+        );
+    }
+
+    #[test]
+    fn review_needed_handler_header_uses_warning_color() {
+        assert_eq!(
+            HooksBrowserView::handler_header_lines(HookEventName::PreToolUse, 1)[1].spans[0]
+                .style
+                .fg,
+            Some(Color::Yellow)
         );
     }
 
