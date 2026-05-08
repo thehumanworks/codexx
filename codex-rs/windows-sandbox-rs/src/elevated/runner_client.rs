@@ -36,7 +36,6 @@ use windows_sys::Win32::System::Pipes::PeekNamedPipe;
 use windows_sys::Win32::System::Threading::CreateProcessWithLogonW;
 use windows_sys::Win32::System::Threading::GetCurrentProcess;
 use windows_sys::Win32::System::Threading::GetCurrentThread;
-use windows_sys::Win32::System::Threading::LOGON_WITH_PROFILE;
 use windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 use windows_sys::Win32::System::Threading::STARTUPINFOW;
 use windows_sys::Win32::System::Threading::TerminateProcess;
@@ -252,11 +251,14 @@ pub(crate) fn spawn_runner_transport(
 
     let previous_error_mode = unsafe { SetErrorMode(RUNNER_ERROR_MODE_FLAGS) };
     let spawn_res = unsafe {
+        // The broker process does not need HKCU, and loading the sandbox user's profile for each
+        // short-lived runner launch can leak temporary Windows profiles when the profile service
+        // cannot attach cleanly. Authenticate the sandbox user, but avoid LOGON_WITH_PROFILE here.
         CreateProcessWithLogonW(
             user_w.as_ptr(),
             domain_w.as_ptr(),
             password_w.as_ptr(),
-            LOGON_WITH_PROFILE,
+            0,
             exe_w.as_ptr(),
             cmdline_vec.as_mut_ptr(),
             windows_sys::Win32::System::Threading::CREATE_NO_WINDOW
