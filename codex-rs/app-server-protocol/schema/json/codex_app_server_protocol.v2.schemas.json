@@ -143,45 +143,12 @@
         "id": {
           "description": "Identifier from `default_permissions` or the implicit built-in default, such as `:workspace` or a user-defined `[permissions.<id>]` profile.",
           "type": "string"
-        },
-        "modifications": {
-          "default": [],
-          "description": "Bounded user-requested modifications applied on top of the named profile, if any.",
-          "items": {
-            "$ref": "#/definitions/ActivePermissionProfileModification"
-          },
-          "type": "array"
         }
       },
       "required": [
         "id"
       ],
       "type": "object"
-    },
-    "ActivePermissionProfileModification": {
-      "oneOf": [
-        {
-          "description": "Additional concrete directory that should be writable.",
-          "properties": {
-            "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
-            },
-            "type": {
-              "enum": [
-                "additionalWritableRoot"
-              ],
-              "title": "AdditionalWritableRootActivePermissionProfileModificationType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "path",
-            "type"
-          ],
-          "title": "AdditionalWritableRootActivePermissionProfileModification",
-          "type": "object"
-        }
-      ]
     },
     "AddCreditsNudgeCreditType": {
       "enum": [
@@ -6489,6 +6456,11 @@
         "action": {
           "$ref": "#/definitions/GuardianApprovalReviewAction"
         },
+        "completedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review completed.",
+          "format": "int64",
+          "type": "integer"
+        },
         "decisionSource": {
           "$ref": "#/definitions/AutoReviewDecisionSource"
         },
@@ -6498,6 +6470,11 @@
         "reviewId": {
           "description": "Stable identifier for this review.",
           "type": "string"
+        },
+        "startedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review started.",
+          "format": "int64",
+          "type": "integer"
         },
         "targetItemId": {
           "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
@@ -6515,9 +6492,11 @@
       },
       "required": [
         "action",
+        "completedAtMs",
         "decisionSource",
         "review",
         "reviewId",
+        "startedAtMs",
         "threadId",
         "turnId"
       ],
@@ -6538,6 +6517,11 @@
           "description": "Stable identifier for this review.",
           "type": "string"
         },
+        "startedAtMs": {
+          "description": "Unix timestamp (in milliseconds) when this review started.",
+          "format": "int64",
+          "type": "integer"
+        },
         "targetItemId": {
           "description": "Identifier for the reviewed item or tool call when one exists.\n\nIn most cases, one review maps to one target item. The exceptions are - execve reviews, where a single command may contain multiple execve calls to review (only possible when using the shell_zsh_fork feature) - network policy reviews, where there is no target item\n\nA network call is triggered by a CommandExecution item, so having a target_item_id set to the CommandExecution item would be misleading because the review is about the network call, not the command execution. Therefore, target_item_id is set to None for network policy reviews.",
           "type": [
@@ -6556,6 +6540,7 @@
         "action",
         "review",
         "reviewId",
+        "startedAtMs",
         "threadId",
         "turnId"
       ],
@@ -8230,31 +8215,6 @@
         }
       ]
     },
-    "PermissionProfileModificationParams": {
-      "oneOf": [
-        {
-          "description": "Additional concrete directory that should be writable.",
-          "properties": {
-            "path": {
-              "$ref": "#/definitions/AbsolutePathBuf"
-            },
-            "type": {
-              "enum": [
-                "additionalWritableRoot"
-              ],
-              "title": "AdditionalWritableRootPermissionProfileModificationParamsType",
-              "type": "string"
-            }
-          },
-          "required": [
-            "path",
-            "type"
-          ],
-          "title": "AdditionalWritableRootPermissionProfileModificationParams",
-          "type": "object"
-        }
-      ]
-    },
     "PermissionProfileNetworkPermissions": {
       "properties": {
         "enabled": {
@@ -8269,19 +8229,10 @@
     "PermissionProfileSelectionParams": {
       "oneOf": [
         {
-          "description": "Select a named built-in or user-defined profile and optionally apply bounded modifications that Codex knows how to validate.",
+          "description": "Select a named built-in or user-defined profile. This updates profile identity metadata only; it does not replace the thread's effective permissions profile.",
           "properties": {
             "id": {
               "type": "string"
-            },
-            "modifications": {
-              "items": {
-                "$ref": "#/definitions/PermissionProfileModificationParams"
-              },
-              "type": [
-                "array",
-                "null"
-              ]
             },
             "type": {
               "enum": [
@@ -8989,9 +8940,19 @@
       ],
       "type": "object"
     },
+    "PluginShareUpdateDiscoverability": {
+      "enum": [
+        "UNLISTED",
+        "PRIVATE"
+      ],
+      "type": "string"
+    },
     "PluginShareUpdateTargetsParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "discoverability": {
+          "$ref": "#/definitions/PluginShareUpdateDiscoverability"
+        },
         "remotePluginId": {
           "type": "string"
         },
@@ -9003,6 +8964,7 @@
         }
       },
       "required": [
+        "discoverability",
         "remotePluginId",
         "shareTargets"
       ],
@@ -9012,6 +8974,9 @@
     "PluginShareUpdateTargetsResponse": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
+        "discoverability": {
+          "$ref": "#/definitions/PluginShareDiscoverability"
+        },
         "principals": {
           "items": {
             "$ref": "#/definitions/PluginSharePrincipal"
@@ -9020,6 +8985,7 @@
         }
       },
       "required": [
+        "discoverability",
         "principals"
       ],
       "title": "PluginShareUpdateTargetsResponse",
@@ -10868,13 +10834,6 @@
               ],
               "title": "WorkspaceWriteSandboxPolicyType",
               "type": "string"
-            },
-            "writableRoots": {
-              "default": [],
-              "items": {
-                "$ref": "#/definitions/AbsolutePathBuf"
-              },
-              "type": "array"
             }
           },
           "required": [
@@ -12616,24 +12575,6 @@
       ],
       "type": "object"
     },
-    "SkillsListExtraRootsForCwd": {
-      "properties": {
-        "cwd": {
-          "type": "string"
-        },
-        "extraUserRoots": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "cwd",
-        "extraUserRoots"
-      ],
-      "type": "object"
-    },
     "SkillsListParams": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "properties": {
@@ -12647,17 +12588,6 @@
         "forceReload": {
           "description": "When true, bypass the skills cache and re-scan skills from disk.",
           "type": "boolean"
-        },
-        "perCwdExtraUserRoots": {
-          "default": null,
-          "description": "Optional per-cwd extra roots to scan as user-scoped skills.",
-          "items": {
-            "$ref": "#/definitions/SkillsListExtraRootsForCwd"
-          },
-          "type": [
-            "array",
-            "null"
-          ]
         }
       },
       "title": "SkillsListParams",
@@ -13166,7 +13096,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Deprecated for fork. The server rejects this field because the source permission profile value is preserved across fork."
         },
         "serviceTier": {
           "type": [
@@ -14669,7 +14600,8 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "description": "Deprecated for resume. The server rejects this field because the persisted permission profile value is preserved across resume."
         },
         "serviceTier": {
           "type": [
@@ -15711,7 +15643,7 @@
               "type": "null"
             }
           ],
-          "description": "Override the sandbox policy for this turn and subsequent turns."
+          "description": "Deprecated for turns. The server rejects this field because the thread permission profile value is not mutable through `turn/start`."
         },
         "serviceTier": {
           "description": "Override the service tier for this turn and subsequent turns.",

@@ -95,7 +95,6 @@ use super::analytics::wait_for_analytics_payload;
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
 #[cfg(not(windows))]
 const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-const INTERNAL_ERROR_CODE: i64 = -32603;
 const CODEX_5_2_INSTRUCTIONS_TEMPLATE_DEFAULT: &str = "You are Codex, a coding agent based on GPT-5. You and the user share the same workspace and collaborate to achieve the user's goals.";
 
 fn normalized_existing_path(path: impl AsRef<Path>) -> Result<PathBuf> {
@@ -746,37 +745,6 @@ async fn thread_goal_clear_deletes_goal_and_notifies() -> Result<()> {
 }
 
 #[tokio::test]
-async fn thread_resume_by_path_uses_remote_thread_store_error() -> Result<()> {
-    let server = create_mock_responses_server_repeating_assistant("Done").await;
-    let codex_home = TempDir::new()?;
-    create_config_toml_with_remote_thread_store(codex_home.path(), &server.uri())?;
-
-    let mut mcp = McpProcess::new(codex_home.path()).await?;
-    timeout(DEFAULT_READ_TIMEOUT, mcp.initialize()).await??;
-
-    let resume_id = mcp
-        .send_thread_resume_request(ThreadResumeParams {
-            thread_id: "ignored-when-path-is-present".to_string(),
-            path: Some(PathBuf::from("sessions/2025/01/05/rollout.jsonl")),
-            ..Default::default()
-        })
-        .await?;
-    let resume_err: JSONRPCError = timeout(
-        DEFAULT_READ_TIMEOUT,
-        mcp.read_stream_until_error_message(RequestId::Integer(resume_id)),
-    )
-    .await??;
-
-    assert_eq!(resume_err.error.code, INTERNAL_ERROR_CODE);
-    assert_eq!(
-        resume_err.error.message,
-        "failed to read thread: thread-store internal error: remote thread store does not support read_thread_by_rollout_path"
-    );
-
-    Ok(())
-}
-
-#[tokio::test]
 async fn thread_resume_emits_restored_token_usage_before_next_turn() -> Result<()> {
     let server = create_mock_responses_server_repeating_assistant("Done").await;
     let codex_home = TempDir::new()?;
@@ -1207,6 +1175,7 @@ stream_max_retries = 0
         forked_from_id: None,
         timestamp: "2025-01-05T12:00:00Z".to_string(),
         cwd: repo_path.clone(),
+        workspace_roots: Vec::new(),
         originator: "codex".to_string(),
         cli_version: "0.0.0".to_string(),
         source: RolloutSessionSource::Cli,
@@ -2911,36 +2880,6 @@ fn create_config_toml(codex_home: &std::path::Path, server_uri: &str) -> std::io
 model = "gpt-5.3-codex"
 approval_policy = "never"
 sandbox_mode = "read-only"
-
-model_provider = "mock_provider"
-
-[features]
-personality = true
-
-[model_providers.mock_provider]
-name = "Mock provider for test"
-base_url = "{server_uri}/v1"
-wire_api = "responses"
-request_max_retries = 0
-stream_max_retries = 0
-"#
-        ),
-    )
-}
-
-fn create_config_toml_with_remote_thread_store(
-    codex_home: &std::path::Path,
-    server_uri: &str,
-) -> std::io::Result<()> {
-    let config_toml = codex_home.join("config.toml");
-    std::fs::write(
-        config_toml,
-        format!(
-            r#"
-model = "gpt-5.3-codex"
-approval_policy = "never"
-sandbox_mode = "read-only"
-experimental_thread_store_endpoint = "http://127.0.0.1:1"
 
 model_provider = "mock_provider"
 

@@ -1,4 +1,5 @@
 use super::*;
+use crate::error_code::method_not_found;
 
 const THREAD_LIST_DEFAULT_LIMIT: usize = 25;
 const THREAD_LIST_MAX_LIMIT: usize = 100;
@@ -14,6 +15,99 @@ struct ThreadListFilters {
     cwd_filters: Option<Vec<PathBuf>>,
     search_term: Option<String>,
     use_state_db_only: bool,
+}
+
+#[derive(Clone)]
+struct PersistedThreadPermissionState {
+    permission_profile: PermissionProfile,
+    active_permission_profile: Option<ActivePermissionProfile>,
+    workspace_roots: Vec<AbsolutePathBuf>,
+}
+
+fn absolute_path_from_history_path(
+    path: &Path,
+    base: Option<&AbsolutePathBuf>,
+) -> Option<AbsolutePathBuf> {
+    if let Ok(path) = AbsolutePathBuf::try_from(path) {
+        Some(path)
+    } else if let Some(base) = base {
+        Some(AbsolutePathBuf::resolve_path_against_base(
+            path,
+            base.as_path(),
+        ))
+    } else {
+        AbsolutePathBuf::relative_to_current_dir(path).ok()
+    }
+}
+
+fn roots_or_cwd(
+    roots: Vec<AbsolutePathBuf>,
+    cwd: Option<&AbsolutePathBuf>,
+) -> Vec<AbsolutePathBuf> {
+    if roots.is_empty() {
+        cwd.cloned().into_iter().collect()
+    } else {
+        roots
+    }
+}
+
+fn persisted_thread_permission_state(
+    history: &InitialHistory,
+    fallback_cwd: Option<&Path>,
+    fallback_sandbox_policy: Option<&codex_protocol::protocol::SandboxPolicy>,
+) -> Option<PersistedThreadPermissionState> {
+    let mut cwd =
+        fallback_cwd.and_then(|cwd| absolute_path_from_history_path(cwd, /*base*/ None));
+    let mut workspace_roots = None;
+    let mut permission_profile = None;
+    let mut active_permission_profile = None;
+
+    for item in history.get_rollout_items() {
+        match item {
+            RolloutItem::SessionMeta(meta_line) => {
+                cwd = absolute_path_from_history_path(meta_line.meta.cwd.as_path(), cwd.as_ref())
+                    .or(cwd);
+                workspace_roots = Some(roots_or_cwd(meta_line.meta.workspace_roots, cwd.as_ref()));
+            }
+            RolloutItem::TurnContext(context) => {
+                cwd = absolute_path_from_history_path(context.cwd.as_path(), cwd.as_ref()).or(cwd);
+                workspace_roots = Some(roots_or_cwd(context.workspace_roots, cwd.as_ref()));
+                let context_cwd = cwd
+                    .as_ref()
+                    .map(AbsolutePathBuf::as_path)
+                    .unwrap_or(context.cwd.as_path());
+                permission_profile = Some(context.permission_profile.unwrap_or_else(|| {
+                    PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+                        &context.sandbox_policy,
+                        context_cwd,
+                    )
+                }));
+            }
+            RolloutItem::EventMsg(EventMsg::SessionConfigured(event)) => {
+                cwd = Some(event.cwd.clone());
+                workspace_roots = Some(roots_or_cwd(event.workspace_roots, cwd.as_ref()));
+                permission_profile = Some(event.permission_profile);
+                active_permission_profile = event.active_permission_profile;
+            }
+            RolloutItem::ResponseItem(_) | RolloutItem::Compacted(_) | RolloutItem::EventMsg(_) => {
+            }
+        }
+    }
+
+    if permission_profile.is_none() {
+        let cwd = cwd.as_ref()?;
+        let fallback_sandbox_policy = fallback_sandbox_policy?;
+        permission_profile = Some(PermissionProfile::from_legacy_sandbox_policy_for_cwd(
+            fallback_sandbox_policy,
+            cwd.as_path(),
+        ));
+    }
+
+    Some(PersistedThreadPermissionState {
+        permission_profile: permission_profile?,
+        active_permission_profile,
+        workspace_roots: roots_or_cwd(workspace_roots.unwrap_or_default(), cwd.as_ref()),
+    })
 }
 
 fn collect_resume_override_mismatches(
@@ -591,6 +685,15 @@ impl ThreadRequestProcessor {
             .map(|response| Some(response.into()))
     }
 
+    pub(crate) async fn thread_turns_items_list(
+        &self,
+        _params: ThreadTurnsItemsListParams,
+    ) -> Result<Option<ClientResponsePayload>, JSONRPCErrorError> {
+        Err(method_not_found(
+            "thread/turns/items/list is not supported yet",
+        ))
+    }
+
     pub(crate) async fn thread_shell_command(
         &self,
         request_id: &ConnectionRequestId,
@@ -788,6 +891,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -821,6 +925,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -1138,6 +1243,7 @@ impl ThreadRequestProcessor {
 
         let sandbox = thread_response_sandbox_policy(
             &config_snapshot.permission_profile,
+            &config_snapshot.workspace_roots,
             config_snapshot.cwd.as_path(),
         );
         let active_permission_profile =
@@ -1153,6 +1259,7 @@ impl ThreadRequestProcessor {
             approval_policy: config_snapshot.approval_policy.into(),
             approvals_reviewer: config_snapshot.approvals_reviewer.into(),
             sandbox,
+            workspace_roots: config_snapshot.workspace_roots,
             permission_profile: Some(config_snapshot.permission_profile.into()),
             active_permission_profile,
             reasoning_effort: config_snapshot.reasoning_effort,
@@ -1185,6 +1292,7 @@ impl ThreadRequestProcessor {
         model_provider: Option<String>,
         service_tier: Option<Option<String>>,
         cwd: Option<String>,
+        workspace_roots: Option<Vec<AbsolutePathBuf>>,
         approval_policy: Option<codex_app_server_protocol::AskForApproval>,
         approvals_reviewer: Option<codex_app_server_protocol::ApprovalsReviewer>,
         sandbox: Option<SandboxMode>,
@@ -1198,6 +1306,8 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd: cwd.map(PathBuf::from),
+            workspace_roots: workspace_roots
+                .map(|roots| roots.into_iter().map(|root| root.to_path_buf()).collect()),
             approval_policy: approval_policy
                 .map(codex_app_server_protocol::AskForApproval::to_core),
             approvals_reviewer: approvals_reviewer
@@ -1212,6 +1322,40 @@ impl ThreadRequestProcessor {
         };
         apply_permission_profile_selection_to_config_overrides(&mut overrides, permissions);
         overrides
+    }
+
+    async fn validate_active_permission_profile_selection(
+        &self,
+        permissions: PermissionProfileSelectionParams,
+        request_overrides: Option<HashMap<String, serde_json::Value>>,
+        cwd: Option<PathBuf>,
+        fallback_cwd: Option<PathBuf>,
+    ) -> Result<ActivePermissionProfile, JSONRPCErrorError> {
+        let mut overrides = ConfigOverrides {
+            cwd,
+            codex_linux_sandbox_exe: self.arg0_paths.codex_linux_sandbox_exe.clone(),
+            main_execve_wrapper_exe: self.arg0_paths.main_execve_wrapper_exe.clone(),
+            ..Default::default()
+        };
+        apply_permission_profile_selection_to_config_overrides(&mut overrides, Some(permissions));
+        let config = self
+            .config_manager
+            .load_for_cwd(request_overrides, overrides, fallback_cwd)
+            .await
+            .map_err(|err| config_load_error(&err))?;
+        if let Some(warning) = config.startup_warnings.iter().find(|warning| {
+            warning.contains("Configured value for `permission_profile` is disallowed")
+        }) {
+            return Err(invalid_request(format!(
+                "invalid permission profile selection: {warning}"
+            )));
+        }
+        config
+            .permissions
+            .active_permission_profile()
+            .ok_or_else(|| {
+                invalid_request("permission profile selection did not resolve to a named profile")
+            })
     }
 
     fn parse_environment_selections(
@@ -2072,7 +2216,9 @@ impl ThreadRequestProcessor {
             cursor,
             limit,
             sort_direction,
+            items_view,
         } = params;
+        let items_view = items_view.unwrap_or(TurnItemsView::Summary);
 
         let thread_uuid = ThreadId::from_string(&thread_id)
             .map_err(|err| invalid_request(format!("invalid thread id: {err}")))?;
@@ -2101,7 +2247,7 @@ impl ThreadRequestProcessor {
         } else {
             None
         };
-        let turns = reconstruct_thread_turns_for_turns_list(
+        let mut turns = reconstruct_thread_turns_for_turns_list(
             &items,
             self.thread_watch_manager
                 .loaded_status_for_thread(&thread_uuid.to_string())
@@ -2109,6 +2255,41 @@ impl ThreadRequestProcessor {
             has_live_running_thread,
             active_turn,
         );
+        for turn in &mut turns {
+            match items_view {
+                TurnItemsView::NotLoaded => {
+                    turn.items.clear();
+                    turn.items_view = TurnItemsView::NotLoaded;
+                }
+                TurnItemsView::Summary => {
+                    let first_user_message = turn
+                        .items
+                        .iter()
+                        .find(|item| matches!(item, ThreadItem::UserMessage { .. }))
+                        .cloned();
+                    let final_agent_message = turn
+                        .items
+                        .iter()
+                        .rev()
+                        .find(|item| matches!(item, ThreadItem::AgentMessage { .. }))
+                        .cloned();
+                    turn.items = match (first_user_message, final_agent_message) {
+                        (Some(user_message), Some(agent_message))
+                            if user_message.id() != agent_message.id() =>
+                        {
+                            vec![user_message, agent_message]
+                        }
+                        (Some(user_message), _) => vec![user_message],
+                        (None, Some(agent_message)) => vec![agent_message],
+                        (None, None) => Vec::new(),
+                    };
+                    turn.items_view = TurnItemsView::Summary;
+                }
+                TurnItemsView::Full => {
+                    turn.items_view = TurnItemsView::Full;
+                }
+            }
+        }
         let page = paginate_thread_turns(
             turns,
             cursor.as_deref(),
@@ -2274,6 +2455,15 @@ impl ThreadRequestProcessor {
                 .await;
             return Ok(());
         }
+        if params.sandbox.is_some() {
+            self.outgoing
+                .send_error(
+                    request_id,
+                    invalid_request("`sandbox` cannot be used to change thread permissions"),
+                )
+                .await;
+            return Ok(());
+        }
         if params.persist_extended_history {
             self.send_persist_extended_history_deprecation_notice(request_id.connection_id)
                 .await;
@@ -2311,9 +2501,10 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
-            sandbox,
+            sandbox: _sandbox,
             permissions,
             config: mut request_overrides,
             base_instructions,
@@ -2341,19 +2532,68 @@ impl ThreadRequestProcessor {
         };
 
         let history_cwd = thread_history.session_cwd();
+        let persisted_permission_state = persisted_thread_permission_state(
+            &thread_history,
+            history_cwd.as_deref(),
+            resume_source_thread
+                .as_ref()
+                .map(|thread| &thread.sandbox_policy),
+        );
+        let active_permission_profile = if let Some(permissions) = permissions {
+            match self
+                .validate_active_permission_profile_selection(
+                    permissions,
+                    request_overrides.clone(),
+                    cwd.clone().map(PathBuf::from),
+                    history_cwd.clone(),
+                )
+                .await
+            {
+                Ok(active_permission_profile) => Some(active_permission_profile),
+                Err(error) => {
+                    self.outgoing.send_error(request_id, error).await;
+                    return Ok(());
+                }
+            }
+        } else {
+            persisted_permission_state
+                .as_ref()
+                .and_then(|state| state.active_permission_profile.clone())
+        };
+        let workspace_roots_were_explicit = workspace_roots.is_some();
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
             service_tier,
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
-            sandbox,
-            permissions,
+            /*sandbox*/ None,
+            /*permissions*/ None,
             base_instructions,
             developer_instructions,
             personality,
         );
+        if let Some(persisted_permission_state) = persisted_permission_state {
+            typesafe_overrides.permission_profile =
+                Some(persisted_permission_state.permission_profile.clone());
+            if !workspace_roots_were_explicit {
+                typesafe_overrides.workspace_roots = Some(
+                    persisted_permission_state
+                        .workspace_roots
+                        .iter()
+                        .map(codex_utils_absolute_path::AbsolutePathBuf::to_path_buf)
+                        .collect(),
+                );
+            }
+        } else if !workspace_roots_were_explicit
+            && let Some(root) = history_cwd
+                .as_deref()
+                .and_then(|cwd| absolute_path_from_history_path(cwd, /*base*/ None))
+        {
+            typesafe_overrides.workspace_roots = Some(vec![root.to_path_buf()]);
+        }
         self.load_and_apply_persisted_resume_metadata(
             &thread_history,
             &mut request_overrides,
@@ -2362,7 +2602,7 @@ impl ThreadRequestProcessor {
         .await;
 
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = match self
+        let mut config = match self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
@@ -2374,6 +2614,7 @@ impl ThreadRequestProcessor {
                 return Ok(());
             }
         };
+        config.permissions.active_permission_profile = active_permission_profile;
 
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
         let response_history = thread_history.clone();
@@ -2467,6 +2708,7 @@ impl ThreadRequestProcessor {
                 let config_snapshot = codex_thread.config_snapshot().await;
                 let sandbox = thread_response_sandbox_policy(
                     &config_snapshot.permission_profile,
+                    &config_snapshot.workspace_roots,
                     config_snapshot.cwd.as_path(),
                 );
                 let active_permission_profile = thread_response_active_permission_profile(
@@ -2483,6 +2725,7 @@ impl ThreadRequestProcessor {
                     approval_policy: session_configured.approval_policy.into(),
                     approvals_reviewer: session_configured.approvals_reviewer.into(),
                     sandbox,
+                    workspace_roots: config_snapshot.workspace_roots,
                     permission_profile: Some(config_snapshot.permission_profile.into()),
                     active_permission_profile,
                     reasoning_effort: session_configured.reasoning_effort,
@@ -2941,6 +3184,7 @@ impl ThreadRequestProcessor {
             model_provider,
             service_tier,
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
             sandbox,
@@ -2957,6 +3201,11 @@ impl ThreadRequestProcessor {
         if sandbox.is_some() && permissions.is_some() {
             return Err(invalid_request(
                 "`permissions` cannot be combined with `sandbox`",
+            ));
+        }
+        if sandbox.is_some() {
+            return Err(invalid_request(
+                "`sandbox` cannot be used to change thread permissions",
             ));
         }
         if persist_extended_history {
@@ -3001,26 +3250,62 @@ impl ThreadRequestProcessor {
         } else {
             Some(cli_overrides)
         };
+        let fork_history = InitialHistory::Forked(history_items.clone());
+        let persisted_permission_state = persisted_thread_permission_state(
+            &fork_history,
+            history_cwd.as_deref(),
+            Some(&source_thread.sandbox_policy),
+        )
+        .ok_or_else(|| {
+            invalid_request("thread history is missing persisted permission configuration")
+        })?;
+        let active_permission_profile = if let Some(permissions) = permissions {
+            Some(
+                self.validate_active_permission_profile_selection(
+                    permissions,
+                    request_overrides.clone(),
+                    cwd.clone().map(PathBuf::from),
+                    history_cwd.clone(),
+                )
+                .await?,
+            )
+        } else {
+            persisted_permission_state.active_permission_profile.clone()
+        };
+        let workspace_roots_were_explicit = workspace_roots.is_some();
         let mut typesafe_overrides = self.build_thread_config_overrides(
             model,
             model_provider,
             service_tier,
             cwd,
+            workspace_roots,
             approval_policy,
             approvals_reviewer,
-            sandbox,
-            permissions,
+            /*sandbox*/ None,
+            /*permissions*/ None,
             base_instructions,
             developer_instructions,
             /*personality*/ None,
         );
+        typesafe_overrides.permission_profile =
+            Some(persisted_permission_state.permission_profile.clone());
+        if !workspace_roots_were_explicit {
+            typesafe_overrides.workspace_roots = Some(
+                persisted_permission_state
+                    .workspace_roots
+                    .iter()
+                    .map(codex_utils_absolute_path::AbsolutePathBuf::to_path_buf)
+                    .collect(),
+            );
+        }
         typesafe_overrides.ephemeral = ephemeral.then_some(true);
         // Derive a Config using the same logic as new conversation, honoring overrides if provided.
-        let config = self
+        let mut config = self
             .config_manager
             .load_for_cwd(request_overrides, typesafe_overrides, history_cwd)
             .await
             .map_err(|err| config_load_error(&err))?;
+        config.permissions.active_permission_profile = active_permission_profile;
 
         let fallback_model_provider = config.model_provider_id.clone();
         let instruction_sources = Self::instruction_sources_from_config(&config).await;
@@ -3124,6 +3409,7 @@ impl ThreadRequestProcessor {
         let config_snapshot = forked_thread.config_snapshot().await;
         let sandbox = thread_response_sandbox_policy(
             &config_snapshot.permission_profile,
+            &config_snapshot.workspace_roots,
             config_snapshot.cwd.as_path(),
         );
         let active_permission_profile =
@@ -3139,6 +3425,7 @@ impl ThreadRequestProcessor {
             approval_policy: session_configured.approval_policy.into(),
             approvals_reviewer: session_configured.approvals_reviewer.into(),
             sandbox,
+            workspace_roots: config_snapshot.workspace_roots,
             permission_profile: Some(config_snapshot.permission_profile.into()),
             active_permission_profile,
             reasoning_effort: session_configured.reasoning_effort,
@@ -3496,19 +3783,30 @@ fn normalize_thread_turns_status(
 
 enum ThreadReadViewError {
     InvalidRequest(String),
+    Unsupported(&'static str),
     Internal(String),
 }
 
 fn thread_read_view_error(err: ThreadReadViewError) -> JSONRPCErrorError {
     match err {
         ThreadReadViewError::InvalidRequest(message) => invalid_request(message),
+        ThreadReadViewError::Unsupported(operation) => {
+            unsupported_thread_store_operation(operation)
+        }
         ThreadReadViewError::Internal(message) => internal_error(message),
     }
+}
+
+fn unsupported_thread_store_operation(operation: &'static str) -> JSONRPCErrorError {
+    method_not_found(format!("{operation} is not supported yet"))
 }
 
 fn thread_store_list_error(err: ThreadStoreError) -> JSONRPCErrorError {
     match err {
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
+        ThreadStoreError::Unsupported { operation } => {
+            unsupported_thread_store_operation(operation)
+        }
         err => internal_error(format!("failed to list threads: {err}")),
     }
 }
@@ -3516,6 +3814,9 @@ fn thread_store_list_error(err: ThreadStoreError) -> JSONRPCErrorError {
 fn thread_store_resume_read_error(err: ThreadStoreError) -> JSONRPCErrorError {
     match err {
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
+        ThreadStoreError::Unsupported { operation } => {
+            unsupported_thread_store_operation(operation)
+        }
         ThreadStoreError::ThreadNotFound { thread_id } => {
             invalid_request(format!("no rollout found for thread id {thread_id}"))
         }
@@ -3538,6 +3839,7 @@ fn thread_turns_list_history_load_error(
         ThreadStoreError::InvalidRequest { message } => {
             ThreadReadViewError::InvalidRequest(message)
         }
+        ThreadStoreError::Unsupported { operation } => ThreadReadViewError::Unsupported(operation),
         err => ThreadReadViewError::Internal(format!(
             "failed to load thread history for thread {thread_id}: {err}"
         )),
@@ -3564,6 +3866,7 @@ fn thread_read_history_load_error(
         ThreadStoreError::InvalidRequest { message } => {
             ThreadReadViewError::InvalidRequest(message)
         }
+        ThreadStoreError::Unsupported { operation } => ThreadReadViewError::Unsupported(operation),
         err => ThreadReadViewError::Internal(format!(
             "failed to load thread history for thread {thread_id}: {err}"
         )),
@@ -3578,6 +3881,9 @@ fn conversation_summary_thread_id_read_error(
     match err {
         ThreadStoreError::InvalidRequest { message } if message == no_rollout_message => {
             conversation_summary_not_found_error(conversation_id)
+        }
+        ThreadStoreError::Unsupported { operation } => {
+            unsupported_thread_store_operation(operation)
         }
         ThreadStoreError::ThreadNotFound { thread_id } if thread_id == conversation_id => {
             conversation_summary_not_found_error(conversation_id)
@@ -3601,6 +3907,9 @@ fn conversation_summary_rollout_path_read_error(
 ) -> JSONRPCErrorError {
     match err {
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
+        ThreadStoreError::Unsupported { operation } => {
+            unsupported_thread_store_operation(operation)
+        }
         err => internal_error(format!(
             "failed to load conversation summary from {}: {}",
             path.display(),
@@ -3615,6 +3924,9 @@ fn thread_store_write_error(operation: &str, err: ThreadStoreError) -> JSONRPCEr
             invalid_request(format!("thread not found: {thread_id}"))
         }
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
+        ThreadStoreError::Unsupported { operation } => {
+            unsupported_thread_store_operation(operation)
+        }
         err => internal_error(format!("failed to {operation}: {err}")),
     }
 }
@@ -3622,6 +3934,9 @@ fn thread_store_write_error(operation: &str, err: ThreadStoreError) -> JSONRPCEr
 fn thread_store_archive_error(operation: &str, err: ThreadStoreError) -> JSONRPCErrorError {
     match err {
         ThreadStoreError::InvalidRequest { message } => invalid_request(message),
+        ThreadStoreError::Unsupported {
+            operation: unsupported_operation,
+        } => unsupported_thread_store_operation(unsupported_operation),
         err => internal_error(format!("failed to {operation} thread: {err}")),
     }
 }

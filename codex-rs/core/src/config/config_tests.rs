@@ -44,6 +44,9 @@ use codex_config::types::Notice;
 use codex_config::types::NotificationCondition;
 use codex_config::types::NotificationMethod;
 use codex_config::types::Notifications;
+use codex_config::types::OtelConfig;
+use codex_config::types::OtelConfigToml;
+use codex_config::types::OtelExporterKind;
 use codex_config::types::SandboxWorkspaceWrite;
 use codex_config::types::SessionPickerViewMode;
 use codex_config::types::SkillsConfig;
@@ -64,7 +67,6 @@ use codex_model_provider_info::WireApi;
 use codex_models_manager::bundled_models_response;
 use codex_protocol::config_types::ServiceTier;
 use codex_protocol::models::ActivePermissionProfile;
-use codex_protocol::models::ActivePermissionProfileModification;
 use codex_protocol::models::ManagedFileSystemPermissions;
 use codex_protocol::models::PermissionProfile;
 use codex_protocol::models::SandboxEnforcement;
@@ -92,6 +94,14 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 use tempfile::TempDir;
+
+fn materialized_file_system_sandbox_policy(config: &Config) -> FileSystemSandboxPolicy {
+    config
+        .permissions
+        .permission_profile()
+        .materialize_project_roots_with_workspace_roots(&config.workspace_roots)
+        .file_system_sandbox_policy()
+}
 
 fn stdio_mcp(command: &str) -> McpServerConfig {
     McpServerConfig {
@@ -1005,7 +1015,7 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
             },
             FileSystemSandboxEntry {
                 path: FileSystemPath::Path {
-                    path: memories_root.clone(),
+                    path: memories_root,
                 },
                 access: FileSystemAccessMode::Write,
             },
@@ -1014,7 +1024,6 @@ async fn default_permissions_profile_populates_runtime_sandbox_policy() -> std::
     assert_eq!(
         &config.legacy_sandbox_policy(),
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![memories_root],
             network_access: false,
             exclude_tmpdir_env_var: true,
             exclude_slash_tmp: true,
@@ -1191,7 +1200,6 @@ async fn permission_profile_override_applies_runtime_roots_to_legacy_projection(
     assert_eq!(
         &config.legacy_sandbox_policy(),
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![memories_root],
             network_access: false,
             exclude_tmpdir_env_var: true,
             exclude_slash_tmp: true,
@@ -1392,7 +1400,7 @@ async fn default_permissions_can_select_builtin_profile_without_permissions_tabl
     )
     .await?;
 
-    let policy = config.permissions.file_system_sandbox_policy();
+    let policy = materialized_file_system_sandbox_policy(&config);
     assert_eq!(
         config
             .permissions
@@ -1413,7 +1421,7 @@ async fn default_permissions_can_select_builtin_profile_without_permissions_tabl
 }
 
 #[tokio::test]
-async fn default_permissions_read_only_applies_additional_writable_roots_as_modifications()
+async fn default_permissions_read_only_records_additional_writable_roots_as_workspace_roots()
 -> std::io::Result<()> {
     let codex_home = TempDir::new()?;
     let cwd = TempDir::new()?;
@@ -1434,18 +1442,18 @@ async fn default_permissions_read_only_applies_additional_writable_roots_as_modi
     )
     .await?;
 
-    let policy = config.permissions.file_system_sandbox_policy();
-    assert!(
-        policy.can_write_path_with_cwd(extra_root.as_path(), cwd.path()),
-        "expected additional writable root to modify :read-only, policy: {policy:?}"
+    let policy = materialized_file_system_sandbox_policy(&config);
+    assert_eq!(
+        policy,
+        PermissionProfile::read_only().file_system_sandbox_policy()
+    );
+    assert_eq!(
+        config.workspace_roots,
+        vec![cwd.path().abs(), extra_root.clone()]
     );
     assert_eq!(
         config.permissions.active_permission_profile(),
-        Some(
-            ActivePermissionProfile::new(":read-only").with_modifications(vec![
-                ActivePermissionProfileModification::AdditionalWritableRoot { path: extra_root },
-            ])
-        )
+        Some(ActivePermissionProfile::new(":read-only"))
     );
     Ok(())
 }
@@ -1476,7 +1484,7 @@ async fn explicit_builtin_workspace_profile_ignores_legacy_workspace_write_setti
     )
     .await?;
 
-    let policy = config.permissions.file_system_sandbox_policy();
+    let policy = materialized_file_system_sandbox_policy(&config);
     assert_eq!(
         config.permissions.network_sandbox_policy(),
         NetworkSandboxPolicy::Restricted
@@ -1516,7 +1524,7 @@ async fn empty_config_defaults_to_builtin_profile_for_trusted_project() -> std::
     )
     .await?;
 
-    let policy = config.permissions.file_system_sandbox_policy();
+    let policy = materialized_file_system_sandbox_policy(&config);
     assert_eq!(
         config
             .permissions
@@ -1584,7 +1592,7 @@ async fn implicit_builtin_workspace_profile_preserves_sandbox_workspace_write_se
     )
     .await?;
 
-    let policy = config.permissions.file_system_sandbox_policy();
+    let policy = materialized_file_system_sandbox_policy(&config);
     assert!(
         policy.can_write_path_with_cwd(extra_root.as_path(), cwd.path()),
         "expected implicit :workspace to preserve sandbox_workspace_write.writable_roots, policy: {policy:?}"
@@ -1601,12 +1609,11 @@ async fn implicit_builtin_workspace_profile_preserves_sandbox_workspace_write_se
     );
     match config.legacy_sandbox_policy() {
         SandboxPolicy::WorkspaceWrite {
-            writable_roots,
             network_access,
             exclude_tmpdir_env_var,
             exclude_slash_tmp,
         } => {
-            assert!(writable_roots.contains(&extra_root));
+            assert!(config.workspace_roots.contains(&extra_root));
             assert!(network_access);
             assert!(exclude_tmpdir_env_var);
             assert!(!exclude_slash_tmp);
@@ -1650,7 +1657,7 @@ async fn implicit_builtin_workspace_profile_preserves_add_dir_metadata_carveouts
     )
     .await?;
 
-    let policy = config.permissions.file_system_sandbox_policy();
+    let policy = materialized_file_system_sandbox_policy(&config);
     let extra_root = extra_root.path().abs();
     assert!(
         policy.can_write_path_with_cwd(extra_root.as_path(), cwd.path()),
@@ -1825,9 +1832,6 @@ async fn permissions_profiles_allow_direct_write_roots_outside_workspace_root()
     )
     .await?;
 
-    let memories_root = AbsolutePathBuf::from_absolute_path(std::fs::canonicalize(
-        codex_home.path().join("memories"),
-    )?)?;
     assert!(
         config
             .permissions
@@ -1837,7 +1841,6 @@ async fn permissions_profiles_allow_direct_write_roots_outside_workspace_root()
     assert_eq!(
         &config.legacy_sandbox_policy(),
         &SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![external_write_path, memories_root],
             network_access: false,
             exclude_tmpdir_env_var: true,
             exclude_slash_tmp: true,
@@ -2275,6 +2278,27 @@ async fn runtime_config_resolves_terminal_resize_reflow_defaults_and_overrides()
     );
 }
 
+#[tokio::test]
+async fn legacy_remote_thread_store_endpoint_is_rejected() {
+    let cfg: ConfigToml =
+        toml::from_str(r#"experimental_thread_store_endpoint = "https://example.com""#)
+            .expect("legacy remote thread-store endpoint should still deserialize");
+
+    let err = Config::load_from_base_config_with_overrides(
+        cfg,
+        ConfigOverrides::default(),
+        tempdir().expect("tempdir").abs(),
+    )
+    .await
+    .expect_err("legacy remote thread-store endpoint should be rejected at load time");
+
+    assert!(
+        err.to_string()
+            .contains("experimental_thread_store_endpoint")
+    );
+    assert!(err.to_string().contains("no longer supported"));
+}
+
 #[test]
 fn profile_tui_rejects_unsupported_settings() {
     let err = toml::from_str::<ConfigToml>(
@@ -2426,7 +2450,6 @@ trust_level = "trusted"
         assert_eq!(
             resolution,
             SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![writable_root.clone()],
                 network_access: false,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
@@ -2466,7 +2489,6 @@ exclude_slash_tmp = true
         assert_eq!(
             resolution,
             SandboxPolicy::WorkspaceWrite {
-                writable_roots: vec![writable_root],
                 network_access: false,
                 exclude_tmpdir_env_var: true,
                 exclude_slash_tmp: true,
@@ -3328,14 +3350,15 @@ async fn add_dir_override_extends_workspace_writable_roots() -> std::io::Result<
         }
     } else {
         match &config.legacy_sandbox_policy() {
-            SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
+            SandboxPolicy::WorkspaceWrite { .. } => {
                 assert_eq!(
-                    writable_roots
+                    config
+                        .workspace_roots
                         .iter()
                         .filter(|root| **root == expected_backend)
                         .count(),
                     1,
-                    "expected single writable root entry for {}",
+                    "expected single workspace root entry for {}",
                     expected_backend.display()
                 );
             }
@@ -3458,13 +3481,16 @@ async fn workspace_write_always_includes_memories_root_once() -> std::io::Result
             "expected memories root directory to exist at {}",
             memories_root.display()
         );
-        let expected_memories_root = memories_root.abs();
+        let expected_memories_root =
+            AbsolutePathBuf::from_absolute_path(std::fs::canonicalize(&memories_root)?)?;
         match &config.legacy_sandbox_policy() {
-            SandboxPolicy::WorkspaceWrite { writable_roots, .. } => {
+            SandboxPolicy::WorkspaceWrite { .. } => {
+                let writable_roots = materialized_file_system_sandbox_policy(&config)
+                    .get_writable_roots_with_cwd(config.cwd.as_path());
                 assert_eq!(
                     writable_roots
                         .iter()
-                        .filter(|root| **root == expected_memories_root)
+                        .filter(|root| root.root == expected_memories_root)
                         .count(),
                     1,
                     "expected single writable root entry for {}",
@@ -6963,6 +6989,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             user_instructions: None,
             notify: None,
             cwd: fixture.cwd(),
+            workspace_roots: vec![fixture.cwd()],
             cli_auth_credentials_store_mode: Default::default(),
             mcp_servers: Constrained::allow_any(HashMap::new()),
             mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -7028,7 +7055,7 @@ async fn test_precedence_fixture_with_o3_profile() -> std::io::Result<()> {
             commit_attribution: None,
             forced_chatgpt_workspace_id: None,
             forced_login_method: None,
-            include_apply_patch_tool: false,
+            include_apply_patch_tool: true,
             web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
             web_search_config: None,
             use_experimental_unified_exec_tool: !cfg!(windows),
@@ -7119,6 +7146,119 @@ async fn trace_exporter_defaults_to_none_when_log_exporter_is_set() -> std::io::
 }
 
 #[tokio::test]
+async fn load_config_applies_otel_trace_metadata() -> std::io::Result<()> {
+    let mut fixture = create_test_fixture()?;
+    fixture.cfg = toml::from_str(
+        r#"
+[otel.span_attributes]
+"example.trace_attr" = "enabled"
+
+[otel.tracestate.example]
+alpha = "one"
+beta = "two"
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg.clone(),
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.otel.span_attributes,
+        BTreeMap::from([("example.trace_attr".to_string(), "enabled".to_string())])
+    );
+    assert_eq!(
+        config.otel.tracestate,
+        BTreeMap::from([(
+            "example".to_string(),
+            BTreeMap::from([
+                ("alpha".to_string(), "one".to_string()),
+                ("beta".to_string(), "two".to_string()),
+            ]),
+        )])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn load_config_drops_invalid_otel_trace_metadata_entries() -> std::io::Result<()> {
+    let mut fixture = create_test_fixture()?;
+    fixture.cfg = toml::from_str(
+        r#"
+[otel]
+environment = "test"
+
+[otel.span_attributes]
+"" = "missing-key"
+"example.trace_attr" = "enabled"
+
+[otel.tracestate.example]
+alpha = "one"
+beta = "two\ntoo"
+
+[otel.tracestate.bad]
+alpha = "one\ntwo"
+"#,
+    )
+    .expect("TOML deserialization should succeed");
+
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg.clone(),
+        ConfigOverrides {
+            cwd: Some(fixture.cwd_path()),
+            ..Default::default()
+        },
+        fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(config.otel.environment, "test");
+    assert_eq!(
+        config.otel.span_attributes,
+        BTreeMap::from([("example.trace_attr".to_string(), "enabled".to_string())])
+    );
+    assert_eq!(
+        config.otel.tracestate,
+        BTreeMap::from([(
+            "example".to_string(),
+            BTreeMap::from([("alpha".to_string(), "one".to_string())]),
+        )])
+    );
+    assert!(
+        config.startup_warnings.iter().any(|warning| {
+            warning.contains("Ignoring invalid `otel.span_attributes` config")
+                && warning.contains("configured span attribute key must not be empty")
+        }),
+        "{:?}",
+        config.startup_warnings
+    );
+    assert!(
+        config.startup_warnings.iter().any(|warning| {
+            warning.contains("Ignoring invalid `otel.tracestate` config")
+                && warning.contains("invalid configured tracestate value for example.beta")
+        }),
+        "{:?}",
+        config.startup_warnings
+    );
+    assert!(
+        config.startup_warnings.iter().any(|warning| {
+            warning.contains("Ignoring invalid `otel.tracestate` config")
+                && warning.contains("invalid configured tracestate value for bad.alpha")
+        }),
+        "{:?}",
+        config.startup_warnings
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn explicit_null_service_tier_override_sets_fast_default_opt_out() -> std::io::Result<()> {
     let fixture = create_test_fixture()?;
 
@@ -7150,6 +7290,54 @@ async fn legacy_fast_service_tier_override_uses_priority_request_value() -> std:
             ..Default::default()
         },
         fixture.codex_home(),
+    )
+    .await?;
+
+    assert_eq!(
+        config.service_tier,
+        Some(ServiceTier::Fast.request_value().to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_toml_service_tier_accepts_arbitrary_string() -> std::io::Result<()> {
+    let mut fixture = create_test_fixture()?;
+    fixture.cfg.service_tier = Some("experimental-tier-id".to_string());
+    let cwd = fixture.cwd_path();
+    let codex_home = fixture.codex_home();
+
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg,
+        ConfigOverrides {
+            cwd: Some(cwd),
+            ..Default::default()
+        },
+        codex_home,
+    )
+    .await?;
+
+    assert_eq!(
+        config.service_tier,
+        Some("experimental-tier-id".to_string())
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_toml_legacy_fast_service_tier_uses_priority_request_value() -> std::io::Result<()> {
+    let mut fixture = create_test_fixture()?;
+    fixture.cfg.service_tier = Some("fast".to_string());
+    let cwd = fixture.cwd_path();
+    let codex_home = fixture.codex_home();
+
+    let config = Config::load_from_base_config_with_overrides(
+        fixture.cfg,
+        ConfigOverrides {
+            cwd: Some(cwd),
+            ..Default::default()
+        },
+        codex_home,
     )
     .await?;
 
@@ -7222,6 +7410,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         user_instructions: None,
         notify: None,
         cwd: fixture.cwd(),
+        workspace_roots: vec![fixture.cwd()],
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -7287,7 +7476,7 @@ async fn test_precedence_fixture_with_gpt3_profile() -> std::io::Result<()> {
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
-        include_apply_patch_tool: false,
+        include_apply_patch_tool: true,
         web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
         web_search_config: None,
         use_experimental_unified_exec_tool: !cfg!(windows),
@@ -7380,6 +7569,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         user_instructions: None,
         notify: None,
         cwd: fixture.cwd(),
+        workspace_roots: vec![fixture.cwd()],
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -7445,7 +7635,7 @@ async fn test_precedence_fixture_with_zdr_profile() -> std::io::Result<()> {
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
-        include_apply_patch_tool: false,
+        include_apply_patch_tool: true,
         web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
         web_search_config: None,
         use_experimental_unified_exec_tool: !cfg!(windows),
@@ -7523,6 +7713,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         user_instructions: None,
         notify: None,
         cwd: fixture.cwd(),
+        workspace_roots: vec![fixture.cwd()],
         cli_auth_credentials_store_mode: Default::default(),
         mcp_servers: Constrained::allow_any(HashMap::new()),
         mcp_oauth_credentials_store_mode: resolve_mcp_oauth_credentials_store_mode(
@@ -7588,7 +7779,7 @@ async fn test_precedence_fixture_with_gpt5_profile() -> std::io::Result<()> {
         commit_attribution: None,
         forced_chatgpt_workspace_id: None,
         forced_login_method: None,
-        include_apply_patch_tool: false,
+        include_apply_patch_tool: true,
         web_search_mode: Constrained::allow_any(WebSearchMode::Cached),
         web_search_config: None,
         use_experimental_unified_exec_tool: !cfg!(windows),
