@@ -37,46 +37,40 @@ windows_modules!(
 mod deny_read_resolver;
 
 #[cfg(target_os = "windows")]
-#[path = "conpty/mod.rs"]
 mod conpty;
 
 #[cfg(target_os = "windows")]
-#[path = "proc_thread_attr.rs"]
-mod proc_thread_attr;
-
-#[cfg(target_os = "windows")]
-#[path = "elevated/ipc_framed.rs"]
-pub(crate) mod ipc_framed;
-
-#[cfg(target_os = "windows")]
-#[path = "setup_orchestrator.rs"]
-mod setup;
+mod elevated;
 
 #[cfg(target_os = "windows")]
 mod elevated_impl;
 
 #[cfg(target_os = "windows")]
-#[path = "elevated/runner_pipe.rs"]
-mod runner_pipe;
+mod proc_thread_attr;
 
 #[cfg(target_os = "windows")]
-#[path = "elevated/runner_client.rs"]
-mod runner_client;
+mod sandbox_utils;
+
+#[cfg(target_os = "windows")]
+mod setup;
 
 #[cfg(target_os = "windows")]
 mod setup_error;
 
 #[cfg(target_os = "windows")]
-#[path = "sandbox_utils.rs"]
-mod sandbox_utils;
-
-#[cfg(target_os = "windows")]
-#[path = "spawn_prep.rs"]
 mod spawn_prep;
 
 #[cfg(target_os = "windows")]
-#[path = "unified_exec/session.rs"]
-mod session;
+mod unified_exec;
+
+#[cfg(target_os = "windows")]
+pub(crate) use elevated::ipc_framed;
+
+#[cfg(target_os = "windows")]
+pub(crate) use elevated::runner_client;
+
+#[cfg(target_os = "windows")]
+pub(crate) use elevated::runner_pipe;
 
 #[cfg(target_os = "windows")]
 pub use acl::add_deny_read_ace;
@@ -185,10 +179,6 @@ pub use process::read_handle_loop;
 #[cfg(target_os = "windows")]
 pub use process::spawn_process_with_pipes;
 #[cfg(target_os = "windows")]
-pub use session::spawn_windows_sandbox_session_elevated;
-#[cfg(target_os = "windows")]
-pub use session::spawn_windows_sandbox_session_legacy;
-#[cfg(target_os = "windows")]
 pub use setup::SETUP_VERSION;
 #[cfg(target_os = "windows")]
 pub use setup::SandboxSetupRequest;
@@ -237,6 +227,10 @@ pub use token::create_workspace_write_token_with_caps_and_user_from;
 pub use token::create_workspace_write_token_with_caps_from;
 #[cfg(target_os = "windows")]
 pub use token::get_current_token_for_restriction;
+#[cfg(target_os = "windows")]
+pub use unified_exec::spawn_windows_sandbox_session_elevated;
+#[cfg(target_os = "windows")]
+pub use unified_exec::spawn_windows_sandbox_session_legacy;
 #[cfg(target_os = "windows")]
 pub use wfp::install_wfp_filters_for_account;
 #[cfg(target_os = "windows")]
