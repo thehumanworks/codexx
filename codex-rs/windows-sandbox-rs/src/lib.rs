@@ -281,9 +281,6 @@ mod windows_impl {
     use super::deny_read_acl::apply_deny_read_acls;
     use super::deny_read_acl::cleanup_stale_persistent_deny_read_acls;
     use super::deny_read_acl::write_persistent_deny_read_acl_record;
-    use super::env::apply_no_network_to_env;
-    use super::env::ensure_non_interactive_pager;
-    use super::env::normalize_null_device_env;
     use super::logging::log_failure;
     use super::logging::log_success;
     use super::path_normalization::canonicalize_path;

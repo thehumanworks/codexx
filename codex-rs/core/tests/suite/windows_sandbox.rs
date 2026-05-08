@@ -5,14 +5,13 @@ use codex_core::exec::ExecParams;
 use codex_core::exec::process_exec_tool_call;
 use codex_core::sandboxing::SandboxPermissions;
 use codex_protocol::config_types::WindowsSandboxLevel;
+use codex_protocol::models::PermissionProfile;
 use codex_protocol::permissions::FileSystemAccessMode;
 use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::ReadOnlyAccess;
-use codex_protocol::protocol::SandboxPolicy;
 use core_test_support::PathExt;
 use pretty_assertions::assert_eq;
 use serial_test::serial;
@@ -59,13 +58,6 @@ async fn windows_restricted_token_enforces_exact_and_glob_deny_read_policy() -> 
     std::fs::write(&secret, "glob secret\n")?;
     std::fs::write(&public, "public ok\n")?;
 
-    let sandbox_policy = SandboxPolicy::WorkspaceWrite {
-        writable_roots: vec![],
-        read_only_access: ReadOnlyAccess::FullAccess,
-        network_access: false,
-        exclude_tmpdir_env_var: true,
-        exclude_slash_tmp: true,
-    };
     let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
@@ -75,7 +67,7 @@ async fn windows_restricted_token_enforces_exact_and_glob_deny_read_policy() -> 
         },
         FileSystemSandboxEntry {
             path: FileSystemPath::Special {
-                value: FileSystemSpecialPath::CurrentWorkingDirectory,
+                value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
             },
             access: FileSystemAccessMode::Write,
         },
@@ -92,6 +84,10 @@ async fn windows_restricted_token_enforces_exact_and_glob_deny_read_policy() -> 
             access: FileSystemAccessMode::None,
         },
     ]);
+    let permission_profile = PermissionProfile::from_runtime_permissions(
+        &file_system_sandbox_policy,
+        NetworkSandboxPolicy::Restricted,
+    );
 
     let output = process_exec_tool_call(
         ExecParams {
@@ -113,9 +109,7 @@ async fn windows_restricted_token_enforces_exact_and_glob_deny_read_policy() -> 
             justification: None,
             arg0: None,
         },
-        &sandbox_policy,
-        &file_system_sandbox_policy,
-        NetworkSandboxPolicy::Restricted,
+        &permission_profile,
         &cwd,
         &None,
         /*use_legacy_landlock*/ false,
