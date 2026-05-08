@@ -1,4 +1,5 @@
 use super::*;
+use codex_protocol::openai_models::SPEED_TIER_FAST;
 use pretty_assertions::assert_eq;
 
 fn complete_turn_with_message(chat: &mut ChatWidget, turn_id: &str, message: Option<&str>) {
@@ -1823,7 +1824,7 @@ async fn service_tier_slash_command_updates_and_persists_local_service_tier() {
             AppEvent::CodexOp(Op::OverrideTurnContext {
                 service_tier: Some(Some(service_tier)),
                 ..
-            }) if service_tier == ServiceTier::Fast.request_value()
+            }) if service_tier == SPEED_TIER_FAST
         )),
         "expected fast-mode override app event; events: {events:?}"
     );
@@ -1832,7 +1833,9 @@ async fn service_tier_slash_command_updates_and_persists_local_service_tier() {
             event,
             AppEvent::PersistServiceTierSelection {
                 service_tier: Some(ServiceTier::Fast),
+                service_tier_id: Some(service_tier_id),
             }
+            if service_tier_id == SPEED_TIER_FAST
         )),
         "expected service-tier persistence app event; events: {events:?}"
     );
@@ -1864,7 +1867,9 @@ async fn fast_keybinding_toggle_uses_same_events_as_fast_slash_command() {
             event,
             AppEvent::PersistServiceTierSelection {
                 service_tier: Some(ServiceTier::Fast),
+                service_tier_id: Some(service_tier_id),
             }
+            if service_tier_id == ServiceTier::Fast.request_value()
         )),
         "expected fast-mode persistence app event; events: {events:?}"
     );
@@ -1906,7 +1911,7 @@ async fn user_turn_carries_service_tier_after_fast_toggle() {
         Op::UserTurn {
             service_tier: Some(Some(service_tier)),
             ..
-        } if service_tier == ServiceTier::Fast.request_value() => {}
+        } if service_tier == SPEED_TIER_FAST => {}
         other => panic!("expected Op::UserTurn with fast service tier, got {other:?}"),
     }
 }
@@ -1932,7 +1937,7 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
             AppEvent::CodexOp(Op::OverrideTurnContext {
                 service_tier: Some(Some(service_tier)),
                 ..
-            }) if service_tier == ServiceTier::Fast.request_value()
+            }) if service_tier == SPEED_TIER_FAST
         )),
         "expected queued /fast to update service tier before next turn; events: {events:?}"
     );
@@ -1942,7 +1947,7 @@ async fn queued_fast_slash_applies_before_next_queued_message() {
             items,
             service_tier: Some(Some(service_tier)),
             ..
-        } if service_tier == ServiceTier::Fast.request_value() => assert_eq!(
+        } if service_tier == SPEED_TIER_FAST => assert_eq!(
             items,
             vec![UserInput::Text {
                 text: "hello after fast".to_string(),
@@ -1979,7 +1984,10 @@ async fn user_turn_sends_standard_override_after_fast_is_turned_off() {
     assert!(
         events.iter().any(|event| matches!(
             event,
-            AppEvent::PersistServiceTierSelection { service_tier: None }
+            AppEvent::PersistServiceTierSelection {
+                service_tier: None,
+                service_tier_id: None,
+            }
         )),
         "expected fast-mode opt-out persistence app event; events: {events:?}"
     );
