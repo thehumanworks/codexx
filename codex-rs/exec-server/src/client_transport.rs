@@ -19,18 +19,24 @@ use crate::connection::JsonRpcConnection;
 const ENVIRONMENT_CLIENT_NAME: &str = "codex-environment";
 const ENVIRONMENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const ENVIRONMENT_INITIALIZE_TIMEOUT: Duration = Duration::from_secs(5);
+pub const CODEX_EXEC_SERVER_CONNECT_TIMEOUT_MS_ENV_VAR: &str =
+    "CODEX_EXEC_SERVER_CONNECT_TIMEOUT_MS";
+pub const CODEX_EXEC_SERVER_INITIALIZE_TIMEOUT_MS_ENV_VAR: &str =
+    "CODEX_EXEC_SERVER_INITIALIZE_TIMEOUT_MS";
 
 impl ExecServerClient {
     pub(crate) async fn connect_for_transport(
         transport_params: crate::client_api::ExecServerTransportParams,
     ) -> Result<Self, ExecServerError> {
+        let connect_timeout = environment_connect_timeout();
+        let initialize_timeout = environment_initialize_timeout();
         match transport_params {
             crate::client_api::ExecServerTransportParams::WebSocketUrl(websocket_url) => {
                 Self::connect_websocket(RemoteExecServerConnectArgs {
                     websocket_url,
                     client_name: ENVIRONMENT_CLIENT_NAME.to_string(),
-                    connect_timeout: ENVIRONMENT_CONNECT_TIMEOUT,
-                    initialize_timeout: ENVIRONMENT_INITIALIZE_TIMEOUT,
+                    connect_timeout,
+                    initialize_timeout,
                     resume_session_id: None,
                 })
                 .await
@@ -39,7 +45,7 @@ impl ExecServerClient {
                 Self::connect_stdio_command(StdioExecServerConnectArgs {
                     command,
                     client_name: ENVIRONMENT_CLIENT_NAME.to_string(),
-                    initialize_timeout: ENVIRONMENT_INITIALIZE_TIMEOUT,
+                    initialize_timeout,
                     resume_session_id: None,
                 })
                 .await
@@ -124,4 +130,55 @@ fn stdio_command_process(stdio_command: &StdioExecServerCommand) -> Command {
     #[cfg(unix)]
     command.process_group(0);
     command
+}
+
+fn environment_connect_timeout() -> Duration {
+    timeout_from_env_var(
+        CODEX_EXEC_SERVER_CONNECT_TIMEOUT_MS_ENV_VAR,
+        ENVIRONMENT_CONNECT_TIMEOUT,
+    )
+}
+
+fn environment_initialize_timeout() -> Duration {
+    timeout_from_env_var(
+        CODEX_EXEC_SERVER_INITIALIZE_TIMEOUT_MS_ENV_VAR,
+        ENVIRONMENT_INITIALIZE_TIMEOUT,
+    )
+}
+
+fn timeout_from_env_var(env_var: &str, default: Duration) -> Duration {
+    timeout_from_env_value(std::env::var(env_var).ok().as_deref(), default)
+}
+
+fn timeout_from_env_value(value: Option<&str>, default: Duration) -> Duration {
+    value
+        .map(str::trim)
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(Duration::from_millis)
+        .unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timeout_from_env_value_uses_milliseconds() {
+        assert_eq!(
+            timeout_from_env_value(Some("1234"), Duration::from_secs(5)),
+            Duration::from_millis(1234)
+        );
+    }
+
+    #[test]
+    fn timeout_from_env_value_uses_default_for_missing_or_invalid_values() {
+        let default = Duration::from_secs(5);
+
+        assert_eq!(timeout_from_env_value(/*value*/ None, default), default);
+        assert_eq!(timeout_from_env_value(Some(""), default), default);
+        assert_eq!(
+            timeout_from_env_value(Some("not-a-number"), default),
+            default
+        );
+    }
 }

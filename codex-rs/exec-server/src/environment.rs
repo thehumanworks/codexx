@@ -21,6 +21,7 @@ use crate::remote_file_system::RemoteFileSystem;
 use crate::remote_process::RemoteProcess;
 
 pub const CODEX_EXEC_SERVER_URL_ENV_VAR: &str = "CODEX_EXEC_SERVER_URL";
+pub const CODEX_EXEC_SERVER_ENVIRONMENT_ID_ENV_VAR: &str = "CODEX_EXEC_SERVER_ENVIRONMENT_ID";
 
 /// Owns the execution/filesystem environments available to the Codex runtime.
 ///
@@ -96,8 +97,11 @@ impl EnvironmentManager {
         let EnvironmentManagerArgs {
             local_runtime_paths,
         } = args;
-        let exec_server_url = std::env::var(CODEX_EXEC_SERVER_URL_ENV_VAR).ok();
-        Self::from_default_provider_url(exec_server_url, local_runtime_paths).await
+        let provider = DefaultEnvironmentProvider::from_env();
+        match Self::from_provider(&provider, local_runtime_paths).await {
+            Ok(manager) => manager,
+            Err(err) => panic!("default provider should create valid environments: {err}"),
+        }
     }
 
     /// Builds a manager from `CODEX_HOME` and local runtime paths used when
