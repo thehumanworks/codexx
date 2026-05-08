@@ -456,7 +456,7 @@ async fn thread_start_params_include_review_policy_when_auto_review_is_enabled()
 }
 
 #[tokio::test]
-async fn thread_lifecycle_params_include_legacy_sandbox_when_no_active_profile() {
+async fn thread_lifecycle_params_handle_legacy_sandbox_when_no_active_profile() {
     let codex_home = tempdir().expect("create temp codex home");
     let cwd = tempdir().expect("create temp cwd");
     let config = ConfigBuilder::default()
@@ -479,10 +479,7 @@ async fn thread_lifecycle_params_include_legacy_sandbox_when_no_active_profile()
         Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
     );
     assert_eq!(start_params.permissions, None);
-    assert_eq!(
-        resume_params.sandbox,
-        Some(codex_app_server_protocol::SandboxMode::DangerFullAccess)
-    );
+    assert_eq!(resume_params.sandbox, None);
     assert_eq!(resume_params.permissions, None);
 }
 

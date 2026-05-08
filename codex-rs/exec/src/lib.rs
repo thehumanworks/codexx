@@ -959,12 +959,6 @@ fn thread_start_params_from_config(config: &Config) -> ThreadStartParams {
 
 fn thread_resume_params_from_config(config: &Config, thread_id: String) -> ThreadResumeParams {
     let permissions = permissions_selection_from_config(config);
-    let sandbox = permissions.is_none().then(|| {
-        sandbox_mode_from_permission_profile(
-            &config.permissions.permission_profile(),
-            config.cwd.as_path(),
-        )
-    });
     ThreadResumeParams {
         thread_id,
         model: config.model.clone(),
@@ -973,7 +967,7 @@ fn thread_resume_params_from_config(config: &Config, thread_id: String) -> Threa
         workspace_roots: Some(config.workspace_roots.clone()),
         approval_policy: Some(config.permissions.approval_policy.value().into()),
         approvals_reviewer: approvals_reviewer_override_from_config(config),
-        sandbox: sandbox.flatten(),
+        sandbox: None,
         permissions,
         config: config_request_overrides_from_config(config),
         ..ThreadResumeParams::default()
