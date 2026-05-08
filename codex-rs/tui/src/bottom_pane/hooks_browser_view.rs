@@ -330,11 +330,7 @@ impl HooksBrowserView {
 
             if selected {
                 for span in &mut row_line {
-                    *span = if span.style.fg == Some(ratatui::style::Color::Yellow) {
-                        span.clone().bold()
-                    } else {
-                        span.clone().cyan().bold()
-                    };
+                    *span = span.clone().cyan().bold();
                 }
             } else {
                 row_line[1] = row_line[1].clone().dim();
@@ -995,7 +991,7 @@ mod tests {
         );
         assert_eq!(
             view.event_table_lines()[1].spans[3].style.fg,
-            Some(Color::Yellow)
+            Some(Color::Cyan)
         );
         assert!(
             view.event_table_lines()[1].spans[3]
