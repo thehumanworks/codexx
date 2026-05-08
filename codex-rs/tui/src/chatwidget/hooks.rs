@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use super::ChatWidget;
 use crate::app_event::AppEvent;
 use crate::bottom_pane::HooksBrowserView;
-use crate::bottom_pane::HooksReviewPromptView;
 use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookMetadata;
 use codex_app_server_protocol::HooksListResponse;
@@ -36,54 +35,6 @@ impl ChatWidget {
             }
             Err(err) => self.add_error_message(format!("Failed to load hooks: {err}")),
         }
-    }
-
-    pub(crate) fn open_startup_hooks_review(
-        &mut self,
-        hooks: Vec<HookMetadata>,
-        warnings: Vec<String>,
-        errors: Vec<HookErrorInfo>,
-    ) {
-        self.bottom_pane
-            .show_view(Box::new(HooksReviewPromptView::new(
-                hooks,
-                warnings,
-                errors,
-                None,
-                self.app_event_tx.clone(),
-            )));
-        self.request_redraw();
-    }
-
-    pub(crate) fn complete_startup_hooks_review(&mut self) {
-        self.bottom_pane.complete_active_view_if_id(
-            HooksReviewPromptView::VIEW_ID,
-            crate::bottom_pane::ViewCompletion::Accepted,
-        );
-        self.request_redraw();
-    }
-
-    pub(crate) fn show_startup_hooks_review_error(
-        &mut self,
-        hooks: Vec<HookMetadata>,
-        warnings: Vec<String>,
-        errors: Vec<HookErrorInfo>,
-        error: String,
-    ) {
-        let replaced = self.bottom_pane.replace_active_view_if_id(
-            HooksReviewPromptView::VIEW_ID,
-            Box::new(HooksReviewPromptView::new(
-                hooks,
-                warnings,
-                errors,
-                Some(error.clone()),
-                self.app_event_tx.clone(),
-            )),
-        );
-        if !replaced {
-            self.add_error_message(error);
-        }
-        self.request_redraw();
     }
 
     pub(crate) fn open_hooks_browser(

@@ -1,3 +1,4 @@
+use crate::hooks_rpc::HookTrustUpdate;
 use codex_app_server_protocol::HookErrorInfo;
 use codex_app_server_protocol::HookEventName;
 use codex_app_server_protocol::HookMetadata;
@@ -202,23 +203,29 @@ impl HooksBrowserView {
         }
 
         hook.trust_status = HookTrustStatus::Trusted;
-        self.app_event_tx.send(AppEvent::TrustHook {
-            key: hook.key.clone(),
-            current_hash: hook.current_hash.clone(),
+        self.app_event_tx.send(AppEvent::TrustHooks {
+            updates: vec![HookTrustUpdate {
+                key: hook.key.clone(),
+                current_hash: hook.current_hash.clone(),
+            }],
         });
     }
 
     fn trust_all_hooks(&mut self) {
+        let mut updates = Vec::new();
         for hook in &mut self.hooks {
             if !hook_needs_review(hook) {
                 continue;
             }
 
             hook.trust_status = HookTrustStatus::Trusted;
-            self.app_event_tx.send(AppEvent::TrustHook {
+            updates.push(HookTrustUpdate {
                 key: hook.key.clone(),
                 current_hash: hook.current_hash.clone(),
             });
+        }
+        if !updates.is_empty() {
+            self.app_event_tx.send(AppEvent::TrustHooks { updates });
         }
     }
 
@@ -1424,13 +1431,13 @@ mod tests {
         view.handle_key_event(KeyEvent::from(KeyCode::Char('t')));
 
         match rx.try_recv().expect("trust event") {
-            AppEvent::TrustHook {
-                key,
-                current_hash: hash_to_trust,
-            } => {
-                assert_eq!(key, "path:untrusted");
-                assert_eq!(hash_to_trust, current_hash);
-            }
+            AppEvent::TrustHooks { updates } => assert_eq!(
+                updates,
+                vec![HookTrustUpdate {
+                    key: "path:untrusted".to_string(),
+                    current_hash,
+                }]
+            ),
             other => panic!("expected hook trust event, got {other:?}"),
         }
     }
@@ -1463,13 +1470,13 @@ mod tests {
         assert!(!hook.enabled);
         assert_eq!(hook.trust_status, HookTrustStatus::Trusted);
         match rx.try_recv().expect("trust event") {
-            AppEvent::TrustHook {
-                key,
-                current_hash: hash_to_trust,
-            } => {
-                assert_eq!(key, "path:modified");
-                assert_eq!(hash_to_trust, current_hash);
-            }
+            AppEvent::TrustHooks { updates } => assert_eq!(
+                updates,
+                vec![HookTrustUpdate {
+                    key: "path:modified".to_string(),
+                    current_hash,
+                }]
+            ),
             other => panic!("expected hook trust event, got {other:?}"),
         }
     }
@@ -1532,13 +1539,23 @@ mod tests {
                 HookTrustStatus::Trusted,
             ]
         );
-        let trust_events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
-        assert_eq!(trust_events.len(), 2);
-        assert!(
-            trust_events
-                .into_iter()
-                .all(|event| matches!(event, AppEvent::TrustHook { .. }))
-        );
+        match rx.try_recv().expect("trust event") {
+            AppEvent::TrustHooks { updates } => assert_eq!(
+                updates,
+                vec![
+                    HookTrustUpdate {
+                        key: "path:untrusted".to_string(),
+                        current_hash: "sha256:current".to_string(),
+                    },
+                    HookTrustUpdate {
+                        key: "path:modified".to_string(),
+                        current_hash: "sha256:current".to_string(),
+                    },
+                ]
+            ),
+            other => panic!("expected hook trust event, got {other:?}"),
+        }
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

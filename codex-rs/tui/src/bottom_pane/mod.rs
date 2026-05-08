@@ -104,7 +104,6 @@ pub(crate) use footer::GoalStatusIndicator;
 #[cfg(test)]
 pub(crate) use footer::goal_status_indicator_line;
 pub(crate) use list_selection_view::ColumnWidthMode;
-#[cfg(test)]
 pub(crate) use list_selection_view::ListSelectionView;
 pub(crate) use list_selection_view::SelectionRowDisplay;
 pub(crate) use list_selection_view::SelectionToggle;
@@ -115,7 +114,6 @@ pub(crate) use list_selection_view::side_by_side_layout_widths;
 pub(crate) use memories_settings_view::MemoriesSettingsView;
 mod feedback_view;
 mod hooks_browser_view;
-mod hooks_review_prompt_view;
 pub(crate) use feedback_view::FeedbackAudience;
 pub(crate) use feedback_view::feedback_classification;
 pub(crate) use feedback_view::feedback_disabled_params;
@@ -143,7 +141,6 @@ mod textarea;
 mod unified_exec_footer;
 pub(crate) use feedback_view::FeedbackNoteView;
 pub(crate) use hooks_browser_view::HooksBrowserView;
-pub(crate) use hooks_review_prompt_view::HooksReviewPromptView;
 pub(crate) use selection_tabs::SelectionTab;
 
 /// How long the "press again to quit" hint stays visible.
@@ -1220,42 +1217,6 @@ impl BottomPane {
 
     pub(crate) fn show_view(&mut self, view: Box<dyn BottomPaneView>) {
         self.push_view(view);
-    }
-
-    pub(crate) fn replace_active_view_if_id(
-        &mut self,
-        view_id: &'static str,
-        view: Box<dyn BottomPaneView>,
-    ) -> bool {
-        let Some(active_view) = self.view_stack.last_mut() else {
-            return false;
-        };
-        if active_view.view_id() != Some(view_id) {
-            return false;
-        }
-
-        *active_view = view;
-        self.schedule_active_view_frame();
-        self.request_redraw();
-        true
-    }
-
-    pub(crate) fn complete_active_view_if_id(
-        &mut self,
-        view_id: &'static str,
-        completion: ViewCompletion,
-    ) -> bool {
-        if self
-            .view_stack
-            .last()
-            .is_none_or(|view| view.view_id() != Some(view_id))
-        {
-            return false;
-        }
-
-        self.pop_active_view_with_completion(Some(completion));
-        self.request_redraw();
-        true
     }
 
     /// Called when the agent requests user approval.

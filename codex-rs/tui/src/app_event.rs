@@ -325,28 +325,6 @@ pub(crate) enum AppEvent {
         result: Result<codex_app_server_protocol::HooksListResponse, String>,
     },
 
-    /// Open the lifecycle hooks browser with already-fetched hook state.
-    OpenHooksBrowser {
-        hooks: Vec<codex_app_server_protocol::HookMetadata>,
-        warnings: Vec<String>,
-        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
-    },
-
-    /// Trust every pending startup hook, then continue only after persistence succeeds.
-    TrustStartupHooksAndContinue {
-        hooks: Vec<codex_app_server_protocol::HookMetadata>,
-        warnings: Vec<String>,
-        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
-    },
-
-    /// Result of persisting every pending startup hook trust decision.
-    StartupHooksTrusted {
-        hooks: Vec<codex_app_server_protocol::HookMetadata>,
-        warnings: Vec<String>,
-        errors: Vec<codex_app_server_protocol::HookErrorInfo>,
-        result: Result<(), String>,
-    },
-
     /// Open the prompt for adding a marketplace source.
     OpenMarketplaceAddPrompt,
 
@@ -792,10 +770,9 @@ pub(crate) enum AppEvent {
         enabled: bool,
     },
 
-    /// Trust the current definition for a hook by stable hook key.
-    TrustHook {
-        key: String,
-        current_hash: String,
+    /// Trust the current definitions for one or more hooks by stable hook key.
+    TrustHooks {
+        updates: Vec<crate::hooks_rpc::HookTrustUpdate>,
     },
 
     /// Result of persisting hook enabled state.

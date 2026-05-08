@@ -409,31 +409,6 @@ impl App {
             AppEvent::FetchHooksList { cwd } => {
                 self.fetch_hooks_list(app_server, cwd);
             }
-            AppEvent::OpenHooksBrowser {
-                hooks,
-                warnings,
-                errors,
-            } => {
-                self.chat_widget.open_hooks_browser(hooks, warnings, errors);
-            }
-            AppEvent::TrustStartupHooksAndContinue {
-                hooks,
-                warnings,
-                errors,
-            } => {
-                self.trust_startup_hooks_and_continue(app_server, hooks, warnings, errors);
-            }
-            AppEvent::StartupHooksTrusted {
-                hooks,
-                warnings,
-                errors,
-                result,
-            } => match result {
-                Ok(()) => self.chat_widget.complete_startup_hooks_review(),
-                Err(err) => self
-                    .chat_widget
-                    .show_startup_hooks_review_error(hooks, warnings, errors, err),
-            },
             AppEvent::OpenMarketplaceAddPrompt => {
                 self.chat_widget.open_marketplace_add_prompt();
             }
@@ -1740,8 +1715,8 @@ impl App {
             AppEvent::SetHookEnabled { key, enabled } => {
                 self.set_hook_enabled(app_server, key, enabled);
             }
-            AppEvent::TrustHook { key, current_hash } => {
-                self.trust_hook(app_server, key, current_hash);
+            AppEvent::TrustHooks { updates } => {
+                self.trust_hooks(app_server, updates);
             }
             AppEvent::HookEnabledSet {
                 key,
