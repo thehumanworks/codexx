@@ -120,3 +120,64 @@ jobs:
             suite::v2::account::get_account \
             -- \
             --nocapture
+
+  cargo-windows-x64-timeouts:
+    name: Cargo Windows x64 timeout repro (${{ matrix.group }})
+    runs-on:
+      group: codex-runners
+      labels: codex-windows-x64
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: codex-rs
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: core-cli-stream
+            package: codex-core
+            target_args: --test all
+            filters: suite::cli_stream::integration_creates_and_checks_session_file
+          - group: exec-server-stdio
+            package: codex-exec-server
+            target_args:
+            filters: client::tests::connect_stdio_command_initializes_json_rpc_client_on_windows
+          - group: exec-resume
+            package: codex-exec
+            target_args: --test all
+            filters: suite::resume::exec_resume_by_id_appends_to_existing_file suite::resume::exec_resume_accepts_images_after_subcommand suite::resume::exec_resume_last_accepts_prompt_after_flag_in_json_mode suite::resume::exec_resume_preserves_cli_configuration_overrides suite::resume::exec_resume_last_appends_to_existing_file
+          - group: app-server-thread
+            package: codex-app-server
+            target_args: --test all
+            filters: suite::v2::thread_fork::thread_fork_can_exclude_turns_and_skip_restored_token_usage suite::v2::turn_start::turn_start_resolves_sticky_thread_environments_and_turn_overrides
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: taiki-e/install-action@44c6d64aa62cd779e873306675c7a58e86d6d532 # v2.62.49
+        with:
+          tool: nextest
+          version: 0.9.103
+
+      - name: Run timed-out tests with nextest
+        shell: bash
+        env:
+          RUST_BACKTRACE: 1
+          RUST_MIN_STACK: "8388608"
+          NEXTEST_STATUS_LEVEL: leak
+        run: |
+          cargo nextest run \
+            --no-fail-fast \
+            -p "${{ matrix.package }}" \
+            ${{ matrix.target_args }} \
+            --target x86_64-pc-windows-msvc \
+            --cargo-profile ci-test \
+            --timings \
+            ${{ matrix.filters }}
