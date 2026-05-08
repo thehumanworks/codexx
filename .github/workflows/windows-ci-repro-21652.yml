@@ -139,10 +139,6 @@ jobs:
             package: codex-core
             target_args: --test all
             filters: suite::cli_stream::integration_creates_and_checks_session_file
-          - group: exec-server-stdio
-            package: codex-exec-server
-            target_args:
-            filters: client::tests::connect_stdio_command_initializes_json_rpc_client_on_windows
           - group: exec-resume
             package: codex-exec
             target_args: --test all
@@ -150,7 +146,7 @@ jobs:
           - group: app-server-thread
             package: codex-app-server
             target_args: --test all
-            filters: suite::v2::thread_fork::thread_fork_can_exclude_turns_and_skip_restored_token_usage suite::v2::turn_start::turn_start_resolves_sticky_thread_environments_and_turn_overrides
+            filters: suite::v2::thread_fork::thread_fork_can_exclude_turns_and_skip_restored_token_usage suite::v2::turn_start::turn_start_resolves_sticky_thread_environments_and_turn_overrides suite::v2::turn_start::turn_start_resolves_multi_environment_thread_selection suite::v2::turn_start::turn_start_resolves_turn_environment_overrides
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -165,6 +161,16 @@ jobs:
         with:
           tool: nextest
           version: 0.9.103
+
+      - name: Build Codex CLI for core CLI stream test
+        if: ${{ matrix.group == 'core-cli-stream' }}
+        shell: bash
+        run: |
+          cargo build \
+            -p codex-cli \
+            --bin codex \
+            --target x86_64-pc-windows-msvc \
+            --profile ci-test
 
       - name: Run timed-out tests with nextest
         shell: bash
