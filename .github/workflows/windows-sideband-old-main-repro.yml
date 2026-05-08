@@ -11,8 +11,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  bazel-windows-cross-sideband:
-    name: Bazel Windows cross sideband repro
+  bazel-windows-cross-core:
+    name: Bazel Windows cross core repro
     runs-on: windows-latest
     timeout-minutes: 20
 
@@ -28,7 +28,7 @@ jobs:
           cache-scope: bazel-windows-sideband-old-main-repro
           install-test-prereqs: "true"
 
-      - name: Run exact Bazel Windows cross sideband test
+      - name: Run Bazel Windows cross core tests
         env:
           BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
         shell: bash
@@ -41,15 +41,10 @@ jobs:
             -- \
             test \
             --nocache_test_results \
-            --test_output=all \
-            --test_sharding_strategy=disabled \
-            --runs_per_test=5 \
+            --test_output=errors \
             --test_timeout=300 \
             --test_verbose_timeout_warnings \
             --build_metadata=COMMIT_SHA=${GITHUB_SHA} \
             --build_metadata=TAG_repro=old_main_sideband_windows \
-            --test_arg=suite::realtime_conversation::conversation_webrtc_sideband_connect_failure_closes_with_error \
-            --test_arg=--exact \
-            --test_arg=--nocapture \
             -- \
             //codex-rs/core:core-all-test-windows-cross
