@@ -295,7 +295,7 @@ async fn responses_api_stream_cli() {
     assert!(stdout.contains("fixture hello"));
 }
 
-/// End-to-end: create a session (writes rollout), verify the file, then resume and confirm append.
+/// End-to-end: create a session and verify the session file.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn integration_creates_and_checks_session_file() -> anyhow::Result<()> {
     // Honor sandbox network restrictions for CI parity with the other tests.
@@ -430,12 +430,53 @@ async fn integration_creates_and_checks_session_file() -> anyhow::Result<()> {
         found_message,
         "No message found in session file containing the marker"
     );
+    Ok(())
+}
 
-    // Second run: resume should update the existing file.
+/// End-to-end: resume an existing session and confirm the existing file is appended.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn integration_resume_updates_existing_session_file() -> anyhow::Result<()> {
+    // Honor sandbox network restrictions for CI parity with the other tests.
+    skip_if_no_network!(Ok(()));
+
+    let home = TempDir::new()?;
+    let marker = format!("integration-test-{}", Uuid::new_v4());
+    let thread_id = Uuid::new_v4();
+    let timestamp = "2025-01-03T12:34:56Z";
+    let sessions_dir = home.path().join("sessions");
+    let day_dir = sessions_dir.join("2025/01/03");
+    std::fs::create_dir_all(&day_dir)?;
+    let path = day_dir.join(format!("rollout-2025-01-03T12-34-56-{thread_id}.jsonl"));
+    let session_meta = serde_json::json!({
+        "timestamp": timestamp,
+        "type": "session_meta",
+        "payload": {
+            "id": thread_id,
+            "timestamp": timestamp,
+            "cwd": repo_root(),
+            "originator": "test_originator",
+            "cli_version": "test_version",
+            "source": "cli",
+            "model_provider": "openai"
+        },
+    });
+    let user_event = serde_json::json!({
+        "timestamp": timestamp,
+        "type": "event_msg",
+        "payload": {
+            "type": "user_message",
+            "message": marker,
+            "kind": "plain",
+        },
+    });
+    std::fs::write(&path, format!("{session_meta}\n{user_event}\n"))?;
+
+    let fixture = cli_responses_fixture();
+    let repo_root = repo_root();
     let marker2 = format!("integration-resume-{}", Uuid::new_v4());
     let prompt2 = format!("echo {marker2}");
-    let bin2 = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
-    let mut cmd2 = AssertCommand::new(bin2);
+    let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
+    let mut cmd2 = AssertCommand::new(bin);
     cmd2.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
@@ -468,7 +509,7 @@ async fn integration_creates_and_checks_session_file() -> anyhow::Result<()> {
     // Resume should write to the existing log file.
     assert_eq!(
         resumed_path, path,
-        "resume should create a new session file"
+        "resume should append to the existing session file"
     );
 
     let resumed_content = std::fs::read_to_string(&resumed_path)?;
