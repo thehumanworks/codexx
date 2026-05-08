@@ -446,12 +446,63 @@ unsafe fn create_token_with_caps_from(
         return Err(anyhow!("CreateRestrictedToken failed: {}", GetLastError()));
     }
 
-    let mut dacl_sids: Vec<*mut c_void> = Vec::with_capacity(psid_capabilities.len() + 2);
-    dacl_sids.push(psid_logon);
-    dacl_sids.push(psid_everyone);
-    dacl_sids.extend_from_slice(psid_capabilities);
+    let dacl_sids = build_default_dacl_sids(
+        psid_logon,
+        psid_everyone,
+        psid_capabilities,
+        extra_restricting_sids,
+    );
     set_default_dacl(new_token, &dacl_sids)?;
 
     enable_single_privilege(new_token, "SeChangeNotifyPrivilege")?;
     Ok(new_token)
+}
+
+fn build_default_dacl_sids(
+    psid_logon: *mut c_void,
+    psid_everyone: *mut c_void,
+    psid_capabilities: &[*mut c_void],
+    extra_restricting_sids: &[*mut c_void],
+) -> Vec<*mut c_void> {
+    let mut dacl_sids: Vec<*mut c_void> =
+        Vec::with_capacity(psid_capabilities.len() + extra_restricting_sids.len() + 2);
+    dacl_sids.push(psid_logon);
+    dacl_sids.push(psid_everyone);
+    dacl_sids.extend_from_slice(psid_capabilities);
+    for sid in extra_restricting_sids {
+        if !dacl_sids.contains(sid) {
+            dacl_sids.push(*sid);
+        }
+    }
+    dacl_sids
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_default_dacl_sids;
+    use std::ffi::c_void;
+
+    #[test]
+    fn default_dacl_includes_extra_user_sid_for_elevated_tokens() {
+        let logon = 1usize as *mut c_void;
+        let everyone = 2usize as *mut c_void;
+        let capability = 3usize as *mut c_void;
+        let user_sid = 4usize as *mut c_void;
+
+        let dacl_sids = build_default_dacl_sids(logon, everyone, &[capability], &[user_sid]);
+
+        assert_eq!(dacl_sids, vec![logon, everyone, capability, user_sid]);
+    }
+
+    #[test]
+    fn default_dacl_deduplicates_extra_sids() {
+        let logon = 1usize as *mut c_void;
+        let everyone = 2usize as *mut c_void;
+        let capability = 3usize as *mut c_void;
+
+        let dacl_sids =
+            build_default_dacl_sids(logon, everyone, &[capability], &[capability, everyone]);
+
+        assert_eq!(dacl_sids, vec![logon, everyone, capability]);
+    }
 }
