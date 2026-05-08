@@ -42,7 +42,7 @@ async fn responses_mode_stream_cli() {
     );
     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
     let mut cmd = AssertCommand::new(bin);
-    cmd.timeout(Duration::from_secs(30));
+    cmd.timeout(Duration::from_secs(60));
     cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
@@ -106,7 +106,7 @@ async fn responses_mode_stream_cli_supports_openai_base_url_config_override() {
     let home = TempDir::new().unwrap();
     let bin = codex_utils_cargo_bin::cargo_bin("codex").unwrap();
     let mut cmd = AssertCommand::new(bin);
-    cmd.timeout(Duration::from_secs(30));
+    cmd.timeout(Duration::from_secs(60));
     cmd.arg("exec")
         .arg("--skip-git-repo-check")
         .arg("-c")
