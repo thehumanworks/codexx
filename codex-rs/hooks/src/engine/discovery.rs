@@ -516,7 +516,12 @@ fn hook_key_sources_for_config_layer(
     let Ok(relative_path) = source_path.as_path().strip_prefix(project_root.as_path()) else {
         return (legacy_key_source, None);
     };
-    let key_source = format!("project:{project_trust_key}:{}", relative_path.display());
+    let relative_path = relative_path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/");
+    let key_source = format!("project:{project_trust_key}:{relative_path}");
     (key_source, Some(legacy_key_source))
 }
 
