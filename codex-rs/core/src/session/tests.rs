@@ -223,6 +223,16 @@ fn test_session_telemetry_without_metadata() -> SessionTelemetry {
     .with_metrics_without_metadata_tags(metrics)
 }
 
+fn local_thread_store_for_test(
+    config: &Config,
+    state_db_access: crate::StateDbAccess,
+) -> Arc<dyn codex_thread_store::ThreadStore> {
+    Arc::new(codex_thread_store::LocalThreadStore::new(
+        codex_thread_store::LocalThreadStoreConfig::from_config(config),
+        state_db_access,
+    ))
+}
+
 fn find_metric<'a>(resource_metrics: &'a ResourceMetrics, name: &str) -> &'a Metric {
     for scope_metrics in resource_metrics.scope_metrics() {
         for metric in scope_metrics.metrics() {
@@ -3729,10 +3739,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            crate::StateDbAccess::none(),
-        )),
+        local_thread_store_for_test(config.as_ref(), crate::StateDbAccess::none()),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         crate::StateDbAccess::none(),
@@ -3880,10 +3887,7 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         network_approval: Arc::clone(&network_approval),
         state_db_access: crate::StateDbAccess::none(),
         live_thread: None,
-        thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            crate::StateDbAccess::none(),
-        )),
+        thread_store: local_thread_store_for_test(config.as_ref(), crate::StateDbAccess::none()),
         attestation_provider: None,
         model_client: ModelClient::new(
             Some(auth_manager.clone()),
@@ -4069,10 +4073,7 @@ async fn make_session_with_config_and_rx(
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            crate::StateDbAccess::none(),
-        )),
+        local_thread_store_for_test(config.as_ref(), crate::StateDbAccess::none()),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         crate::StateDbAccess::none(),
@@ -4183,10 +4184,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         agent_control,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
         /*analytics_events_client*/ None,
-        Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            state_db_access.clone(),
-        )),
+        local_thread_store_for_test(config.as_ref(), state_db_access.clone()),
         codex_rollout_trace::ThreadTraceContext::disabled(),
         /*attestation_provider*/ None,
         state_db_access,
@@ -5606,10 +5604,7 @@ where
         network_approval: Arc::clone(&network_approval),
         state_db_access: state_db_access.clone(),
         live_thread: None,
-        thread_store: Arc::new(codex_thread_store::LocalThreadStore::new(
-            codex_thread_store::LocalThreadStoreConfig::from_config(config.as_ref()),
-            state_db_access,
-        )),
+        thread_store: local_thread_store_for_test(config.as_ref(), state_db_access),
         attestation_provider: None,
         model_client: ModelClient::new(
             Some(Arc::clone(&auth_manager)),
