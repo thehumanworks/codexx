@@ -139,6 +139,7 @@ impl ExecutorFileSystem for SandboxedFileSystem {
             is_directory: response.is_directory,
             is_file: response.is_file,
             is_symlink: response.is_symlink,
+            link_count: response.link_count,
             created_at_ms: response.created_at_ms,
             modified_at_ms: response.modified_at_ms,
         })
