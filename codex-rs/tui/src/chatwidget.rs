@@ -351,6 +351,8 @@ use self::status_surfaces::TerminalTitleStatusKind;
 mod user_messages;
 use self::user_messages::PendingSteerCompareKey;
 use self::user_messages::UserMessageDisplay;
+mod warnings;
+use self::warnings::WarningDisplayState;
 pub(crate) use crate::branch_summary::StatusLineGitSummary;
 use crate::streaming::chunking::AdaptiveChunkingPolicy;
 use crate::streaming::commit_tick::CommitTickScope;
@@ -780,6 +782,7 @@ pub(crate) struct ChatWidget {
     plan_type: Option<PlanType>,
     codex_rate_limit_reached_type: Option<RateLimitReachedType>,
     rate_limit_warnings: RateLimitWarningState,
+    warning_display_state: WarningDisplayState,
     rate_limit_switch_prompt: RateLimitSwitchPromptState,
     add_credits_nudge_email_in_flight: Option<AddCreditsNudgeCreditType>,
     adaptive_chunking: AdaptiveChunkingPolicy,
@@ -1634,6 +1637,7 @@ fn request_permissions_from_params(
     RequestPermissionsEvent {
         turn_id: params.turn_id,
         call_id: params.item_id,
+        started_at_ms: params.started_at_ms,
         reason: params.reason,
         permissions: params.permissions.into(),
         cwd: Some(params.cwd),
@@ -3133,7 +3137,11 @@ impl ChatWidget {
     }
 
     fn on_warning(&mut self, message: impl Into<String>) {
-        self.add_to_history(history_cell::new_warning_event(message.into()));
+        let message = message.into();
+        if !self.warning_display_state.should_display(&message) {
+            return;
+        }
+        self.add_to_history(history_cell::new_warning_event(message));
         self.request_redraw();
     }
 
@@ -4941,6 +4949,7 @@ impl ChatWidget {
             plan_type: initial_plan_type,
             codex_rate_limit_reached_type: None,
             rate_limit_warnings: RateLimitWarningState::default(),
+            warning_display_state: WarningDisplayState::default(),
             rate_limit_switch_prompt: RateLimitSwitchPromptState::default(),
             add_credits_nudge_email_in_flight: None,
             adaptive_chunking: AdaptiveChunkingPolicy::default(),
@@ -6366,8 +6375,9 @@ impl ChatWidget {
                 self.on_guardian_review_notification(
                     notification.review_id,
                     notification.turn_id,
+                    notification.started_at_ms,
                     notification.review,
-                    /*decision_source*/ None,
+                    /*completion*/ None,
                     notification.action,
                 );
             }
@@ -6375,8 +6385,9 @@ impl ChatWidget {
                 self.on_guardian_review_notification(
                     notification.review_id,
                     notification.turn_id,
+                    notification.started_at_ms,
                     notification.review,
-                    Some(notification.decision_source),
+                    Some((notification.completed_at_ms, notification.decision_source)),
                     notification.action,
                 );
             }
@@ -6559,14 +6570,24 @@ impl ChatWidget {
         &mut self,
         id: String,
         turn_id: String,
+        started_at_ms: i64,
         review: codex_app_server_protocol::GuardianApprovalReview,
-        decision_source: Option<codex_app_server_protocol::AutoReviewDecisionSource>,
+        completion: Option<(i64, codex_app_server_protocol::AutoReviewDecisionSource)>,
         action: GuardianApprovalReviewAction,
     ) {
+        let (completed_at_ms, decision_source) = match completion {
+            Some((completed_at_ms, decision_source)) => {
+                (Some(completed_at_ms), Some(decision_source))
+            }
+            None => (None, None),
+        };
+
         self.on_guardian_assessment(GuardianAssessmentEvent {
             id,
             target_item_id: None,
             turn_id,
+            started_at_ms,
+            completed_at_ms,
             status: match review.status {
                 codex_app_server_protocol::GuardianApprovalReviewStatus::InProgress => {
                     GuardianAssessmentStatus::InProgress
@@ -9120,6 +9141,8 @@ impl ChatWidget {
             .set(policy.to_core())
         {
             tracing::warn!(%err, "failed to set approval_policy on chat config");
+        } else {
+            self.refresh_status_surfaces();
         }
     }
 
@@ -9129,7 +9152,9 @@ impl ChatWidget {
         &mut self,
         profile: PermissionProfile,
     ) -> ConstraintResult<()> {
-        self.config.permissions.set_permission_profile(profile)
+        self.config.permissions.set_permission_profile(profile)?;
+        self.refresh_status_surfaces();
+        Ok(())
     }
 
     #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
@@ -9210,6 +9235,7 @@ impl ChatWidget {
 
     pub(crate) fn set_approvals_reviewer(&mut self, policy: ApprovalsReviewer) {
         self.config.approvals_reviewer = policy;
+        self.refresh_status_surfaces();
     }
 
     pub(crate) fn set_full_access_warning_acknowledged(&mut self, acknowledged: bool) {
