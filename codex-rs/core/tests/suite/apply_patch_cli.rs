@@ -15,6 +15,11 @@ use std::time::Duration;
 use codex_exec_server::CreateDirectoryOptions;
 use codex_features::Feature;
 use codex_protocol::models::PermissionProfile;
+use codex_protocol::permissions::FileSystemAccessMode;
+use codex_protocol::permissions::FileSystemPath;
+use codex_protocol::permissions::FileSystemSandboxEntry;
+use codex_protocol::permissions::FileSystemSandboxPolicy;
+use codex_protocol::permissions::FileSystemSpecialPath;
 use codex_protocol::permissions::NetworkSandboxPolicy;
 use codex_protocol::protocol::AskForApproval;
 use codex_protocol::protocol::EventMsg;
@@ -23,6 +28,7 @@ use codex_protocol::protocol::SandboxPolicy;
 use codex_protocol::user_input::UserInput;
 #[cfg(target_os = "linux")]
 use codex_sandboxing::landlock::CODEX_LINUX_SANDBOX_ARG0;
+use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::assert_regex_match;
 use core_test_support::responses::ev_assistant_message;
 use core_test_support::responses::ev_completed;
@@ -110,6 +116,67 @@ fn restrictive_workspace_write_profile() -> PermissionProfile {
         /*exclude_tmpdir_env_var*/ true,
         /*exclude_slash_tmp*/ true,
     )
+}
+
+fn workspace_write_with_read_only_root(read_only_root: AbsolutePathBuf) -> PermissionProfile {
+    let file_system_sandbox_policy = FileSystemSandboxPolicy::restricted(vec![
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Path {
+                path: read_only_root,
+            },
+            access: FileSystemAccessMode::Read,
+        },
+        FileSystemSandboxEntry {
+            path: FileSystemPath::Special {
+                value: FileSystemSpecialPath::project_roots(/*subpath*/ None),
+            },
+            access: FileSystemAccessMode::Write,
+        },
+    ]);
+    PermissionProfile::from_runtime_permissions(
+        &file_system_sandbox_policy,
+        NetworkSandboxPolicy::Restricted,
+    )
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceLinkKind {
+    Soft,
+    Hard,
+}
+
+impl WorkspaceLinkKind {
+    fn name(self) -> &'static str {
+        match self {
+            WorkspaceLinkKind::Soft => "soft",
+            WorkspaceLinkKind::Hard => "hard",
+        }
+    }
+
+    fn create(self, source: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+        match self {
+            WorkspaceLinkKind::Soft => create_file_symlink(source, link),
+            WorkspaceLinkKind::Hard => std::fs::hard_link(source, link),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn create_file_symlink(source: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, link)
+}
+
+#[cfg(windows)]
+fn create_file_symlink(source: &std::path::Path, link: &std::path::Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(source, link)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn create_file_symlink(_source: &std::path::Path, _link: &std::path::Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "file symlinks are unsupported on this platform",
+    ))
 }
 
 pub async fn mount_apply_patch(
@@ -671,6 +738,74 @@ async fn apply_patch_cli_rejects_path_traversal_outside_workspace(
     assert!(
         !harness.abs_path_exists(&escape_path).await?,
         "path traversal should be rejected; tool output: {out}"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[test_case(ApplyPatchModelOutput::Freeform, WorkspaceLinkKind::Soft ; "freeform_soft_link")]
+#[test_case(ApplyPatchModelOutput::Shell, WorkspaceLinkKind::Soft ; "shell_soft_link")]
+#[test_case(ApplyPatchModelOutput::ShellViaHeredoc, WorkspaceLinkKind::Soft ; "shell_heredoc_soft_link")]
+#[test_case(ApplyPatchModelOutput::ShellCommandViaHeredoc, WorkspaceLinkKind::Soft ; "shell_command_heredoc_soft_link")]
+#[test_case(ApplyPatchModelOutput::Freeform, WorkspaceLinkKind::Hard ; "freeform_hard_link")]
+#[test_case(ApplyPatchModelOutput::Shell, WorkspaceLinkKind::Hard ; "shell_hard_link")]
+#[test_case(ApplyPatchModelOutput::ShellViaHeredoc, WorkspaceLinkKind::Hard ; "shell_heredoc_hard_link")]
+#[test_case(ApplyPatchModelOutput::ShellCommandViaHeredoc, WorkspaceLinkKind::Hard ; "shell_command_heredoc_hard_link")]
+async fn apply_patch_cli_does_not_write_through_link_escape_outside_workspace(
+    model_output: ApplyPatchModelOutput,
+    link_kind: WorkspaceLinkKind,
+) -> Result<()> {
+    skip_if_no_network!(Ok(()));
+    skip_if_remote!(
+        Ok(()),
+        "link escape setup needs local filesystem link creation"
+    );
+
+    let test_root = tempfile::tempdir_in(std::env::current_dir()?)?;
+    let work_dir = AbsolutePathBuf::try_from(test_root.path().join("work"))?;
+    let outside_dir = AbsolutePathBuf::try_from(test_root.path().join("outside"))?;
+    std::fs::create_dir_all(work_dir.as_path())?;
+    std::fs::create_dir_all(outside_dir.as_path())?;
+
+    let harness_work_dir = work_dir.clone();
+    let harness = apply_patch_harness_with(move |builder| {
+        builder.with_config(move |config| {
+            config.cwd = harness_work_dir;
+        })
+    })
+    .await?;
+    let original_contents = "original outside content\n";
+    let outside_file = outside_dir.join("victim.txt");
+    std::fs::write(&outside_file, original_contents)?;
+
+    let link_rel = format!("{}-link.txt", link_kind.name());
+    let link_path = harness.path(&link_rel);
+    match link_kind.create(&outside_file, &link_path) {
+        Ok(()) => {}
+        Err(error) if link_kind == WorkspaceLinkKind::Soft && cfg!(windows) => {
+            eprintln!("Skipping Windows symlink apply_patch sandbox test: {error}");
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    let patch = format!("*** Begin Patch\n*** Add File: {link_rel}\n+pwned\n*** End Patch");
+    let call_id = format!("apply-{}-link-escape", link_kind.name());
+    mount_apply_patch(&harness, &call_id, &patch, "fail", model_output).await;
+
+    harness
+        .submit_with_permission_profile(
+            "attempt to escape workspace via apply_patch link",
+            workspace_write_with_read_only_root(outside_dir.clone()),
+        )
+        .await?;
+
+    let out = harness.apply_patch_output(&call_id, model_output).await;
+    assert_eq!(
+        std::fs::read_to_string(&outside_file)?,
+        original_contents,
+        "{:?} link escape should not modify the outside victim; tool output: {out}",
+        link_kind
     );
     Ok(())
 }
