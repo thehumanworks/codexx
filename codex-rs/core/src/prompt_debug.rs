@@ -20,6 +20,7 @@ use crate::session::turn::built_tools;
 use crate::state_db_bridge::StateDbHandle;
 use crate::thread_manager::ThreadManager;
 use crate::thread_manager::thread_store_from_config;
+use codex_extension_api::empty_extension_registry;
 
 /// Build the model-visible `input` list for a single debug turn.
 #[doc(hidden)]
@@ -45,6 +46,7 @@ pub async fn build_prompt_input(
         Arc::clone(&auth_manager),
         SessionSource::Exec,
         Arc::new(EnvironmentManager::new(EnvironmentManagerArgs::new(local_runtime_paths)).await),
+        empty_extension_registry(),
         /*analytics_events_client*/ None,
         thread_store,
         state_db.clone(),

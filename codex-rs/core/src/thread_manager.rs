@@ -23,6 +23,8 @@ use codex_app_server_protocol::ThreadHistoryBuilder;
 use codex_app_server_protocol::TurnStatus;
 use codex_core_plugins::PluginsManager;
 use codex_exec_server::EnvironmentManager;
+use codex_extension_api::ExtensionRegistry;
+use codex_extension_api::empty_extension_registry;
 use codex_login::AuthManager;
 use codex_login::CodexAuth;
 use codex_model_provider::create_model_provider;
@@ -246,6 +248,7 @@ pub(crate) struct ThreadManagerState {
     skills_manager: Arc<SkillsManager>,
     plugins_manager: Arc<PluginsManager>,
     mcp_manager: Arc<McpManager>,
+    extensions: Arc<ExtensionRegistry<Config>>,
     skills_watcher: Arc<SkillsWatcher>,
     thread_store: Arc<dyn ThreadStore>,
     session_source: SessionSource,
@@ -288,6 +291,7 @@ impl ThreadManager {
         auth_manager: Arc<AuthManager>,
         session_source: SessionSource,
         environment_manager: Arc<EnvironmentManager>,
+        extensions: Arc<ExtensionRegistry<Config>>,
         analytics_events_client: Option<AnalyticsEventsClient>,
         thread_store: Arc<dyn ThreadStore>,
         state_db: Option<StateDbHandle>,
@@ -316,6 +320,7 @@ impl ThreadManager {
                 skills_manager,
                 plugins_manager,
                 mcp_manager,
+                extensions,
                 skills_watcher,
                 thread_store,
                 auth_manager,
@@ -417,6 +422,7 @@ impl ThreadManager {
                 skills_manager,
                 plugins_manager,
                 mcp_manager,
+                extensions: empty_extension_registry(),
                 skills_watcher,
                 thread_store,
                 auth_manager,
@@ -1171,6 +1177,7 @@ impl ThreadManagerState {
             skills_manager: Arc::clone(&self.skills_manager),
             plugins_manager: Arc::clone(&self.plugins_manager),
             mcp_manager: Arc::clone(&self.mcp_manager),
+            extensions: Arc::clone(&self.extensions),
             skills_watcher: Arc::clone(&self.skills_watcher),
             conversation_history: initial_history,
             session_source,

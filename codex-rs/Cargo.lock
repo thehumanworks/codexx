@@ -1868,11 +1868,13 @@ dependencies = [
  "codex-core-plugins",
  "codex-device-key",
  "codex-exec-server",
+ "codex-extension-api",
  "codex-external-agent-migration",
  "codex-external-agent-sessions",
  "codex-features",
  "codex-feedback",
  "codex-file-search",
+ "codex-git-attribution",
  "codex-git-utils",
  "codex-hooks",
  "codex-login",
@@ -2451,7 +2453,6 @@ dependencies = [
  "codex-hooks",
  "codex-login",
  "codex-mcp",
- "codex-memories",
  "codex-memories-read",
  "codex-model-provider",
  "codex-model-provider-info",
@@ -2550,6 +2551,7 @@ dependencies = [
  "codex-config",
  "codex-core",
  "codex-exec-server",
+ "codex-extension-api",
  "codex-features",
  "codex-login",
  "codex-model-provider-info",
@@ -2786,10 +2788,7 @@ dependencies = [
 name = "codex-extension-api"
 version = "0.0.0"
 dependencies = [
- "codex-git-attribution",
- "codex-guardian",
- "codex-memories",
- "codex-multi-agent-v2",
+ "codex-protocol",
  "codex-tools",
  "serde_json",
  "thiserror 2.0.18",
@@ -2877,7 +2876,9 @@ dependencies = [
 name = "codex-git-attribution"
 version = "0.0.0"
 dependencies = [
+ "codex-core",
  "codex-extension-api",
+ "codex-features",
 ]
 
 [[package]]
@@ -2902,13 +2903,6 @@ dependencies = [
  "tokio",
  "ts-rs",
  "walkdir",
-]
-
-[[package]]
-name = "codex-guardian"
-version = "0.0.0"
-dependencies = [
- "codex-extension-api",
 ]
 
 [[package]]
@@ -3072,6 +3066,7 @@ dependencies = [
  "codex-config",
  "codex-core",
  "codex-exec-server",
+ "codex-extension-api",
  "codex-login",
  "codex-protocol",
  "codex-shell-command",
@@ -3098,12 +3093,17 @@ dependencies = [
 name = "codex-memories"
 version = "0.0.0"
 dependencies = [
+ "codex-core",
  "codex-extension-api",
+ "codex-features",
+ "codex-memories-mcp",
  "codex-memories-read",
+ "codex-protocol",
+ "codex-tools",
  "codex-utils-absolute-path",
- "rmcp",
+ "codex-utils-stream-parser",
+ "serde",
  "serde_json",
- "thiserror 2.0.18",
  "tokio",
 ]
 
@@ -3246,13 +3246,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "codex-multi-agent-v2"
-version = "0.0.0"
-dependencies = [
- "codex-extension-api",
 ]
 
 [[package]]
@@ -4305,6 +4298,7 @@ dependencies = [
  "codex-config",
  "codex-core",
  "codex-exec-server",
+ "codex-extension-api",
  "codex-features",
  "codex-hooks",
  "codex-login",

@@ -6003,18 +6003,43 @@ async fn make_multi_agent_v2_usage_hint_test_session(
     (session, turn_context)
 }
 
+struct GitAttributionTestContributor;
+struct GitAttributionTestState;
+
+impl codex_extension_api::ContextContributor for GitAttributionTestContributor {
+    fn contribute(
+        &self,
+        _session_store: &codex_extension_api::ExtensionData,
+        thread_store: &codex_extension_api::ExtensionData,
+    ) -> Vec<codex_extension_api::PromptFragment> {
+        thread_store
+            .get::<GitAttributionTestState>()
+            .is_some()
+            .then(|| {
+                codex_extension_api::PromptFragment::developer_policy(
+                    "git attribution extension enabled",
+                )
+            })
+            .into_iter()
+            .collect()
+    }
+}
+
+fn git_attribution_test_registry()
+-> Arc<codex_extension_api::ExtensionRegistry<crate::config::Config>> {
+    let mut builder = codex_extension_api::ExtensionRegistryBuilder::new();
+    builder.prompt_contributor(Arc::new(GitAttributionTestContributor));
+    Arc::new(builder.build())
+}
+
 #[tokio::test]
 async fn build_initial_context_includes_git_attribution_from_extensions() {
-    let (mut session, mut turn_context) = make_session_and_context().await;
-    session.services.extensions = Arc::new(
-        codex_extension_api::ExtensionRegistryBuilder::<crate::ExtensionContext>::new()
-            .with_extension(codex_git_attribution::extension())
-            .build(),
-    );
-    turn_context
-        .features
-        .enable(Feature::CodexGitCommit)
-        .expect("test features should allow git attribution");
+    let (mut session, turn_context) = make_session_and_context().await;
+    session.services.extensions = git_attribution_test_registry();
+    session
+        .services
+        .thread_extension_data
+        .insert(GitAttributionTestState);
 
     let initial_context = session.build_initial_context(&turn_context).await;
     let developer_messages = developer_message_texts(&initial_context);
@@ -6023,7 +6048,7 @@ async fn build_initial_context_includes_git_attribution_from_extensions() {
         developer_messages
             .iter()
             .flatten()
-            .any(|text| text.contains("Co-authored-by: Codex <noreply@openai.com>")),
+            .any(|text| *text == "git attribution extension enabled"),
         "expected git attribution developer text, got {developer_messages:?}"
     );
 }
@@ -6031,11 +6056,7 @@ async fn build_initial_context_includes_git_attribution_from_extensions() {
 #[tokio::test]
 async fn build_initial_context_omits_git_attribution_when_feature_is_disabled() {
     let (mut session, turn_context) = make_session_and_context().await;
-    session.services.extensions = Arc::new(
-        codex_extension_api::ExtensionRegistryBuilder::<crate::ExtensionContext>::new()
-            .with_extension(codex_git_attribution::extension())
-            .build(),
-    );
+    session.services.extensions = git_attribution_test_registry();
 
     let initial_context = session.build_initial_context(&turn_context).await;
     let developer_messages = developer_message_texts(&initial_context);
@@ -6044,7 +6065,7 @@ async fn build_initial_context_omits_git_attribution_when_feature_is_disabled() 
         !developer_messages
             .iter()
             .flatten()
-            .any(|text| text.contains("Co-authored-by:")),
+            .any(|text| *text == "git attribution extension enabled"),
         "did not expect git attribution developer text, got {developer_messages:?}"
     );
 }

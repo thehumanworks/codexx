@@ -22,10 +22,9 @@ impl CodexExtension<()> for SharedStateExtension {
 #[derive(Debug)]
 struct StyleContributor;
 
-impl ContextContributor<()> for StyleContributor {
+impl ContextContributor for StyleContributor {
     fn contribute(
         &self,
-        _context: &(),
         session_store: &ExtensionData,
         thread_store: &ExtensionData,
     ) -> Vec<PromptFragment> {
@@ -41,10 +40,9 @@ impl ContextContributor<()> for StyleContributor {
 #[derive(Debug)]
 struct UsageContributor;
 
-impl ContextContributor<()> for UsageContributor {
+impl ContextContributor for UsageContributor {
     fn contribute(
         &self,
-        _context: &(),
         session_store: &ExtensionData,
         thread_store: &ExtensionData,
     ) -> Vec<PromptFragment> {

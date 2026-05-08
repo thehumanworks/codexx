@@ -1,8 +1,12 @@
-/// Runtime facts needed to decide whether read-memory surfaces are visible.
-///
-/// Hosts should expose the current effective values for the thread being
-/// assembled. The extension owns the policy that combines those values.
-pub trait MemoriesContext {
-    fn memory_tool_enabled(&self) -> bool;
-    fn use_memories(&self) -> bool;
+use codex_extension_api::ExtensionData;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct MemoriesReadConfig {
+    pub(crate) enabled: bool,
+}
+
+pub(crate) fn read_surface_enabled(thread_store: &ExtensionData) -> bool {
+    thread_store
+        .get::<MemoriesReadConfig>()
+        .is_some_and(|config| config.enabled)
 }

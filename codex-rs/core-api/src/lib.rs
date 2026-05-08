@@ -46,6 +46,7 @@ pub use codex_core::thread_store_from_config;
 pub use codex_exec_server::EnvironmentManager;
 pub use codex_exec_server::EnvironmentManagerArgs;
 pub use codex_exec_server::ExecServerRuntimePaths;
+pub use codex_extension_api::empty_extension_registry;
 pub use codex_features::Feature;
 pub use codex_features::Features;
 pub use codex_login::AuthManager;

@@ -8,14 +8,14 @@ use thiserror::Error;
 
 // TMP
 #[derive(Clone)]
-pub struct ToolContribution<C> {
+pub struct ToolContribution {
     spec: ResponsesApiTool,
-    handler: Arc<dyn ToolHandler<C>>,
+    handler: Arc<dyn ToolHandler>,
     supports_parallel_tool_calls: bool,
 }
 
-impl<C> ToolContribution<C> {
-    pub fn new(spec: ResponsesApiTool, handler: Arc<dyn ToolHandler<C>>) -> Self {
+impl ToolContribution {
+    pub fn new(spec: ResponsesApiTool, handler: Arc<dyn ToolHandler>) -> Self {
         Self {
             spec,
             handler,
@@ -37,17 +37,16 @@ impl<C> ToolContribution<C> {
         self.supports_parallel_tool_calls
     }
 
-    pub fn handler(&self) -> Arc<dyn ToolHandler<C>> {
+    pub fn handler(&self) -> Arc<dyn ToolHandler> {
         Arc::clone(&self.handler)
     }
 }
 
 //////// Just to make it compile ////////////////////////////////
-pub trait ToolHandler<C>: Send + Sync {
+pub trait ToolHandler: Send + Sync {
     /// Handles one JSON-encoded invocation for this tool.
     fn handle<'a>(
         &'a self,
-        context: &'a C,
         arguments: Value,
     ) -> Pin<Box<dyn Future<Output = Result<Value, ToolCallError>> + Send + 'a>>;
 }

@@ -1,36 +1,52 @@
-mod citation_output;
+mod contributors;
 pub mod ctx;
-mod list_tool;
-mod prompt_contributor;
-mod tool_contributor;
+mod tools;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::ctx::MemoriesContext;
+use crate::ctx::MemoriesReadConfig;
+use codex_core::config::Config;
 use codex_extension_api::CodexExtension;
+use codex_extension_api::ExtensionData;
 use codex_extension_api::ExtensionRegistryBuilder;
+use codex_extension_api::ThreadStartContributor;
+use codex_features::Feature;
 use codex_memories_read::build_memory_tool_developer_instructions;
 use codex_memories_read::memory_root;
-use codex_protocol::items::TurnItem;
 use codex_utils_absolute_path::AbsolutePathBuf;
-use list_tool::ListMemoriesTool;
+use contributors::CitationContributor;
+use contributors::PromptContributor;
+use contributors::ToolsContributor;
+use tools::MemoriesTools;
 
 /// Extension that contributes memories read surfaces.
 #[derive(Clone, Debug)]
 pub struct MemoriesExtension {
-    read_prompt: Option<String>,
-    pub(crate) list_tool: Arc<ListMemoriesTool>, // This is just to have useful examples, it will disappear
+    prompt: Arc<PromptContributor>,
+    tools: Arc<ToolsContributor>,
+    citations: Arc<CitationContributor>,
 }
 
-impl<C> CodexExtension<C> for MemoriesExtension
-where
-    C: MemoriesContext + Send + Sync + 'static,
-{
-    fn install(self: Arc<Self>, registry: &mut ExtensionRegistryBuilder<C>) {
-        registry.tool_contributor(self.clone());
-        registry.output_contributor::<TurnItem>(self.clone());
-        registry.prompt_contributor(self);
+impl CodexExtension<Config> for MemoriesExtension {
+    fn install(self: Arc<Self>, registry: &mut ExtensionRegistryBuilder<Config>) {
+        registry.thread_start_contributor(self.clone());
+        registry.prompt_contributor(self.prompt.clone());
+        registry.tool_contributor(self.tools.clone());
+        registry.turn_item_contributor(self.citations.clone());
+    }
+}
+
+impl ThreadStartContributor<Config> for MemoriesExtension {
+    fn contribute(
+        &self,
+        config: &Config,
+        _session_store: &ExtensionData,
+        thread_store: &ExtensionData,
+    ) {
+        thread_store.insert(MemoriesReadConfig {
+            enabled: config.features.enabled(Feature::MemoryTool) && config.memories.use_memories,
+        });
     }
 }
 
@@ -39,19 +55,10 @@ impl MemoriesExtension {
     /// it should expose.
     pub fn new(read_prompt: Option<String>, memories_root: impl Into<PathBuf>) -> Self {
         Self {
-            read_prompt,
-            list_tool: Arc::new(ListMemoriesTool::new(memories_root)),
+            prompt: Arc::new(PromptContributor::new(read_prompt)),
+            tools: Arc::new(ToolsContributor::new(MemoriesTools::new(memories_root))),
+            citations: Arc::new(CitationContributor),
         }
-    }
-
-    /// Returns the rendered developer instruction for read access, if available.
-    pub fn read_prompt(&self) -> Option<&str> {
-        self.read_prompt.as_deref()
-    }
-
-    // Just for example
-    pub(crate) fn is_read_surface_enabled<C: MemoriesContext>(&self, context: &C) -> bool {
-        context.memory_tool_enabled() && context.use_memories()
     }
 }
 

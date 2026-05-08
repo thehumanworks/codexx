@@ -364,7 +364,7 @@ impl Session {
         skills_manager: Arc<SkillsManager>,
         plugins_manager: Arc<PluginsManager>,
         mcp_manager: Arc<McpManager>,
-        extensions: Arc<codex_extension_api::ExtensionRegistry<crate::ExtensionContext>>,
+        extensions: Arc<codex_extension_api::ExtensionRegistry<crate::config::Config>>,
         skills_watcher: Arc<SkillsWatcher>,
         agent_control: AgentControl,
         environment_manager: Arc<EnvironmentManager>,
@@ -811,6 +811,16 @@ impl Session {
                 SessionId::from(thread_id)
             };
             let agent_control = agent_control.with_session_id(session_id);
+            let session_extension_data = codex_extension_api::ExtensionData::new();
+            let thread_extension_data = codex_extension_api::ExtensionData::new();
+            for contributor in extensions.thread_start_contributors() {
+                contributor.contribute(
+                    config.as_ref(),
+                    &session_extension_data,
+                    &thread_extension_data,
+                );
+            }
+
             let services = SessionServices {
                 // Initialize the MCP connection manager with an uninitialized
                 // instance. It will be replaced with one created via
@@ -847,8 +857,9 @@ impl Session {
                 plugins_manager: Arc::clone(&plugins_manager),
                 mcp_manager: Arc::clone(&mcp_manager),
                 extensions,
-                session_extension_data: codex_extension_api::ExtensionData::new(),
-                thread_extension_data: codex_extension_api::ExtensionData::new(),
+                // TODO(jif): extract session to share between sub-agents
+                session_extension_data,
+                thread_extension_data,
                 skills_watcher,
                 agent_control,
                 network_proxy,

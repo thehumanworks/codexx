@@ -99,6 +99,7 @@ async fn queue_refresh(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::thread_extensions;
     use async_trait::async_trait;
     use codex_arg0::Arg0DispatchPaths;
     use codex_config::CloudRequirementsLoader;
@@ -120,7 +121,6 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use tempfile::TempDir;
-    use crate::extensions::thread_extensions;
 
     #[tokio::test]
     async fn strict_refresh_reports_thread_planning_failures() -> anyhow::Result<()> {

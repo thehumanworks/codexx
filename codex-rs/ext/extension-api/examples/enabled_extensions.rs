@@ -13,7 +13,7 @@ fn main() {
     // 1. Build the extension value owned by the host.
     let extension = Arc::new(SharedStateExtension);
 
-    // 2. Install it into the registry for the context type this host exposes.
+    // 2. Install it into the registry for the thread-start input type this host exposes.
     let registry = ExtensionRegistryBuilder::<()>::new()
         .with_extension(extension)
         .build();
@@ -63,6 +63,6 @@ fn contribute_prompt(
     registry
         .context_contributors()
         .iter()
-        .flat_map(|contributor| contributor.contribute(&(), session_store, thread_store))
+        .flat_map(|contributor| contributor.contribute(session_store, thread_store))
         .collect()
 }

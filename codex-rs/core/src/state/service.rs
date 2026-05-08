@@ -6,7 +6,6 @@ use crate::agent::AgentControl;
 use crate::client::ModelClient;
 use crate::config::StartedNetworkProxy;
 use crate::exec_policy::ExecPolicyManager;
-use crate::extensions::ExtensionContext;
 use crate::guardian::GuardianRejection;
 use crate::guardian::GuardianRejectionCircuitBreaker;
 use crate::mcp::McpManager;
@@ -62,7 +61,7 @@ pub(crate) struct SessionServices {
     pub(crate) skills_manager: Arc<SkillsManager>,
     pub(crate) plugins_manager: Arc<PluginsManager>,
     pub(crate) mcp_manager: Arc<McpManager>,
-    pub(crate) extensions: Arc<ExtensionRegistry<ExtensionContext>>,
+    pub(crate) extensions: Arc<ExtensionRegistry<crate::config::Config>>,
     pub(crate) session_extension_data: ExtensionData,
     pub(crate) thread_extension_data: ExtensionData,
     pub(crate) skills_watcher: Arc<SkillsWatcher>,
