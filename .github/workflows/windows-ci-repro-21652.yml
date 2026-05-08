@@ -5,124 +5,14 @@ on:
     branches:
       - pakrym/windows-ci-repro-21652
   workflow_dispatch:
-    inputs:
-      test_filter:
-        description: Exact libtest name to run
-        required: false
-        default: suite::realtime_conversation::conversation_webrtc_sideband_connect_failure_closes_with_error
 
 concurrency:
   group: windows-ci-repro-21652-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  REPRO_TEST_FILTER: ${{ github.event.inputs.test_filter || 'suite::realtime_conversation::conversation_webrtc_sideband_connect_failure_closes_with_error' }}
-
 jobs:
-  bazel-windows-cross-realtime:
-    name: Bazel Windows cross realtime repro
-    runs-on: windows-latest
-    timeout-minutes: 15
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Prepare Bazel CI
-        uses: ./.github/actions/prepare-bazel-ci
-        with:
-          target: x86_64-pc-windows-gnullvm
-          cache-scope: bazel-windows-ci-repro-21652
-          install-test-prereqs: "true"
-
-      - name: Run exact Bazel Windows cross test
-        env:
-          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
-        shell: bash
-        run: |
-          ./.github/scripts/run-bazel-ci.sh \
-            --print-failed-action-summary \
-            --print-failed-test-logs \
-            --windows-cross-compile \
-            --remote-download-toplevel \
-            -- \
-            test \
-            --test_output=all \
-            --test_sharding_strategy=disabled \
-            --test_timeout=300 \
-            --test_verbose_timeout_warnings \
-            --build_metadata=COMMIT_SHA=${GITHUB_SHA} \
-            --build_metadata=TAG_repro=pr21652_windows_bazel_realtime \
-            --test_arg="${REPRO_TEST_FILTER}" \
-            --test_arg=--exact \
-            --test_arg=--nocapture \
-            -- \
-            //codex-rs/core:core-all-test-windows-cross
-
-  cargo-windows-x64-realtime:
-    name: Cargo Windows x64 realtime repro
-    runs-on:
-      group: codex-runners
-      labels: codex-windows-x64
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: codex-rs
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
-
-      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Run exact Cargo Windows x64 test
-        shell: bash
-        run: |
-          cargo test \
-            -p codex-core \
-            --test all \
-            --target x86_64-pc-windows-msvc \
-            --profile ci-test \
-            "${REPRO_TEST_FILTER}" \
-            -- \
-            --exact \
-            --nocapture
-
-  cargo-windows-x64-account:
-    name: Cargo Windows x64 account repro
-    runs-on:
-      group: codex-runners
-      labels: codex-windows-x64
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: codex-rs
-
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - uses: facebook/install-dotslash@1e4e7b3e07eaca387acb98f1d4720e0bee8dbb6a # v2
-
-      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Run account startup timeout repros
-        shell: bash
-        run: |
-          cargo test \
-            -p codex-app-server \
-            --test all \
-            --target x86_64-pc-windows-msvc \
-            --profile ci-test \
-            suite::v2::account::get_account \
-            -- \
-            --nocapture
-
-  cargo-windows-x64-timeouts:
-    name: Cargo Windows x64 timeout repro (${{ matrix.group }})
+  cargo-windows-x64-sandbox-pwsh:
+    name: Cargo Windows x64 sandbox PowerShell repro
     runs-on:
       group: codex-runners
       labels: codex-windows-x64
@@ -130,71 +20,6 @@ jobs:
     defaults:
       run:
         working-directory: codex-rs
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - group: core-cli-create
-            package: codex-core
-            target_args: --test all
-            filters: suite::cli_stream::integration_creates_and_checks_session_file
-          - group: core-cli-resume
-            package: codex-core
-            target_args: --test all
-            filters: suite::cli_stream::integration_resume_updates_existing_session_file
-          - group: core-cli-git-info
-            package: codex-core
-            target_args: --test all
-            filters: suite::cli_stream::integration_git_info_unit_test
-          - group: exec-resume-by-id
-            package: codex-exec
-            target_args: --test all
-            filters: suite::resume::exec_resume_by_id_appends_to_existing_file
-          - group: exec-resume-images
-            package: codex-exec
-            target_args: --test all
-            filters: suite::resume::exec_resume_accepts_images_after_subcommand
-          - group: exec-resume-global-flags
-            package: codex-exec
-            target_args: --test all
-            filters: suite::resume::exec_resume_accepts_global_flags_after_subcommand
-          - group: exec-resume-json
-            package: codex-exec
-            target_args: --test all
-            filters: suite::resume::exec_resume_last_accepts_prompt_after_flag_in_json_mode
-          - group: exec-resume-config
-            package: codex-exec
-            target_args: --test all
-            filters: suite::resume::exec_resume_preserves_cli_configuration_overrides
-          - group: exec-resume-last
-            package: codex-exec
-            target_args: --test all
-            filters: suite::resume::exec_resume_last_appends_to_existing_file
-          - group: exec-server-stdio
-            package: codex-exec-server
-            target_args: ""
-            filters: client::tests::connect_stdio_command_initializes_json_rpc_client_on_windows
-          - group: windows-sandbox-legacy-pwsh
-            package: codex-windows-sandbox
-            target_args: ""
-            filters: session::tests::legacy_capture_powershell_emits_output
-          - group: app-thread-fork
-            package: codex-app-server
-            target_args: --test all
-            filters: suite::v2::thread_fork::thread_fork_can_exclude_turns_and_skip_restored_token_usage
-          - group: app-turn-sticky
-            package: codex-app-server
-            target_args: --test all
-            filters: suite::v2::turn_start::turn_start_resolves_sticky_thread_environments_and_turn_overrides
-          - group: app-turn-multi
-            package: codex-app-server
-            target_args: --test all
-            filters: suite::v2::turn_start::turn_start_resolves_multi_environment_thread_selection
-          - group: app-turn-overrides
-            package: codex-app-server
-            target_args: --test all
-            filters: suite::v2::turn_start::turn_start_resolves_turn_environment_overrides
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -210,16 +35,6 @@ jobs:
           tool: nextest
           version: 0.9.103
 
-      - name: Build Codex CLI for core CLI stream test
-        if: ${{ startsWith(matrix.group, 'core-cli') }}
-        shell: bash
-        run: |
-          cargo build \
-            -p codex-cli \
-            --bin codex \
-            --target x86_64-pc-windows-msvc \
-            --profile ci-test
-
       - name: Run timed-out tests with nextest
         shell: bash
         env:
@@ -229,9 +44,8 @@ jobs:
         run: |
           cargo nextest run \
             --no-fail-fast \
-            -p "${{ matrix.package }}" \
-            ${{ matrix.target_args }} \
+            -p codex-windows-sandbox \
             --target x86_64-pc-windows-msvc \
             --cargo-profile ci-test \
             --timings \
-            ${{ matrix.filters }}
+            session::tests::legacy_capture_powershell_emits_output
