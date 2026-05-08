@@ -1,6 +1,7 @@
 use super::turn_context::TurnEnvironment;
 use super::*;
 use crate::config::ConfigBuilder;
+use crate::config::ConfigOverrides;
 use crate::config::test_config;
 use crate::context::ContextualUserFragment;
 use crate::context::TurnAborted;
@@ -77,6 +78,11 @@ use crate::turn_diff_tracker::TurnDiffTracker;
 use codex_app_server_protocol::AppInfo;
 use codex_config::config_toml::ConfigToml;
 use codex_config::config_toml::ProjectConfig;
+use codex_config::permissions_toml::FilesystemPermissionToml;
+use codex_config::permissions_toml::FilesystemPermissionsToml;
+use codex_config::permissions_toml::NetworkToml;
+use codex_config::permissions_toml::PermissionProfileToml;
+use codex_config::permissions_toml::PermissionsToml;
 use codex_execpolicy::Decision;
 use codex_execpolicy::NetworkRuleProtocol;
 use codex_execpolicy::Policy;
@@ -768,7 +774,7 @@ async fn managed_network_proxy_decider_survives_full_access_start() -> anyhow::R
 
 #[tokio::test]
 async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow::Result<()> {
-    let (mut session, _turn_context) = make_session_and_context().await;
+    let (session, _turn_context) = make_session_and_context().await;
     let initial_policy = SandboxPolicy::new_workspace_write_policy();
 
     let mut network_config = NetworkProxyConfig::default();
@@ -827,7 +833,10 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
             ))
             .expect("test setup should allow permission profile");
     }
-    session.services.network_proxy = Some(started_proxy);
+    session
+        .services
+        .network_proxy
+        .store(Some(Arc::new(started_proxy)));
 
     session
         .new_turn_with_sub_id(
@@ -842,7 +851,7 @@ async fn new_turn_refreshes_managed_network_proxy_for_sandbox_change() -> anyhow
     let started_proxy = session
         .services
         .network_proxy
-        .as_ref()
+        .load_full()
         .expect("managed network proxy should be present");
     assert_eq!(
         started_proxy
@@ -1744,6 +1753,7 @@ async fn fork_startup_context_then_first_turn_diff_snapshot() -> anyhow::Result<
             approvals_reviewer: None,
             sandbox_policy: None,
             permission_profile: None,
+            active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -3162,6 +3172,108 @@ async fn session_configuration_apply_permission_profile_preserves_supplied_activ
     );
 }
 
+#[tokio::test]
+async fn active_profile_update_rebuilds_network_proxy_config() -> std::io::Result<()> {
+    let codex_home = tempfile::tempdir().expect("create codex home");
+    let cwd = tempfile::tempdir().expect("create cwd");
+    let permissions = PermissionsToml {
+        entries: std::collections::BTreeMap::from([
+            (
+                "locked-down".to_string(),
+                PermissionProfileToml {
+                    filesystem: Some(FilesystemPermissionsToml {
+                        glob_scan_max_depth: None,
+                        entries: std::collections::BTreeMap::from([(
+                            ":minimal".to_string(),
+                            FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
+                        )]),
+                    }),
+                    network: None,
+                },
+            ),
+            (
+                "web-enabled".to_string(),
+                PermissionProfileToml {
+                    filesystem: Some(FilesystemPermissionsToml {
+                        glob_scan_max_depth: None,
+                        entries: std::collections::BTreeMap::from([(
+                            ":minimal".to_string(),
+                            FilesystemPermissionToml::Access(FileSystemAccessMode::Read),
+                        )]),
+                    }),
+                    network: Some(NetworkToml {
+                        enabled: Some(true),
+                        proxy_url: Some("http://127.0.0.1:43128".to_string()),
+                        enable_socks5: Some(false),
+                        ..Default::default()
+                    }),
+                },
+            ),
+        ]),
+    };
+    let base_config = ConfigToml {
+        default_permissions: Some("locked-down".to_string()),
+        permissions: Some(permissions),
+        ..Default::default()
+    };
+    std::fs::write(
+        codex_home.path().join(codex_config::CONFIG_TOML_FILE),
+        toml::to_string(&base_config).expect("serialize config"),
+    )?;
+    let locked_config = Arc::new(
+        ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .harness_overrides(ConfigOverrides {
+                cwd: Some(cwd.path().to_path_buf()),
+                ..Default::default()
+            })
+            .build()
+            .await?,
+    );
+    assert_ne!(
+        locked_config
+            .permissions
+            .network
+            .as_ref()
+            .map(crate::config::NetworkProxySpec::proxy_host_and_port)
+            .as_deref(),
+        Some("127.0.0.1:43128")
+    );
+    let selected_config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .harness_overrides(ConfigOverrides {
+            cwd: Some(cwd.path().to_path_buf()),
+            default_permissions: Some("web-enabled".to_string()),
+            ..Default::default()
+        })
+        .build()
+        .await?;
+
+    let mut session_configuration = make_session_configuration_for_tests().await;
+    session_configuration.permission_profile = locked_config.permissions.permission_profile.clone();
+    session_configuration.active_permission_profile =
+        locked_config.permissions.active_permission_profile();
+    session_configuration.original_config_do_not_use = Arc::clone(&locked_config);
+
+    let updated = session_configuration
+        .apply(&SessionSettingsUpdate {
+            permission_profile: Some(selected_config.permissions.permission_profile()),
+            active_permission_profile: selected_config.permissions.active_permission_profile(),
+            ..Default::default()
+        })
+        .expect("active profile update should apply");
+
+    let network = updated
+        .original_config_do_not_use
+        .permissions
+        .network
+        .as_ref()
+        .expect("selected profile proxy should become the session proxy config");
+    assert_eq!(network.proxy_host_and_port(), "127.0.0.1:43128");
+    assert!(!network.socks_enabled());
+    Ok(())
+}
+
 #[cfg_attr(windows, ignore)]
 #[tokio::test]
 async fn new_default_turn_uses_config_aware_skills_for_role_overrides() {
@@ -3698,7 +3810,9 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         mcp_manager,
         skills_watcher,
         agent_control,
-        network_proxy: None,
+        network_proxy: arc_swap::ArcSwapOption::from(None),
+        network_proxy_audit_metadata: crate::config::NetworkProxyAuditMetadata::default(),
+        managed_network_requirements_configured: false,
         network_approval: Arc::clone(&network_approval),
         state_db: None,
         live_thread: None,
@@ -4397,6 +4511,7 @@ fn op_kind_distinguishes_turn_ops() {
             approvals_reviewer: None,
             sandbox_policy: None,
             permission_profile: None,
+            active_permission_profile: None,
             windows_sandbox_level: None,
             model: None,
             effort: None,
@@ -5213,7 +5328,9 @@ where
         mcp_manager,
         skills_watcher,
         agent_control,
-        network_proxy: None,
+        network_proxy: arc_swap::ArcSwapOption::from(None),
+        network_proxy_audit_metadata: crate::config::NetworkProxyAuditMetadata::default(),
+        managed_network_requirements_configured: false,
         network_approval: Arc::clone(&network_approval),
         state_db: Some(state_db.clone()),
         live_thread: None,

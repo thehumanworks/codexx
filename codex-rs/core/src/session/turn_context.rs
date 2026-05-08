@@ -415,6 +415,8 @@ impl Session {
         per_turn_config.approvals_reviewer = session_configuration.approvals_reviewer;
         per_turn_config.permissions.permission_profile =
             session_configuration.permission_profile.clone();
+        per_turn_config.permissions.active_permission_profile =
+            session_configuration.active_permission_profile();
         let permission_profile = session_configuration.permission_profile();
         let resolved_web_search_mode =
             resolve_web_search_mode_for_turn(&per_turn_config.web_search_mode, &permission_profile);
@@ -726,6 +728,7 @@ impl Session {
             &self.services.models_manager,
             self.services
                 .network_proxy
+                .load_full()
                 .as_ref()
                 .and_then(|started_proxy| {
                     Self::managed_network_proxy_active_for_permission_profile(

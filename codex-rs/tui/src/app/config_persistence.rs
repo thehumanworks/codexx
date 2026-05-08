@@ -137,6 +137,7 @@ impl App {
                 approval_policy,
                 approvals_reviewer,
                 Some(permission_profile),
+                active_permission_profile,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
                 /*effort*/ None,
@@ -475,6 +476,7 @@ impl App {
                 approval_policy_override,
                 approvals_reviewer_override,
                 permission_profile_override,
+                /*active_permission_profile*/ None,
                 /*windows_sandbox_level*/ None,
                 /*model*/ None,
                 /*effort*/ None,
@@ -502,6 +504,7 @@ impl App {
                         /*approval_policy*/ None,
                         /*approvals_reviewer*/ None,
                         /*permission_profile*/ None,
+                        /*active_permission_profile*/ None,
                         #[cfg(target_os = "windows")]
                         Some(windows_sandbox_level),
                         /*model*/ None,
