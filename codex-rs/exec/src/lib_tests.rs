@@ -531,6 +531,26 @@ async fn session_configured_from_thread_response_uses_permission_profile_from_re
     assert_eq!(event.permission_profile, PermissionProfile::Disabled);
 }
 
+#[tokio::test]
+async fn session_configured_from_thread_response_uses_workspace_roots_from_response() {
+    let codex_home = tempdir().expect("create temp codex home");
+    let cwd = tempdir().expect("create temp cwd");
+    let config = ConfigBuilder::default()
+        .codex_home(codex_home.path().to_path_buf())
+        .fallback_cwd(Some(cwd.path().to_path_buf()))
+        .build()
+        .await
+        .expect("build config");
+    let mut response = sample_thread_start_response();
+    let extra_root = test_path_buf("/tmp/extra-root").abs();
+    response.workspace_roots = vec![response.cwd.clone(), extra_root.clone()];
+
+    let event = session_configured_from_thread_start_response(&response, &config)
+        .expect("build bootstrap session configured event");
+
+    assert_eq!(event.workspace_roots, vec![response.cwd, extra_root]);
+}
+
 fn sample_thread_start_response() -> ThreadStartResponse {
     ThreadStartResponse {
         thread: codex_app_server_protocol::Thread {
@@ -558,11 +578,11 @@ fn sample_thread_start_response() -> ThreadStartResponse {
         model_provider: "openai".to_string(),
         service_tier: None,
         cwd: test_path_buf("/tmp").abs(),
+        workspace_roots: Vec::new(),
         instruction_sources: Vec::new(),
         approval_policy: codex_app_server_protocol::AskForApproval::OnRequest,
         approvals_reviewer: codex_app_server_protocol::ApprovalsReviewer::AutoReview,
         sandbox: codex_app_server_protocol::SandboxPolicy::WorkspaceWrite {
-            writable_roots: vec![],
             network_access: false,
             exclude_tmpdir_env_var: false,
             exclude_slash_tmp: false,
