@@ -26,7 +26,6 @@ pub use session::turn_context::TurnContext;
 mod agent;
 mod codex_delegate;
 mod command_canonicalization;
-mod commit_attribution;
 pub mod config;
 pub mod connectors;
 pub mod context;
