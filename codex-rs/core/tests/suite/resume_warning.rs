@@ -29,6 +29,7 @@ fn resume_history(
         turn_id: Some(turn_id.clone()),
         trace_id: None,
         cwd: config.cwd.to_path_buf(),
+        workspace_roots: config.workspace_roots.clone(),
         current_date: None,
         timezone: None,
         approval_policy: config.permissions.approval_policy.value(),
