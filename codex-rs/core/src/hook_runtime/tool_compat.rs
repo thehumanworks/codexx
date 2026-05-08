@@ -55,7 +55,7 @@ pub(crate) fn pre_tool_use_payload(invocation: &ToolInvocation) -> Option<PreToo
                 tool_input: serde_json::json!({ "command": command }),
             })
         }
-        _ => mcp_payload(invocation),
+        _ => None,
     }
 }
 
