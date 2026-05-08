@@ -430,13 +430,26 @@ fn append_matcher_groups(
                     let legacy_key = source.legacy_key_source.as_ref().map(|legacy_key_source| {
                         crate::hook_key(legacy_key_source, event_name, group_index, handler_index)
                     });
-                    let state = source.hook_states.get(&key).or_else(|| {
-                        legacy_key
-                            .as_ref()
-                            .and_then(|key| source.hook_states.get(key))
-                    });
-                    let enabled = hook_enabled(source.is_managed, state);
-                    let trusted_hash = hook_trusted_hash(source.is_managed, state);
+                    let canonical_state = source.hook_states.get(&key);
+                    let legacy_state = legacy_key
+                        .as_ref()
+                        .and_then(|key| source.hook_states.get(key));
+                    // Merge alias records field-by-field so a write under the new
+                    // canonical key does not discard state that still only exists
+                    // under the legacy absolute-path key during migration.
+                    let state = match (canonical_state, legacy_state) {
+                        (Some(canonical_state), Some(legacy_state)) => Some(HookStateToml {
+                            enabled: canonical_state.enabled.or(legacy_state.enabled),
+                            trusted_hash: canonical_state
+                                .trusted_hash
+                                .clone()
+                                .or_else(|| legacy_state.trusted_hash.clone()),
+                        }),
+                        (Some(state), None) | (None, Some(state)) => Some(state.clone()),
+                        (None, None) => None,
+                    };
+                    let enabled = hook_enabled(source.is_managed, state.as_ref());
+                    let trusted_hash = hook_trusted_hash(source.is_managed, state.as_ref());
                     let trust_status =
                         hook_trust_status(source.is_managed, &current_hash, trusted_hash);
                     hook_entries.push(HookListEntry {

@@ -439,6 +439,62 @@ fn project_hook_trust_falls_back_to_legacy_path_key() {
     );
 }
 
+#[test]
+fn project_hook_state_merges_canonical_and_legacy_keys() {
+    let project_root = "/tmp/worktree-a";
+    let project_root_abs = test_path_buf(project_root).abs();
+    let trust_key = test_path_buf("/repo").display().to_string();
+    let current_hash = super::discovery::discover_handlers(
+        Some(&config_layer_stack(vec![test_project_layer(
+            project_root,
+            &trust_key,
+        )])),
+        Vec::new(),
+        Vec::new(),
+    )
+    .hook_entries[0]
+        .current_hash
+        .clone();
+    let canonical_key = expected_project_hook_key(&trust_key);
+    let legacy_key = format!(
+        "{}:pre_tool_use:0:0",
+        project_root_abs.join(".codex/config.toml").display()
+    );
+    let config: TomlValue = serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "state": {
+                (legacy_key): {
+                    "enabled": false,
+                },
+                (canonical_key.clone()): {
+                    "trusted_hash": current_hash,
+                },
+            },
+        },
+    }))
+    .expect("config TOML should deserialize");
+    let stack = config_layer_stack(vec![
+        ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: AbsolutePathBuf::try_from("/tmp/config.toml").expect("absolute path"),
+            },
+            config,
+        ),
+        test_project_layer(project_root, &trust_key),
+    ]);
+
+    let discovered = super::discovery::discover_handlers(Some(&stack), Vec::new(), Vec::new());
+
+    assert_eq!(discovered.handlers.len(), 0);
+    assert_eq!(discovered.hook_entries.len(), 1);
+    assert_eq!(discovered.hook_entries[0].key, canonical_key);
+    assert_eq!(discovered.hook_entries[0].enabled, false);
+    assert_eq!(
+        discovered.hook_entries[0].trust_status,
+        HookTrustStatus::Trusted
+    );
+}
+
 fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
     serde_json::from_value(serde_json::json!({
         "hooks": {
