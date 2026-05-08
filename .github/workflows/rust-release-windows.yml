@@ -46,13 +46,13 @@ jobs:
             runs_on:
               group: codex-runners
               labels: codex-windows-x64
-          - runner: windows-arm64
+          - runner: windows-x64
             target: aarch64-pc-windows-msvc
             bundle: primary
             binaries: "codex codex-responses-api-proxy"
             runs_on:
               group: codex-runners
-              labels: codex-windows-arm64
+              labels: codex-windows-x64
           - runner: windows-x64
             target: x86_64-pc-windows-msvc
             bundle: helpers
@@ -60,13 +60,13 @@ jobs:
             runs_on:
               group: codex-runners
               labels: codex-windows-x64
-          - runner: windows-arm64
+          - runner: windows-x64
             target: aarch64-pc-windows-msvc
             bundle: helpers
             binaries: "codex-windows-sandbox-setup codex-command-runner"
             runs_on:
               group: codex-runners
-              labels: codex-windows-arm64
+              labels: codex-windows-x64
           - runner: windows-x64
             target: x86_64-pc-windows-msvc
             bundle: app-server
@@ -74,13 +74,13 @@ jobs:
             runs_on:
               group: codex-runners
               labels: codex-windows-x64
-          - runner: windows-arm64
+          - runner: windows-x64
             target: aarch64-pc-windows-msvc
             bundle: app-server
             binaries: "codex-app-server"
             runs_on:
               group: codex-runners
-              labels: codex-windows-arm64
+              labels: codex-windows-x64
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -103,6 +103,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
         with:
           targets: ${{ matrix.target }}
+
+      - name: Expose MSVC SDK environment (Windows)
+        uses: ./.github/actions/setup-msvc-env
+        with:
+          target: ${{ matrix.target }}
 
       - name: Cargo build (Windows binaries)
         shell: bash
@@ -160,11 +165,11 @@ jobs:
             runs_on:
               group: codex-runners
               labels: codex-windows-x64
-          - runner: windows-arm64
+          - runner: windows-x64
             target: aarch64-pc-windows-msvc
             runs_on:
               group: codex-runners
-              labels: codex-windows-arm64
+              labels: codex-windows-x64
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

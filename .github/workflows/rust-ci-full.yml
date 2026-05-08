@@ -205,12 +205,12 @@ jobs:
             runs_on:
               group: codex-runners
               labels: codex-windows-x64
-          - runner: windows-arm64
+          - runner: windows-x64
             target: aarch64-pc-windows-msvc
             profile: dev
             runs_on:
               group: codex-runners
-              labels: codex-windows-arm64
+              labels: codex-windows-x64
 
           # Also run representative release builds on Mac and Linux because
           # there could be release-only build errors we want to catch.
@@ -237,12 +237,12 @@ jobs:
             runs_on:
               group: codex-runners
               labels: codex-windows-x64
-          - runner: windows-arm64
+          - runner: windows-x64
             target: aarch64-pc-windows-msvc
             profile: release
             runs_on:
               group: codex-runners
-              labels: codex-windows-arm64
+              labels: codex-windows-x64
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -265,6 +265,12 @@ jobs:
         with:
           targets: ${{ matrix.target }}
           components: clippy
+
+      - name: Expose MSVC SDK environment (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc-env
+        with:
+          target: ${{ matrix.target }}
 
       - if: ${{ matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'aarch64-unknown-linux-musl'}}
         name: Use hermetic Cargo home (musl)
@@ -594,6 +600,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
         with:
           targets: ${{ matrix.target }}
+
+      - name: Expose MSVC SDK environment (Windows)
+        if: ${{ runner.os == 'Windows' }}
+        uses: ./.github/actions/setup-msvc-env
+        with:
+          target: ${{ matrix.target }}
 
       - name: Compute lockfile hash
         id: lockhash
