@@ -743,6 +743,7 @@ async fn guardian_subagent_does_not_inherit_parent_exec_policy_rules() {
         skills_manager,
         plugins_manager,
         mcp_manager,
+        extensions: codex_extension_api::empty_extension_registry(),
         skills_watcher,
         conversation_history: InitialHistory::New,
         session_source: SessionSource::SubAgent(SubAgentSource::Other(
