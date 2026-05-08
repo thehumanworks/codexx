@@ -135,18 +135,54 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - group: core-cli-stream
+          - group: core-cli-create
             package: codex-core
             target_args: --test all
-            filters: suite::cli_stream::integration_
-          - group: exec-resume
+            filters: suite::cli_stream::integration_creates_and_checks_session_file
+          - group: core-cli-resume
+            package: codex-core
+            target_args: --test all
+            filters: suite::cli_stream::integration_resume_updates_existing_session_file
+          - group: core-cli-git-info
+            package: codex-core
+            target_args: --test all
+            filters: suite::cli_stream::integration_git_info_unit_test
+          - group: exec-resume-by-id
             package: codex-exec
             target_args: --test all
-            filters: suite::resume::exec_resume_by_id_appends_to_existing_file suite::resume::exec_resume_accepts_images_after_subcommand suite::resume::exec_resume_last_accepts_prompt_after_flag_in_json_mode suite::resume::exec_resume_preserves_cli_configuration_overrides suite::resume::exec_resume_last_appends_to_existing_file
-          - group: app-server-thread
+            filters: suite::resume::exec_resume_by_id_appends_to_existing_file
+          - group: exec-resume-images
+            package: codex-exec
+            target_args: --test all
+            filters: suite::resume::exec_resume_accepts_images_after_subcommand
+          - group: exec-resume-json
+            package: codex-exec
+            target_args: --test all
+            filters: suite::resume::exec_resume_last_accepts_prompt_after_flag_in_json_mode
+          - group: exec-resume-config
+            package: codex-exec
+            target_args: --test all
+            filters: suite::resume::exec_resume_preserves_cli_configuration_overrides
+          - group: exec-resume-last
+            package: codex-exec
+            target_args: --test all
+            filters: suite::resume::exec_resume_last_appends_to_existing_file
+          - group: app-thread-fork
             package: codex-app-server
             target_args: --test all
-            filters: suite::v2::thread_fork::thread_fork_can_exclude_turns_and_skip_restored_token_usage suite::v2::turn_start::turn_start_resolves_sticky_thread_environments_and_turn_overrides suite::v2::turn_start::turn_start_resolves_multi_environment_thread_selection suite::v2::turn_start::turn_start_resolves_turn_environment_overrides
+            filters: suite::v2::thread_fork::thread_fork_can_exclude_turns_and_skip_restored_token_usage
+          - group: app-turn-sticky
+            package: codex-app-server
+            target_args: --test all
+            filters: suite::v2::turn_start::turn_start_resolves_sticky_thread_environments_and_turn_overrides
+          - group: app-turn-multi
+            package: codex-app-server
+            target_args: --test all
+            filters: suite::v2::turn_start::turn_start_resolves_multi_environment_thread_selection
+          - group: app-turn-overrides
+            package: codex-app-server
+            target_args: --test all
+            filters: suite::v2::turn_start::turn_start_resolves_turn_environment_overrides
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -163,7 +199,7 @@ jobs:
           version: 0.9.103
 
       - name: Build Codex CLI for core CLI stream test
-        if: ${{ matrix.group == 'core-cli-stream' }}
+        if: ${{ startsWith(matrix.group, 'core-cli') }}
         shell: bash
         run: |
           cargo build \
