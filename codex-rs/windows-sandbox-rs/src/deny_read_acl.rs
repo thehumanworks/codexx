@@ -78,8 +78,9 @@ fn read_record(path: &Path) -> Result<DenyReadAclRecord> {
         Ok(contents) => serde_json::from_str(&contents)
             .with_context(|| format!("parse deny-read ACL record {}", path.display())),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(DenyReadAclRecord::default()),
-        Err(err) => Err(err)
-            .with_context(|| format!("read deny-read ACL record {}", path.display())),
+        Err(err) => {
+            Err(err).with_context(|| format!("read deny-read ACL record {}", path.display()))
+        }
     }
 }
 
@@ -198,9 +199,10 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let missing = tmp.path().join("future-secret.env");
 
-        assert_eq!(plan_deny_read_acl_paths(std::slice::from_ref(&missing)), vec![
-            missing
-        ]);
+        assert_eq!(
+            plan_deny_read_acl_paths(std::slice::from_ref(&missing)),
+            vec![missing]
+        );
     }
 
     #[test]
