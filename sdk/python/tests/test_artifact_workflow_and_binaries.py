@@ -379,6 +379,34 @@ def test_stage_runtime_release_copies_resource_binaries(tmp_path: Path) -> None:
     }
 
 
+def test_runtime_resource_binaries_are_included_by_wheel_config(
+    tmp_path: Path,
+) -> None:
+    script = _load_update_script_module()
+    fake_binary = tmp_path / script.runtime_binary_name()
+    helper = tmp_path / "helper"
+    fake_binary.write_text("fake codex\n")
+    helper.write_text("fake helper\n")
+
+    staged = script.stage_python_runtime_package(
+        tmp_path / "runtime-stage",
+        "1.2.3",
+        fake_binary,
+        resource_binaries=(helper,),
+    )
+
+    pyproject = tomllib.loads((staged / "pyproject.toml").read_text())
+    assert {
+        "include": pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["include"],
+        "helper": (
+            staged / "src" / "codex_cli_bin" / "bin" / "helper"
+        ).read_text(),
+    } == {
+        "include": ["src/codex_cli_bin/bin/**"],
+        "helper": "fake helper\n",
+    }
+
+
 def test_stage_sdk_release_injects_exact_runtime_pin(tmp_path: Path) -> None:
     script = _load_update_script_module()
     staged = script.stage_python_sdk_package(
