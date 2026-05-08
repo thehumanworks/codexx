@@ -257,7 +257,7 @@ async fn one_shot_bridge_waits_to_shutdown_until_mcp_startup_complete() {
         .expect("bridge did not send shutdown")
         .expect("shutdown submission missing");
     assert_eq!("shutdown", shutdown.id);
-    assert!(matches!(shutdown.op, Op::Shutdown {}));
+    assert!(matches!(shutdown.op, Op::Shutdown));
     assert!(child_cancel.is_cancelled());
 }
 
