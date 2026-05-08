@@ -46,6 +46,7 @@ members = [
     "execpolicy-legacy",
     "ext/extension-api",
     "ext/git-attribution",
+    "ext/memories",
     "external-agent-migration",
     "external-agent-sessions",
     "keyring-store",
@@ -161,6 +162,7 @@ codex-exec-server = { path = "exec-server" }
 codex-execpolicy = { path = "execpolicy" }
 codex-extension-api = { path = "ext/extension-api" }
 codex-git-attribution = { path = "ext/git-attribution" }
+codex-memories = { path = "ext/memories" }
 codex-external-agent-migration = { path = "external-agent-migration" }
 codex-external-agent-sessions = { path = "external-agent-sessions" }
 codex-experimental-api-macros = { path = "codex-experimental-api-macros" }
@@ -469,6 +471,7 @@ unwrap_used = "deny"
 ignored = [
     "codex-agent-graph-store",
     "codex-extension-api",
+    "codex-memories",
     "codex-memories-mcp",
     "icu_provider",
     "openssl-sys",
