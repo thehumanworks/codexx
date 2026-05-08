@@ -393,6 +393,9 @@ async fn apply_hunks_to_files(
         let path_abs = hunk.resolve_path(cwd);
         match hunk {
             Hunk::AddFile { contents, .. } => {
+                ensure_sandbox_write_target_is_not_hard_link(&path_abs, fs, sandbox)
+                    .await
+                    .with_context(|| format!("Failed to write file {}", path_abs.display()))?;
                 let overwritten_content =
                     read_optional_file_text_for_delta(&path_abs, fs, sandbox, &mut delta.exact)
                         .await;
@@ -455,6 +458,9 @@ async fn apply_hunks_to_files(
             Hunk::UpdateFile {
                 move_path, chunks, ..
             } => {
+                ensure_sandbox_write_target_is_not_hard_link(&path_abs, fs, sandbox)
+                    .await
+                    .with_context(|| format!("Failed to write file {}", path_abs.display()))?;
                 note_existing_path_delta_support(&path_abs, fs, sandbox, &mut delta.exact).await;
                 let AppliedPatch {
                     original_contents,
@@ -462,6 +468,9 @@ async fn apply_hunks_to_files(
                 } = derive_new_contents_from_chunks(&path_abs, chunks, fs, sandbox).await?;
                 if let Some(dest) = move_path {
                     let dest_abs = AbsolutePathBuf::resolve_path_against_base(dest, cwd);
+                    ensure_sandbox_write_target_is_not_hard_link(&dest_abs, fs, sandbox)
+                        .await
+                        .with_context(|| format!("Failed to write file {}", dest_abs.display()))?;
                     let overwritten_move_content =
                         read_optional_file_text_for_delta(&dest_abs, fs, sandbox, &mut delta.exact)
                             .await;
@@ -548,6 +557,26 @@ async fn apply_hunks_to_files(
         modified,
         deleted,
     })
+}
+
+async fn ensure_sandbox_write_target_is_not_hard_link(
+    path: &AbsolutePathBuf,
+    fs: &dyn ExecutorFileSystem,
+    sandbox: Option<&FileSystemSandboxContext>,
+) -> io::Result<()> {
+    let Some(sandbox) = sandbox.filter(|sandbox| sandbox.should_run_in_sandbox()) else {
+        return Ok(());
+    };
+
+    match fs.get_metadata(path, Some(sandbox)).await {
+        Ok(metadata) if metadata.is_file && metadata.link_count > 1 => Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "refusing to write through hard link",
+        )),
+        Ok(_) => Ok(()),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(source),
+    }
 }
 
 async fn ensure_not_directory(

@@ -295,7 +295,19 @@ async fn file_system_get_metadata_returns_expected_fields(use_remote: bool) -> R
     assert_eq!(metadata.is_directory, false);
     assert_eq!(metadata.is_file, true);
     assert_eq!(metadata.is_symlink, false);
+    assert_eq!(metadata.link_count, 1);
     assert!(metadata.modified_at_ms > 0);
+
+    let hard_link_path = tmp.path().join("note-hard-link.txt");
+    std::fs::hard_link(&file_path, &hard_link_path)?;
+    let hard_link_metadata = file_system
+        .get_metadata(&absolute_path(hard_link_path), /*sandbox*/ None)
+        .await
+        .with_context(|| format!("mode={use_remote}"))?;
+    assert_eq!(hard_link_metadata.is_directory, false);
+    assert_eq!(hard_link_metadata.is_file, true);
+    assert_eq!(hard_link_metadata.is_symlink, false);
+    assert_eq!(hard_link_metadata.link_count, 2);
 
     let symlink_path = tmp.path().join("note-link.txt");
     symlink(&file_path, &symlink_path)?;

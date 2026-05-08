@@ -291,6 +291,7 @@ impl ExecutorFileSystem for DirectFileSystem {
             is_directory: metadata.is_dir(),
             is_file: metadata.is_file(),
             is_symlink: symlink_metadata.file_type().is_symlink(),
+            link_count: metadata_link_count(&metadata),
             created_at_ms: metadata.created().ok().map_or(0, system_time_to_unix_ms),
             modified_at_ms: metadata.modified().ok().map_or(0, system_time_to_unix_ms),
         })
@@ -511,6 +512,25 @@ fn system_time_to_unix_ms(time: SystemTime) -> i64 {
         .ok()
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or(0)
+}
+
+#[cfg(unix)]
+fn metadata_link_count(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+
+    metadata.nlink()
+}
+
+#[cfg(windows)]
+fn metadata_link_count(metadata: &std::fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+
+    metadata.number_of_links().map(u64::from).unwrap_or(1)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn metadata_link_count(_metadata: &std::fs::Metadata) -> u64 {
+    1
 }
 
 #[cfg(all(test, unix))]
