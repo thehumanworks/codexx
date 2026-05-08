@@ -6,8 +6,9 @@ run-name: >-
       ' windows-nextest-{0} arm64-shards-{1}{2}',
       inputs.windows_nextest_threads || 'default',
       inputs.windows_arm64_partitions || '1',
-      inputs.windows_arm64_archive == 'true' && ' arm64-archive' || ''
+      inputs.windows_arm64_archive == 'true' && format(' arm64-archive-{0}', inputs.windows_arm64_archive_builder || 'x64') || ''
     ) ||
+    contains(github.ref_name, 'arm64-native-archive') && ' arm64-native-archive' ||
     contains(github.ref_name, 'arm64-cross-archive') && ' arm64-cross-archive' ||
     contains(github.ref_name, 'arm64-shards-4') && ' arm64-shards-4' ||
     contains(github.ref_name, 'arm64-shards-2') && ' arm64-shards-2' ||
@@ -34,13 +35,21 @@ on:
           - "2"
           - "4"
       windows_arm64_archive:
-        description: "Build Windows arm64 nextest archive on Windows x64, then run it on Windows arm64"
+        description: "Build Windows arm64 nextest archive first, then run it on Windows arm64"
         required: false
         default: "false"
         type: choice
         options:
           - "false"
           - "true"
+      windows_arm64_archive_builder:
+        description: "Runner architecture for the Windows arm64 nextest archive builder"
+        required: false
+        default: "x64"
+        type: choice
+        options:
+          - "x64"
+          - "arm64"
 
 # CI builds in debug (dev) for faster signal.
 
@@ -575,6 +584,8 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       windows_arm64_archive_matrix: ${{ steps.matrix.outputs.windows_arm64_archive_matrix }}
       windows_arm64_archive: ${{ steps.matrix.outputs.windows_arm64_archive }}
+      windows_arm64_archive_builder: ${{ steps.matrix.outputs.windows_arm64_archive_builder }}
+      windows_arm64_archive_runner: ${{ steps.matrix.outputs.windows_arm64_archive_runner }}
     env:
       WINDOWS_ARM64_PARTITIONS: >-
         ${{
@@ -586,8 +597,15 @@ jobs:
       WINDOWS_ARM64_ARCHIVE: >-
         ${{
           github.event_name == 'workflow_dispatch' && inputs.windows_arm64_archive ||
+          contains(github.ref_name, 'arm64-native-archive') && 'true' ||
           contains(github.ref_name, 'arm64-cross-archive') && 'true' ||
           'false'
+        }}
+      WINDOWS_ARM64_ARCHIVE_BUILDER: >-
+        ${{
+          github.event_name == 'workflow_dispatch' && inputs.windows_arm64_archive_builder ||
+          contains(github.ref_name, 'arm64-native-archive') && 'arm64' ||
+          'x64'
         }}
     steps:
       - name: Build test matrix
@@ -609,6 +627,13 @@ jobs:
               exit 1
               ;;
           esac
+          case "${WINDOWS_ARM64_ARCHIVE_BUILDER}" in
+            x64|arm64) ;;
+            *)
+              echo "Unsupported WINDOWS_ARM64_ARCHIVE_BUILDER=${WINDOWS_ARM64_ARCHIVE_BUILDER}" >&2
+              exit 1
+              ;;
+          esac
 
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
@@ -616,6 +641,8 @@ jobs:
 
           windows_arm64_partitions = int(os.environ["WINDOWS_ARM64_PARTITIONS"])
           windows_arm64_archive = os.environ["WINDOWS_ARM64_ARCHIVE"] == "true"
+          windows_arm64_archive_builder = os.environ["WINDOWS_ARM64_ARCHIVE_BUILDER"]
+          windows_arm64_archive_runner = f"windows-{windows_arm64_archive_builder}"
 
           def row(runner, target, profile, *, timeout_minutes=None, remote_env=None, runs_on=None, partition_index=None):
               partition_suffix = ""
@@ -695,16 +722,18 @@ jobs:
           print(json.dumps({"include": windows_arm64_rows}, separators=(",", ":")))
           print("JSON")
           print(f"windows_arm64_archive={'true' if windows_arm64_archive else 'false'}")
+          print(f"windows_arm64_archive_builder={windows_arm64_archive_builder}")
+          print(f"windows_arm64_archive_runner={windows_arm64_archive_runner}")
           PY
 
   windows_arm64_test_archive:
-    name: Build Windows arm64 nextest archive
+    name: Build Windows arm64 nextest archive (${{ needs.test_matrix.outputs.windows_arm64_archive_runner }})
     needs: test_matrix
     if: ${{ needs.test_matrix.outputs.windows_arm64_archive == 'true' }}
     runs-on:
       group: codex-runners
-      labels: codex-windows-x64
-    timeout-minutes: 45
+      labels: ${{ needs.test_matrix.outputs.windows_arm64_archive_runner == 'windows-arm64' && 'codex-windows-arm64' || 'codex-windows-x64' }}
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: codex-rs
@@ -747,9 +776,9 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: cargo-home-windows-x64-aarch64-pc-windows-msvc-dev-${{ steps.lockhash.outputs.hash }}-${{ steps.lockhash.outputs.toolchain_hash }}
+          key: cargo-home-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-${{ steps.lockhash.outputs.hash }}-${{ steps.lockhash.outputs.toolchain_hash }}
           restore-keys: |
-            cargo-home-windows-x64-aarch64-pc-windows-msvc-dev-
+            cargo-home-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-
 
       - name: Install sccache
         if: ${{ env.USE_SCCACHE == 'true' }}
@@ -794,11 +823,11 @@ jobs:
         uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-windows-x64-aarch64-pc-windows-msvc-dev-archive-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
+          key: sccache-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-archive-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
           restore-keys: |
-            sccache-windows-x64-aarch64-pc-windows-msvc-dev-archive-${{ steps.lockhash.outputs.hash }}-
-            sccache-windows-x64-aarch64-pc-windows-msvc-dev-${{ steps.lockhash.outputs.hash }}-
-            sccache-windows-x64-aarch64-pc-windows-msvc-dev-
+            sccache-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-archive-${{ steps.lockhash.outputs.hash }}-
+            sccache-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-${{ steps.lockhash.outputs.hash }}-
+            sccache-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-
 
       - name: Start sccache server
         if: ${{ env.USE_SCCACHE == 'true' }}
@@ -850,7 +879,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: cargo-home-windows-x64-aarch64-pc-windows-msvc-dev-${{ steps.lockhash.outputs.hash }}-${{ steps.lockhash.outputs.toolchain_hash }}
+          key: cargo-home-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-${{ steps.lockhash.outputs.hash }}-${{ steps.lockhash.outputs.toolchain_hash }}
 
       - name: Save sccache cache (fallback)
         if: always() && !cancelled() && env.USE_SCCACHE == 'true' && env.SCCACHE_GHA_ENABLED != 'true'
@@ -858,7 +887,7 @@ jobs:
         uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ${{ env.SCCACHE_DIR }}
-          key: sccache-windows-x64-aarch64-pc-windows-msvc-dev-archive-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
+          key: sccache-${{ needs.test_matrix.outputs.windows_arm64_archive_runner }}-aarch64-pc-windows-msvc-dev-archive-${{ steps.lockhash.outputs.hash }}-${{ github.run_id }}
 
       - name: sccache stats
         if: always() && env.USE_SCCACHE == 'true'
@@ -870,7 +899,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo "### sccache stats — aarch64-pc-windows-msvc (archive)";
+            echo "### sccache stats — aarch64-pc-windows-msvc (archive via ${{ needs.test_matrix.outputs.windows_arm64_archive_runner }})";
             echo;
             echo '```';
             sccache --show-stats || true;
