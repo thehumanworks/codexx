@@ -120,6 +120,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
     use tempfile::TempDir;
+    use crate::extensions::thread_extensions;
 
     #[tokio::test]
     async fn strict_refresh_reports_thread_planning_failures() -> anyhow::Result<()> {
@@ -183,6 +184,7 @@ mod tests {
             auth_manager,
             SessionSource::Exec,
             Arc::new(EnvironmentManager::default_for_tests()),
+            thread_extensions(),
             /*analytics_events_client*/ None,
             thread_store,
             Some(state_db.clone()),

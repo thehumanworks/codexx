@@ -3596,6 +3596,7 @@ async fn session_new_fails_when_zsh_fork_enabled_without_zsh_path() {
         skills_manager,
         plugins_manager,
         mcp_manager,
+        Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         Arc::new(SkillsWatcher::noop()),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -3743,6 +3744,9 @@ pub(crate) async fn make_session_and_context() -> (Session, TurnContext) {
         skills_manager,
         plugins_manager,
         mcp_manager,
+        extensions: Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        session_extension_data: codex_extension_api::ExtensionData::new(),
+        thread_extension_data: codex_extension_api::ExtensionData::new(),
         skills_watcher,
         agent_control,
         network_proxy: None,
@@ -3922,6 +3926,7 @@ async fn make_session_with_config_and_rx(
         skills_manager,
         plugins_manager,
         mcp_manager,
+        Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         Arc::new(SkillsWatcher::noop()),
         AgentControl::default(),
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -4024,6 +4029,7 @@ async fn make_session_with_history_source_and_agent_control_and_rx(
         skills_manager,
         plugins_manager,
         mcp_manager,
+        Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
         Arc::new(SkillsWatcher::noop()),
         agent_control,
         Arc::new(codex_exec_server::EnvironmentManager::default_for_tests()),
@@ -5448,6 +5454,9 @@ where
         skills_manager,
         plugins_manager,
         mcp_manager,
+        extensions: Arc::new(codex_extension_api::ExtensionRegistryBuilder::new().build()),
+        session_extension_data: codex_extension_api::ExtensionData::new(),
+        thread_extension_data: codex_extension_api::ExtensionData::new(),
         skills_watcher,
         agent_control,
         network_proxy: None,
@@ -5992,6 +6001,52 @@ async fn make_multi_agent_v2_usage_hint_test_session(
     )
     .await;
     (session, turn_context)
+}
+
+#[tokio::test]
+async fn build_initial_context_includes_git_attribution_from_extensions() {
+    let (mut session, mut turn_context) = make_session_and_context().await;
+    session.services.extensions = Arc::new(
+        codex_extension_api::ExtensionRegistryBuilder::<crate::ExtensionContext>::new()
+            .with_extension(codex_git_attribution::extension())
+            .build(),
+    );
+    turn_context
+        .features
+        .enable(Feature::CodexGitCommit)
+        .expect("test features should allow git attribution");
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_messages = developer_message_texts(&initial_context);
+
+    assert!(
+        developer_messages
+            .iter()
+            .flatten()
+            .any(|text| text.contains("Co-authored-by: Codex <noreply@openai.com>")),
+        "expected git attribution developer text, got {developer_messages:?}"
+    );
+}
+
+#[tokio::test]
+async fn build_initial_context_omits_git_attribution_when_feature_is_disabled() {
+    let (mut session, turn_context) = make_session_and_context().await;
+    session.services.extensions = Arc::new(
+        codex_extension_api::ExtensionRegistryBuilder::<crate::ExtensionContext>::new()
+            .with_extension(codex_git_attribution::extension())
+            .build(),
+    );
+
+    let initial_context = session.build_initial_context(&turn_context).await;
+    let developer_messages = developer_message_texts(&initial_context);
+
+    assert!(
+        !developer_messages
+            .iter()
+            .flatten()
+            .any(|text| text.contains("Co-authored-by:")),
+        "did not expect git attribution developer text, got {developer_messages:?}"
+    );
 }
 
 #[tokio::test]
