@@ -21,7 +21,6 @@ use crate::tools::tool_dispatch_trace::ToolDispatchTrace;
 use crate::util::error_or_panic;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::protocol::EventMsg;
-use codex_rollout_trace::ToolDispatchPayload;
 use codex_tools::ConfiguredToolSpec;
 use codex_tools::ToolName;
 use codex_tools::ToolSpec;
@@ -58,10 +57,6 @@ pub trait ToolHandler: Send + Sync {
         _invocation: &ToolInvocation,
     ) -> impl std::future::Future<Output = ToolTelemetryTags> + Send {
         async { Vec::new() }
-    }
-
-    fn dispatch_payload(&self, invocation: &ToolInvocation) -> ToolDispatchPayload {
-        tool_dispatch_payload(&invocation.payload)
     }
 
     /// Returns `true` if the [ToolInvocation] *might* mutate the environment of the
@@ -182,8 +177,6 @@ trait AnyToolHandler: Send + Sync {
         invocation: &'a ToolInvocation,
     ) -> BoxFuture<'a, ToolTelemetryTags>;
 
-    fn dispatch_payload(&self, invocation: &ToolInvocation) -> ToolDispatchPayload;
-
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>>;
     fn handle_any<'a>(
         &'a self,
@@ -216,10 +209,6 @@ where
         invocation: &'a ToolInvocation,
     ) -> BoxFuture<'a, ToolTelemetryTags> {
         Box::pin(ToolHandler::telemetry_tags(self, invocation))
-    }
-
-    fn dispatch_payload(&self, invocation: &ToolInvocation) -> ToolDispatchPayload {
-        ToolHandler::dispatch_payload(self, invocation)
     }
 
     fn create_diff_consumer(&self) -> Option<Box<dyn ToolArgumentDiffConsumer>> {
@@ -328,12 +317,10 @@ impl ToolRegistry {
             }
         }
 
+        let dispatch_trace = ToolDispatchTrace::start(&invocation);
         let handler = match self.handler(&tool_name) {
             Some(handler) => handler,
             None => {
-                let dispatch_trace = ToolDispatchTrace::start(&invocation, || {
-                    tool_dispatch_payload(&invocation.payload)
-                });
                 let message = unsupported_tool_call_message(&invocation.payload, &tool_name);
                 otel.tool_result_with_tags(
                     tool_name_flat.as_ref(),
@@ -359,8 +346,6 @@ impl ToolRegistry {
                 .iter()
                 .map(|(key, value)| (*key, value.as_str())),
         );
-        let dispatch_trace =
-            ToolDispatchTrace::start(&invocation, || handler.dispatch_payload(&invocation));
 
         if !handler.matches_kind(&invocation.payload) {
             let message = format!("tool {tool_name} invoked with incompatible payload");
@@ -576,29 +561,6 @@ fn unsupported_tool_call_message(payload: &ToolPayload, tool_name: &ToolName) ->
     match payload {
         ToolPayload::Custom { .. } => format!("unsupported custom tool call: {tool_name}"),
         _ => format!("unsupported call: {tool_name}"),
-    }
-}
-
-fn tool_dispatch_payload(payload: &ToolPayload) -> ToolDispatchPayload {
-    match payload {
-        ToolPayload::Function { arguments } => ToolDispatchPayload::Function {
-            arguments: arguments.clone(),
-        },
-        ToolPayload::ToolSearch { arguments } => ToolDispatchPayload::ToolSearch {
-            arguments: arguments.clone(),
-        },
-        ToolPayload::Custom { input } => ToolDispatchPayload::Custom {
-            input: input.clone(),
-        },
-        ToolPayload::LocalShell { params } => ToolDispatchPayload::LocalShell {
-            command: params.command.clone(),
-            workdir: params.workdir.clone(),
-            timeout_ms: params.timeout_ms,
-            sandbox_permissions: params.sandbox_permissions,
-            prefix_rule: params.prefix_rule.clone(),
-            additional_permissions: params.additional_permissions.clone(),
-            justification: params.justification.clone(),
-        },
     }
 }
 
