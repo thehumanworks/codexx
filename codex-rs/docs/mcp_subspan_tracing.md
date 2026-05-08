@@ -42,6 +42,9 @@ An MCP server opts in by returning a compatible experimental capability in its i
         "tools": {
           "js": {
             "attributeProfile": "browser-use-v1"
+          },
+          "get_state": {
+            "attributeProfile": "cua-v1"
           }
         }
       }
@@ -170,4 +173,4 @@ Subspan telemetry is best effort:
 
 ## Current Attribute Profile
 
-`browser-use-v1` is the initial attribute profile used by Browser Use instrumentation. Codex currently allows Browser Use, Node REPL, and JS-related span names and attribute keys needed for that profile. New profiles should be added deliberately with their own allowlist changes and tests.
+`browser-use-v1` is used by Browser Use instrumentation. `cua-v1` is used by Computer Use instrumentation for state capture, accessibility capture, action execution, and result-building spans. Codex currently allows the Browser Use, Node REPL, JS, and CUA span names and attribute keys needed for those profiles. New profiles should be added deliberately with their own allowlist changes and tests.

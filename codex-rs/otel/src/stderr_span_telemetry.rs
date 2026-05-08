@@ -30,10 +30,38 @@ const ALLOWED_SPAN_NAMES: &[&str] = &[
     "browser_use.tab.screenshot",
     "browser_use.cdp.execute",
     "browser_use.tab.wait_for_load_state",
+    "cua.mcp.list_apps",
+    "cua.mcp.start_using_app",
+    "cua.mcp.activate_app",
+    "cua.mcp.deactivate_app",
+    "cua.mcp.get_state",
+    "cua.mcp.click",
+    "cua.mcp.perform_secondary_action",
+    "cua.mcp.set_value",
+    "cua.mcp.scroll",
+    "cua.mcp.drag",
+    "cua.mcp.press_key",
+    "cua.mcp.type_text",
+    "cua.action.execute_batch",
+    "cua.state.capture_frame",
+    "cua.state.capture_accessibility",
+    "cua.state.build_result",
 ];
 
 const ALLOWED_ATTRIBUTE_PREFIXES: &[&str] = &["browser_use.", "node_repl.", "js."];
-const ALLOWED_ATTRIBUTE_KEYS: &[&str] = &["error.type", "error.message"];
+const ALLOWED_ATTRIBUTE_KEYS: &[&str] = &[
+    "error.type",
+    "error.message",
+    "cua.tool.name",
+    "cua.success",
+    "cua.action.count",
+    "cua.action.kind",
+    "cua.state.has_window",
+    "cua.screenshot.base64_bytes",
+    "cua.display.width",
+    "cua.display.height",
+    "cua.accessibility.text_bytes",
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum StderrSpanTelemetryError {
@@ -468,6 +496,86 @@ mod tests {
         );
         assert!(!attrs.contains_key("unknown.secret"));
         assert!(!attrs.contains_key("browser_use.object"));
+    }
+
+    #[test]
+    fn cua_span_telemetry_reconstructs_otel_span_with_sanitized_attrs() {
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let tracer = provider.tracer("codex-otel-tests");
+        let trace_id = "00000000000000000000000000000001";
+        let parent_span_id = "0000000000000002";
+
+        let record = parse_span_telemetry_record(serde_json::json!({
+            "v": 1,
+            "type": "span",
+            "name": "cua.state.build_result",
+            "traceparent": format!("00-{trace_id}-{parent_span_id}-01"),
+            "start_unix_nanos": 1_000_000_123u64,
+            "end_unix_nanos": 2_000_000_456u64,
+            "attrs": {
+                "cua.screenshot.base64_bytes": 212000,
+                "cua.display.width": 1280,
+                "cua.display.height": 720,
+                "cua.accessibility.text_bytes": 4096,
+                "cua.success": true,
+                "cua.sensitive_text": "drop me",
+                "browser_use.object": {"drop": true}
+            }
+        }))
+        .expect("valid record");
+
+        emit_span_telemetry_record_with_tracer(&tracer, &record).expect("span emitted");
+        provider.force_flush().expect("flush spans");
+        let spans = exporter.get_finished_spans().expect("finished spans");
+        assert_eq!(spans.len(), 1);
+        let span = &spans[0];
+        let attrs = span
+            .attributes
+            .iter()
+            .map(|kv| (kv.key.as_str().to_string(), kv.value.clone()))
+            .collect::<BTreeMap<_, _>>();
+
+        assert_eq!(span.name.as_ref(), "cua.state.build_result");
+        assert_eq!(
+            attrs,
+            BTreeMap::from([
+                (
+                    "cua.accessibility.text_bytes".to_string(),
+                    OtelValue::I64(4096),
+                ),
+                ("cua.display.height".to_string(), OtelValue::I64(720)),
+                ("cua.display.width".to_string(), OtelValue::I64(1280)),
+                (
+                    "cua.screenshot.base64_bytes".to_string(),
+                    OtelValue::I64(212000),
+                ),
+                ("cua.success".to_string(), OtelValue::Bool(true)),
+            ])
+        );
+    }
+
+    #[test]
+    fn stale_cua_get_screenshot_span_is_rejected() {
+        let error = parse_span_telemetry_record(serde_json::json!({
+            "v": 1,
+            "type": "span",
+            "name": "cua.mcp.get_screenshot",
+            "trace_id": "00000000000000000000000000000001",
+            "span_id": "0000000000000010",
+            "parent_span_id": "0000000000000002",
+            "trace_flags": "01",
+            "start_unix_nanos": 1_000_000_000u64,
+            "end_unix_nanos": 2_000_000_000u64,
+        }))
+        .expect_err("unsupported stale CUA span");
+
+        assert!(matches!(
+            error,
+            StderrSpanTelemetryError::UnsupportedSpanName
+        ));
     }
 
     #[test]
