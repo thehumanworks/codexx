@@ -14,6 +14,7 @@ use codex_config::HookEventsToml;
 use codex_config::HookHandlerConfig;
 use codex_config::ManagedHooksRequirementsToml;
 use codex_config::MatcherGroup;
+use codex_config::ProjectTrustScope;
 use codex_config::RequirementSource;
 use codex_config::TomlValue;
 use codex_plugin::PluginHookSource;
@@ -23,6 +24,8 @@ use codex_protocol::protocol::HookOutputEntryKind;
 use codex_protocol::protocol::HookRunStatus;
 use codex_protocol::protocol::HookSource;
 use codex_protocol::protocol::HookTrustStatus;
+use codex_utils_absolute_path::test_support::PathBufExt;
+use codex_utils_absolute_path::test_support::test_path_buf;
 use pretty_assertions::assert_eq;
 use tempfile::tempdir;
 
@@ -364,6 +367,79 @@ fn user_disablement_does_not_filter_managed_layer_hooks() {
     );
 }
 
+#[test]
+fn project_hook_keys_share_project_trust_scope_across_worktrees() {
+    let trust_key = test_path_buf("/repo").display().to_string();
+    let project_a = test_project_layer("/tmp/worktree-a", &trust_key);
+    let project_b = test_project_layer("/tmp/worktree-b", &trust_key);
+
+    let discovered_a = super::discovery::discover_handlers(
+        Some(&config_layer_stack(vec![project_a])),
+        Vec::new(),
+        Vec::new(),
+    );
+    let discovered_b = super::discovery::discover_handlers(
+        Some(&config_layer_stack(vec![project_b])),
+        Vec::new(),
+        Vec::new(),
+    );
+
+    assert_eq!(discovered_a.hook_entries.len(), 1);
+    assert_eq!(discovered_b.hook_entries.len(), 1);
+    assert_eq!(
+        discovered_a.hook_entries[0].key,
+        expected_project_hook_key(&trust_key)
+    );
+    assert_eq!(
+        discovered_a.hook_entries[0].key,
+        discovered_b.hook_entries[0].key
+    );
+}
+
+#[test]
+fn project_hook_trust_falls_back_to_legacy_path_key() {
+    let project_root = "/tmp/worktree-a";
+    let project_root_abs = test_path_buf(project_root).abs();
+    let trust_key = test_path_buf("/repo").display().to_string();
+    let current_hash = super::discovery::discover_handlers(
+        Some(&config_layer_stack(vec![test_project_layer(
+            project_root,
+            &trust_key,
+        )])),
+        Vec::new(),
+        Vec::new(),
+    )
+    .hook_entries[0]
+        .current_hash
+        .clone();
+    let legacy_key = format!(
+        "{}:pre_tool_use:0:0",
+        project_root_abs.join(".codex/config.toml").display()
+    );
+    let stack = config_layer_stack(vec![
+        ConfigLayerEntry::new(
+            ConfigLayerSource::User {
+                file: AbsolutePathBuf::try_from("/tmp/config.toml").expect("absolute path"),
+            },
+            config_with_trusted_hook_state(&legacy_key, &current_hash),
+        ),
+        test_project_layer(project_root, &trust_key),
+    ]);
+
+    let discovered = super::discovery::discover_handlers(Some(&stack), Vec::new(), Vec::new());
+
+    assert_eq!(discovered.handlers.len(), 1);
+    assert_eq!(discovered.hook_entries.len(), 1);
+    assert_eq!(
+        discovered.hook_entries[0].key,
+        expected_project_hook_key(&trust_key)
+    );
+    assert_eq!(
+        discovered.hook_entries[0].trust_status,
+        HookTrustStatus::Trusted
+    );
+}
+
 fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
     serde_json::from_value(serde_json::json!({
         "hooks": {
@@ -375,6 +451,48 @@ fn config_with_hook_state(key: &str, enabled: bool) -> TomlValue {
         },
     }))
     .expect("config TOML should deserialize")
+}
+
+fn config_with_trusted_hook_state(key: &str, current_hash: &str) -> TomlValue {
+    serde_json::from_value(serde_json::json!({
+        "hooks": {
+            "state": {
+                (key): {
+                    "trusted_hash": current_hash,
+                },
+            },
+        },
+    }))
+    .expect("config TOML should deserialize")
+}
+
+fn config_layer_stack(layers: Vec<ConfigLayerEntry>) -> ConfigLayerStack {
+    ConfigLayerStack::new(
+        layers,
+        ConfigRequirements::default(),
+        ConfigRequirementsToml::default(),
+    )
+    .expect("config layer stack")
+}
+
+fn test_project_layer(project_root: &str, trust_key: &str) -> ConfigLayerEntry {
+    let project_root = test_path_buf(project_root).abs();
+    let dot_codex_folder = project_root.join(".codex");
+    ConfigLayerEntry::new(
+        ConfigLayerSource::Project { dot_codex_folder },
+        config_with_pre_tool_use_hook("python3 /tmp/project.py"),
+    )
+    .with_project_trust_scope(ProjectTrustScope {
+        trust_key: trust_key.to_string(),
+        project_root,
+    })
+}
+
+fn expected_project_hook_key(trust_key: &str) -> String {
+    format!(
+        "project:{trust_key}:{}:pre_tool_use:0:0",
+        Path::new(".codex/config.toml").display()
+    )
 }
 
 fn config_with_pre_tool_use_hook_and_states<const N: usize>(

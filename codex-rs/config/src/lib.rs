@@ -115,6 +115,7 @@ pub use state::ConfigLayerEntry;
 pub use state::ConfigLayerStack;
 pub use state::ConfigLayerStackOrdering;
 pub use state::LoaderOverrides;
+pub use state::ProjectTrustScope;
 pub use thread_config::NoopThreadConfigLoader;
 pub use thread_config::RemoteThreadConfigLoader;
 pub use thread_config::SessionThreadConfig;

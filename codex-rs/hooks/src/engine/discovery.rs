@@ -39,6 +39,7 @@ pub(crate) struct DiscoveryResult {
 struct HookHandlerSource<'a> {
     path: &'a AbsolutePathBuf,
     key_source: String,
+    legacy_key_source: Option<String>,
     source: HookSource,
     is_managed: bool,
     hook_states: &'a HashMap<String, HookStateToml>,
@@ -88,6 +89,8 @@ pub(crate) fn discover_handlers(
             }
 
             for (source_path, hook_events) in [json_hooks, toml_hooks].into_iter().flatten() {
+                let (key_source, legacy_key_source) =
+                    hook_key_sources_for_config_layer(layer, &source_path);
                 append_hook_events(
                     &mut handlers,
                     &mut hook_entries,
@@ -95,7 +98,8 @@ pub(crate) fn discover_handlers(
                     &mut display_order,
                     HookHandlerSource {
                         path: &source_path,
-                        key_source: source_path.display().to_string(),
+                        key_source,
+                        legacy_key_source,
                         source: hook_source,
                         is_managed,
                         hook_states: &hook_states,
@@ -148,6 +152,7 @@ fn append_managed_requirement_handlers(
         HookHandlerSource {
             path: &source_path,
             key_source: source_path.display().to_string(),
+            legacy_key_source: None,
             source: hook_source_for_requirement_source(managed_hooks.source.as_ref()),
             is_managed: true,
             hook_states,
@@ -196,6 +201,7 @@ fn append_plugin_hook_sources(
                     plugin_id.as_str(),
                     source_relative_path.as_str(),
                 ),
+                legacy_key_source: None,
                 source: HookSource::Plugin,
                 is_managed: false,
                 hook_states,
@@ -421,7 +427,14 @@ fn append_matcher_groups(
                     // TODO(abhinav): replace this positional suffix with a durable hook id.
                     let key =
                         crate::hook_key(&source.key_source, event_name, group_index, handler_index);
-                    let state = source.hook_states.get(&key);
+                    let legacy_key = source.legacy_key_source.as_ref().map(|legacy_key_source| {
+                        crate::hook_key(legacy_key_source, event_name, group_index, handler_index)
+                    });
+                    let state = source.hook_states.get(&key).or_else(|| {
+                        legacy_key
+                            .as_ref()
+                            .and_then(|key| source.hook_states.get(key))
+                    });
                     let enabled = hook_enabled(source.is_managed, state);
                     let trusted_hash = hook_trusted_hash(source.is_managed, state);
                     let trust_status =
@@ -474,6 +487,41 @@ fn append_matcher_groups(
             }
         }
     }
+}
+
+/// Returns the canonical hook-key source for this layer plus any legacy source
+/// that should still be read for backwards compatibility.
+///
+/// Project-local hooks used to key trust state from their absolute source path.
+/// That made linked worktrees look like unrelated hook sources even when they
+/// shared one project-trust entry. New project-local keys instead use the
+/// resolved project trust key plus the source path relative to that project
+/// root, so worktrees that share project trust also share hook trust. We still
+/// return the old absolute-path source as a legacy fallback so existing user
+/// approvals remain effective after upgrading.
+///
+/// Non-project layers, and any project source that cannot be expressed relative
+/// to the resolved project root, keep the old path-based source identity.
+fn hook_key_sources_for_config_layer(
+    layer: &ConfigLayerEntry,
+    source_path: &AbsolutePathBuf,
+) -> (String, Option<String>) {
+    let legacy_key_source = source_path.display().to_string();
+    let Some(project_trust_scope) = layer.project_trust_scope.as_ref() else {
+        return (legacy_key_source, None);
+    };
+    let Ok(relative_path) = source_path
+        .as_path()
+        .strip_prefix(project_trust_scope.project_root.as_path())
+    else {
+        return (legacy_key_source, None);
+    };
+    let key_source = format!(
+        "project:{}:{}",
+        project_trust_scope.trust_key,
+        relative_path.display()
+    );
+    (key_source, Some(legacy_key_source))
 }
 
 /// Hash a normalized, config-derived identity instead of source text so equivalent
@@ -595,6 +643,7 @@ mod tests {
         super::HookHandlerSource {
             path,
             key_source: path.display().to_string(),
+            legacy_key_source: None,
             source: hook_source(),
             is_managed: true,
             hook_states,

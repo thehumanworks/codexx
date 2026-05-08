@@ -330,6 +330,7 @@ async fn returns_empty_when_all_layers_missing() {
             raw_toml: None,
             version: version_for_toml(&TomlValue::Table(toml::map::Map::new())),
             disabled_reason: None,
+            project_trust_scope: None,
         },
         user_layer,
     );
@@ -1498,6 +1499,10 @@ async fn project_layer_is_added_when_dot_codex_exists_without_config_toml() -> s
             raw_toml: None,
             version: version_for_toml(&TomlValue::Table(toml::map::Map::new())),
             disabled_reason: None,
+            project_trust_scope: Some(codex_config::ProjectTrustScope {
+                trust_key: project_root.display().to_string(),
+                project_root: AbsolutePathBuf::from_absolute_path(project_root.clone())?,
+            }),
         }],
         project_layers
     );
@@ -1602,6 +1607,10 @@ async fn codex_home_within_project_tree_is_not_double_loaded() -> std::io::Resul
             raw_toml: None,
             version: version_for_toml(&child_config),
             disabled_reason: None,
+            project_trust_scope: Some(codex_config::ProjectTrustScope {
+                trust_key: project_root.display().to_string(),
+                project_root: AbsolutePathBuf::from_absolute_path(project_root.clone())?,
+            }),
         }],
         project_layers
     );
