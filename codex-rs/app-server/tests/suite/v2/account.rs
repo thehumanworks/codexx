@@ -50,7 +50,10 @@ use wiremock::ResponseTemplate;
 use wiremock::matchers::method;
 use wiremock::matchers::path;
 
-const DEFAULT_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+#[cfg(target_os = "windows")]
+const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(not(target_os = "windows"))]
+const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(10);
 const LOGIN_ISSUER_ENV_VAR: &str = "CODEX_APP_SERVER_LOGIN_ISSUER";
 
 // Helper to create a minimal config.toml for the app server
