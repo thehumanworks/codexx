@@ -6,7 +6,6 @@ use anyhow::Result;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use codex_otel::StatsigMetricsSettings;
-use codex_windows_sandbox::DenyReadAclRecordKind;
 use codex_windows_sandbox::LOG_FILE_NAME;
 use codex_windows_sandbox::SETUP_VERSION;
 use codex_windows_sandbox::SetupErrorCode;
@@ -15,7 +14,6 @@ use codex_windows_sandbox::SetupFailure;
 use codex_windows_sandbox::add_deny_write_ace;
 use codex_windows_sandbox::apply_deny_read_acls;
 use codex_windows_sandbox::canonicalize_path;
-use codex_windows_sandbox::cleanup_stale_persistent_deny_read_acls;
 use codex_windows_sandbox::convert_string_sid_to_sid;
 use codex_windows_sandbox::ensure_allow_mask_aces_with_inheritance;
 use codex_windows_sandbox::ensure_allow_write_aces;
@@ -32,7 +30,6 @@ use codex_windows_sandbox::sandbox_secrets_dir;
 use codex_windows_sandbox::string_from_sid_bytes;
 use codex_windows_sandbox::to_wide;
 use codex_windows_sandbox::workspace_cap_sid_for_cwd;
-use codex_windows_sandbox::write_persistent_deny_read_acl_record;
 use codex_windows_sandbox::write_setup_error_report;
 use serde::Deserialize;
 use serde::Serialize;
@@ -466,29 +463,6 @@ fn run_read_acl_only(payload: &Payload, log: &mut File) -> Result<()> {
     let sandbox_group_sid = resolve_sandbox_users_group_sid()?;
     let sandbox_group_psid = sid_bytes_to_psid(&sandbox_group_sid)?;
     let mut refresh_errors: Vec<String> = Vec::new();
-    // Stale cleanup must happen before the helper re-grants read ACLs because
-    // the cleanup primitive revokes all ACEs for the sandbox group SID.
-    match unsafe {
-        cleanup_stale_persistent_deny_read_acls(
-            &payload.codex_home,
-            DenyReadAclRecordKind::SandboxGroup,
-            &payload.deny_read_paths,
-            sandbox_group_psid,
-        )
-    } {
-        Ok(cleaned) => {
-            if !cleaned.is_empty() {
-                log_line(
-                    log,
-                    &format!("cleaned {} stale deny-read ACLs", cleaned.len()),
-                )?;
-            }
-        }
-        Err(err) => {
-            refresh_errors.push(format!("cleanup stale deny-read ACLs failed: {err}"));
-            log_line(log, &format!("cleanup stale deny-read ACLs failed: {err}"))?;
-        }
-    }
     if !payload.read_roots.is_empty() {
         let users_sid = resolve_sid("Users")?;
         let users_psid = sid_bytes_to_psid(&users_sid)?;
@@ -526,11 +500,6 @@ fn run_read_acl_only(payload: &Payload, log: &mut File) -> Result<()> {
     // explicit deny entries that take precedence over the broad read allowlist.
     match unsafe { apply_deny_read_acls(&payload.deny_read_paths, sandbox_group_psid) } {
         Ok(applied) => {
-            write_persistent_deny_read_acl_record(
-                &payload.codex_home,
-                DenyReadAclRecordKind::SandboxGroup,
-                &applied,
-            )?;
             if !applied.is_empty() {
                 log_line(log, &format!("applied {} deny-read ACLs", applied.len()))?;
             }
@@ -664,9 +633,8 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         );
     }
 
-    // The read ACL helper is also responsible for persistent deny-read cleanup,
-    // so it must run whenever deny-read paths are present even if no new read
-    // roots need to be granted.
+    // The read ACL helper also applies deny-read ACEs, so it must run whenever
+    // deny-read paths are present even if no new read roots need to be granted.
     if payload.read_roots.is_empty() && payload.deny_read_paths.is_empty() {
         log_line(
             log,

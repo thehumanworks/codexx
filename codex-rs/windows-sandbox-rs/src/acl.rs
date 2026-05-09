@@ -487,6 +487,41 @@ pub unsafe fn add_allow_ace(path: &Path, psid: *mut c_void) -> Result<bool> {
 /// # Safety
 /// Caller must ensure `psid` points to a valid SID and `path` refers to an existing file or directory.
 pub unsafe fn add_deny_write_ace(path: &Path, psid: *mut c_void) -> Result<bool> {
+    add_deny_ace(path, psid, DenyAceKind::Write)
+}
+
+#[derive(Clone, Copy)]
+enum DenyAceKind {
+    Read,
+    Write,
+}
+
+impl DenyAceKind {
+    fn mask(self) -> u32 {
+        match self {
+            Self::Read => FILE_GENERIC_READ | GENERIC_READ_MASK,
+            Self::Write => {
+                FILE_GENERIC_WRITE
+                    | FILE_WRITE_DATA
+                    | FILE_APPEND_DATA
+                    | FILE_WRITE_EA
+                    | FILE_WRITE_ATTRIBUTES
+                    | GENERIC_WRITE_MASK
+                    | DELETE
+                    | FILE_DELETE_CHILD
+            }
+        }
+    }
+
+    unsafe fn already_present(self, p_dacl: *mut ACL, psid: *mut c_void) -> bool {
+        match self {
+            Self::Read => dacl_has_read_deny_for_sid(p_dacl, psid),
+            Self::Write => dacl_has_write_deny_for_sid(p_dacl, psid),
+        }
+    }
+}
+
+unsafe fn add_deny_ace(path: &Path, psid: *mut c_void, kind: DenyAceKind) -> Result<bool> {
     let mut p_sd: *mut c_void = std::ptr::null_mut();
     let mut p_dacl: *mut ACL = std::ptr::null_mut();
     let code = GetNamedSecurityInfoW(
@@ -503,7 +538,7 @@ pub unsafe fn add_deny_write_ace(path: &Path, psid: *mut c_void) -> Result<bool>
         return Err(anyhow!("GetNamedSecurityInfoW failed: {code}"));
     }
     let mut added = false;
-    if !dacl_has_write_deny_for_sid(p_dacl, psid) {
+    if !kind.already_present(p_dacl, psid) {
         let trustee = TRUSTEE_W {
             pMultipleTrustee: std::ptr::null_mut(),
             MultipleTrusteeOperation: 0,
@@ -512,14 +547,7 @@ pub unsafe fn add_deny_write_ace(path: &Path, psid: *mut c_void) -> Result<bool>
             ptstrName: psid as *mut u16,
         };
         let mut explicit: EXPLICIT_ACCESS_W = std::mem::zeroed();
-        explicit.grfAccessPermissions = FILE_GENERIC_WRITE
-            | FILE_WRITE_DATA
-            | FILE_APPEND_DATA
-            | FILE_WRITE_EA
-            | FILE_WRITE_ATTRIBUTES
-            | GENERIC_WRITE_MASK
-            | DELETE
-            | FILE_DELETE_CHILD;
+        explicit.grfAccessPermissions = kind.mask();
         explicit.grfAccessMode = DENY_ACCESS;
         explicit.grfInheritance = CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
         explicit.Trustee = trustee;
@@ -559,73 +587,7 @@ pub unsafe fn add_deny_write_ace(path: &Path, psid: *mut c_void) -> Result<bool>
 /// # Safety
 /// Caller must ensure `psid` points to a valid SID and `path` refers to an existing file or directory.
 pub unsafe fn add_deny_read_ace(path: &Path, psid: *mut c_void) -> Result<bool> {
-    let mut p_sd: *mut c_void = std::ptr::null_mut();
-    let mut p_dacl: *mut ACL = std::ptr::null_mut();
-    let code = GetNamedSecurityInfoW(
-        to_wide(path).as_ptr(),
-        1,
-        DACL_SECURITY_INFORMATION,
-        std::ptr::null_mut(),
-        std::ptr::null_mut(),
-        &mut p_dacl,
-        std::ptr::null_mut(),
-        &mut p_sd,
-    );
-    if code != ERROR_SUCCESS {
-        return Err(anyhow!("GetNamedSecurityInfoW failed: {code}"));
-    }
-    let mut added = false;
-    if !dacl_has_read_deny_for_sid(p_dacl, psid) {
-        let trustee = TRUSTEE_W {
-            pMultipleTrustee: std::ptr::null_mut(),
-            MultipleTrusteeOperation: 0,
-            TrusteeForm: TRUSTEE_IS_SID,
-            TrusteeType: TRUSTEE_IS_UNKNOWN,
-            ptstrName: psid as *mut u16,
-        };
-        let mut explicit: EXPLICIT_ACCESS_W = std::mem::zeroed();
-        explicit.grfAccessPermissions = FILE_GENERIC_READ | GENERIC_READ_MASK;
-        explicit.grfAccessMode = DENY_ACCESS;
-        explicit.grfInheritance = CONTAINER_INHERIT_ACE | OBJECT_INHERIT_ACE;
-        explicit.Trustee = trustee;
-        let mut p_new_dacl: *mut ACL = std::ptr::null_mut();
-        let code2 = SetEntriesInAclW(1, &explicit, p_dacl, &mut p_new_dacl);
-        if code2 != ERROR_SUCCESS {
-            if !p_sd.is_null() {
-                LocalFree(p_sd as HLOCAL);
-            }
-            if !p_new_dacl.is_null() {
-                LocalFree(p_new_dacl as HLOCAL);
-            }
-            return Err(anyhow!("SetEntriesInAclW failed: {code2}"));
-        }
-        let code3 = SetNamedSecurityInfoW(
-            to_wide(path).as_ptr() as *mut u16,
-            1,
-            DACL_SECURITY_INFORMATION,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            p_new_dacl,
-            std::ptr::null_mut(),
-        );
-        if code3 != ERROR_SUCCESS {
-            if !p_sd.is_null() {
-                LocalFree(p_sd as HLOCAL);
-            }
-            if !p_new_dacl.is_null() {
-                LocalFree(p_new_dacl as HLOCAL);
-            }
-            return Err(anyhow!("SetNamedSecurityInfoW failed: {code3}"));
-        }
-        added = true;
-        if !p_new_dacl.is_null() {
-            LocalFree(p_new_dacl as HLOCAL);
-        }
-    }
-    if !p_sd.is_null() {
-        LocalFree(p_sd as HLOCAL);
-    }
-    Ok(added)
+    add_deny_ace(path, psid, DenyAceKind::Read)
 }
 
 pub unsafe fn revoke_ace(path: &Path, psid: *mut c_void) {

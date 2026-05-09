@@ -112,15 +112,9 @@ pub use conpty::ConptyInstance;
 #[cfg(target_os = "windows")]
 pub use conpty::spawn_conpty_process_as_user;
 #[cfg(target_os = "windows")]
-pub use deny_read_acl::DenyReadAclRecordKind;
-#[cfg(target_os = "windows")]
 pub use deny_read_acl::apply_deny_read_acls;
 #[cfg(target_os = "windows")]
-pub use deny_read_acl::cleanup_stale_persistent_deny_read_acls;
-#[cfg(target_os = "windows")]
 pub use deny_read_acl::plan_deny_read_acl_paths;
-#[cfg(target_os = "windows")]
-pub use deny_read_acl::write_persistent_deny_read_acl_record;
 pub use deny_read_resolver::resolve_windows_deny_read_paths;
 #[cfg(target_os = "windows")]
 pub use desktop::LaunchDesktop;
@@ -283,10 +277,7 @@ mod windows_impl {
     use super::allow::compute_allow_paths;
     use super::cap::load_or_create_cap_sids;
     use super::cap::workspace_cap_sid_for_cwd;
-    use super::deny_read_acl::DenyReadAclRecordKind;
     use super::deny_read_acl::apply_deny_read_acls;
-    use super::deny_read_acl::cleanup_stale_persistent_deny_read_acls;
-    use super::deny_read_acl::write_persistent_deny_read_acl_record;
     use super::logging::log_failure;
     use super::logging::log_success;
     use super::path_normalization::canonicalize_path;
@@ -297,6 +288,7 @@ mod windows_impl {
     use super::token::convert_string_sid_to_sid;
     use super::token::create_workspace_write_token_with_caps_from;
     use super::workspace_acl::is_command_cwd_root;
+    use anyhow::Context;
     use anyhow::Result;
     use std::collections::HashMap;
     use std::ffi::c_void;
@@ -457,26 +449,17 @@ mod windows_impl {
         let AllowDenyPaths { allow, mut deny } =
             compute_allow_paths(&policy, sandbox_policy_cwd, &current_dir, &env_map);
         for path in additional_deny_write_paths {
-            if path.exists() {
-                deny.insert(path.clone());
+            // Explicit deny-write carveouts must already exist when the process
+            // starts, otherwise it could create a missing path under a writable
+            // parent before the deny-write ACE exists.
+            if !path.exists() {
+                std::fs::create_dir_all(path)
+                    .with_context(|| format!("create deny-write path {}", path.display()))?;
             }
+            deny.insert(path.clone());
         }
         let canonical_cwd = canonicalize_path(&current_dir);
         let mut guards: Vec<(PathBuf, *mut c_void)> = Vec::new();
-        if persist_aces {
-            // Persistent workspace-write ACEs survive between commands, so drop
-            // deny-read ACLs from the previous policy before applying the new
-            // overlay. Non-persistent runs use guards and clean up at process
-            // exit instead.
-            unsafe {
-                cleanup_stale_persistent_deny_read_acls(
-                    codex_home,
-                    DenyReadAclRecordKind::RestrictedToken,
-                    additional_deny_read_paths,
-                    psid_generic,
-                )?;
-            }
-        }
         unsafe {
             for p in &allow {
                 let psid = if is_workspace_write && is_command_cwd_root(p, &canonical_cwd) {
@@ -517,13 +500,7 @@ mod windows_impl {
                         return Err(err);
                     }
                 };
-            if persist_aces {
-                write_persistent_deny_read_acl_record(
-                    codex_home,
-                    DenyReadAclRecordKind::RestrictedToken,
-                    &applied_deny_read_paths,
-                )?;
-            } else {
+            if !persist_aces {
                 for path in applied_deny_read_paths {
                     guards.push((path, psid_generic));
                 }

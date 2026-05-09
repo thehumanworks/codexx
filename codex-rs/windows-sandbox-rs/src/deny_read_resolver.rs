@@ -47,7 +47,7 @@ pub fn resolve_windows_deny_read_paths(
             })
             .collect(),
     );
-    let Some(matcher) = ReadDenyMatcher::new(&glob_policy, cwd.as_path()) else {
+    let Some(matcher) = ReadDenyMatcher::try_new(&glob_policy, cwd.as_path())? else {
         return Ok(paths);
     };
 
@@ -274,6 +274,23 @@ mod tests {
         let expected = [root_env, nested_env].into_iter().collect();
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn invalid_glob_patterns_fail_before_expansion() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cwd = AbsolutePathBuf::from_absolute_path(tmp.path()).expect("absolute cwd");
+        let policy = FileSystemSandboxPolicy::restricted(vec![unreadable_glob_entry(format!(
+            "{}/**/[z-a]",
+            tmp.path().display()
+        ))]);
+
+        let err = resolve_windows_deny_read_paths(&policy, &cwd).expect_err("invalid glob");
+        assert!(
+            err.contains("invalid deny-read glob pattern"),
+            "unexpected error: {err}"
+        );
+        assert!(err.contains("invalid range"), "unexpected error: {err}");
     }
 
     #[test]
