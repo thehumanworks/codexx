@@ -73,7 +73,7 @@ async fn wait_for_function_call_output(
             if let Some(output) = response_mock
                 .requests()
                 .iter()
-                .find_map(|request| request.function_call_output(call_id).cloned())
+                .find_map(|request| request.function_call_output(call_id))
             {
                 return output;
             }
