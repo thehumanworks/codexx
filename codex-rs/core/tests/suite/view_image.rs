@@ -32,7 +32,6 @@ use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_models_once;
-use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
@@ -452,7 +451,7 @@ async fn view_image_routes_to_selected_local_environment() -> anyhow::Result<()>
     )
     .await?;
     let call_id = "call-view-image-local-env";
-    let response_mock = mount_sse_sequence(
+    let response_mock = responses::mount_sse_sequence(
         &server,
         vec![
             sse(vec![

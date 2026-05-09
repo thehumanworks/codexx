@@ -1486,7 +1486,7 @@ pub async fn mount_function_call_agent_response(
 /// POST to `/v1/responses`. Panics if more requests are received than bodies
 /// provided. Also asserts the exact number of expected calls.
 pub async fn mount_sse_sequence(server: &MockServer, bodies: Vec<String>) -> ResponseMock {
-    mount_sse_sequence_with_expectation(server, bodies, true).await
+    mount_sse_sequence_with_expectation(server, bodies, /*expect_all_calls*/ true).await
 }
 
 /// Mounts a sequence of SSE response bodies without verifying that every body
@@ -1496,7 +1496,7 @@ pub async fn mount_sse_sequence_no_verify(
     server: &MockServer,
     bodies: Vec<String>,
 ) -> ResponseMock {
-    mount_sse_sequence_with_expectation(server, bodies, false).await
+    mount_sse_sequence_with_expectation(server, bodies, /*expect_all_calls*/ false).await
 }
 
 async fn mount_sse_sequence_with_expectation(
