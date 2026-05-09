@@ -33,7 +33,7 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use codex_utils_approval_presets::ApprovalPreset;
 
 use crate::app_command::AppCommand;
-use crate::app_server_session::AppServerStartupHydration;
+use crate::app_server_session::AppServerStartedThread;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
@@ -165,9 +165,9 @@ pub(crate) enum AppEvent {
     /// Start a new session.
     NewSession,
 
-    /// Fresh-start bootstrap and thread creation completed after the first TUI frame.
-    StartupHydrationCompleted {
-        result: Result<AppServerStartupHydration, String>,
+    /// Fresh-start thread creation completed after the first TUI frame.
+    StartupThreadStarted {
+        result: Result<AppServerStartedThread, String>,
     },
 
     /// Clear the terminal UI (screen + scrollback), start a fresh session, and keep the

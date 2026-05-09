@@ -23,38 +23,20 @@ impl App {
                 )
                 .await;
             }
-            AppEvent::StartupHydrationCompleted { result } => match result {
-                Ok(hydration) => {
+            AppEvent::StartupThreadStarted { result } => match result {
+                Ok(started) => {
                     if self.primary_thread_id.is_some() {
                         return Ok(AppRunControl::Continue);
                     }
-                    let model_catalog = Arc::new(ModelCatalog::new(
-                        hydration.bootstrap.available_models.clone(),
-                    ));
-                    self.model_catalog = model_catalog.clone();
-                    self.chat_widget.update_model_catalog(model_catalog);
-                    self.feedback_audience = hydration.bootstrap.feedback_audience;
-                    self.chat_widget.update_account_state(
-                        hydration.bootstrap.status_account_display,
-                        hydration.bootstrap.plan_type,
-                        hydration.bootstrap.has_chatgpt_account,
-                    );
-                    let thread_id = hydration.started.session.thread_id;
                     if let Err(err) = self
-                        .enqueue_primary_thread_session(
-                            hydration.started.session,
-                            hydration.started.turns,
-                        )
+                        .enqueue_primary_thread_session(started.session, started.turns)
                         .await
                     {
                         self.chat_widget
                             .add_error_message(format!("Failed to attach startup thread: {err}"));
                         return Ok(AppRunControl::Continue);
                     }
-                    let pending_ops = std::mem::take(&mut self.pending_startup_ops);
-                    for op in pending_ops {
-                        self.submit_thread_op(app_server, thread_id, op).await?;
-                    }
+                    self.chat_widget.maybe_send_next_queued_input();
                     tui.frame_requester().schedule_frame();
                 }
                 Err(err) => {
@@ -364,12 +346,7 @@ impl App {
                 return Ok(AppRunControl::Exit(ExitReason::Fatal(message)));
             }
             AppEvent::CodexOp(op) => {
-                if self.active_thread_id.is_none() && self.primary_thread_id.is_none() {
-                    self.pending_startup_ops.push(op);
-                    tui.frame_requester().schedule_frame();
-                } else {
-                    self.submit_active_thread_op(app_server, op).await?;
-                }
+                self.submit_active_thread_op(app_server, op).await?;
             }
             AppEvent::AppendMessageHistoryEntry { thread_id, text } => {
                 self.append_message_history_entry(thread_id, text);

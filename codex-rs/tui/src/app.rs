@@ -502,7 +502,6 @@ pub(crate) struct App {
     last_subagent_backfill_attempt: Option<ThreadId>,
     primary_session_configured: Option<ThreadSessionState>,
     pending_primary_events: VecDeque<ThreadBufferedEvent>,
-    pending_startup_ops: Vec<AppCommand>,
     pending_app_server_requests: PendingAppServerRequests,
     // Serialize plugin enablement writes per plugin so stale completions cannot
     // overwrite a newer toggle, even if the plugin is toggled from different
@@ -664,58 +663,34 @@ impl App {
                 });
             }
         };
-        let defer_fresh_start_hydration = matches!(
-            session_selection,
-            SessionSelection::StartFresh | SessionSelection::Exit
+        let bootstrap_start = Instant::now();
+        let bootstrap = app_server.bootstrap(&config).await?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "app_bootstrap",
+            elapsed_ms = bootstrap_start.elapsed().as_millis(),
+            total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+            "startup timing"
         );
-        let bootstrap = if defer_fresh_start_hydration {
-            crate::app_server_session::AppServerBootstrap {
-                account_email: None,
-                auth_mode: None,
-                status_account_display: None,
-                plan_type: None,
-                requires_openai_auth: false,
-                default_model: config
-                    .model
-                    .clone()
-                    .unwrap_or_else(|| "gpt-5.2-codex".to_string()),
-                feedback_audience: FeedbackAudience::External,
-                has_chatgpt_account: false,
-                available_models: Vec::new(),
-            }
-        } else {
-            let bootstrap_start = Instant::now();
-            let bootstrap = app_server.bootstrap(&config).await?;
-            tracing::info!(
-                target: "codex_tui::startup_timing",
-                step = "app_bootstrap",
-                elapsed_ms = bootstrap_start.elapsed().as_millis(),
-                total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
-                "startup timing"
-            );
-            bootstrap
-        };
         let mut model = bootstrap.default_model;
         let available_models = bootstrap.available_models;
-        if !defer_fresh_start_hydration {
-            let exit_info = handle_model_migration_prompt_if_needed(
-                tui,
-                &mut config,
-                model.as_str(),
-                &app_event_tx,
-                &available_models,
-            )
-            .await;
-            if let Some(exit_info) = exit_info {
-                app_server
-                    .shutdown()
-                    .await
-                    .inspect_err(|err| {
-                        tracing::warn!("app-server shutdown failed: {err}");
-                    })
-                    .ok();
-                return Ok(exit_info);
-            }
+        let exit_info = handle_model_migration_prompt_if_needed(
+            tui,
+            &mut config,
+            model.as_str(),
+            &app_event_tx,
+            &available_models,
+        )
+        .await;
+        if let Some(exit_info) = exit_info {
+            app_server
+                .shutdown()
+                .await
+                .inspect_err(|err| {
+                    tracing::warn!("app-server shutdown failed: {err}");
+                })
+                .ok();
+            return Ok(exit_info);
         }
         if let Some(updated_model) = config.model.clone() {
             model = updated_model;
@@ -765,26 +740,16 @@ impl App {
                 &initial_prompt,
                 &initial_images,
             );
-        if defer_fresh_start_hydration {
-            let request_handle = app_server.request_handle();
-            let hydration_config = config.clone();
-            let tx = app_event_tx.clone();
-            let is_remote = app_server.is_remote();
-            let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
-            tokio::spawn(async move {
-                let result = AppServerSession::start_fresh_hydration_with_request_handle(
-                    request_handle,
-                    hydration_config,
-                    is_remote,
-                    remote_cwd_override,
-                )
-                .await
-                .map_err(|err| format!("{err:#}"));
-                tx.send(AppEvent::StartupHydrationCompleted { result });
-            });
-        }
+        let defer_fresh_thread_start = matches!(session_selection, SessionSelection::StartFresh)
+            && initial_prompt.is_none()
+            && initial_images.is_empty();
         let (mut chat_widget, initial_started_thread) = match session_selection {
             SessionSelection::StartFresh | SessionSelection::Exit => {
+                let started = if defer_fresh_thread_start {
+                    None
+                } else {
+                    Some(app_server.start_thread(&config).await?)
+                };
                 let init = crate::chatwidget::ChatWidgetInit {
                     config: config.clone(),
                     environment_manager: environment_manager.clone(),
@@ -806,13 +771,18 @@ impl App {
                     runtime_model_provider_base_url: runtime_model_provider_base_url.clone(),
                     initial_plan_type,
                     model: Some(model.clone()),
-                    startup_tooltip_override: None,
+                    startup_tooltip_override: prepare_startup_tooltip_override(
+                        &mut config,
+                        &available_models,
+                        is_first_run,
+                    )
+                    .await,
                     status_line_invalid_items_warned: status_line_invalid_items_warned.clone(),
                     terminal_title_invalid_items_warned: terminal_title_invalid_items_warned
                         .clone(),
                     session_telemetry: session_telemetry.clone(),
                 };
-                (ChatWidget::new_with_app_event(init), None)
+                (ChatWidget::new_with_app_event(init), started)
             }
             SessionSelection::Resume(target_session) => {
                 let resumed = app_server
@@ -957,11 +927,29 @@ See the Codex keymap documentation for supported actions and examples."
             last_subagent_backfill_attempt: None,
             primary_session_configured: None,
             pending_primary_events: VecDeque::new(),
-            pending_startup_ops: Vec::new(),
             pending_app_server_requests: PendingAppServerRequests::default(),
             pending_plugin_enabled_writes: HashMap::new(),
             pending_hook_enabled_writes: HashMap::new(),
         };
+        if defer_fresh_thread_start {
+            let request_handle = app_server.request_handle();
+            let start_config = app.config.clone();
+            let tx = app.app_event_tx.clone();
+            let is_remote = app_server.is_remote();
+            let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
+            tokio::spawn(async move {
+                let result = AppServerSession::start_thread_with_request_handle(
+                    request_handle,
+                    start_config,
+                    is_remote,
+                    remote_cwd_override,
+                    /*session_start_source*/ None,
+                )
+                .await
+                .map_err(|err| format!("{err:#}"));
+                tx.send(AppEvent::StartupThreadStarted { result });
+            });
+        }
         if let Some(started) = initial_started_thread {
             let thread_id = started.session.thread_id;
             app.enqueue_primary_thread_session(started.session, started.turns)
@@ -1003,6 +991,11 @@ See the Codex keymap documentation for supported actions and examples."
         let tui_events = tui.event_stream();
         tokio::pin!(tui_events);
 
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "first_frame_ready",
+            "startup timing"
+        );
         tui.frame_requester().schedule_frame();
         app.refresh_startup_skills(&app_server);
         app.refresh_startup_hooks(&app_server);
