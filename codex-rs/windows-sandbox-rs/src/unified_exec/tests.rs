@@ -183,13 +183,13 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
     let _guard = legacy_process_test_guard();
     let runtime = current_thread_runtime();
     runtime.block_on(async move {
-        let cwd = sandbox_cwd();
         let codex_home = sandbox_home("legacy-non-tty-deny-read");
         let fixture_id = TEST_HOME_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let fixture_dir = cwd.join(format!("legacy-non-tty-deny-read-fixture-{fixture_id}"));
+        let fixture_dir = codex_home
+            .path()
+            .join(format!("legacy-non-tty-deny-read-fixture-{fixture_id}"));
         let _ = fs::remove_dir_all(&fixture_dir);
         let secret_path = fixture_dir.join("secret.env");
-        let public_path = fixture_dir.join("public.txt");
         fs::create_dir_all(&fixture_dir).expect("create deny-read fixture");
 
         for (label, command) in [
@@ -229,7 +229,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\" 2>&1", public_path.display()),
+                "type \"public.txt\" 2>&1".to_string(),
             ],
             fixture_dir.as_path(),
             HashMap::new(),
@@ -262,7 +262,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\" 2>&1", public_path.display()),
+                "type \"public.txt\" 2>&1".to_string(),
             ],
             fixture_dir.as_path(),
             HashMap::new(),
@@ -288,7 +288,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\" 2>NUL", secret_path.display()),
+                "type \"secret.env\" 2>NUL".to_string(),
             ],
             fixture_dir.as_path(),
             HashMap::new(),
