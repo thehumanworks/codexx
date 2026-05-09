@@ -62,6 +62,8 @@ use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
 pub use token_usage::TokenUsage;
 use tracing::Level;
 use tracing::error;
@@ -189,6 +191,17 @@ mod version;
 mod voice;
 mod width;
 mod workspace_command;
+
+fn log_startup_timing(step: &str, elapsed: Duration, total_elapsed: Duration) {
+    tracing::info!(
+        target: "codex_tui::startup_timing",
+        step,
+        elapsed_ms = elapsed.as_millis(),
+        total_elapsed_ms = total_elapsed.as_millis(),
+        "startup timing"
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[allow(dead_code)]
 mod voice {
@@ -405,24 +418,41 @@ async fn start_app_server(
     state_db: Option<StateDbHandle>,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<AppServerClient> {
+    let start = Instant::now();
     match target {
-        AppServerTarget::Embedded => start_embedded_app_server(
-            arg0_paths,
-            config,
-            cli_kv_overrides,
-            loader_overrides,
-            cloud_requirements,
-            feedback,
-            log_db,
-            state_db,
-            environment_manager,
-        )
-        .await
-        .map(AppServerClient::InProcess),
+        AppServerTarget::Embedded => {
+            let result = start_embedded_app_server(
+                arg0_paths,
+                config,
+                cli_kv_overrides,
+                loader_overrides,
+                cloud_requirements,
+                feedback,
+                log_db,
+                state_db,
+                environment_manager,
+            )
+            .await
+            .map(AppServerClient::InProcess);
+            log_startup_timing(
+                "start_embedded_app_server",
+                start.elapsed(),
+                start.elapsed(),
+            );
+            result
+        }
         AppServerTarget::Remote {
             websocket_url,
             auth_token,
-        } => connect_remote_app_server(websocket_url.clone(), auth_token.clone()).await,
+        } => {
+            let result = connect_remote_app_server(websocket_url.clone(), auth_token.clone()).await;
+            log_startup_timing(
+                "connect_remote_app_server",
+                start.elapsed(),
+                start.elapsed(),
+            );
+            result
+        }
     }
 }
 
@@ -709,6 +739,8 @@ pub async fn run_main(
     remote: Option<String>,
     remote_auth_token: Option<String>,
 ) -> std::io::Result<AppExitInfo> {
+    let startup_start = Instant::now();
+    let mut stage_start = startup_start;
     let remote_url = remote;
     if let (Some(websocket_url), Some(_)) = (remote_url.as_deref(), remote_auth_token.as_ref()) {
         validate_remote_auth_token_transport(websocket_url).map_err(std::io::Error::other)?;
@@ -767,7 +799,9 @@ pub async fn run_main(
             std::process::exit(1);
         }
     };
+    let codex_home_elapsed = stage_start.elapsed();
 
+    stage_start = Instant::now();
     let local_runtime_paths = ExecServerRuntimePaths::from_optional_paths(
         arg0_paths.codex_self_exe.clone(),
         arg0_paths.codex_linux_sandbox_exe.clone(),
@@ -780,10 +814,12 @@ pub async fn run_main(
         }
         .map(Arc::new)
         .map_err(std::io::Error::other)?;
+    let environment_manager_elapsed = stage_start.elapsed();
     let cwd = cli.cwd.clone();
     let config_cwd =
         config_cwd_for_app_server_target(cwd.as_deref(), &app_server_target, &environment_manager)?;
 
+    stage_start = Instant::now();
     #[allow(clippy::print_stderr)]
     let config_toml = match load_config_as_toml_with_cli_and_loader_overrides(
         &codex_home,
@@ -810,7 +846,9 @@ pub async fn run_main(
             std::process::exit(1);
         }
     };
+    let config_toml_elapsed = stage_start.elapsed();
 
+    stage_start = Instant::now();
     let chatgpt_base_url = config_toml
         .chatgpt_base_url
         .clone()
@@ -822,6 +860,7 @@ pub async fn run_main(
         chatgpt_base_url,
     )
     .await;
+    let cloud_requirements_elapsed = stage_start.elapsed();
 
     let model_provider_override = if cli.oss {
         let resolved = resolve_oss_provider(
@@ -880,18 +919,23 @@ pub async fn run_main(
         ..Default::default()
     };
 
+    stage_start = Instant::now();
     let mut config = load_config_or_exit(
         cli_kv_overrides.clone(),
         overrides.clone(),
         cloud_requirements.clone(),
     )
     .await;
+    let config_elapsed = stage_start.elapsed();
 
+    stage_start = Instant::now();
     let state_db = match &app_server_target {
         AppServerTarget::Embedded => state_db::init(&config).await,
         AppServerTarget::Remote { .. } => state_db::get_state_db(&config).await,
     };
+    let state_db_elapsed = stage_start.elapsed();
 
+    stage_start = Instant::now();
     let effective_toml = config.config_layer_stack.effective_config();
     match effective_toml.try_into() {
         Ok(config_toml) => {
@@ -926,7 +970,9 @@ pub async fn run_main(
             tracing::warn!(error = %err, "failed to deserialize config for personality migration");
         }
     }
+    let personality_migration_elapsed = stage_start.elapsed();
 
+    stage_start = Instant::now();
     #[allow(clippy::print_stderr)]
     match check_execpolicy_for_warnings(&config.config_layer_stack).await {
         Ok(None) => {}
@@ -938,6 +984,7 @@ pub async fn run_main(
             std::process::exit(1);
         }
     }
+    let exec_policy_elapsed = stage_start.elapsed();
 
     set_default_client_residency_requirement(config.enforce_residency.value());
 
@@ -954,6 +1001,7 @@ pub async fn run_main(
     }
 
     if matches!(app_server_target, AppServerTarget::Embedded) {
+        stage_start = Instant::now();
         #[allow(clippy::print_stderr)]
         if let Err(err) = enforce_login_restrictions(&AuthConfig {
             codex_home: config.codex_home.to_path_buf(),
@@ -968,7 +1016,9 @@ pub async fn run_main(
             std::process::exit(1);
         }
     }
+    let login_restrictions_elapsed = stage_start.elapsed();
 
+    stage_start = Instant::now();
     let log_dir = crate::legacy_core::config::log_dir(&config)?;
     std::fs::create_dir_all(&log_dir)?;
     // Open (or create) your log file, appending to it.
@@ -1071,6 +1121,46 @@ pub async fn run_main(
         .with(otel_logger_layer)
         .with(otel_tracing_layer)
         .try_init();
+    let logging_init_elapsed = stage_start.elapsed();
+
+    log_startup_timing(
+        "find_codex_home",
+        codex_home_elapsed,
+        startup_start.elapsed(),
+    );
+    log_startup_timing(
+        "environment_manager",
+        environment_manager_elapsed,
+        startup_start.elapsed(),
+    );
+    log_startup_timing(
+        "load_config_toml",
+        config_toml_elapsed,
+        startup_start.elapsed(),
+    );
+    log_startup_timing(
+        "cloud_requirements_loader",
+        cloud_requirements_elapsed,
+        startup_start.elapsed(),
+    );
+    log_startup_timing("load_config", config_elapsed, startup_start.elapsed());
+    log_startup_timing("state_db", state_db_elapsed, startup_start.elapsed());
+    log_startup_timing(
+        "personality_migration",
+        personality_migration_elapsed,
+        startup_start.elapsed(),
+    );
+    log_startup_timing("exec_policy", exec_policy_elapsed, startup_start.elapsed());
+    log_startup_timing(
+        "login_restrictions",
+        login_restrictions_elapsed,
+        startup_start.elapsed(),
+    );
+    log_startup_timing(
+        "logging_init",
+        logging_init_elapsed,
+        startup_start.elapsed(),
+    );
 
     run_ratatui_app(
         cli,

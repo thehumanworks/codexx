@@ -9348,6 +9348,10 @@ impl ChatWidget {
             .set_connectors_enabled(self.connectors_enabled());
     }
 
+    pub(crate) fn update_model_catalog(&mut self, model_catalog: Arc<ModelCatalog>) {
+        self.model_catalog = model_catalog;
+    }
+
     pub(crate) fn set_realtime_audio_device(
         &mut self,
         kind: RealtimeAudioDeviceKind,

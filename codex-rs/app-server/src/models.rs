@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Instant;
 
 use codex_app_server_protocol::Model;
 use codex_app_server_protocol::ModelServiceTier;
@@ -13,13 +14,23 @@ pub async fn supported_models(
     thread_manager: Arc<ThreadManager>,
     include_hidden: bool,
 ) -> Vec<Model> {
-    thread_manager
+    let start = Instant::now();
+    let models = thread_manager
         .list_models(RefreshStrategy::OnlineIfUncached)
         .await
         .into_iter()
         .filter(|preset| include_hidden || preset.show_in_picker)
         .map(model_from_preset)
-        .collect()
+        .collect::<Vec<_>>();
+    tracing::info!(
+        target: "codex_tui::startup_timing",
+        step = "app_server.model/list",
+        elapsed_ms = start.elapsed().as_millis(),
+        model_count = models.len(),
+        include_hidden,
+        "startup timing"
+    );
+    models
 }
 
 fn model_from_preset(preset: ModelPreset) -> Model {

@@ -119,6 +119,7 @@ use color_eyre::eyre::Result;
 use color_eyre::eyre::WrapErr;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::Instant;
 
 fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> color_eyre::Report {
     color_eyre::eyre::eyre!("{context}: {err}")
@@ -130,6 +131,7 @@ fn bootstrap_request_error(context: &'static str, err: TypedRequestError) -> col
 /// Rate-limit snapshots are intentionally **not** included here; they are
 /// fetched asynchronously after bootstrap returns so that the TUI can render
 /// its first frame without waiting for the rate-limit round-trip.
+#[derive(Debug)]
 pub(crate) struct AppServerBootstrap {
     pub(crate) account_email: Option<String>,
     pub(crate) auth_mode: Option<TelemetryAuthMode>,
@@ -166,9 +168,16 @@ impl ThreadParamsMode {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct AppServerStartedThread {
     pub(crate) session: ThreadSessionState,
     pub(crate) turns: Vec<Turn>,
+}
+
+#[derive(Debug)]
+pub(crate) struct AppServerStartupHydration {
+    pub(crate) bootstrap: AppServerBootstrap,
+    pub(crate) started: AppServerStartedThread,
 }
 
 impl AppServerSession {
@@ -194,8 +203,18 @@ impl AppServerSession {
     }
 
     pub(crate) async fn bootstrap(&mut self, config: &Config) -> Result<AppServerBootstrap> {
+        let bootstrap_start = Instant::now();
+        let account_start = Instant::now();
         let account = self.read_account().await?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "account/read",
+            elapsed_ms = account_start.elapsed().as_millis(),
+            total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+            "startup timing"
+        );
         let model_request_id = self.next_request_id();
+        let model_list_start = Instant::now();
         let models: ModelListResponse = self
             .client
             .request_typed(ClientRequest::ModelList {
@@ -210,6 +229,13 @@ impl AppServerSession {
             .map_err(|err| {
                 bootstrap_request_error("model/list failed during TUI bootstrap", err)
             })?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "model/list",
+            elapsed_ms = model_list_start.elapsed().as_millis(),
+            total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+            "startup timing"
+        );
         let available_models = models
             .data
             .into_iter()
@@ -266,6 +292,13 @@ impl AppServerSession {
             }
             None => (None, None, None, None, FeedbackAudience::External, false),
         };
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "bootstrap_total",
+            elapsed_ms = bootstrap_start.elapsed().as_millis(),
+            total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+            "startup timing"
+        );
         Ok(AppServerBootstrap {
             account_email,
             auth_mode,
@@ -335,6 +368,7 @@ impl AppServerSession {
         config: &Config,
         session_start_source: Option<ThreadStartSource>,
     ) -> Result<AppServerStartedThread> {
+        let start = Instant::now();
         let request_id = self.next_request_id();
         let response: ThreadStartResponse = self
             .client
@@ -351,7 +385,17 @@ impl AppServerSession {
             .map_err(|err| {
                 bootstrap_request_error("thread/start failed during TUI bootstrap", err)
             })?;
-        started_thread_from_start_response(response, config, self.thread_params_mode()).await
+        let request_elapsed = start.elapsed();
+        let started =
+            started_thread_from_start_response(response, config, self.thread_params_mode()).await?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "thread/start",
+            elapsed_ms = request_elapsed.as_millis(),
+            total_elapsed_ms = start.elapsed().as_millis(),
+            "startup timing"
+        );
+        Ok(started)
     }
 
     pub(crate) async fn resume_thread(
@@ -962,11 +1006,172 @@ impl AppServerSession {
         self.client.request_handle()
     }
 
+    pub(crate) async fn start_fresh_hydration_with_request_handle(
+        request_handle: AppServerRequestHandle,
+        config: Config,
+        is_remote: bool,
+        remote_cwd_override: Option<PathBuf>,
+    ) -> Result<AppServerStartupHydration> {
+        let thread_params_mode = if is_remote {
+            ThreadParamsMode::Remote
+        } else {
+            ThreadParamsMode::Embedded
+        };
+        let bootstrap = bootstrap_with_request_handle(&request_handle, &config).await?;
+        let start = Instant::now();
+        let response: ThreadStartResponse = request_handle
+            .request_typed(ClientRequest::ThreadStart {
+                request_id: RequestId::String(format!("startup-thread-{}", uuid::Uuid::new_v4())),
+                params: thread_start_params_from_config(
+                    &config,
+                    thread_params_mode,
+                    remote_cwd_override.as_deref(),
+                    /*session_start_source*/ None,
+                ),
+            })
+            .await
+            .map_err(|err| {
+                bootstrap_request_error("thread/start failed during async TUI startup", err)
+            })?;
+        let request_elapsed = start.elapsed();
+        let started =
+            started_thread_from_start_response(response, &config, thread_params_mode).await?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "thread/start",
+            elapsed_ms = request_elapsed.as_millis(),
+            total_elapsed_ms = start.elapsed().as_millis(),
+            "startup timing"
+        );
+        Ok(AppServerStartupHydration { bootstrap, started })
+    }
+
     fn next_request_id(&mut self) -> RequestId {
         let request_id = self.next_request_id;
         self.next_request_id += 1;
         RequestId::Integer(request_id)
     }
+}
+
+async fn bootstrap_with_request_handle(
+    request_handle: &AppServerRequestHandle,
+    config: &Config,
+) -> Result<AppServerBootstrap> {
+    let bootstrap_start = Instant::now();
+    let account_start = Instant::now();
+    let account: GetAccountResponse = request_handle
+        .request_typed(ClientRequest::GetAccount {
+            request_id: RequestId::String(format!("startup-account-{}", uuid::Uuid::new_v4())),
+            params: GetAccountParams {
+                refresh_token: false,
+            },
+        })
+        .await
+        .map_err(|err| {
+            bootstrap_request_error("account/read failed during async TUI startup", err)
+        })?;
+    tracing::info!(
+        target: "codex_tui::startup_timing",
+        step = "account/read",
+        elapsed_ms = account_start.elapsed().as_millis(),
+        total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+        "startup timing"
+    );
+    let model_list_start = Instant::now();
+    let models: ModelListResponse = request_handle
+        .request_typed(ClientRequest::ModelList {
+            request_id: RequestId::String(format!("startup-model-list-{}", uuid::Uuid::new_v4())),
+            params: ModelListParams {
+                cursor: None,
+                limit: None,
+                include_hidden: Some(true),
+            },
+        })
+        .await
+        .map_err(|err| {
+            bootstrap_request_error("model/list failed during async TUI startup", err)
+        })?;
+    tracing::info!(
+        target: "codex_tui::startup_timing",
+        step = "model/list",
+        elapsed_ms = model_list_start.elapsed().as_millis(),
+        total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+        "startup timing"
+    );
+    let available_models = models
+        .data
+        .into_iter()
+        .map(model_preset_from_api_model)
+        .collect::<Vec<_>>();
+    let default_model = config
+        .model
+        .clone()
+        .or_else(|| {
+            available_models
+                .iter()
+                .find(|model| model.is_default)
+                .map(|model| model.model.clone())
+        })
+        .or_else(|| available_models.first().map(|model| model.model.clone()))
+        .wrap_err("model/list returned no models for async TUI startup")?;
+
+    let (
+        account_email,
+        auth_mode,
+        status_account_display,
+        plan_type,
+        feedback_audience,
+        has_chatgpt_account,
+    ) = match account.account {
+        Some(Account::ApiKey {}) => (
+            None,
+            Some(TelemetryAuthMode::ApiKey),
+            Some(StatusAccountDisplay::ApiKey),
+            None,
+            FeedbackAudience::External,
+            false,
+        ),
+        Some(Account::Chatgpt { email, plan_type }) => {
+            let feedback_audience = if email.ends_with("@openai.com") {
+                FeedbackAudience::OpenAiEmployee
+            } else {
+                FeedbackAudience::External
+            };
+            (
+                Some(email.clone()),
+                Some(TelemetryAuthMode::Chatgpt),
+                Some(StatusAccountDisplay::ChatGpt {
+                    email: Some(email),
+                    plan: Some(plan_type_display_name(plan_type)),
+                }),
+                Some(plan_type),
+                feedback_audience,
+                true,
+            )
+        }
+        Some(Account::AmazonBedrock {}) => {
+            (None, None, None, None, FeedbackAudience::External, false)
+        }
+        None => (None, None, None, None, FeedbackAudience::External, false),
+    };
+    tracing::info!(
+        target: "codex_tui::startup_timing",
+        step = "bootstrap_total",
+        elapsed_ms = bootstrap_start.elapsed().as_millis(),
+        total_elapsed_ms = bootstrap_start.elapsed().as_millis(),
+        "startup timing"
+    );
+    Ok(AppServerBootstrap {
+        account_email,
+        auth_mode,
+        status_account_display,
+        plan_type,
+        requires_openai_auth: account.requires_openai_auth,
+        default_model,
+        feedback_audience,
+        has_chatgpt_account,
+        available_models,
+    })
 }
 
 fn thread_realtime_start_params(

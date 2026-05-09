@@ -5,6 +5,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::time::Instant;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 
@@ -421,6 +422,16 @@ pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 512;
 const CYBER_VERIFY_URL: &str = "https://chatgpt.com/cyber";
 const CYBER_SAFETY_URL: &str = "https://developers.openai.com/codex/concepts/cyber-safety";
 
+fn log_startup_timing(step: &'static str, elapsed: Instant, total_start: Instant) {
+    tracing::info!(
+        target: "codex_tui::startup_timing",
+        step,
+        elapsed_ms = elapsed.elapsed().as_millis(),
+        total_elapsed_ms = total_start.elapsed().as_millis(),
+        "startup timing"
+    );
+}
+
 impl Codex {
     /// Spawn a new [`Codex`] and initialize the session.
     pub(crate) async fn spawn(args: CodexSpawnArgs) -> CodexResult<CodexSpawnOk> {
@@ -448,6 +459,7 @@ impl Codex {
     }
 
     async fn spawn_internal(args: CodexSpawnArgs) -> CodexResult<CodexSpawnOk> {
+        let spawn_start = Instant::now();
         let CodexSpawnArgs {
             mut config,
             installation_id,
@@ -478,6 +490,7 @@ impl Codex {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
         let fs = environment_selections.primary_filesystem();
+        let setup_start = Instant::now();
         let plugins_input = config.plugins_config_input();
         let plugin_outcome = plugins_manager.plugins_for_config(&plugins_input).await;
         let effective_skill_roots = plugin_outcome.effective_plugin_skill_roots();
@@ -504,7 +517,9 @@ impl Codex {
         let user_instructions = AgentsMdManager::new(&config)
             .user_instructions(primary_environment.as_deref())
             .await;
+        log_startup_timing("core.codex_spawn.setup", setup_start, spawn_start);
 
+        let exec_policy_start = Instant::now();
         let exec_policy = if crate::guardian::is_guardian_reviewer_source(&session_source) {
             // Guardian review should rely on the built-in shell safety checks,
             // not on caller-provided exec-policy rules that could shape the
@@ -519,6 +534,11 @@ impl Codex {
                     .map_err(|err| CodexErr::Fatal(format!("failed to load rules: {err}")))?,
             )
         };
+        log_startup_timing(
+            "core.codex_spawn.exec_policy",
+            exec_policy_start,
+            spawn_start,
+        );
 
         let config = Arc::new(config);
         let refresh_strategy = if session_source.is_non_root_agent() {
@@ -526,6 +546,7 @@ impl Codex {
         } else {
             codex_models_manager::manager::RefreshStrategy::OnlineIfUncached
         };
+        let model_prewarm_start = Instant::now();
         if config.model.is_none()
             || !matches!(
                 refresh_strategy,
@@ -534,14 +555,26 @@ impl Codex {
         {
             let _ = models_manager.list_models(refresh_strategy).await;
         }
+        log_startup_timing(
+            "core.codex_spawn.model_prewarm",
+            model_prewarm_start,
+            spawn_start,
+        );
+        let default_model_start = Instant::now();
         let model = models_manager
             .get_default_model(&config.model, refresh_strategy)
             .await;
+        log_startup_timing(
+            "core.codex_spawn.default_model",
+            default_model_start,
+            spawn_start,
+        );
 
         // Resolve base instructions for the session. Priority order:
         // 1. config.base_instructions override
         // 2. conversation history => session_meta.base_instructions
         // 3. base_instructions for current model
+        let model_info_start = Instant::now();
         let model_info = models_manager
             .get_model_info(model.as_str(), &config.to_models_manager_config())
             .await;
@@ -550,9 +583,11 @@ impl Codex {
             .clone()
             .or_else(|| conversation_history.get_base_instructions().map(|s| s.text))
             .unwrap_or_else(|| model_info.get_model_instructions(config.personality));
+        log_startup_timing("core.codex_spawn.model_info", model_info_start, spawn_start);
 
         // Respect thread-start tools. When missing (resumed/forked threads), read from the db
         // first, then fall back to rollout-file tools.
+        let dynamic_tools_start = Instant::now();
         let persisted_tools = if dynamic_tools.is_empty() {
             let thread_id = match &conversation_history {
                 InitialHistory::Resumed(resumed) => Some(resumed.conversation_id),
@@ -585,6 +620,11 @@ impl Codex {
         } else {
             dynamic_tools
         };
+        log_startup_timing(
+            "core.codex_spawn.dynamic_tools",
+            dynamic_tools_start,
+            spawn_start,
+        );
         // TODO (aibrahim): Consolidate config.model and config.model_reasoning_effort into config.collaboration_mode
         // to avoid extracting these fields separately and constructing CollaborationMode here.
         let collaboration_mode = CollaborationMode {
@@ -639,6 +679,7 @@ impl Codex {
         let session_source_clone = session_configuration.session_source.clone();
         let (agent_status_tx, agent_status_rx) = watch::channel(AgentStatus::PendingInit);
 
+        let session_new_start = Instant::now();
         let session = Session::new(
             session_configuration,
             config.clone(),
@@ -666,15 +707,26 @@ impl Codex {
             error!("Failed to create session: {e:#}");
             map_session_init_error(&e, &config.codex_home)
         })?;
+        log_startup_timing(
+            "core.codex_spawn.session_new",
+            session_new_start,
+            spawn_start,
+        );
         let thread_id = session.conversation_id;
 
         // This task will run until Op::Shutdown is received.
+        let session_loop_start = Instant::now();
         let session_for_loop = Arc::clone(&session);
         let session_loop_handle = tokio::spawn(async move {
             submission_loop(session_for_loop, config, rx_sub)
                 .instrument(info_span!("session_loop", thread_id = %thread_id))
                 .await;
         });
+        log_startup_timing(
+            "core.codex_spawn.session_loop_spawn",
+            session_loop_start,
+            spawn_start,
+        );
         let codex = Codex {
             tx_sub,
             rx_event,
@@ -682,6 +734,12 @@ impl Codex {
             session,
             session_loop_termination: session_loop_termination_from_handle(session_loop_handle),
         };
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "core.codex_spawn.total",
+            elapsed_ms = spawn_start.elapsed().as_millis(),
+            "startup timing"
+        );
 
         Ok(CodexSpawnOk { codex, thread_id })
     }

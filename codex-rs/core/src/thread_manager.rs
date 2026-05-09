@@ -71,6 +71,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::runtime::Handle;
 use tokio::runtime::RuntimeFlavor;
 use tokio::sync::RwLock;
@@ -1141,6 +1142,7 @@ impl ThreadManagerState {
         environments: Vec<TurnEnvironmentSelection>,
         user_shell_override: Option<crate::shell::Shell>,
     ) -> CodexResult<NewThread> {
+        let spawn_start = Instant::now();
         let is_resumed_thread = matches!(&initial_history, InitialHistory::Resumed(_));
         if let InitialHistory::Resumed(resumed) = &initial_history {
             let mut threads = self.threads.write().await;
@@ -1163,6 +1165,7 @@ impl ThreadManagerState {
                 threads.remove(&resumed.conversation_id);
             }
         }
+        let pre_spawn_start = Instant::now();
         let environment_selections =
             resolve_environment_selections(self.environment_manager.as_ref(), &environments)?;
         let watch_registration = match environment_selections.primary() {
@@ -1181,7 +1184,15 @@ impl ThreadManagerState {
         let parent_rollout_thread_trace = self
             .parent_rollout_thread_trace_for_source(&session_source, &initial_history)
             .await;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "core.thread_spawn.pre_spawn",
+            elapsed_ms = pre_spawn_start.elapsed().as_millis(),
+            total_elapsed_ms = spawn_start.elapsed().as_millis(),
+            "startup timing"
+        );
         let tracked_session_source = session_source.clone();
+        let codex_spawn_start = Instant::now();
         let CodexSpawnOk {
             codex, thread_id, ..
         } = Codex::spawn(CodexSpawnArgs {
@@ -1212,14 +1223,36 @@ impl ThreadManagerState {
             attestation_provider: self.attestation_provider.clone(),
         })
         .await?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "core.thread_spawn.codex_spawn",
+            elapsed_ms = codex_spawn_start.elapsed().as_millis(),
+            total_elapsed_ms = spawn_start.elapsed().as_millis(),
+            "startup timing"
+        );
+        let finalize_start = Instant::now();
         let new_thread = self
             .finalize_thread_spawn(codex, thread_id, tracked_session_source, watch_registration)
             .await?;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "core.thread_spawn.finalize",
+            elapsed_ms = finalize_start.elapsed().as_millis(),
+            total_elapsed_ms = spawn_start.elapsed().as_millis(),
+            "startup timing"
+        );
         if is_resumed_thread
             && let Err(err) = new_thread.thread.apply_goal_resume_runtime_effects().await
         {
             warn!("failed to apply goal resume runtime effects: {err}");
         }
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "core.thread_spawn.total",
+            elapsed_ms = spawn_start.elapsed().as_millis(),
+            resumed = is_resumed_thread,
+            "startup timing"
+        );
         Ok(new_thread)
     }
 

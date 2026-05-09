@@ -13,6 +13,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::sync::TryLockError;
 use tracing::Instrument as _;
@@ -266,6 +267,7 @@ impl ModelsManager for OpenAiModelsManager {
 impl OpenAiModelsManager {
     /// Refresh available models according to the specified strategy.
     async fn refresh_available_models(&self, refresh_strategy: RefreshStrategy) -> CoreResult<()> {
+        let refresh_start = Instant::now();
         if !self.should_refresh_models().await {
             if matches!(
                 refresh_strategy,
@@ -273,6 +275,13 @@ impl OpenAiModelsManager {
             ) {
                 self.try_load_cache().await;
             }
+            tracing::info!(
+                target: "codex_tui::startup_timing",
+                step = "models_manager.refresh.skip_remote",
+                elapsed_ms = refresh_start.elapsed().as_millis(),
+                refresh_strategy = %refresh_strategy,
+                "startup timing"
+            );
             return Ok(());
         }
 
@@ -280,25 +289,52 @@ impl OpenAiModelsManager {
             RefreshStrategy::Offline => {
                 // Only try to load from cache, never fetch
                 self.try_load_cache().await;
+                tracing::info!(
+                    target: "codex_tui::startup_timing",
+                    step = "models_manager.refresh.offline",
+                    elapsed_ms = refresh_start.elapsed().as_millis(),
+                    "startup timing"
+                );
                 Ok(())
             }
             RefreshStrategy::OnlineIfUncached => {
                 // Try cache first, fall back to online if unavailable
                 if self.try_load_cache().await {
                     info!("models cache: using cached models for OnlineIfUncached");
+                    tracing::info!(
+                        target: "codex_tui::startup_timing",
+                        step = "models_manager.refresh.cache_hit",
+                        elapsed_ms = refresh_start.elapsed().as_millis(),
+                        "startup timing"
+                    );
                     return Ok(());
                 }
                 info!("models cache: cache miss, fetching remote models");
-                self.fetch_and_update_models().await
+                let result = self.fetch_and_update_models().await;
+                tracing::info!(
+                    target: "codex_tui::startup_timing",
+                    step = "models_manager.refresh.cache_miss_fetch",
+                    elapsed_ms = refresh_start.elapsed().as_millis(),
+                    "startup timing"
+                );
+                result
             }
             RefreshStrategy::Online => {
                 // Always fetch from network
-                self.fetch_and_update_models().await
+                let result = self.fetch_and_update_models().await;
+                tracing::info!(
+                    target: "codex_tui::startup_timing",
+                    step = "models_manager.refresh.online",
+                    elapsed_ms = refresh_start.elapsed().as_millis(),
+                    "startup timing"
+                );
+                result
             }
         }
     }
 
     async fn fetch_and_update_models(&self) -> CoreResult<()> {
+        let fetch_start = Instant::now();
         let client_version = crate::client_version_to_whole();
         let (models, etag) = self.endpoint_client.list_models(&client_version).await?;
         self.apply_remote_models(models.clone()).await;
@@ -306,6 +342,13 @@ impl OpenAiModelsManager {
         self.cache_manager
             .persist_cache(&models, etag, client_version)
             .await;
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "models_manager.fetch_and_update_models",
+            elapsed_ms = fetch_start.elapsed().as_millis(),
+            model_count = models.len(),
+            "startup timing"
+        );
         Ok(())
     }
 
@@ -335,6 +378,7 @@ impl OpenAiModelsManager {
 
     /// Attempt to satisfy the refresh from the cache when it matches the provider and TTL.
     async fn try_load_cache(&self) -> bool {
+        let load_start = Instant::now();
         let _timer =
             codex_otel::start_global_timer("codex.remote_models.load_cache.duration_ms", &[]);
         let client_version = crate::client_version_to_whole();
@@ -345,6 +389,12 @@ impl OpenAiModelsManager {
             Some(cache) => cache,
             None => {
                 info!("models cache: no usable cache entry");
+                tracing::info!(
+                    target: "codex_tui::startup_timing",
+                    step = "models_manager.try_load_cache.miss",
+                    elapsed_ms = load_start.elapsed().as_millis(),
+                    "startup timing"
+                );
                 return false;
             }
         };
@@ -355,6 +405,13 @@ impl OpenAiModelsManager {
             models_count = models.len(),
             etag = ?cache.etag,
             "models cache: cache entry applied"
+        );
+        tracing::info!(
+            target: "codex_tui::startup_timing",
+            step = "models_manager.try_load_cache.hit",
+            elapsed_ms = load_start.elapsed().as_millis(),
+            model_count = models.len(),
+            "startup timing"
         );
         true
     }
