@@ -6,6 +6,8 @@ use codex_utils_absolute_path::test_support::PathBufExt;
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
+#[cfg(target_os = "macos")]
+use std::path::Path;
 use std::process::ExitStatus;
 use tokio::fs::create_dir_all;
 use tokio::process::Child;
@@ -359,6 +361,124 @@ async fn sandbox_distinguishes_command_and_policy_cwds() {
     assert!(allowed_exists, "allowed path should exist");
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn macos_workspace_write_allows_existing_hard_link_write_through() {
+    core_test_support::skip_if_sandbox!();
+
+    let temp = tempfile::tempdir().expect("should create temp dir");
+    let workspace_dir = temp.path().join("workspace");
+    let outside_dir = temp.path().join("outside");
+    create_dir_all(&workspace_dir)
+        .await
+        .expect("mkdir workspace");
+    create_dir_all(&outside_dir).await.expect("mkdir outside");
+    let victim = outside_dir.join("victim.txt");
+    tokio::fs::write(&victim, "original")
+        .await
+        .expect("write victim");
+    std::fs::hard_link(&victim, workspace_dir.join("hard.txt")).expect("create hard link");
+
+    let output = run_macos_workspace_write_command(
+        &workspace_dir,
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "printf pwned > hard.txt".to_string(),
+        ],
+    )
+    .await;
+
+    assert!(
+        output.status.success(),
+        "sandbox should allow writing through an existing hard link: {}",
+        command_output_details(&output)
+    );
+    let victim_contents = tokio::fs::read_to_string(&victim)
+        .await
+        .expect("read victim");
+    assert_eq!(victim_contents, "pwned");
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn macos_workspace_write_rejects_existing_symlink_write_through() {
+    core_test_support::skip_if_sandbox!();
+
+    let temp = tempfile::tempdir().expect("should create temp dir");
+    let workspace_dir = temp.path().join("workspace");
+    let outside_dir = temp.path().join("outside");
+    create_dir_all(&workspace_dir)
+        .await
+        .expect("mkdir workspace");
+    create_dir_all(&outside_dir).await.expect("mkdir outside");
+    let victim = outside_dir.join("victim.txt");
+    tokio::fs::write(&victim, "original")
+        .await
+        .expect("write victim");
+    std::os::unix::fs::symlink(&victim, workspace_dir.join("soft.txt")).expect("create symlink");
+
+    let output = run_macos_workspace_write_command(
+        &workspace_dir,
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "printf pwned > soft.txt".to_string(),
+        ],
+    )
+    .await;
+
+    assert!(
+        !output.status.success(),
+        "sandbox unexpectedly allowed writing through a symlink: {}",
+        command_output_details(&output)
+    );
+    let victim_contents = tokio::fs::read_to_string(&victim)
+        .await
+        .expect("read victim");
+    assert_eq!(victim_contents, "original");
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn macos_workspace_write_rejects_creating_hard_link_to_outside_file() {
+    core_test_support::skip_if_sandbox!();
+
+    let temp = tempfile::tempdir().expect("should create temp dir");
+    let workspace_dir = temp.path().join("workspace");
+    let outside_dir = temp.path().join("outside");
+    create_dir_all(&workspace_dir)
+        .await
+        .expect("mkdir workspace");
+    create_dir_all(&outside_dir).await.expect("mkdir outside");
+    let victim = outside_dir.join("victim.txt");
+    tokio::fs::write(&victim, "original")
+        .await
+        .expect("write victim");
+
+    let output = run_macos_workspace_write_command(
+        &workspace_dir,
+        vec![
+            "/bin/sh".to_string(),
+            "-c".to_string(),
+            "ln \"$1\" hard.txt && printf pwned > hard.txt".to_string(),
+            "sh".to_string(),
+            victim.to_string_lossy().into_owned(),
+        ],
+    )
+    .await;
+
+    assert!(
+        !output.status.success(),
+        "sandbox unexpectedly allowed creating a hard link to an outside file: {}",
+        command_output_details(&output)
+    );
+    let victim_contents = tokio::fs::read_to_string(&victim)
+        .await
+        .expect("read victim");
+    assert_eq!(victim_contents, "original");
+}
+
 #[tokio::test]
 async fn sandbox_blocks_first_time_dot_codex_creation() {
     core_test_support::skip_if_sandbox!();
@@ -428,6 +548,47 @@ async fn sandbox_blocks_first_time_dot_codex_creation() {
         "{} should not have been created",
         config_toml.display()
     );
+}
+
+#[cfg(target_os = "macos")]
+async fn run_macos_workspace_write_command(
+    workspace_dir: &Path,
+    command: Vec<String>,
+) -> std::process::Output {
+    let workspace = workspace_dir.to_path_buf().abs();
+    let policy = SandboxPolicy::WorkspaceWrite {
+        writable_roots: vec![],
+        network_access: false,
+        exclude_tmpdir_env_var: true,
+        exclude_slash_tmp: true,
+    };
+    let child = match spawn_command_under_sandbox(
+        command,
+        workspace.clone(),
+        &policy,
+        &workspace,
+        StdioPolicy::RedirectForShellTool,
+        HashMap::new(),
+    )
+    .await
+    {
+        Ok(child) => child,
+        Err(err) => panic!("should spawn command under sandbox: {err}"),
+    };
+    match child.wait_with_output().await {
+        Ok(output) => output,
+        Err(err) => panic!("should collect sandboxed command output: {err}"),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn command_output_details(output: &std::process::Output) -> String {
+    format!(
+        "status={:?}, stdout={:?}, stderr={:?}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 fn unix_sock_body() {
