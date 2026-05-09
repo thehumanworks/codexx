@@ -69,6 +69,38 @@ impl App {
         }
     }
 
+    pub(super) async fn open_thread_goal_editor(
+        &mut self,
+        app_server: &mut AppServerSession,
+        thread_id: Option<ThreadId>,
+    ) {
+        let Some(thread_id) = thread_id else {
+            self.show_no_thread_goal_to_edit();
+            return;
+        };
+
+        let result = app_server.thread_goal_get(thread_id).await;
+        if self.current_displayed_thread_id() != Some(thread_id) {
+            return;
+        }
+
+        let response = match result {
+            Ok(response) => response,
+            Err(err) => {
+                self.chat_widget
+                    .add_error_message(format!("Failed to read thread goal: {err}"));
+                return;
+            }
+        };
+
+        let Some(goal) = response.goal else {
+            self.show_no_thread_goal_to_edit();
+            return;
+        };
+
+        self.chat_widget.show_goal_edit_prompt(thread_id, goal);
+    }
+
     pub(super) async fn set_thread_goal_objective(
         &mut self,
         app_server: &mut AppServerSession,
@@ -76,7 +108,7 @@ impl App {
         objective: String,
         mode: ThreadGoalSetMode,
     ) {
-        if mode == ThreadGoalSetMode::ConfirmIfExists {
+        if matches!(mode, ThreadGoalSetMode::ConfirmIfExists) {
             let result = app_server.thread_goal_get(thread_id).await;
             if self.current_displayed_thread_id() != Some(thread_id) {
                 return;
@@ -95,14 +127,18 @@ impl App {
                 }
             }
         }
+        let (status, token_budget) = match mode {
+            ThreadGoalSetMode::ConfirmIfExists | ThreadGoalSetMode::ReplaceExisting => {
+                (ThreadGoalStatus::Active, None)
+            }
+            ThreadGoalSetMode::UpdateExisting {
+                status,
+                token_budget,
+            } => (status, Some(token_budget)),
+        };
 
         let result = app_server
-            .thread_goal_set(
-                thread_id,
-                Some(objective),
-                Some(ThreadGoalStatus::Active),
-                /*token_budget*/ None,
-            )
+            .thread_goal_set(thread_id, Some(objective), Some(status), token_budget)
             .await;
         if self.current_displayed_thread_id() != Some(thread_id) {
             return;
@@ -207,5 +243,14 @@ impl App {
             items,
             ..Default::default()
         });
+    }
+
+    fn show_no_thread_goal_to_edit(&mut self) {
+        self.chat_widget
+            .add_error_message("No goal is currently set.".to_string());
+        self.chat_widget.add_info_message(
+            "Usage: /goal <objective>".to_string(),
+            Some("Create a goal before editing it.".to_string()),
+        );
     }
 }

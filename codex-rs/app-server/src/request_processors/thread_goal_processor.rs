@@ -157,7 +157,7 @@ impl ThreadGoalRequestProcessor {
                 goal.objective == objective
                     && goal.status != codex_state::ThreadGoalStatus::Complete
             }) {
-                let previous_status = ExternalGoalPreviousStatus::Existing(goal.status);
+                let previous_status = ExternalGoalPreviousStatus::from(goal);
                 state_db
                     .update_thread_goal(
                         thread_id,
@@ -177,7 +177,10 @@ impl ThreadGoalRequestProcessor {
                     })
                     .map(|goal| (goal, previous_status))
             } else {
-                let previous_status = ExternalGoalPreviousStatus::NewGoal;
+                let previous_status = existing_goal
+                    .as_ref()
+                    .map(ExternalGoalPreviousStatus::from)
+                    .unwrap_or(ExternalGoalPreviousStatus::NewGoal);
                 state_db
                     .replace_thread_goal(
                         thread_id,
@@ -198,7 +201,7 @@ impl ThreadGoalRequestProcessor {
                     "cannot update goal for thread {thread_id}: no goal exists"
                 )));
             };
-            let previous_status = ExternalGoalPreviousStatus::Existing(existing_goal.status);
+            let previous_status = ExternalGoalPreviousStatus::from(&existing_goal);
             state_db
                 .update_thread_goal(
                     thread_id,
