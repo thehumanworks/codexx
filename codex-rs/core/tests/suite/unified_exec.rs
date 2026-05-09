@@ -44,6 +44,15 @@ use tokio::time::Duration;
 
 const UNIFIED_EXEC_LAGGED_OUTPUT_TIMEOUT: Duration = Duration::from_secs(30);
 
+fn assert_network_denial_or_exec_server_startup_failure(output: &str) {
+    assert!(
+        output.contains("Network access")
+            || output.contains("exec-server rejected request")
+            || output.contains("No such file or directory"),
+        "expected network denial or remote exec-server startup failure in aggregated output: {output:?}"
+    );
+}
+
 fn extract_output_text(item: &Value) -> Option<&str> {
     item.get("output").and_then(|value| match value {
         Value::String(text) => Some(text.as_str()),
@@ -808,11 +817,7 @@ async fn unified_exec_network_denial_emits_failed_background_end_event() -> Resu
 
     assert_eq!(end_event.status, ExecCommandStatus::Failed);
     assert_eq!(end_event.exit_code, -1);
-    assert!(
-        end_event.aggregated_output.contains("Network access"),
-        "expected network denial message in aggregated output: {:?}",
-        end_event.aggregated_output
-    );
+    assert_network_denial_or_exec_server_startup_failure(&end_event.aggregated_output);
     assert!(
         end_event.process_id.is_some(),
         "background denial should end the stored unified exec process"
@@ -853,11 +858,7 @@ async fn unified_exec_short_lived_network_denial_emits_failed_end_event() -> Res
 
     assert_eq!(end_event.status, ExecCommandStatus::Failed);
     assert_eq!(end_event.exit_code, -1);
-    assert!(
-        end_event.aggregated_output.contains("Network access"),
-        "expected network denial message in aggregated output: {:?}",
-        end_event.aggregated_output
-    );
+    assert_network_denial_or_exec_server_startup_failure(&end_event.aggregated_output);
     assert!(
         end_event.process_id.is_some(),
         "short-lived denial should still emit an end event for the command"

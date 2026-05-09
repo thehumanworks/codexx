@@ -11,6 +11,9 @@ max-threads = 1
 [test-groups.core_apply_patch_cli_integration]
 max-threads = 1
 
+[test-groups.core_remote_environment_integration]
+max-threads = 1
+
 [test-groups.windows_sandbox_legacy_sessions]
 max-threads = 1
 
@@ -38,6 +41,13 @@ test-group = 'app_server_integration'
 # sensitive to Windows runner process-startup stalls when many cases launch at once.
 filter = 'package(codex-core) & kind(test) & test(apply_patch_cli)'
 test-group = 'core_apply_patch_cli_integration'
+
+[[profile.default.overrides]]
+# These tests share a single Docker-backed remote exec-server environment in CI.
+# Serialize them so process startup and filesystem probes do not contend with
+# each other and trip nextest's per-test timeout.
+filter = 'package(codex-core) & kind(test) & (test(remote_env) | test(view_image_routes_to_selected_remote_environment) | test(unified_exec_network_denial_emits_failed_background_end_event) | test(unified_exec_short_lived_network_denial_emits_failed_end_event))'
+test-group = 'core_remote_environment_integration'
 
 [[profile.default.overrides]]
 # These tests create restricted-token Windows child processes and private desktops.

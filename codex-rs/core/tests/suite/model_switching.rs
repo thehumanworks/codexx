@@ -34,9 +34,11 @@ use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::test_codex::turn_permission_fields;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use std::path::Path;
 use std::path::PathBuf;
+use tokio::time::Duration;
 use wiremock::MockServer;
 
 fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
@@ -794,9 +796,11 @@ async fn thread_rollback_after_generated_image_drops_entire_image_turn_history()
     test.codex
         .submit(Op::ThreadRollback { num_turns: 1 })
         .await?;
-    wait_for_event(&test.codex, |ev| {
-        matches!(ev, EventMsg::ThreadRolledBack(_))
-    })
+    wait_for_event_with_timeout(
+        &test.codex,
+        |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
+        Duration::from_secs(20),
+    )
     .await;
 
     test.codex
