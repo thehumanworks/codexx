@@ -221,6 +221,39 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             assert_eq!(exit_code, 0, "{label} stdout={stdout:?}");
         }
 
+        let public_read_without_deny = spawn_windows_sandbox_session_legacy(
+            "workspace-write",
+            fixture_dir.as_path(),
+            codex_home.path(),
+            vec![
+                "C:\\Windows\\System32\\cmd.exe".to_string(),
+                "/c".to_string(),
+                "type \"public.txt\" 2>&1".to_string(),
+            ],
+            fixture_dir.as_path(),
+            HashMap::new(),
+            Some(5_000),
+            &[],
+            &[],
+            /*tty*/ false,
+            /*stdin_open*/ false,
+            /*use_private_desktop*/ true,
+        )
+        .await
+        .expect("spawn legacy public read control session");
+        let (stdout, exit_code) = collect_stdout_and_exit(
+            public_read_without_deny,
+            codex_home.path(),
+            Duration::from_secs(10),
+        )
+        .await;
+        let stdout = String::from_utf8_lossy(&stdout);
+        assert_eq!(exit_code, 0, "control stdout={stdout:?}");
+        assert!(
+            stdout.contains("public allowed"),
+            "control stdout={stdout:?}"
+        );
+
         let public_read = spawn_windows_sandbox_session_legacy(
             "workspace-write",
             fixture_dir.as_path(),
@@ -228,7 +261,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                "type \"public.txt\"".to_string(),
+                "type \"public.txt\" 2>&1".to_string(),
             ],
             fixture_dir.as_path(),
             HashMap::new(),
@@ -244,7 +277,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         let (stdout, exit_code) =
             collect_stdout_and_exit(public_read, codex_home.path(), Duration::from_secs(10)).await;
         let stdout = String::from_utf8_lossy(&stdout);
-        assert_eq!(exit_code, 0, "stdout={stdout:?}");
+        assert_eq!(exit_code, 0, "deny stdout={stdout:?}");
         assert!(stdout.contains("public allowed"), "stdout={stdout:?}");
 
         let secret_read = spawn_windows_sandbox_session_legacy(
