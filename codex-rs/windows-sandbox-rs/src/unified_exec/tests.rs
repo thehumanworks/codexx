@@ -189,7 +189,6 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         let fixture_dir = cwd.join(format!("legacy-non-tty-deny-read-fixture-{fixture_id}"));
         let _ = fs::remove_dir_all(&fixture_dir);
         let secret_path = fixture_dir.join("secret.env");
-        let public_path = fixture_dir.join("public.txt");
         fs::create_dir_all(&fixture_dir).expect("create deny-read fixture");
 
         for (label, command) in [
