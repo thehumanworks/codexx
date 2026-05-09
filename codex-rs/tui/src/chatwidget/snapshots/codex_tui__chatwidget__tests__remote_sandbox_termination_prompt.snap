@@ -1,0 +1,11 @@
+---
+source: tui/src/chatwidget/tests/popups_and_settings.rs
+expression: popup
+---
+  Terminate remote sandbox?
+  modal sandbox sb-yes is still running.
+
+› 1. Yes, terminate sandbox (y)  Terminate the Modal sandbox before exiting Codex.
+  2. No, keep it running (n)     Leave the Modal sandbox running after Codex exits.
+
+  Press enter to confirm or esc to go back

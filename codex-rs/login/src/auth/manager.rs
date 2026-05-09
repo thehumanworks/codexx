@@ -464,6 +464,7 @@ impl ChatgptAuth {
 
 pub const OPENAI_API_KEY_ENV_VAR: &str = "OPENAI_API_KEY";
 pub const CODEX_API_KEY_ENV_VAR: &str = "CODEX_API_KEY";
+pub const CODEX_AUTH_TOKEN_ENV_VAR: &str = "CODEX_AUTH_TOKEN";
 pub const CODEX_ACCESS_TOKEN_ENV_VAR: &str = "CODEX_ACCESS_TOKEN";
 
 pub fn read_openai_api_key_from_env() -> Option<String> {
@@ -479,6 +480,10 @@ pub fn read_codex_api_key_from_env() -> Option<String> {
 
 pub fn read_codex_access_token_from_env() -> Option<String> {
     read_non_empty_env_var(CODEX_ACCESS_TOKEN_ENV_VAR)
+}
+
+pub fn read_codex_auth_token_from_env() -> Option<String> {
+    read_non_empty_env_var(CODEX_AUTH_TOKEN_ENV_VAR)
 }
 
 fn read_non_empty_env_var(key: &str) -> Option<String> {
@@ -732,6 +737,19 @@ async fn load_auth(
         return Ok(Some(CodexAuth::from_api_key(api_key.as_str())));
     }
 
+    // ChatGPT auth token via env var is process-local and should not require auth.json.
+    if let Some(auth_token) = read_codex_auth_token_from_env() {
+        let auth_dot_json = AuthDotJson::from_chatgpt_access_token(&auth_token, None, None)?;
+        let auth = CodexAuth::from_auth_dot_json(
+            codex_home,
+            auth_dot_json,
+            AuthCredentialsStoreMode::Ephemeral,
+            chatgpt_base_url,
+        )
+        .await?;
+        return Ok(Some(auth));
+    }
+
     // External ChatGPT auth tokens live in the in-memory (ephemeral) store. Always check this
     // first so external auth takes precedence over any persisted credentials.
     let ephemeral_storage = create_auth_storage(
@@ -926,26 +944,30 @@ fn refresh_token_endpoint() -> String {
 }
 
 impl AuthDotJson {
-    fn from_external_tokens(external: &ExternalAuthTokens) -> std::io::Result<Self> {
-        let Some(chatgpt_metadata) = external.chatgpt_metadata() else {
-            return Err(std::io::Error::other(
-                "external auth tokens are missing ChatGPT metadata",
-            ));
-        };
+    fn from_chatgpt_access_token(
+        access_token: &str,
+        chatgpt_account_id: Option<&str>,
+        chatgpt_plan_type: Option<&str>,
+    ) -> std::io::Result<Self> {
         let mut token_info =
-            parse_chatgpt_jwt_claims(&external.access_token).map_err(std::io::Error::other)?;
-        token_info.chatgpt_account_id = Some(chatgpt_metadata.account_id.clone());
-        token_info.chatgpt_plan_type = chatgpt_metadata
-            .plan_type
-            .as_deref()
-            .map(InternalPlanType::from_raw_value)
-            .or(token_info.chatgpt_plan_type)
-            .or(Some(InternalPlanType::Unknown("unknown".to_string())));
+            parse_chatgpt_jwt_claims(access_token).map_err(std::io::Error::other)?;
+        let account_id = chatgpt_account_id
+            .map(str::to_string)
+            .or_else(|| token_info.chatgpt_account_id.clone());
+        if let Some(chatgpt_account_id) = chatgpt_account_id {
+            token_info.chatgpt_account_id = Some(chatgpt_account_id.to_string());
+        }
+        if chatgpt_account_id.is_some() || chatgpt_plan_type.is_some() {
+            token_info.chatgpt_plan_type = chatgpt_plan_type
+                .map(InternalPlanType::from_raw_value)
+                .or(token_info.chatgpt_plan_type)
+                .or(Some(InternalPlanType::Unknown("unknown".to_string())));
+        }
         let tokens = TokenData {
             id_token: token_info,
-            access_token: external.access_token.clone(),
+            access_token: access_token.to_string(),
             refresh_token: String::new(),
-            account_id: Some(chatgpt_metadata.account_id.clone()),
+            account_id,
         };
 
         Ok(Self {
@@ -955,6 +977,19 @@ impl AuthDotJson {
             last_refresh: Some(Utc::now()),
             agent_identity: None,
         })
+    }
+
+    fn from_external_tokens(external: &ExternalAuthTokens) -> std::io::Result<Self> {
+        let Some(chatgpt_metadata) = external.chatgpt_metadata() else {
+            return Err(std::io::Error::other(
+                "external auth tokens are missing ChatGPT metadata",
+            ));
+        };
+        Self::from_chatgpt_access_token(
+            &external.access_token,
+            Some(&chatgpt_metadata.account_id),
+            chatgpt_metadata.plan_type.as_deref(),
+        )
     }
 
     fn from_external_access_token(

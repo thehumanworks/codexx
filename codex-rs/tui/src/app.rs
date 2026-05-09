@@ -58,6 +58,8 @@ use crate::multi_agents::format_agent_picker_item_name;
 use crate::multi_agents::next_agent_shortcut_matches;
 use crate::multi_agents::previous_agent_shortcut_matches;
 use crate::pager_overlay::Overlay;
+use crate::remote_session::RemoteSandboxSession;
+use crate::remote_session::RemoteSessionRequest;
 use crate::render::highlight::highlight_bash_to_lines;
 use crate::render::renderable::Renderable;
 use crate::resume_picker::SessionSelection;
@@ -192,6 +194,7 @@ mod input;
 mod loaded_threads;
 mod pending_interactive_replay;
 mod platform_actions;
+mod remote_session;
 mod replay_filter;
 mod resize_reflow;
 mod session_lifecycle;
@@ -477,6 +480,9 @@ pub(crate) struct App {
     environment_manager: Arc<EnvironmentManager>,
     remote_app_server_url: Option<String>,
     remote_app_server_auth_token: Option<String>,
+    remote_sandbox_session: Option<RemoteSandboxSession>,
+    remote_sandbox_exit_prompt_pending: bool,
+    pending_modal_initial_user_message: Option<crate::chatwidget::UserMessage>,
     /// Set when the user confirms an update; propagated on exit.
     pub(crate) pending_update_action: Option<UpdateAction>,
 
@@ -616,6 +622,7 @@ impl App {
         should_prompt_windows_sandbox_nux_at_startup: bool,
         remote_app_server_url: Option<String>,
         remote_app_server_auth_token: Option<String>,
+        initial_modal_request: Option<RemoteSessionRequest>,
         state_db: Option<StateDbHandle>,
         environment_manager: Arc<EnvironmentManager>,
     ) -> Result<AppExitInfo> {
@@ -732,6 +739,22 @@ impl App {
                 &initial_prompt,
                 &initial_images,
             );
+        let initial_user_message = crate::chatwidget::create_initial_user_message(
+            initial_prompt.clone(),
+            initial_images.clone(),
+            // CLI prompt args are plain strings, so they don't provide element ranges.
+            Vec::new(),
+        );
+        let pending_modal_initial_user_message = if initial_modal_request.is_some() {
+            initial_user_message.clone()
+        } else {
+            None
+        };
+        let local_initial_user_message = if initial_modal_request.is_some() {
+            None
+        } else {
+            initial_user_message
+        };
         let (mut chat_widget, initial_started_thread) = match session_selection {
             SessionSelection::StartFresh | SessionSelection::Exit => {
                 let started = app_server.start_thread(&config).await?;
@@ -744,12 +767,7 @@ impl App {
                     frame_requester: tui.frame_requester(),
                     app_event_tx: app_event_tx.clone(),
                     workspace_command_runner: Some(workspace_command_runner.clone()),
-                    initial_user_message: crate::chatwidget::create_initial_user_message(
-                        initial_prompt.clone(),
-                        initial_images.clone(),
-                        // CLI prompt args are plain strings, so they don't provide element ranges.
-                        Vec::new(),
-                    ),
+                    initial_user_message: local_initial_user_message.clone(),
                     enhanced_keys_supported,
                     has_chatgpt_account,
                     model_catalog: model_catalog.clone(),
@@ -781,12 +799,7 @@ impl App {
                     frame_requester: tui.frame_requester(),
                     app_event_tx: app_event_tx.clone(),
                     workspace_command_runner: Some(workspace_command_runner.clone()),
-                    initial_user_message: crate::chatwidget::create_initial_user_message(
-                        initial_prompt.clone(),
-                        initial_images.clone(),
-                        // CLI prompt args are plain strings, so they don't provide element ranges.
-                        Vec::new(),
-                    ),
+                    initial_user_message: local_initial_user_message.clone(),
                     enhanced_keys_supported,
                     has_chatgpt_account,
                     model_catalog: model_catalog.clone(),
@@ -823,12 +836,7 @@ impl App {
                     frame_requester: tui.frame_requester(),
                     app_event_tx: app_event_tx.clone(),
                     workspace_command_runner: Some(workspace_command_runner.clone()),
-                    initial_user_message: crate::chatwidget::create_initial_user_message(
-                        initial_prompt.clone(),
-                        initial_images.clone(),
-                        // CLI prompt args are plain strings, so they don't provide element ranges.
-                        Vec::new(),
-                    ),
+                    initial_user_message: local_initial_user_message.clone(),
                     enhanced_keys_supported,
                     has_chatgpt_account,
                     model_catalog: model_catalog.clone(),
@@ -897,6 +905,9 @@ See the Codex keymap documentation for supported actions and examples."
             environment_manager,
             remote_app_server_url,
             remote_app_server_auth_token,
+            remote_sandbox_session: None,
+            remote_sandbox_exit_prompt_pending: false,
+            pending_modal_initial_user_message,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState::default(),
@@ -963,6 +974,9 @@ See the Codex keymap documentation for supported actions and examples."
         if requires_openai_auth && has_chatgpt_account {
             app.refresh_rate_limits(&app_server, RateLimitRefreshOrigin::StartupPrefetch);
         }
+        if let Some(request) = initial_modal_request {
+            app.app_event_tx.send(AppEvent::StartModalSession(request));
+        }
 
         let mut listen_for_app_server_events = true;
         let mut waiting_for_initial_session_configured = wait_for_initial_session_configured;
@@ -1027,7 +1041,7 @@ See the Codex keymap documentation for supported actions and examples."
                             }
                         } else {
                             tracing::warn!("terminal input stream closed; shutting down active thread");
-                            app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst).await
+                            app.finish_exit_mode(&mut app_server, ExitMode::ShutdownFirst).await
                         }
                     }
                     app_server_event = app_server.next_event(), if listen_for_app_server_events => {

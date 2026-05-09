@@ -1,6 +1,9 @@
 use std::path::Path;
 
 use anyhow::Result;
+use codex_login::CODEX_ACCESS_TOKEN_ENV_VAR;
+use codex_login::CODEX_API_KEY_ENV_VAR;
+use codex_login::CODEX_AUTH_TOKEN_ENV_VAR;
 use predicates::str::contains;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
@@ -9,8 +12,13 @@ use tempfile::TempDir;
 fn codex_command(codex_home: &Path) -> Result<assert_cmd::Command> {
     let mut cmd = assert_cmd::Command::new(codex_utils_cargo_bin::cargo_bin("codex")?);
     cmd.env("CODEX_HOME", codex_home);
+    cmd.env_remove(CODEX_ACCESS_TOKEN_ENV_VAR);
+    cmd.env_remove(CODEX_API_KEY_ENV_VAR);
+    cmd.env_remove(CODEX_AUTH_TOKEN_ENV_VAR);
     Ok(cmd)
 }
+
+const FAKE_CHATGPT_AUTH_TOKEN: &str = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6InVzZXJAZXhhbXBsZS5jb20iLCJodHRwczovL2FwaS5vcGVuYWkuY29tL2F1dGgiOnsiY2hhdGdwdF9hY2NvdW50X2lkIjoib3JnX21pbmUiLCJjaGF0Z3B0X3BsYW5fdHlwZSI6InBybyIsImNoYXRncHRfdXNlcl9pZCI6InVzZXItMTIzNDUifX0.c2ln";
 
 fn write_file_auth_config(codex_home: &Path) -> Result<()> {
     std::fs::write(
@@ -61,6 +69,26 @@ fn login_with_access_token_rejects_invalid_jwt() -> Result<()> {
         .assert()
         .failure()
         .stderr(contains("Error logging in with access token"));
+
+    Ok(())
+}
+
+#[test]
+fn login_status_reads_codex_auth_token_env_without_auth_json() -> Result<()> {
+    let codex_home = TempDir::new()?;
+    write_file_auth_config(codex_home.path())?;
+
+    let mut cmd = codex_command(codex_home.path())?;
+    cmd.env(CODEX_AUTH_TOKEN_ENV_VAR, FAKE_CHATGPT_AUTH_TOKEN)
+        .args(["login", "status"])
+        .assert()
+        .success()
+        .stderr(contains("Logged in using ChatGPT"));
+
+    assert!(
+        !codex_home.path().join("auth.json").exists(),
+        "CODEX_AUTH_TOKEN should not write auth.json"
+    );
 
     Ok(())
 }

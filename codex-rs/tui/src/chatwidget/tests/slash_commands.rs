@@ -1,6 +1,11 @@
 use super::*;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
+use crate::remote_session::RemoteProvider;
+use crate::remote_session::RemoteSessionRequest;
+use crate::remote_session::RemoteWorkspaceMode;
 use pretty_assertions::assert_eq;
+use std::path::Path;
+use std::path::PathBuf;
 
 fn fast_tier_command() -> ServiceTierCommand {
     ServiceTierCommand {
@@ -573,6 +578,100 @@ async fn inline_slash_command_is_available_from_local_recall_after_dispatch() {
     let _ = drain_insert_history(&mut rx);
     chat.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
     assert_eq!(chat.bottom_pane.composer_text(), "/rename Better title");
+}
+
+#[tokio::test]
+async fn modal_slash_command_reports_usage_without_target() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+
+    submit_composer_text(&mut chat, "/modal");
+
+    assert_no_submit_op(&mut op_rx);
+    let cells = drain_insert_history(&mut rx);
+    let rendered = cells
+        .iter()
+        .map(|lines| lines_to_single_string(lines))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        rendered.contains("Usage: /modal [sandbox_id]:[workdir]"),
+        "expected /modal usage, got {rendered:?}"
+    );
+}
+
+#[tokio::test]
+async fn modal_slash_command_emits_start_modal_session_event() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let local_cwd = chat.config.cwd.to_path_buf();
+    let command = "/modal sb-123456789:/workspace/codex --copy-cwd";
+
+    submit_composer_text(&mut chat, command);
+
+    let event = std::iter::from_fn(|| rx.try_recv().ok())
+        .find(|event| matches!(event, AppEvent::StartModalSession(_)))
+        .expect("expected start Modal event");
+    let AppEvent::StartModalSession(request) = event else {
+        panic!("expected StartModalSession, got {event:?}");
+    };
+    assert_eq!(request.provider, RemoteProvider::Modal);
+    assert_eq!(request.sandbox_id.as_deref(), Some("sb-123456789"));
+    assert_eq!(request.remote_cwd, PathBuf::from("/workspace/codex"));
+    assert_eq!(request.workspace_mode, RemoteWorkspaceMode::CopyCwd);
+    assert_eq!(request.local_cwd, local_cwd);
+    assert_no_submit_op(&mut op_rx);
+    assert_eq!(recall_latest_after_clearing(&mut chat), command);
+}
+
+#[tokio::test]
+async fn queued_modal_slash_command_dispatches_after_active_turn() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    chat.thread_id = Some(ThreadId::new());
+    handle_turn_started(&mut chat, "turn-1");
+
+    queue_composer_text_with_tab(&mut chat, "/modal --git-clone");
+
+    assert_eq!(chat.queued_user_messages.len(), 1);
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+
+    complete_turn_with_message(&mut chat, "turn-1", Some("done"));
+
+    let events = std::iter::from_fn(|| rx.try_recv().ok()).collect::<Vec<_>>();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            AppEvent::StartModalSession(request)
+                if request.provider == RemoteProvider::Modal
+                    && request.workspace_mode == RemoteWorkspaceMode::GitClone
+                    && request.remote_cwd == Path::new("/workspace")
+        )),
+        "expected queued /modal to emit StartModalSession; events: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn modal_start_status_marks_task_running_and_blocks_slash_submission() {
+    let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let request = RemoteSessionRequest {
+        provider: RemoteProvider::Modal,
+        sandbox_id: None,
+        remote_cwd: PathBuf::from("/workspace"),
+        workspace_mode: RemoteWorkspaceMode::UseRemotePath,
+        local_cwd: chat.config.cwd.to_path_buf(),
+    };
+
+    chat.show_modal_session_start_status(&request);
+
+    assert!(chat.is_task_running_for_test());
+    while rx.try_recv().is_ok() {}
+    chat.bottom_pane
+        .set_composer_text("/modal --git-clone".to_string(), Vec::new(), Vec::new());
+    chat.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_no_submit_op(&mut op_rx);
+    assert_matches!(rx.try_recv(), Err(TryRecvError::Empty));
+
+    chat.clear_modal_session_start_status();
+
+    assert!(!chat.is_task_running_for_test());
 }
 
 #[tokio::test]

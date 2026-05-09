@@ -37,6 +37,7 @@ pub enum SlashCommand {
     Plan,
     Goal,
     Collab,
+    Modal,
     Agent,
     Side,
     Copy,
@@ -112,6 +113,7 @@ impl SlashCommand {
             SlashCommand::Plan => "switch to Plan mode",
             SlashCommand::Goal => "set or view the goal for a long-running task",
             SlashCommand::Collab => "change collaboration mode (experimental)",
+            SlashCommand::Modal => "connect to Modal: /modal [sandbox_id]:[workdir]",
             SlashCommand::Agent | SlashCommand::MultiAgents => "switch the active agent thread",
             SlashCommand::Side => "start a side conversation in an ephemeral fork",
             SlashCommand::Permissions => "choose what Codex is allowed to do",
@@ -147,6 +149,7 @@ impl SlashCommand {
                 | SlashCommand::Rename
                 | SlashCommand::Plan
                 | SlashCommand::Goal
+                | SlashCommand::Modal
                 | SlashCommand::Ide
                 | SlashCommand::Keymap
                 | SlashCommand::Mcp
@@ -191,6 +194,7 @@ impl SlashCommand {
             | SlashCommand::Plan
             | SlashCommand::Clear
             | SlashCommand::Logout
+            | SlashCommand::Modal
             | SlashCommand::MemoryDrop
             | SlashCommand::MemoryUpdate => false,
             SlashCommand::Diff

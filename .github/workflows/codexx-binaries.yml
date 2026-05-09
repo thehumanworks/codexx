@@ -1,0 +1,93 @@
+name: codexx-binaries
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/codexx-binaries.yml"
+      - "codex-rs/**"
+
+permissions:
+  contents: read
+
+jobs:
+  build-linux:
+    name: Build CodexX - ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: codex-rs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@a0b273b48ed29de4470960879e8381ff45632f26 # 1.93.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            clang \
+            cmake \
+            libcap-dev \
+            lld \
+            pkg-config
+
+      - name: Build bundled bwrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --target "${{ matrix.target }}" --release --timings -p codex-bwrap --bin bwrap
+          bwrap_path="target/${{ matrix.target }}/release/bwrap"
+          if [[ ! -f "$bwrap_path" ]]; then
+            echo "bwrap binary ${bwrap_path} not found"
+            exit 1
+          fi
+          digest="$(sha256sum "$bwrap_path" | awk '{print $1}')"
+          echo "CODEX_BWRAP_SHA256=${digest}" >> "$GITHUB_ENV"
+          echo "Built bundled bwrap ${bwrap_path} with sha256:${digest}"
+
+      - name: Build Codex CLI
+        shell: bash
+        run: cargo build --target "${{ matrix.target }}" --release --timings -p codex-cli --bin codex
+
+      - name: Stage codexx archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          target="${{ matrix.target }}"
+          release_dir="target/${target}/release"
+          dist_dir="${GITHUB_WORKSPACE}/dist/${target}"
+          archive="codexx-${target}.tar.gz"
+
+          mkdir -p "$dist_dir/codex-resources"
+          cp "${release_dir}/codex" "${dist_dir}/codexx"
+          cp "${release_dir}/bwrap" "${dist_dir}/codex-resources/bwrap"
+          chmod 0755 "${dist_dir}/codexx" "${dist_dir}/codex-resources/bwrap"
+          tar -C "$dist_dir" -czf "${GITHUB_WORKSPACE}/dist/${archive}" codexx codex-resources/bwrap
+          shasum -a 256 "${GITHUB_WORKSPACE}/dist/${archive}" > "${GITHUB_WORKSPACE}/dist/${archive}.sha256"
+
+      - name: Upload codexx archive
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: codexx-${{ matrix.target }}
+          path: |
+            dist/codexx-${{ matrix.target }}.tar.gz
+            dist/codexx-${{ matrix.target }}.tar.gz.sha256

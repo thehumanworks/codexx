@@ -13,6 +13,7 @@ use crate::bottom_pane::slash_commands::BuiltinCommandFlags;
 use crate::bottom_pane::slash_commands::ServiceTierCommand;
 use crate::bottom_pane::slash_commands::SlashCommandItem;
 use crate::bottom_pane::slash_commands::find_slash_command;
+use crate::remote_session::parse_modal_session_request;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlashCommandDispatchSource {
@@ -35,6 +36,9 @@ const SIDE_REVIEW_UNAVAILABLE_MESSAGE: &str =
 const SIDE_SLASH_COMMAND_UNAVAILABLE_HINT: &str = "Press Esc to return to the main thread first.";
 const GOAL_USAGE: &str = "Usage: /goal <objective>";
 const GOAL_USAGE_HINT: &str = "Example: /goal improve benchmark coverage";
+const MODAL_USAGE: &str = "Usage: /modal [sandbox_id]:[workdir]";
+const MODAL_USAGE_HELP: &str =
+    "Examples: /modal sb-123456789:/workspace, /modal --copy-cwd, /modal --git-clone";
 const RAW_USAGE: &str = "Usage: /raw [on|off]";
 
 impl ChatWidget {
@@ -246,6 +250,9 @@ impl ChatWidget {
                     return;
                 }
                 self.open_collaboration_modes_popup();
+            }
+            SlashCommand::Modal => {
+                self.add_info_message(MODAL_USAGE.to_string(), Some(MODAL_USAGE_HELP.to_string()));
             }
             SlashCommand::Side => {
                 self.request_empty_side_conversation();
@@ -618,6 +625,20 @@ impl ChatWidget {
                 }
                 _ => self.add_error_message(RAW_USAGE.to_string()),
             },
+            SlashCommand::Modal if !trimmed.is_empty() => {
+                match parse_modal_session_request(trimmed, self.config.cwd.to_path_buf()) {
+                    Ok(request) => {
+                        self.app_event_tx.send(AppEvent::StartModalSession(request));
+                    }
+                    Err(err) => {
+                        self.add_error_message(err.to_string());
+                        self.add_info_message(
+                            MODAL_USAGE.to_string(),
+                            Some(MODAL_USAGE_HELP.to_string()),
+                        );
+                    }
+                }
+            }
             SlashCommand::Rename if !trimmed.is_empty() => {
                 if !self.ensure_thread_rename_allowed() {
                     return;
@@ -939,6 +960,7 @@ impl ChatWidget {
             | SlashCommand::Personality
             | SlashCommand::Plan
             | SlashCommand::Goal
+            | SlashCommand::Modal
             | SlashCommand::Collab
             | SlashCommand::Side
             | SlashCommand::Keymap

@@ -718,6 +718,26 @@ struct FeatureToggles {
 
 #[derive(Debug, Default, Parser, Clone)]
 struct InteractiveRemoteOptions {
+    /// Start or attach to a Modal sandbox-backed TUI session.
+    ///
+    /// Accepted target form: `[sandbox_id]:[workdir]`.
+    #[arg(
+        long = "modal",
+        value_name = "SANDBOX_TARGET",
+        num_args = 0..=1,
+        default_missing_value = "",
+        conflicts_with_all = ["remote", "remote_auth_token_env"]
+    )]
+    modal: Option<String>,
+
+    /// Copy the current local working directory into a new Modal sandbox.
+    #[arg(long = "with-cwd", conflicts_with = "with_git_clone")]
+    with_cwd: bool,
+
+    /// Clone the current git repository into a new Modal sandbox.
+    #[arg(long = "with-git-clone", conflicts_with = "with_cwd")]
+    with_git_clone: bool,
+
     /// Connect the TUI to a remote app server websocket endpoint.
     ///
     /// Accepted forms: `ws://host:port` or `wss://host:port`.
@@ -728,6 +748,33 @@ struct InteractiveRemoteOptions {
     /// a remote app server websocket.
     #[arg(long = "remote-auth-token-env", value_name = "ENV_VAR")]
     remote_auth_token_env: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModalWorkspaceCliMode {
+    WithCwd,
+    WithGitClone,
+}
+
+impl ModalWorkspaceCliMode {
+    fn modal_arg(self) -> &'static str {
+        match self {
+            Self::WithCwd => "--copy-cwd",
+            Self::WithGitClone => "--git-clone",
+        }
+    }
+}
+
+impl InteractiveRemoteOptions {
+    fn workspace_mode(&self) -> Option<ModalWorkspaceCliMode> {
+        if self.with_cwd {
+            Some(ModalWorkspaceCliMode::WithCwd)
+        } else if self.with_git_clone {
+            Some(ModalWorkspaceCliMode::WithGitClone)
+        } else {
+            None
+        }
+    }
 }
 
 impl FeatureToggles {
@@ -812,8 +859,13 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
     // Fold --enable/--disable into config overrides so they flow to all subcommands.
     let toggle_overrides = feature_toggles.to_overrides()?;
     root_config_overrides.raw_overrides.extend(toggle_overrides);
-    let root_remote = remote.remote;
-    let root_remote_auth_token_env = remote.remote_auth_token_env;
+    let root_remote_options = remote;
+    let root_modal = resolve_modal_target(&root_remote_options, None)?;
+    let root_remote = root_remote_options.remote.clone();
+    let root_remote_auth_token_env = root_remote_options.remote_auth_token_env.clone();
+    if let Some(subcommand_name) = modal_disallowed_subcommand_name(&subcommand) {
+        reject_modal_mode_for_subcommand(root_modal.as_deref(), subcommand_name)?;
+    }
 
     match subcommand {
         None => {
@@ -823,6 +875,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             );
             let exit_info = run_interactive_tui(
                 interactive,
+                root_modal.clone(),
                 root_remote.clone(),
                 root_remote_auth_token_env.clone(),
                 arg0_paths.clone(),
@@ -1024,6 +1077,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             remote,
             config_overrides,
         })) => {
+            let modal_target = resolve_modal_target(&root_remote_options, Some(&remote))?;
             interactive = finalize_resume_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -1035,6 +1089,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             );
             let exit_info = run_interactive_tui(
                 interactive,
+                modal_target,
                 remote.remote.or(root_remote.clone()),
                 remote
                     .remote_auth_token_env
@@ -1051,6 +1106,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             remote,
             config_overrides,
         })) => {
+            let modal_target = resolve_modal_target(&root_remote_options, Some(&remote))?;
             interactive = finalize_fork_interactive(
                 interactive,
                 root_config_overrides.clone(),
@@ -1061,6 +1117,7 @@ async fn cli_main(arg0_paths: Arg0DispatchPaths) -> anyhow::Result<()> {
             );
             let exit_info = run_interactive_tui(
                 interactive,
+                modal_target,
                 remote.remote.or(root_remote.clone()),
                 remote
                     .remote_auth_token_env
@@ -1604,6 +1661,82 @@ fn prepend_config_flags(
         .splice(0..0, cli_config_overrides.raw_overrides);
 }
 
+fn modal_disallowed_subcommand_name(subcommand: &Option<Subcommand>) -> Option<&'static str> {
+    match subcommand {
+        None | Some(Subcommand::Resume(_)) | Some(Subcommand::Fork(_)) => None,
+        Some(Subcommand::Exec(_)) => Some("exec"),
+        Some(Subcommand::Review(_)) => Some("review"),
+        Some(Subcommand::Login(_)) => Some("login"),
+        Some(Subcommand::Logout(_)) => Some("logout"),
+        Some(Subcommand::Mcp(_)) => Some("mcp"),
+        Some(Subcommand::Plugin(_)) => Some("plugin"),
+        Some(Subcommand::McpServer) => Some("mcp-server"),
+        Some(Subcommand::AppServer(_)) => Some("app-server"),
+        Some(Subcommand::RemoteControl) => Some("remote-control"),
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        Some(Subcommand::App(_)) => Some("app"),
+        Some(Subcommand::Completion(_)) => Some("completion"),
+        Some(Subcommand::Update) => Some("update"),
+        Some(Subcommand::Sandbox(_)) => Some("sandbox"),
+        Some(Subcommand::Debug(_)) => Some("debug"),
+        Some(Subcommand::Execpolicy(_)) => Some("execpolicy"),
+        Some(Subcommand::Apply(_)) => Some("apply"),
+        Some(Subcommand::Cloud(_)) => Some("cloud"),
+        Some(Subcommand::ResponsesApiProxy(_)) => Some("responses-api-proxy"),
+        Some(Subcommand::StdioToUds(_)) => Some("stdio-to-uds"),
+        Some(Subcommand::ExecServer(_)) => Some("exec-server"),
+        Some(Subcommand::Features(_)) => Some("features"),
+    }
+}
+
+fn resolve_modal_target(
+    root: &InteractiveRemoteOptions,
+    subcommand: Option<&InteractiveRemoteOptions>,
+) -> anyhow::Result<Option<String>> {
+    let modal = subcommand
+        .and_then(|options| options.modal.clone())
+        .or_else(|| root.modal.clone());
+    let root_workspace_mode = root.workspace_mode();
+    let subcommand_workspace_mode = subcommand.and_then(InteractiveRemoteOptions::workspace_mode);
+    let workspace_mode = match (root_workspace_mode, subcommand_workspace_mode) {
+        (Some(root), Some(subcommand)) if root != subcommand => {
+            anyhow::bail!("`--with-cwd` and `--with-git-clone` cannot be used together.");
+        }
+        (_, Some(subcommand)) => Some(subcommand),
+        (root, None) => root,
+    };
+
+    let Some(mut modal) = modal else {
+        if workspace_mode.is_some() {
+            anyhow::bail!("`--with-cwd` and `--with-git-clone` require `--modal`.");
+        }
+        return Ok(None);
+    };
+
+    if let Some(workspace_mode) = workspace_mode {
+        if !modal.is_empty() {
+            modal.push(' ');
+        }
+        modal.push_str(workspace_mode.modal_arg());
+    }
+
+    Ok(Some(modal))
+}
+
+fn reject_modal_mode_for_subcommand(modal: Option<&str>, subcommand: &str) -> anyhow::Result<()> {
+    if let Some(modal) = modal {
+        let suffix = if modal.is_empty() {
+            String::new()
+        } else {
+            format!(" {modal}")
+        };
+        anyhow::bail!(
+            "`--modal{suffix}` is only supported for interactive TUI commands, not `codex {subcommand}`"
+        );
+    }
+    Ok(())
+}
+
 fn reject_remote_mode_for_subcommand(
     remote: Option<&str>,
     remote_auth_token_env: Option<&str>,
@@ -1689,6 +1822,7 @@ fn read_remote_auth_token_from_env_var(env_var_name: &str) -> anyhow::Result<Str
 
 async fn run_interactive_tui(
     mut interactive: TuiCli,
+    modal: Option<String>,
     remote: Option<String>,
     remote_auth_token_env: Option<String>,
     arg0_paths: Arg0DispatchPaths,
@@ -1716,6 +1850,12 @@ async fn run_interactive_tui(
         }
     }
 
+    if modal.is_some() && (remote.is_some() || remote_auth_token_env.is_some()) {
+        return Ok(AppExitInfo::fatal(
+            "`--modal` cannot be combined with `--remote` or `--remote-auth-token-env`.",
+        ));
+    }
+
     let normalized_remote = remote
         .as_deref()
         .map(codex_tui::normalize_remote_addr)
@@ -1737,6 +1877,7 @@ async fn run_interactive_tui(
         codex_config::LoaderOverrides::default(),
         normalized_remote,
         remote_auth_token,
+        modal,
     )
     .await
 }
@@ -2462,6 +2603,72 @@ mod tests {
     }
 
     #[test]
+    fn modal_flag_parses_for_interactive_root() {
+        let cli =
+            MultitoolCli::try_parse_from(["codex", "--modal", "sb-123:/workspace"]).expect("parse");
+        assert_eq!(cli.remote.modal.as_deref(), Some("sb-123:/workspace"));
+    }
+
+    #[test]
+    fn modal_flag_without_target_parses_for_interactive_root() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--modal"]).expect("parse");
+        assert_eq!(cli.remote.modal.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn modal_with_cwd_flag_resolves_for_interactive_root() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--modal", "--with-cwd"]).expect("parse");
+        assert_eq!(
+            resolve_modal_target(&cli.remote, None).expect("resolve modal target"),
+            Some("--copy-cwd".to_string())
+        );
+    }
+
+    #[test]
+    fn modal_with_git_clone_flag_resolves_for_interactive_root() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "--modal",
+            "sb-123:/workspace",
+            "--with-git-clone",
+        ])
+        .expect("parse");
+        assert_eq!(
+            resolve_modal_target(&cli.remote, None).expect("resolve modal target"),
+            Some("sb-123:/workspace --git-clone".to_string())
+        );
+    }
+
+    #[test]
+    fn modal_workspace_flags_require_modal() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--with-cwd"]).expect("parse");
+        let err =
+            resolve_modal_target(&cli.remote, None).expect_err("--with-cwd should require --modal");
+        assert!(err.to_string().contains("require `--modal`"));
+    }
+
+    #[test]
+    fn modal_workspace_flags_conflict() {
+        let err =
+            MultitoolCli::try_parse_from(["codex", "--modal", "--with-cwd", "--with-git-clone"])
+                .expect_err("workspace flags should conflict");
+        assert!(err.to_string().contains("cannot be used with"));
+    }
+
+    #[test]
+    fn modal_flag_conflicts_with_remote_flag() {
+        let err = MultitoolCli::try_parse_from([
+            "codex",
+            "--modal",
+            "sb-123:/workspace",
+            "--remote",
+            "ws://127.0.0.1:4500",
+        ])
+        .expect_err("--modal should conflict with --remote");
+        assert!(err.to_string().contains("cannot be used with"));
+    }
+
+    #[test]
     fn remote_auth_token_env_flag_parses_for_interactive_root() {
         let cli = MultitoolCli::try_parse_from([
             "codex",
@@ -2491,6 +2698,50 @@ mod tests {
     }
 
     #[test]
+    fn modal_flag_parses_for_resume_subcommand() {
+        let cli = MultitoolCli::try_parse_from(["codex", "resume", "--modal", "sb-123:/workspace"])
+            .expect("parse");
+        let Subcommand::Resume(ResumeCommand { remote, .. }) =
+            cli.subcommand.expect("resume present")
+        else {
+            panic!("expected resume subcommand");
+        };
+        assert_eq!(remote.modal.as_deref(), Some("sb-123:/workspace"));
+    }
+
+    #[test]
+    fn modal_workspace_flag_resolves_for_resume_subcommand() {
+        let cli = MultitoolCli::try_parse_from(["codex", "resume", "--modal", "--with-cwd"])
+            .expect("parse");
+        let Subcommand::Resume(ResumeCommand { remote, .. }) =
+            cli.subcommand.expect("resume present")
+        else {
+            panic!("expected resume subcommand");
+        };
+        assert_eq!(
+            resolve_modal_target(&InteractiveRemoteOptions::default(), Some(&remote))
+                .expect("resolve modal target"),
+            Some("--copy-cwd".to_string())
+        );
+    }
+
+    #[test]
+    fn root_modal_workspace_flag_applies_to_resume_subcommand() {
+        let cli = MultitoolCli::try_parse_from(["codex", "--modal", "--with-git-clone", "resume"])
+            .expect("parse");
+        let root_remote = cli.remote;
+        let Subcommand::Resume(ResumeCommand { remote, .. }) =
+            cli.subcommand.expect("resume present")
+        else {
+            panic!("expected resume subcommand");
+        };
+        assert_eq!(
+            resolve_modal_target(&root_remote, Some(&remote)).expect("resolve modal target"),
+            Some("--git-clone".to_string())
+        );
+    }
+
+    #[test]
     fn reject_remote_mode_for_non_interactive_subcommands() {
         let err = reject_remote_mode_for_subcommand(
             Some("127.0.0.1:4500"),
@@ -2498,6 +2749,16 @@ mod tests {
             "exec",
         )
         .expect_err("non-interactive subcommands should reject --remote");
+        assert!(
+            err.to_string()
+                .contains("only supported for interactive TUI commands")
+        );
+    }
+
+    #[test]
+    fn reject_modal_mode_for_non_interactive_subcommands() {
+        let err = reject_modal_mode_for_subcommand(Some("sb-123:/workspace"), "exec")
+            .expect_err("non-interactive subcommands should reject --modal");
         assert!(
             err.to_string()
                 .contains("only supported for interactive TUI commands")

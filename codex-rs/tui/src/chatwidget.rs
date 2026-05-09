@@ -18,8 +18,8 @@
 //! The bottom pane exposes a single "task running" indicator that drives the spinner and interrupt
 //! hints. This module treats that indicator as derived UI-busy state: it is set while an agent turn
 //! is in progress and while MCP server startup is in progress. Those lifecycles are tracked
-//! independently (`agent_turn_running` and `mcp_startup_status`) and synchronized via
-//! `update_task_running_state`.
+//! independently (`agent_turn_running`, `mcp_startup_status`, and Modal startup) and synchronized
+//! via `update_task_running_state`.
 //!
 //! For preamble-capable models, assistant output may include commentary before
 //! the final answer. During streaming we hide the status row to avoid duplicate
@@ -69,6 +69,7 @@ use crate::mention_codec::encode_history_mentions;
 use crate::model_catalog::ModelCatalog;
 use crate::multi_agents;
 use crate::multi_agents::AgentMetadata;
+use crate::remote_session::RemoteSessionRequest;
 use crate::session_state::SessionNetworkProxyRuntime;
 use crate::session_state::ThreadSessionState;
 use crate::status::RateLimitWindowDisplay;
@@ -304,6 +305,7 @@ use crate::key_hint::KeyBinding;
 use crate::key_hint::KeyBindingListExt;
 use crate::keymap::ChatKeymap;
 use crate::keymap::RuntimeKeymap;
+use crate::remote_session::RemoteSandboxSession;
 use crate::render::Insets;
 use crate::render::renderable::ColumnRenderable;
 use crate::render::renderable::FlexRenderable;
@@ -842,6 +844,9 @@ pub(crate) struct ChatWidget {
     /// as "running" while this is populated, even if no agent turn is currently
     /// executing.
     mcp_startup_status: Option<HashMap<String, McpStartupStatus>>,
+    /// Tracks Modal sandbox provisioning while it runs in the background before
+    /// the remote app-server session is attached.
+    modal_session_start_running: bool,
     /// Expected MCP servers for the current startup round, seeded from enabled local config.
     mcp_startup_expected_servers: Option<HashSet<String>>,
     /// After startup settles, ignore stale updates until enough notifications confirm a new round.
@@ -1711,8 +1716,11 @@ impl ChatWidget {
     /// The bottom pane only has one running flag, but this module treats it as a derived state of
     /// both the agent turn lifecycle and MCP startup lifecycle.
     fn update_task_running_state(&mut self) {
-        self.bottom_pane
-            .set_task_running(self.agent_turn_running || self.mcp_startup_status.is_some());
+        self.bottom_pane.set_task_running(
+            self.agent_turn_running
+                || self.mcp_startup_status.is_some()
+                || self.modal_session_start_running,
+        );
         self.refresh_plan_mode_nudge();
         self.refresh_status_surfaces();
     }
@@ -2776,6 +2784,63 @@ impl ChatWidget {
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some(MULTI_AGENT_ENABLE_TITLE.to_string()),
             subtitle: Some("Subagents are currently disabled in your config.".to_string()),
+            footer_hint: Some(standard_popup_hint_line()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_remote_sandbox_termination_prompt(
+        &mut self,
+        session: RemoteSandboxSession,
+        exit_mode: ExitMode,
+    ) {
+        let terminate_session = session.clone();
+        let keep_session = session.clone();
+        let items = vec![
+            SelectionItem {
+                name: "Yes, terminate sandbox".to_string(),
+                display_shortcut: Some(key_hint::plain(KeyCode::Char('y'))),
+                description: Some("Terminate the Modal sandbox before exiting Codex.".to_string()),
+                selected_description: Some(
+                    "Terminate the Modal sandbox before exiting Codex.".to_string(),
+                ),
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::RemoteSandboxExitDecision {
+                        session: terminate_session.clone(),
+                        terminate: true,
+                        exit_mode,
+                    });
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+            SelectionItem {
+                name: "No, keep it running".to_string(),
+                display_shortcut: Some(key_hint::plain(KeyCode::Char('n'))),
+                description: Some("Leave the Modal sandbox running after Codex exits.".to_string()),
+                selected_description: Some(
+                    "Leave the Modal sandbox running after Codex exits.".to_string(),
+                ),
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::RemoteSandboxExitDecision {
+                        session: keep_session.clone(),
+                        terminate: false,
+                        exit_mode,
+                    });
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            },
+        ];
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Terminate remote sandbox?".to_string()),
+            subtitle: Some(format!(
+                "{} sandbox {} is still running.",
+                session.provider.as_str(),
+                session.sandbox_id
+            )),
             footer_hint: Some(standard_popup_hint_line()),
             items,
             ..Default::default()
@@ -4967,6 +5032,7 @@ impl ChatWidget {
             unified_exec_processes: Vec::new(),
             agent_turn_running: false,
             mcp_startup_status: None,
+            modal_session_start_running: false,
             last_agent_markdown: None,
             agent_turn_markdowns: Vec::new(),
             visible_user_turn_count: 0,
@@ -9136,6 +9202,39 @@ impl ChatWidget {
 
     #[cfg(not(target_os = "windows"))]
     pub(crate) fn clear_windows_sandbox_setup_status(&mut self) {}
+
+    pub(crate) fn show_modal_session_start_status(&mut self, request: &RemoteSessionRequest) {
+        self.modal_session_start_running = true;
+        self.update_task_running_state();
+        self.bottom_pane.set_composer_input_enabled(
+            /*enabled*/ false,
+            Some("Starting Modal sandbox...".to_string()),
+        );
+        self.bottom_pane
+            .set_interrupt_hint_visible(/*visible*/ false);
+        self.set_status(
+            "Starting Modal sandbox...".to_string(),
+            Some(format!(
+                "Remote working directory: {}",
+                request.remote_cwd.display()
+            )),
+            StatusDetailsCapitalization::CapitalizeFirst,
+            STATUS_DETAILS_DEFAULT_MAX_LINES,
+        );
+        self.request_redraw();
+    }
+
+    pub(crate) fn clear_modal_session_start_status(&mut self) {
+        self.modal_session_start_running = false;
+        self.update_task_running_state();
+        self.bottom_pane
+            .set_composer_input_enabled(/*enabled*/ true, /*placeholder*/ None);
+        self.request_redraw();
+    }
+
+    pub(crate) fn is_modal_session_start_running(&self) -> bool {
+        self.modal_session_start_running
+    }
 
     /// Set the approval policy in the widget's config copy.
     pub(crate) fn set_approval_policy(&mut self, policy: AskForApproval) {

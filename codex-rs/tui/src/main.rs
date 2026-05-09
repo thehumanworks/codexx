@@ -59,6 +59,7 @@ fn main() -> anyhow::Result<()> {
             LoaderOverrides::default(),
             /*remote*/ None,
             /*remote_auth_token*/ None,
+            /*modal_target*/ None,
         )
         .await?;
         match exit_info.exit_reason {

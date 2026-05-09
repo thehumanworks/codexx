@@ -62,6 +62,12 @@ const REMOTE_APP_SERVER_MAX_WEBSOCKET_MESSAGE_SIZE: usize = 128 << 20;
 pub struct RemoteAppServerConnectArgs {
     pub websocket_url: String,
     pub auth_token: Option<String>,
+    /// Allow bearer auth over public plaintext `ws://` transports.
+    ///
+    /// Keep this false for user-supplied remote URLs. It exists for callers
+    /// that generate short-lived endpoints through another trusted control
+    /// plane, such as Modal sandbox tunnels.
+    pub allow_insecure_auth_token_transport: bool,
     pub client_name: String,
     pub client_version: String,
     pub experimental_api: bool,
@@ -100,6 +106,10 @@ pub(crate) fn websocket_url_supports_auth_token(url: &Url) -> bool {
         ("ws", Some(url::Host::Ipv6(addr))) => addr.is_loopback(),
         _ => false,
     }
+}
+
+pub(crate) fn auth_token_transport_allowed(args: &RemoteAppServerConnectArgs, url: &Url) -> bool {
+    args.allow_insecure_auth_token_transport || websocket_url_supports_auth_token(url)
 }
 
 enum RemoteClientCommand {
@@ -148,7 +158,7 @@ impl RemoteAppServerClient {
                 format!("invalid websocket URL `{websocket_url}`: {err}"),
             )
         })?;
-        if args.auth_token.is_some() && !websocket_url_supports_auth_token(&url) {
+        if args.auth_token.is_some() && !auth_token_transport_allowed(&args, &url) {
             return Err(IoError::new(
                 ErrorKind::InvalidInput,
                 format!(

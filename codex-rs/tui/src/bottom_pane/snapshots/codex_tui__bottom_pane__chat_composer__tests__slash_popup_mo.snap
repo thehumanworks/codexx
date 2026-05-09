@@ -5,5 +5,5 @@ expression: terminal.backend()
 "                                                            "
 "› /mo                                                       "
 "                                                            "
-"                                                            "
 "  /model  choose what model and reasoning effort to use     "
+"  /modal  connect to Modal: /modal [sandbox_id]:[workdir]   "

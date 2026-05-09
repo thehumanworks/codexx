@@ -10,6 +10,8 @@
 
 use std::path::PathBuf;
 
+use crate::remote_session::RemoteSandboxSession;
+use crate::remote_session::RemoteSessionEndpoint;
 use codex_app_server_protocol::AddCreditsNudgeCreditType;
 use codex_app_server_protocol::AddCreditsNudgeEmailStatus;
 use codex_app_server_protocol::AppInfo;
@@ -37,6 +39,7 @@ use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::StatusLineItem;
 use crate::bottom_pane::TerminalTitleItem;
 use crate::chatwidget::UserMessage;
+use crate::remote_session::RemoteSessionRequest;
 use codex_app_server_protocol::AskForApproval;
 use codex_config::types::ApprovalsReviewer;
 use codex_features::Feature;
@@ -183,6 +186,22 @@ pub(crate) enum AppEvent {
 
     /// Open the resume picker inside the running TUI session.
     OpenResumePicker,
+
+    /// Start or attach to a Modal sandbox-backed app-server session.
+    StartModalSession(RemoteSessionRequest),
+
+    /// Complete Modal sandbox app-server startup after background provisioning.
+    ModalSessionStarted {
+        request: RemoteSessionRequest,
+        result: Result<RemoteSessionEndpoint, String>,
+    },
+
+    /// Resolve the exit-time prompt for a remote sandbox-backed app-server session.
+    RemoteSandboxExitDecision {
+        session: RemoteSandboxSession,
+        terminate: bool,
+        exit_mode: ExitMode,
+    },
 
     /// Resume a thread by UUID or thread name inside the running TUI session.
     ResumeSessionByIdOrName(String),

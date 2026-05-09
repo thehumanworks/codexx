@@ -1215,6 +1215,7 @@ mod tests {
         RemoteAppServerConnectArgs {
             websocket_url,
             auth_token: None,
+            allow_insecure_auth_token_transport: false,
             client_name: "codex-app-server-client-test".to_string(),
             client_version: "0.0.0-test".to_string(),
             experimental_api: true,
@@ -1555,6 +1556,20 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn remote_auth_token_transport_policy_allows_explicit_plaintext_opt_in() {
+        let args = RemoteAppServerConnectArgs {
+            auth_token: Some("remote-bearer-token".to_string()),
+            allow_insecure_auth_token_transport: true,
+            ..test_remote_connect_args("ws://example.com:4500".to_string())
+        };
+
+        assert!(crate::remote::auth_token_transport_allowed(
+            &args,
+            &url::Url::parse("ws://example.com:4500").expect("ws URL should parse")
+        ));
+    }
+
     #[tokio::test]
     async fn remote_duplicate_request_id_keeps_original_waiter() {
         let (first_request_seen_tx, first_request_seen_rx) = tokio::sync::oneshot::channel();
@@ -1708,6 +1723,7 @@ mod tests {
         let mut client = RemoteAppServerClient::connect(RemoteAppServerConnectArgs {
             websocket_url,
             auth_token: None,
+            allow_insecure_auth_token_transport: false,
             client_name: "codex-app-server-client-test".to_string(),
             client_version: "0.0.0-test".to_string(),
             experimental_api: true,

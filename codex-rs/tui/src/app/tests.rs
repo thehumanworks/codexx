@@ -3892,6 +3892,9 @@ async fn make_test_app() -> App {
         environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
         remote_app_server_url: None,
         remote_app_server_auth_token: None,
+        remote_sandbox_session: None,
+        remote_sandbox_exit_prompt_pending: false,
+        pending_modal_initial_user_message: None,
         pending_update_action: None,
         pending_shutdown_exit_thread_id: None,
         windows_sandbox: WindowsSandboxState::default(),
@@ -3955,6 +3958,9 @@ async fn make_test_app_with_channels() -> (
             environment_manager: Arc::new(EnvironmentManager::default_for_tests()),
             remote_app_server_url: None,
             remote_app_server_auth_token: None,
+            remote_sandbox_session: None,
+            remote_sandbox_exit_prompt_pending: false,
+            pending_modal_initial_user_message: None,
             pending_update_action: None,
             pending_shutdown_exit_thread_id: None,
             windows_sandbox: WindowsSandboxState::default(),
@@ -5132,7 +5138,7 @@ async fn shutdown_first_exit_returns_immediate_exit_when_shutdown_submit_fails()
     ))
     .await
     .expect("embedded app server");
-    let control = Box::pin(app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst)).await;
+    let control = Box::pin(app.finish_exit_mode(&mut app_server, ExitMode::ShutdownFirst)).await;
 
     assert_eq!(app.pending_shutdown_exit_thread_id, None);
     assert!(matches!(
@@ -5152,7 +5158,7 @@ async fn shutdown_first_exit_uses_app_server_shutdown_without_submitting_op() {
     ))
     .await
     .expect("embedded app server");
-    let control = Box::pin(app.handle_exit_mode(&mut app_server, ExitMode::ShutdownFirst)).await;
+    let control = Box::pin(app.finish_exit_mode(&mut app_server, ExitMode::ShutdownFirst)).await;
 
     assert_eq!(app.pending_shutdown_exit_thread_id, None);
     assert!(matches!(

@@ -152,6 +152,7 @@ mod oss_selection;
 mod pager_overlay;
 mod permission_compat;
 pub(crate) mod public_widgets;
+mod remote_session;
 mod render;
 mod resize_reflow_cap;
 mod resume_picker;
@@ -377,10 +378,12 @@ fn validate_remote_auth_token_transport(websocket_url: &str) -> color_eyre::Resu
 async fn connect_remote_app_server(
     websocket_url: String,
     auth_token: Option<String>,
+    allow_insecure_auth_token_transport: bool,
 ) -> color_eyre::Result<AppServerClient> {
     let app_server = RemoteAppServerClient::connect(RemoteAppServerConnectArgs {
         websocket_url,
         auth_token,
+        allow_insecure_auth_token_transport,
         client_name: "codex-tui".to_string(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
         experimental_api: true,
@@ -422,7 +425,14 @@ async fn start_app_server(
         AppServerTarget::Remote {
             websocket_url,
             auth_token,
-        } => connect_remote_app_server(websocket_url.clone(), auth_token.clone()).await,
+        } => {
+            connect_remote_app_server(
+                websocket_url.clone(),
+                auth_token.clone(),
+                /*allow_insecure_auth_token_transport*/ false,
+            )
+            .await
+        }
     }
 }
 
@@ -708,6 +718,7 @@ pub async fn run_main(
     loader_overrides: LoaderOverrides,
     remote: Option<String>,
     remote_auth_token: Option<String>,
+    modal_target: Option<String>,
 ) -> std::io::Result<AppExitInfo> {
     let remote_url = remote;
     if let (Some(websocket_url), Some(_)) = (remote_url.as_deref(), remote_auth_token.as_ref()) {
@@ -1087,6 +1098,7 @@ pub async fn run_main(
         state_db,
         remote_url,
         remote_auth_token,
+        modal_target,
         environment_manager,
     )
     .await
@@ -1109,6 +1121,7 @@ async fn run_ratatui_app(
     state_db: Option<StateDbHandle>,
     remote_url: Option<String>,
     remote_auth_token: Option<String>,
+    modal_target: Option<String>,
     environment_manager: Arc<EnvironmentManager>,
 ) -> color_eyre::Result<AppExitInfo> {
     let remote_mode = matches!(&app_server_target, AppServerTarget::Remote { .. });
@@ -1466,6 +1479,13 @@ async fn run_ratatui_app(
         }
         _ => config,
     };
+    let initial_modal_request = modal_target
+        .as_deref()
+        .map(|args| {
+            crate::remote_session::parse_modal_session_request(args, config.cwd.to_path_buf())
+        })
+        .transpose()
+        .map_err(|err| color_eyre::eyre::eyre!("{err}"))?;
 
     // Configure syntax highlighting theme from the final config — onboarding
     // and resume/fork can both reload config with a different tui_theme, so
@@ -1536,6 +1556,7 @@ async fn run_ratatui_app(
         should_prompt_windows_sandbox_nux_at_startup,
         remote_url,
         remote_auth_token,
+        initial_modal_request,
         state_db,
         environment_manager,
     )
@@ -1932,7 +1953,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn fork_last_filters_latest_session_by_cwd_unless_show_all() -> color_eyre::Result<()> {
         fn write_session_rollout(
             codex_home: &Path,

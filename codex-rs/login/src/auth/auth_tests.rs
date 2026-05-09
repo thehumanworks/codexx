@@ -176,7 +176,7 @@ async fn login_with_access_token_rejects_unsigned_jwt() {
 #[serial(codex_auth_env)]
 async fn missing_auth_json_returns_none() {
     let dir = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let auth = CodexAuth::from_auth_storage(
         dir.path(),
         AuthCredentialsStoreMode::File,
@@ -191,7 +191,7 @@ async fn missing_auth_json_returns_none() {
 #[serial(codex_auth_env)]
 async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let fake_jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -250,7 +250,7 @@ async fn pro_account_with_no_api_key_uses_chatgpt_auth() {
 #[serial(codex_auth_env)]
 async fn loads_api_key_from_auth_json() {
     let dir = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let auth_file = dir.path().join("auth.json");
     std::fs::write(
         auth_file,
@@ -324,7 +324,7 @@ async fn unauthorized_recovery_reports_mode_and_step_names() {
 #[serial(codex_auth_env)]
 async fn refresh_failure_is_scoped_to_the_matching_auth_snapshot() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -704,14 +704,18 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn remove_access_token_env_var() -> EnvVarGuard {
-    EnvVarGuard::remove(CODEX_ACCESS_TOKEN_ENV_VAR)
+fn remove_token_env_vars() -> (EnvVarGuard, EnvVarGuard) {
+    (
+        EnvVarGuard::remove(CODEX_AUTH_TOKEN_ENV_VAR),
+        EnvVarGuard::remove(CODEX_ACCESS_TOKEN_ENV_VAR),
+    )
 }
 
 #[tokio::test]
 #[serial(codex_auth_env)]
 async fn load_auth_reads_access_token_from_env() {
     let codex_home = tempdir().unwrap();
+    let _auth_token_guard = EnvVarGuard::remove(CODEX_AUTH_TOKEN_ENV_VAR);
     let expected_record = agent_identity_record("account-123");
     let agent_identity =
         signed_agent_identity_jwt(&expected_record, json!(expected_record.plan_type))
@@ -760,10 +764,58 @@ async fn load_auth_reads_access_token_from_env() {
 
 #[tokio::test]
 #[serial(codex_auth_env)]
+async fn load_auth_reads_chatgpt_auth_token_from_env() {
+    let codex_home = tempdir().unwrap();
+    let auth_token = fake_jwt_for_auth_file_params(&AuthFileParams {
+        openai_api_key: None,
+        chatgpt_plan_type: Some("pro".to_string()),
+        chatgpt_account_id: Some("org_mine".to_string()),
+    })
+    .expect("fake ChatGPT auth token");
+    let _auth_token_guard = EnvVarGuard::set(CODEX_AUTH_TOKEN_ENV_VAR, &auth_token);
+    let _access_token_guard = EnvVarGuard::remove(CODEX_ACCESS_TOKEN_ENV_VAR);
+
+    let auth = super::load_auth(
+        codex_home.path(),
+        /*enable_codex_api_key_env*/ false,
+        AuthCredentialsStoreMode::File,
+        /*chatgpt_base_url*/ None,
+    )
+    .await
+    .expect("env auth should load")
+    .expect("env auth should be present");
+
+    assert_eq!(auth.api_auth_mode(), AuthMode::ChatgptAuthTokens);
+    assert_eq!(auth.auth_mode(), AuthMode::Chatgpt);
+    assert_eq!(
+        auth.get_token().expect("token should be available"),
+        auth_token
+    );
+    assert_eq!(auth.get_account_id().as_deref(), Some("org_mine"));
+    assert_eq!(
+        auth.account_plan_type(),
+        Some(AccountPlanType::Pro),
+        "env ChatGPT auth token should derive the plan from JWT claims"
+    );
+    assert!(
+        !get_auth_file(codex_home.path()).exists(),
+        "env auth should not write auth.json"
+    );
+}
+
+#[tokio::test]
+#[serial(codex_auth_env)]
 async fn load_auth_keeps_codex_api_key_env_precedence() {
     let codex_home = tempdir().unwrap();
     let record = agent_identity_record("account-123");
     let agent_identity = fake_agent_identity_jwt(&record).expect("fake agent identity");
+    let auth_token = fake_jwt_for_auth_file_params(&AuthFileParams {
+        openai_api_key: None,
+        chatgpt_plan_type: Some("pro".to_string()),
+        chatgpt_account_id: Some("org_mine".to_string()),
+    })
+    .expect("fake ChatGPT auth token");
+    let _auth_token_guard = EnvVarGuard::set(CODEX_AUTH_TOKEN_ENV_VAR, &auth_token);
     let _access_token_guard = EnvVarGuard::set(CODEX_ACCESS_TOKEN_ENV_VAR, &agent_identity);
     let _api_key_guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "sk-env");
 
@@ -784,7 +836,7 @@ async fn load_auth_keeps_codex_api_key_env_precedence() {
 #[serial(codex_auth_env)]
 async fn enforce_login_restrictions_logs_out_for_method_mismatch() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     login_with_api_key(codex_home.path(), "sk-test", AuthCredentialsStoreMode::File)
         .expect("seed api key");
 
@@ -809,7 +861,7 @@ async fn enforce_login_restrictions_logs_out_for_method_mismatch() {
 #[serial(codex_auth_env)]
 async fn enforce_login_restrictions_logs_out_for_workspace_mismatch() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -841,7 +893,7 @@ async fn enforce_login_restrictions_logs_out_for_workspace_mismatch() {
 #[serial(codex_auth_env)]
 async fn enforce_login_restrictions_allows_matching_workspace() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -873,7 +925,7 @@ async fn enforce_login_restrictions_allows_matching_workspace() {
 async fn enforce_login_restrictions_allows_api_key_if_login_method_not_set_but_forced_chatgpt_workspace_id_is_set()
  {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     login_with_api_key(codex_home.path(), "sk-test", AuthCredentialsStoreMode::File)
         .expect("seed api key");
 
@@ -897,7 +949,7 @@ async fn enforce_login_restrictions_allows_api_key_if_login_method_not_set_but_f
 #[serial(codex_auth_env)]
 async fn enforce_login_restrictions_blocks_env_api_key_when_chatgpt_required() {
     let _guard = EnvVarGuard::set(CODEX_API_KEY_ENV_VAR, "sk-env");
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let codex_home = tempdir().unwrap();
 
     let config = build_config(
@@ -1073,7 +1125,7 @@ async fn assert_agent_identity_plan_alias(
 #[serial(codex_auth_env)]
 async fn plan_type_maps_known_plan() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -1101,7 +1153,7 @@ async fn plan_type_maps_known_plan() {
 #[serial(codex_auth_env)]
 async fn plan_type_maps_self_serve_business_usage_based_plan() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -1132,7 +1184,7 @@ async fn plan_type_maps_self_serve_business_usage_based_plan() {
 #[serial(codex_auth_env)]
 async fn plan_type_maps_enterprise_cbp_usage_based_plan() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -1163,7 +1215,7 @@ async fn plan_type_maps_enterprise_cbp_usage_based_plan() {
 #[serial(codex_auth_env)]
 async fn plan_type_maps_unknown_to_unknown() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,
@@ -1191,7 +1243,7 @@ async fn plan_type_maps_unknown_to_unknown() {
 #[serial(codex_auth_env)]
 async fn missing_plan_type_maps_to_unknown() {
     let codex_home = tempdir().unwrap();
-    let _access_token_guard = remove_access_token_env_var();
+    let _token_env_guards = remove_token_env_vars();
     let _jwt = write_auth_file(
         AuthFileParams {
             openai_api_key: None,

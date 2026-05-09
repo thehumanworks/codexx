@@ -8,6 +8,58 @@ use codex_features::Stage;
 use pretty_assertions::assert_eq;
 
 #[tokio::test]
+async fn remote_sandbox_termination_prompt_accepts_yes_shortcut() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let session = crate::remote_session::RemoteSandboxSession {
+        provider: crate::remote_session::RemoteProvider::Modal,
+        sandbox_id: "sb-yes".to_string(),
+    };
+
+    chat.open_remote_sandbox_termination_prompt(session.clone(), ExitMode::ShutdownFirst);
+    let popup = render_bottom_popup(&chat, /*width*/ 100);
+    assert!(
+        popup.contains("Terminate remote sandbox?")
+            && popup.contains("modal sandbox sb-yes is still running.")
+            && popup.contains("Yes, terminate sandbox")
+            && popup.contains("No, keep it running"),
+        "expected remote sandbox termination prompt, got:\n{popup}"
+    );
+    assert_chatwidget_snapshot!("remote_sandbox_termination_prompt", popup);
+
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RemoteSandboxExitDecision {
+            session: received_session,
+            terminate: true,
+            exit_mode: ExitMode::ShutdownFirst,
+        }) if received_session == session
+    );
+}
+
+#[tokio::test]
+async fn remote_sandbox_termination_prompt_accepts_no_shortcut() {
+    let (mut chat, mut rx, _op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
+    let session = crate::remote_session::RemoteSandboxSession {
+        provider: crate::remote_session::RemoteProvider::Modal,
+        sandbox_id: "sb-no".to_string(),
+    };
+
+    chat.open_remote_sandbox_termination_prompt(session.clone(), ExitMode::ShutdownFirst);
+    chat.handle_key_event(KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+
+    assert_matches!(
+        rx.try_recv(),
+        Ok(AppEvent::RemoteSandboxExitDecision {
+            session: received_session,
+            terminate: false,
+            exit_mode: ExitMode::ShutdownFirst,
+        }) if received_session == session
+    );
+}
+
+#[tokio::test]
 async fn realtime_error_closes_without_followup_closed_info() {
     let (mut chat, mut rx, mut op_rx) = make_chatwidget_manual(/*model_override*/ None).await;
     chat.realtime_conversation.phase = RealtimeConversationPhase::Active;

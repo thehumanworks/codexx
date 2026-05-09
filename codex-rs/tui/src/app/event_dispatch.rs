@@ -109,6 +109,22 @@ impl App {
                 // Leaving alt-screen may blank the inline viewport; force a redraw either way.
                 tui.frame_requester().schedule_frame();
             }
+            AppEvent::StartModalSession(request) => {
+                self.begin_start_modal_session(tui, request);
+            }
+            AppEvent::ModalSessionStarted { request, result } => {
+                self.handle_modal_session_started(tui, app_server, request, result)
+                    .await;
+            }
+            AppEvent::RemoteSandboxExitDecision {
+                session,
+                terminate,
+                exit_mode,
+            } => {
+                return Ok(self
+                    .handle_remote_sandbox_exit_decision(app_server, session, terminate, exit_mode)
+                    .await);
+            }
             AppEvent::ResumeSessionByIdOrName(id_or_name) => {
                 match crate::lookup_session_target_with_app_server(app_server, &id_or_name).await? {
                     Some(target_session) => {
@@ -306,12 +322,12 @@ impl App {
                 self.chat_widget.on_commit_tick();
             }
             AppEvent::Exit(mode) => {
-                return Ok(self.handle_exit_mode(app_server, mode).await);
+                return Ok(self.handle_exit_mode(tui, app_server, mode).await);
             }
             AppEvent::Logout => match app_server.logout_account().await {
                 Ok(()) => {
                     return Ok(self
-                        .handle_exit_mode(app_server, ExitMode::ShutdownFirst)
+                        .handle_exit_mode(tui, app_server, ExitMode::ShutdownFirst)
                         .await);
                 }
                 Err(err) => {
@@ -2089,6 +2105,26 @@ impl App {
     }
 
     pub(super) async fn handle_exit_mode(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &mut AppServerSession,
+        mode: ExitMode,
+    ) -> AppRunControl {
+        if self.should_prompt_remote_sandbox_termination(mode) {
+            let Some(session) = self.remote_sandbox_session.clone() else {
+                return self.finish_exit_mode(app_server, mode).await;
+            };
+            self.remote_sandbox_exit_prompt_pending = true;
+            self.chat_widget
+                .open_remote_sandbox_termination_prompt(session, mode);
+            tui.frame_requester().schedule_frame();
+            return AppRunControl::Continue;
+        }
+
+        self.finish_exit_mode(app_server, mode).await
+    }
+
+    pub(super) async fn finish_exit_mode(
         &mut self,
         app_server: &mut AppServerSession,
         mode: ExitMode,
