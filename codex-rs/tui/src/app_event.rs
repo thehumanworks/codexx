@@ -200,6 +200,11 @@ pub(crate) enum AppEvent {
     /// Open the prompt for creating a managed worktree.
     OpenWorktreeCreatePrompt,
 
+    /// Open the optional base-ref prompt for creating a managed worktree.
+    OpenWorktreeBaseRefPrompt {
+        branch: String,
+    },
+
     /// Result of loading worktrees for the managed worktree picker.
     WorktreesLoaded {
         cwd: PathBuf,

@@ -207,6 +207,102 @@ fn move_all_transfers_dirty_state_and_cleans_source_checkout() -> anyhow::Result
 }
 
 #[test]
+fn move_tracked_transfers_tracked_state_and_leaves_untracked_files() -> anyhow::Result<()> {
+    let fixture = GitFixture::new()?;
+    fs::write(fixture.repo.path().join("staged.txt"), "staged changed\n")?;
+    run_git(fixture.repo.path(), &["add", "staged.txt"])?;
+    fs::write(
+        fixture.repo.path().join("unstaged.txt"),
+        "unstaged changed\n",
+    )?;
+    fs::write(fixture.repo.path().join("untracked.txt"), "untracked\n")?;
+
+    let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home: fixture.codex_home.path().to_path_buf(),
+        source_cwd: fixture.repo.path().to_path_buf(),
+        branch: "move-tracked".to_string(),
+        base_ref: /*base_ref*/ None,
+        dirty_policy: DirtyPolicy::MoveTracked,
+    })?;
+
+    assert_eq!(
+        git(
+            &resolution.info.worktree_git_root,
+            &["diff", "--cached", "--name-only"]
+        )?,
+        "staged.txt"
+    );
+    assert_eq!(
+        git(&resolution.info.worktree_git_root, &["diff", "--name-only"])?,
+        "unstaged.txt"
+    );
+    assert!(
+        !resolution
+            .info
+            .worktree_git_root
+            .join("untracked.txt")
+            .exists()
+    );
+    assert_eq!(
+        git(fixture.repo.path(), &["status", "--short"])?,
+        "?? untracked.txt"
+    );
+    Ok(())
+}
+
+#[test]
+fn creates_orphan_worktree_from_unborn_repo_without_base_ref() -> anyhow::Result<()> {
+    let fixture = GitFixture::new_unborn()?;
+    fs::write(fixture.repo.path().join("README.md"), "hello\n")?;
+
+    let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home: fixture.codex_home.path().to_path_buf(),
+        source_cwd: fixture.repo.path().to_path_buf(),
+        branch: "feature".to_string(),
+        base_ref: /*base_ref*/ None,
+        dirty_policy: DirtyPolicy::CopyAll,
+    })?;
+
+    assert_eq!(
+        git(
+            &resolution.info.worktree_git_root,
+            &["status", "--short", "--branch"]
+        )?,
+        "## No commits yet on feature\n?? README.md"
+    );
+    Ok(())
+}
+
+#[test]
+fn move_all_cleans_unborn_source_checkout() -> anyhow::Result<()> {
+    let fixture = GitFixture::new_unborn()?;
+    fs::write(fixture.repo.path().join("staged.txt"), "staged\n")?;
+    run_git(fixture.repo.path(), &["add", "staged.txt"])?;
+    fs::write(fixture.repo.path().join("untracked.txt"), "untracked\n")?;
+
+    let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
+        codex_home: fixture.codex_home.path().to_path_buf(),
+        source_cwd: fixture.repo.path().to_path_buf(),
+        branch: "feature".to_string(),
+        base_ref: /*base_ref*/ None,
+        dirty_policy: DirtyPolicy::MoveAll,
+    })?;
+
+    assert_eq!(
+        git(
+            &resolution.info.worktree_git_root,
+            &["status", "--short", "--branch"]
+        )?,
+        "## No commits yet on feature\nA  staged.txt\n?? untracked.txt"
+    );
+    assert_eq!(
+        git(fixture.repo.path(), &["status", "--short", "--branch"])?,
+        "## No commits yet on main"
+    );
+    Ok(())
+}
+
+#[test]
 fn refuses_sibling_path_collision_for_different_branch() -> anyhow::Result<()> {
     let fixture = GitFixture::new()?;
     let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
@@ -290,6 +386,15 @@ impl GitFixture {
         fs::write(repo.path().join("unstaged.txt"), "unstaged original\n")?;
         run_git(repo.path(), &["add", "."])?;
         run_git(repo.path(), &["commit", "-m", "initial"])?;
+        Ok(Self { repo, codex_home })
+    }
+
+    fn new_unborn() -> anyhow::Result<Self> {
+        let repo = TempDir::new()?;
+        let codex_home = TempDir::new()?;
+        run_git(repo.path(), &["init", "-b", "main"])?;
+        run_git(repo.path(), &["config", "user.email", "codex@example.com"])?;
+        run_git(repo.path(), &["config", "user.name", "Codex"])?;
         Ok(Self { repo, codex_home })
     }
 }

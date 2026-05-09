@@ -59,7 +59,7 @@ pub fn ensure_worktree(req: WorktreeRequest) -> Result<WorktreeResolution> {
     }
 
     let warnings = dirty::validate_dirty_policy_before_create(&repo.root, req.dirty_policy)?;
-    let base_ref = req.base_ref.as_deref().unwrap_or("HEAD");
+    let has_head = git::status(&repo.root, &["rev-parse", "--verify", "HEAD"]).is_ok();
     fs::create_dir_all(
         worktree_git_root
             .parent()
@@ -75,7 +75,20 @@ pub fn ensure_worktree(req: WorktreeRequest) -> Result<WorktreeResolution> {
                 &branch,
             ],
         )?;
+    } else if req.base_ref.is_none() && !has_head {
+        git::status(
+            &repo.root,
+            &[
+                "worktree",
+                "add",
+                "--orphan",
+                "-b",
+                &branch,
+                &worktree_git_root.to_string_lossy(),
+            ],
+        )?;
     } else {
+        let base_ref = req.base_ref.as_deref().unwrap_or("HEAD");
         git::status(
             &repo.root,
             &[

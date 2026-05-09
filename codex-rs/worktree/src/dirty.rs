@@ -16,7 +16,16 @@ pub enum DirtyPolicy {
     Ignore,
     CopyTracked,
     CopyAll,
+    MoveTracked,
     MoveAll,
+}
+
+#[derive(Debug)]
+struct TransferPlan {
+    staged_diff: Vec<u8>,
+    unstaged_diff: Vec<u8>,
+    tracked_paths: Vec<PathBuf>,
+    untracked_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -59,7 +68,7 @@ pub fn validate_dirty_policy_before_create(
             "source checkout has uncommitted changes; the new worktree was created without them"
                 .to_string(),
         ]),
-        DirtyPolicy::CopyTracked => {
+        DirtyPolicy::CopyTracked | DirtyPolicy::MoveTracked => {
             if state.has_untracked_files {
                 Ok(vec![
                     "untracked files were left in the source checkout; use --worktree-dirty copy-all or move-all to carry them"
@@ -85,17 +94,33 @@ pub fn apply_dirty_policy_after_create(
 
     match policy {
         DirtyPolicy::Fail | DirtyPolicy::Ignore => Ok(()),
-        DirtyPolicy::CopyTracked => apply_tracked_diff(source_root, worktree_root),
+        DirtyPolicy::CopyTracked => {
+            let plan = TransferPlan::capture(source_root)?;
+            plan.apply_tracked_diff(worktree_root)
+        }
         DirtyPolicy::CopyAll => {
-            apply_tracked_diff(source_root, worktree_root)?;
-            copy_untracked_files(source_root, worktree_root)?;
+            let plan = TransferPlan::capture(source_root)?;
+            plan.apply_tracked_diff(worktree_root)?;
+            copy_untracked_files_at_paths(source_root, worktree_root, &plan.untracked_paths)?;
+            Ok(())
+        }
+        DirtyPolicy::MoveTracked => {
+            let plan = TransferPlan::capture(source_root)?;
+            plan.apply_tracked_diff(worktree_root)?;
+            plan.clean_source_after_move(source_root, /*move_untracked*/ false)
+                .with_context(|| {
+                    "worktree already contains transferred changes, but failed to clean the source checkout after move"
+                })?;
             Ok(())
         }
         DirtyPolicy::MoveAll => {
-            let untracked_paths = untracked_paths(source_root)?;
-            apply_tracked_diff(source_root, worktree_root)?;
-            copy_untracked_files_at_paths(source_root, worktree_root, &untracked_paths)?;
-            clean_source_after_move(source_root, &untracked_paths)?;
+            let plan = TransferPlan::capture(source_root)?;
+            plan.apply_tracked_diff(worktree_root)?;
+            copy_untracked_files_at_paths(source_root, worktree_root, &plan.untracked_paths)?;
+            plan.clean_source_after_move(source_root, /*move_untracked*/ true)
+                .with_context(|| {
+                    "worktree already contains transferred changes, but failed to clean the source checkout after move"
+                })?;
             Ok(())
         }
     }
@@ -103,39 +128,71 @@ pub fn apply_dirty_policy_after_create(
 
 fn bail_for_dirty_source<T>() -> Result<T> {
     anyhow::bail!(
-        "source checkout has uncommitted changes; use --worktree-dirty ignore, copy-tracked, copy-all, or move-all"
+        "source checkout has uncommitted changes; use --worktree-dirty ignore, copy-tracked, copy-all, move-tracked, or move-all"
     );
 }
 
-fn apply_tracked_diff(source_root: &Path, worktree_root: &Path) -> Result<()> {
-    let staged = git::bytes(source_root, &["diff", "--cached", "--binary"])?;
-    let unstaged = git::bytes(source_root, &["diff", "--binary"])?;
-
-    if !staged.is_empty() {
-        git::status_with_stdin(
-            worktree_root,
-            &["apply", "--index", "--binary", "-"],
-            &staged,
-        )
-        .context("failed to apply staged changes to worktree")?;
+impl TransferPlan {
+    fn capture(source_root: &Path) -> Result<Self> {
+        Ok(Self {
+            staged_diff: git::bytes(source_root, &["diff", "--cached", "--binary"])?,
+            unstaged_diff: git::bytes(source_root, &["diff", "--binary"])?,
+            tracked_paths: tracked_paths(source_root)?,
+            untracked_paths: untracked_paths(source_root)?,
+        })
     }
-    if !unstaged.is_empty() {
-        git::status_with_stdin(worktree_root, &["apply", "--binary", "-"], &unstaged)
+
+    fn apply_tracked_diff(&self, worktree_root: &Path) -> Result<()> {
+        if !self.staged_diff.is_empty() {
+            git::status_with_stdin(
+                worktree_root,
+                &["apply", "--index", "--binary", "-"],
+                &self.staged_diff,
+            )
+            .context("failed to apply staged changes to worktree")?;
+        }
+        if !self.unstaged_diff.is_empty() {
+            git::status_with_stdin(
+                worktree_root,
+                &["apply", "--binary", "-"],
+                &self.unstaged_diff,
+            )
             .context("failed to apply unstaged changes to worktree")?;
+        }
+        Ok(())
     }
-    Ok(())
+
+    fn clean_source_after_move(&self, source_root: &Path, move_untracked: bool) -> Result<()> {
+        if has_head(source_root) {
+            git::status(source_root, &["reset", "--hard", "HEAD"])
+                .context("failed to clean tracked changes from source checkout after move")?;
+        } else {
+            git::status(source_root, &["read-tree", "--empty"])
+                .context("failed to clear unborn source index after move")?;
+            for relative_path in &self.tracked_paths {
+                remove_file_if_present(source_root, relative_path, "tracked")?;
+            }
+        }
+        if move_untracked {
+            for relative_path in &self.untracked_paths {
+                remove_file_if_present(source_root, relative_path, "untracked")?;
+            }
+        }
+        Ok(())
+    }
 }
 
-fn copy_untracked_files(source_root: &Path, worktree_root: &Path) -> Result<()> {
-    let paths = untracked_paths(source_root)?;
-    copy_untracked_files_at_paths(source_root, worktree_root, &paths)
+fn tracked_paths(source_root: &Path) -> Result<Vec<PathBuf>> {
+    let staged = git::bytes(source_root, &["diff", "--cached", "--name-only", "-z"])?;
+    let unstaged = git::bytes(source_root, &["diff", "--name-only", "-z"])?;
+    let mut paths = paths_from_nul_separated(&staged)?;
+    paths.extend(paths_from_nul_separated(&unstaged)?);
+    paths.sort();
+    paths.dedup();
+    Ok(paths)
 }
 
-fn untracked_paths(source_root: &Path) -> Result<Vec<PathBuf>> {
-    let output = git::bytes(
-        source_root,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-    )?;
+fn paths_from_nul_separated(output: &[u8]) -> Result<Vec<PathBuf>> {
     output
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
@@ -145,6 +202,31 @@ fn untracked_paths(source_root: &Path) -> Result<Vec<PathBuf>> {
             Ok(relative_path)
         })
         .collect()
+}
+
+fn has_head(source_root: &Path) -> bool {
+    git::status(source_root, &["rev-parse", "--verify", "HEAD"]).is_ok()
+}
+
+fn remove_file_if_present(source_root: &Path, relative_path: &Path, kind: &str) -> Result<()> {
+    match fs::remove_file(source_root.join(relative_path)) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).with_context(|| {
+            format!(
+                "failed to remove moved {kind} path {} from source checkout",
+                relative_path.display()
+            )
+        }),
+    }
+}
+
+fn untracked_paths(source_root: &Path) -> Result<Vec<PathBuf>> {
+    let output = git::bytes(
+        source_root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+    )?;
+    paths_from_nul_separated(&output)
 }
 
 fn copy_untracked_files_at_paths(
@@ -166,20 +248,6 @@ fn copy_untracked_files_at_paths(
         } else if metadata.is_file() {
             fs::copy(&source, &destination)?;
         }
-    }
-    Ok(())
-}
-
-fn clean_source_after_move(source_root: &Path, untracked_paths: &[PathBuf]) -> Result<()> {
-    git::status(source_root, &["reset", "--hard", "HEAD"])
-        .context("failed to clean tracked changes from source checkout after move")?;
-    for relative_path in untracked_paths {
-        fs::remove_file(source_root.join(relative_path)).with_context(|| {
-            format!(
-                "failed to remove moved untracked path {} from source checkout",
-                relative_path.display()
-            )
-        })?;
     }
     Ok(())
 }

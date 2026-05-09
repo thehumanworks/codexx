@@ -1,5 +1,6 @@
 //! App-layer handlers for the worktree TUI flow.
 
+use anyhow::Context;
 use codex_protocol::ThreadId;
 use codex_worktree::DirtyPolicy;
 use codex_worktree::WorktreeInfo;
@@ -39,29 +40,28 @@ impl WorktreeSessionTransition {
 }
 
 impl App {
-    pub(super) fn open_worktree_picker(&mut self, tui: &mut tui::Tui) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
+    pub(super) async fn open_worktree_picker(
+        &mut self,
+        tui: &mut tui::Tui,
+        app_server: &AppServerSession,
+    ) {
         self.chat_widget
             .show_selection_view(crate::worktree::loading_params(
                 tui.frame_requester(),
                 self.config.animations,
             ));
-        self.fetch_worktrees_for_picker();
+        if self.remote_app_server_url.is_some() {
+            let result = self
+                .list_current_repo_worktrees_remote(app_server)
+                .await
+                .map_err(|err| err.to_string());
+            self.on_worktrees_loaded(self.session_workspace_cwd(app_server).to_path_buf(), result);
+        } else {
+            self.fetch_worktrees_for_picker();
+        }
     }
 
     pub(super) fn open_worktree_create_prompt(&mut self) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
-
         let tx = self.app_event_tx.clone();
         let view = CustomPromptView::new(
             "New worktree".to_string(),
@@ -70,9 +70,29 @@ impl App {
             /*context_label*/
             Some("Creates a sibling worktree and starts this chat there.".to_string()),
             Box::new(move |branch: String| {
-                tx.send(AppEvent::CreateWorktreeAndSwitch {
+                tx.send(AppEvent::OpenWorktreeBaseRefPrompt {
                     branch: branch.trim().to_string(),
-                    base_ref: None,
+                });
+            }),
+        );
+        self.chat_widget.show_bottom_pane_view(Box::new(view));
+    }
+
+    pub(super) fn open_worktree_base_ref_prompt(&mut self, branch: String) {
+        let tx = self.app_event_tx.clone();
+        let view = CustomPromptView::new_allow_empty(
+            "Base ref".to_string(),
+            "Optional base ref; leave blank for default".to_string(),
+            /*initial_text*/ String::new(),
+            /*context_label*/
+            Some(format!(
+                "Create {branch} from this ref, or leave blank for the default."
+            )),
+            Box::new(move |base_ref: String| {
+                let base_ref = base_ref.trim();
+                tx.send(AppEvent::CreateWorktreeAndSwitch {
+                    branch: branch.clone(),
+                    base_ref: (!base_ref.is_empty()).then(|| base_ref.to_string()),
                     dirty_policy: None,
                 });
             }),
@@ -85,33 +105,28 @@ impl App {
         cwd: PathBuf,
         result: Result<Vec<WorktreeInfo>, String>,
     ) {
-        if cwd.as_path() != self.config.cwd.as_path() {
+        if self.remote_app_server_url.is_none() && cwd.as_path() != self.config.cwd.as_path() {
             return;
         }
         let params = match result {
             Ok(entries) if entries.is_empty() => crate::worktree::empty_params(),
-            Ok(entries) => crate::worktree::picker_params(entries, self.config.cwd.as_path()),
+            Ok(entries) => crate::worktree::picker_params(entries, cwd.as_path()),
             Err(err) => crate::worktree::error_params(err),
         };
         self.replace_worktree_view(params);
     }
 
-    pub(super) fn create_worktree_and_switch(
+    pub(super) async fn create_worktree_and_switch(
         &mut self,
         tui: &mut tui::Tui,
+        app_server: &AppServerSession,
         branch: String,
         base_ref: Option<String>,
         dirty_policy: Option<DirtyPolicy>,
     ) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
         let dirty_policy = match dirty_policy {
             Some(policy) => policy,
-            None => match codex_worktree::dirty_state(self.config.cwd.as_path()) {
+            None => match self.source_worktree_dirty_state(app_server).await {
                 Ok(state) if state.is_dirty() => {
                     let params = crate::worktree::dirty_policy_prompt_params(branch, base_ref);
                     self.chat_widget.show_selection_view(params);
@@ -127,13 +142,16 @@ impl App {
         };
 
         self.show_worktree_creating_view(tui, branch.clone());
-        self.spawn_worktree_create_request(WorktreeRequest {
-            codex_home: self.config.codex_home.to_path_buf(),
-            source_cwd: self.config.cwd.to_path_buf(),
-            branch,
-            base_ref,
-            dirty_policy,
-        });
+        self.spawn_worktree_create_request(
+            app_server,
+            WorktreeRequest {
+                codex_home: self.config.codex_home.to_path_buf(),
+                source_cwd: self.session_workspace_cwd(app_server).to_path_buf(),
+                branch,
+                base_ref,
+                dirty_policy,
+            },
+        );
     }
 
     pub(super) async fn on_worktree_created(
@@ -143,7 +161,7 @@ impl App {
         cwd: PathBuf,
         result: Result<WorktreeResolution, String>,
     ) {
-        if cwd.as_path() != self.config.cwd.as_path() {
+        if cwd.as_path() != self.session_workspace_cwd(app_server) {
             return;
         }
         let resolution = match result {
@@ -173,12 +191,6 @@ impl App {
     }
 
     pub(super) fn begin_switch_to_worktree_target(&mut self, tui: &mut tui::Tui, target: String) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
         self.show_worktree_switching_view(tui, target.clone());
         self.defer_switch_to_worktree_target(target);
     }
@@ -194,13 +206,10 @@ impl App {
         app_server: &mut AppServerSession,
         target: String,
     ) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
-        let entries = match self.list_current_repo_worktrees() {
+        let entries = match self
+            .list_current_repo_worktrees_for_session(app_server)
+            .await
+        {
             Ok(entries) => entries,
             Err(err) => {
                 self.show_worktree_error("Failed to list worktrees.".to_string(), err.to_string());
@@ -218,14 +227,15 @@ impl App {
             .await;
     }
 
-    pub(super) fn show_worktree_path(&mut self, target: String) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
-        match self.list_current_repo_worktrees() {
+    pub(super) async fn show_worktree_path(
+        &mut self,
+        app_server: &AppServerSession,
+        target: String,
+    ) {
+        match self
+            .list_current_repo_worktrees_for_session(app_server)
+            .await
+        {
             Ok(entries) => match crate::worktree::find_worktree(&entries, &target) {
                 Ok(info) => {
                     self.chat_widget.add_info_message(
@@ -242,20 +252,18 @@ impl App {
         }
     }
 
-    pub(super) fn remove_worktree(
+    pub(super) async fn remove_worktree(
         &mut self,
+        app_server: &AppServerSession,
         target: String,
         force: bool,
         delete_branch: bool,
         confirmed: bool,
     ) {
-        if self.remote_app_server_url.is_some() {
-            self.chat_widget.add_error_message(
-                "/worktree is not supported for remote sessions yet.".to_string(),
-            );
-            return;
-        }
-        let entries = match self.list_current_repo_worktrees() {
+        let entries = match self
+            .list_current_repo_worktrees_for_session(app_server)
+            .await
+        {
             Ok(entries) => entries,
             Err(err) => {
                 self.chat_widget
@@ -283,13 +291,33 @@ impl App {
             return;
         }
 
-        match codex_worktree::remove_worktree(WorktreeRemoveRequest {
-            codex_home: self.config.codex_home.to_path_buf(),
-            source_cwd: Some(self.config.cwd.to_path_buf()),
-            name_or_path: target.clone(),
-            force,
-            delete_branch,
-        }) {
+        let result = if self.remote_app_server_url.is_some() {
+            let Some(runner) = self.workspace_command_runner.clone() else {
+                self.chat_widget.add_error_message(
+                    "Remote worktree removal is unavailable because the workspace command runner is missing."
+                        .to_string(),
+                );
+                return;
+            };
+            crate::remote_worktree::remove_worktree(
+                &runner,
+                &app_server.request_handle(),
+                self.session_workspace_cwd(app_server),
+                &target,
+                force,
+                delete_branch,
+            )
+            .await
+        } else {
+            codex_worktree::remove_worktree(WorktreeRemoveRequest {
+                codex_home: self.config.codex_home.to_path_buf(),
+                source_cwd: Some(self.session_workspace_cwd(app_server).to_path_buf()),
+                name_or_path: target.clone(),
+                force,
+                delete_branch,
+            })
+        };
+        match result {
             Ok(result) => {
                 let mut message = format!("Removed worktree {}", result.removed_path.display());
                 if let Some(branch) = result.deleted_branch {
@@ -312,6 +340,67 @@ impl App {
         })
     }
 
+    async fn list_current_repo_worktrees_for_session(
+        &self,
+        app_server: &AppServerSession,
+    ) -> anyhow::Result<Vec<WorktreeInfo>> {
+        if self.remote_app_server_url.is_some() {
+            self.list_current_repo_worktrees_remote(app_server).await
+        } else {
+            self.list_current_repo_worktrees()
+        }
+    }
+
+    async fn list_current_repo_worktrees_remote(
+        &self,
+        app_server: &AppServerSession,
+    ) -> anyhow::Result<Vec<WorktreeInfo>> {
+        let runner = self
+            .workspace_command_runner
+            .clone()
+            .context("remote worktree operations require a workspace command runner")?;
+        crate::remote_worktree::list_current_repo_worktrees(
+            &runner,
+            &app_server.request_handle(),
+            self.session_workspace_cwd(app_server),
+        )
+        .await
+    }
+
+    async fn source_worktree_dirty_state(
+        &self,
+        app_server: &AppServerSession,
+    ) -> anyhow::Result<codex_worktree::DirtyState> {
+        if self.remote_app_server_url.is_some() {
+            let runner = self
+                .workspace_command_runner
+                .clone()
+                .context("remote worktree operations require a workspace command runner")?;
+            crate::remote_worktree::source_dirty_state(
+                &runner,
+                self.session_workspace_cwd(app_server),
+            )
+            .await
+        } else {
+            codex_worktree::dirty_state(self.config.cwd.as_path())
+        }
+    }
+
+    fn session_workspace_cwd<'a>(&'a self, app_server: &'a AppServerSession) -> &'a Path {
+        if self.remote_app_server_url.is_some() {
+            app_server
+                .remote_cwd_override()
+                .or_else(|| {
+                    self.primary_session_configured
+                        .as_ref()
+                        .map(|session| session.cwd.as_path())
+                })
+                .unwrap_or(self.config.cwd.as_path())
+        } else {
+            self.config.cwd.as_path()
+        }
+    }
+
     fn fetch_worktrees_for_picker(&mut self) {
         let query = WorktreeListQuery {
             codex_home: self.config.codex_home.to_path_buf(),
@@ -326,13 +415,38 @@ impl App {
         });
     }
 
-    fn spawn_worktree_create_request(&self, request: WorktreeRequest) {
+    fn spawn_worktree_create_request(
+        &self,
+        app_server: &AppServerSession,
+        request: WorktreeRequest,
+    ) {
         let cwd = request.source_cwd.clone();
         let app_event_tx = self.app_event_tx.clone();
-        tokio::task::spawn_blocking(move || {
-            let result = codex_worktree::ensure_worktree(request).map_err(|err| err.to_string());
-            app_event_tx.send(AppEvent::WorktreeCreated { cwd, result });
-        });
+        if self.remote_app_server_url.is_some() {
+            let Some(runner) = self.workspace_command_runner.clone() else {
+                app_event_tx.send(AppEvent::WorktreeCreated {
+                    cwd,
+                    result: Err(
+                        "remote worktree operations require a workspace command runner".to_string(),
+                    ),
+                });
+                return;
+            };
+            let request_handle = app_server.request_handle();
+            tokio::spawn(async move {
+                let result =
+                    crate::remote_worktree::ensure_worktree(&runner, &request_handle, request)
+                        .await
+                        .map_err(|err| err.to_string());
+                app_event_tx.send(AppEvent::WorktreeCreated { cwd, result });
+            });
+        } else {
+            tokio::task::spawn_blocking(move || {
+                let result =
+                    codex_worktree::ensure_worktree(request).map_err(|err| err.to_string());
+                app_event_tx.send(AppEvent::WorktreeCreated { cwd, result });
+            });
+        }
     }
 
     async fn switch_to_worktree_info(
@@ -342,17 +456,21 @@ impl App {
         info: WorktreeInfo,
         warnings: Vec<String>,
     ) {
-        let mut config = match self
-            .rebuild_config_for_cwd(info.workspace_cwd.clone())
-            .await
-        {
-            Ok(config) => config,
-            Err(err) => {
-                self.show_worktree_error(
-                    "Failed to rebuild configuration for worktree.".to_string(),
-                    err.to_string(),
-                );
-                return;
+        let mut config = if app_server.is_remote() {
+            self.config.clone()
+        } else {
+            match self
+                .rebuild_config_for_cwd(info.workspace_cwd.clone())
+                .await
+            {
+                Ok(config) => config,
+                Err(err) => {
+                    self.show_worktree_error(
+                        "Failed to rebuild configuration for worktree.".to_string(),
+                        err.to_string(),
+                    );
+                    return;
+                }
             }
         };
         self.apply_runtime_policy_overrides(&mut config);
@@ -387,6 +505,9 @@ impl App {
                         err.to_string(),
                     );
                 } else {
+                    if app_server.is_remote() {
+                        app_server.set_remote_cwd_override(Some(info.workspace_cwd.clone()));
+                    }
                     let transition = if forked {
                         WorktreeSessionTransition::Forked
                     } else {
@@ -419,7 +540,11 @@ impl App {
         warnings: Vec<String>,
     ) {
         let request_handle = app_server.request_handle();
-        let remote_cwd_override = app_server.remote_cwd_override().map(Path::to_path_buf);
+        let remote_cwd_override = if app_server.is_remote() {
+            Some(info.workspace_cwd.clone())
+        } else {
+            app_server.remote_cwd_override().map(Path::to_path_buf)
+        };
         let app_event_tx = self.app_event_tx.clone();
         tokio::spawn(async move {
             let forked = matches!(mode, WorktreeSwitchMode::Fork(_));

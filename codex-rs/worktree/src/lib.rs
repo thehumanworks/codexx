@@ -16,11 +16,16 @@ pub use manager::ensure_worktree;
 pub use manager::list_worktrees;
 pub use manager::remove_worktree;
 pub use manager::resolve_worktree;
+pub use metadata::WorktreeMetadata;
+pub use metadata::WorktreeThreadMetadata;
 pub use metadata::bind_thread;
 pub use metadata::read_worktree_metadata;
 pub use metadata::write_worktree_metadata;
 pub use paths::codex_worktrees_root;
 pub use paths::is_managed_worktree_path;
+pub use paths::repo_fingerprint;
+pub use paths::sibling_worktree_git_root;
+pub use paths::slugify_name;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeRequest {

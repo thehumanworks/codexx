@@ -236,9 +236,10 @@ fn parse_dirty_policy(value: &str) -> Result<DirtyPolicy, String> {
         "ignore" => Ok(DirtyPolicy::Ignore),
         "copy-tracked" => Ok(DirtyPolicy::CopyTracked),
         "copy-all" => Ok(DirtyPolicy::CopyAll),
+        "move-tracked" => Ok(DirtyPolicy::MoveTracked),
         "move-all" => Ok(DirtyPolicy::MoveAll),
         _ => Err(
-            "Dirty mode must be one of: fail, ignore, copy-tracked, copy-all, move-all."
+            "Dirty mode must be one of: fail, ignore, copy-tracked, copy-all, move-tracked, move-all."
                 .to_string(),
         ),
     }
@@ -493,6 +494,11 @@ pub(crate) fn dirty_policy_prompt_params(
                 DirtyPolicy::CopyAll,
             ),
             item(
+                "Move tracked",
+                "Move staged and unstaged tracked changes; leave untracked files behind.",
+                DirtyPolicy::MoveTracked,
+            ),
+            item(
                 "Copy tracked",
                 "Copy staged and unstaged tracked changes.",
                 DirtyPolicy::CopyTracked,
@@ -639,6 +645,18 @@ mod tests {
                 branch: "fcoury/demo".to_string(),
                 base_ref: /*base_ref*/ None,
                 dirty_policy: Some(DirtyPolicy::MoveAll),
+            })
+        );
+    }
+
+    #[test]
+    fn parse_new_with_move_tracked_dirty_policy() {
+        assert_eq!(
+            parse_worktree_slash_args("new fcoury/demo --dirty move-tracked"),
+            Ok(WorktreeSlashAction::Create {
+                branch: "fcoury/demo".to_string(),
+                base_ref: /*base_ref*/ None,
+                dirty_policy: Some(DirtyPolicy::MoveTracked),
             })
         );
     }

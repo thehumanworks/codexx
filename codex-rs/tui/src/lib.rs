@@ -179,6 +179,7 @@ mod tui;
 mod ui_consts;
 pub(crate) mod update_action;
 pub use update_action::UpdateAction;
+mod remote_worktree;
 mod worktree;
 mod worktree_labels;
 #[cfg(not(debug_assertions))]

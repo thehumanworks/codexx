@@ -352,6 +352,9 @@ struct WorktreeCli {
 
 #[derive(Debug, clap::Subcommand)]
 enum WorktreeSubcommand {
+    /// Create or reuse a Codex-managed worktree for the current repository.
+    Create(WorktreeCreateCommand),
+
     /// List Codex-managed worktrees for the current repository.
     List(WorktreeListCommand),
 
@@ -374,6 +377,20 @@ struct WorktreeListCommand {
     /// Print machine-readable JSON.
     #[arg(long = "json", default_value_t = false)]
     json: bool,
+}
+
+#[derive(Debug, Args)]
+struct WorktreeCreateCommand {
+    /// Branch name for the managed worktree.
+    branch: String,
+
+    /// Base ref for a newly created managed worktree.
+    #[arg(long = "base", value_name = "REF")]
+    base_ref: Option<String>,
+
+    /// How to handle uncommitted source checkout changes when creating the worktree.
+    #[arg(long = "dirty", value_enum, default_value_t = WorktreeDirtyCliArg::Fail)]
+    dirty: WorktreeDirtyCliArg,
 }
 
 #[derive(Debug, Args)]
@@ -789,6 +806,7 @@ fn dirty_policy_from_cli(arg: WorktreeDirtyCliArg) -> DirtyPolicy {
         WorktreeDirtyCliArg::Ignore => DirtyPolicy::Ignore,
         WorktreeDirtyCliArg::CopyTracked => DirtyPolicy::CopyTracked,
         WorktreeDirtyCliArg::CopyAll => DirtyPolicy::CopyAll,
+        WorktreeDirtyCliArg::MoveTracked => DirtyPolicy::MoveTracked,
         WorktreeDirtyCliArg::MoveAll => DirtyPolicy::MoveAll,
     }
 }
@@ -796,6 +814,19 @@ fn dirty_policy_from_cli(arg: WorktreeDirtyCliArg) -> DirtyPolicy {
 fn run_worktree_command(cli: WorktreeCli) -> anyhow::Result<()> {
     let codex_home = find_codex_home()?.to_path_buf();
     match cli.subcommand {
+        WorktreeSubcommand::Create(command) => {
+            let resolution = codex_worktree::ensure_worktree(WorktreeRequest {
+                codex_home,
+                source_cwd: std::env::current_dir()?,
+                branch: command.branch,
+                base_ref: command.base_ref,
+                dirty_policy: dirty_policy_from_cli(command.dirty),
+            })?;
+            for warning in &resolution.warnings {
+                eprintln!("warning: {}", warning.message);
+            }
+            println!("{}", resolution.info.workspace_cwd.display());
+        }
         WorktreeSubcommand::List(command) => {
             let source_cwd = if command.all {
                 None
@@ -2431,6 +2462,32 @@ mod tests {
         .expect("worktree flags should parse");
 
         assert_eq!(cli.interactive.worktree_dirty, WorktreeDirtyCliArg::MoveAll);
+    }
+
+    #[test]
+    fn worktree_create_subcommand_parses() {
+        let cli = MultitoolCli::try_parse_from([
+            "codex",
+            "worktree",
+            "create",
+            "parser-fix",
+            "--base",
+            "origin/main",
+            "--dirty",
+            "move-tracked",
+        ])
+        .expect("worktree create should parse");
+
+        let Some(Subcommand::Worktree(WorktreeCli {
+            subcommand: WorktreeSubcommand::Create(command),
+        })) = cli.subcommand
+        else {
+            panic!("expected worktree create subcommand");
+        };
+
+        assert_eq!(command.branch, "parser-fix");
+        assert_eq!(command.base_ref.as_deref(), Some("origin/main"));
+        assert_eq!(command.dirty, WorktreeDirtyCliArg::MoveTracked);
     }
 
     #[test]

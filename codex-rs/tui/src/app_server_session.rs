@@ -191,6 +191,10 @@ impl AppServerSession {
         self.remote_cwd_override.as_deref()
     }
 
+    pub(crate) fn set_remote_cwd_override(&mut self, remote_cwd_override: Option<PathBuf>) {
+        self.remote_cwd_override = remote_cwd_override;
+    }
+
     pub(crate) fn is_remote(&self) -> bool {
         matches!(self.client, AppServerClient::Remote(_))
     }

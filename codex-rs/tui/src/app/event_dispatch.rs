@@ -188,11 +188,15 @@ impl App {
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::OpenWorktreePicker => {
-                self.open_worktree_picker(tui);
+                self.open_worktree_picker(tui, app_server).await;
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::OpenWorktreeCreatePrompt => {
                 self.open_worktree_create_prompt();
+                tui.frame_requester().schedule_frame();
+            }
+            AppEvent::OpenWorktreeBaseRefPrompt { branch } => {
+                self.open_worktree_base_ref_prompt(branch);
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::WorktreesLoaded { cwd, result } => {
@@ -204,7 +208,8 @@ impl App {
                 base_ref,
                 dirty_policy,
             } => {
-                self.create_worktree_and_switch(tui, branch, base_ref, dirty_policy);
+                self.create_worktree_and_switch(tui, app_server, branch, base_ref, dirty_policy)
+                    .await;
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::WorktreeCreated { cwd, result } => {
@@ -238,7 +243,7 @@ impl App {
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::ShowWorktreePath { target } => {
-                self.show_worktree_path(target);
+                self.show_worktree_path(app_server, target).await;
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::RemoveWorktree {
@@ -247,7 +252,8 @@ impl App {
                 delete_branch,
                 confirmed,
             } => {
-                self.remove_worktree(target, force, delete_branch, confirmed);
+                self.remove_worktree(app_server, target, force, delete_branch, confirmed)
+                    .await;
                 tui.frame_requester().schedule_frame();
             }
             AppEvent::BeginInitialHistoryReplayBuffer => {

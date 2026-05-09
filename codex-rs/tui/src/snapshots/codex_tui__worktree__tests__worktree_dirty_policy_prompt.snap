@@ -9,8 +9,10 @@ expression: "render_selection(dirty_policy_prompt_params(\"fcoury/demo\".to_stri
 › 1. Move all      Move tracked changes and untracked files; leave the source
                    checkout clean.
   2. Copy all      Copy tracked changes and untracked files.
-  3. Copy tracked  Copy staged and unstaged tracked changes.
-  4. Ignore        Create from the requested base without copying local changes.
-  5. Fail          Cancel creation and leave the source checkout unchanged.
+  3. Move tracked  Move staged and unstaged tracked changes; leave untracked
+                   files behind.
+  4. Copy tracked  Copy staged and unstaged tracked changes.
+  5. Ignore        Create from the requested base without copying local changes.
+  6. Fail          Cancel creation and leave the source checkout unchanged.
 
   Press enter to confirm or esc to go back
