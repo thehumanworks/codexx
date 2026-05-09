@@ -1,12 +1,9 @@
 #![cfg(target_os = "windows")]
 
 use super::spawn_windows_sandbox_session_legacy;
-use crate::LocalSid;
-use crate::acl::add_allow_ace;
 use crate::ipc_framed::Message;
 use crate::ipc_framed::decode_bytes;
 use crate::ipc_framed::read_frame;
-use crate::load_or_create_cap_sids;
 use crate::run_windows_sandbox_capture;
 use codex_utils_pty::ProcessDriver;
 use pretty_assertions::assert_eq;
@@ -194,18 +191,35 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         let secret_path = fixture_dir.join("secret.env");
         let public_path = fixture_dir.join("public.txt");
         fs::create_dir_all(&fixture_dir).expect("create deny-read fixture");
-        fs::write(&secret_path, "secret denied").expect("write secret");
-        fs::write(&public_path, "public allowed").expect("write public");
-        let generic_sid = LocalSid::from_string(
-            &load_or_create_cap_sids(codex_home.path())
-                .expect("load caps")
-                .workspace,
-        )
-        .expect("workspace SID");
-        unsafe {
-            add_allow_ace(&fixture_dir, generic_sid.as_ptr()).expect("allow fixture dir");
-            add_allow_ace(&secret_path, generic_sid.as_ptr()).expect("allow secret");
-            add_allow_ace(&public_path, generic_sid.as_ptr()).expect("allow public");
+
+        for (label, command) in [
+            ("secret", "echo secret denied>secret.env"),
+            ("public", "echo public allowed>public.txt"),
+        ] {
+            let setup = spawn_windows_sandbox_session_legacy(
+                "workspace-write",
+                fixture_dir.as_path(),
+                codex_home.path(),
+                vec![
+                    "C:\\Windows\\System32\\cmd.exe".to_string(),
+                    "/c".to_string(),
+                    command.to_string(),
+                ],
+                fixture_dir.as_path(),
+                HashMap::new(),
+                Some(5_000),
+                &[],
+                &[],
+                /*tty*/ false,
+                /*stdin_open*/ false,
+                /*use_private_desktop*/ true,
+            )
+            .await
+            .unwrap_or_else(|err| panic!("spawn legacy {label} setup session: {err}"));
+            let (stdout, exit_code) =
+                collect_stdout_and_exit(setup, codex_home.path(), Duration::from_secs(10)).await;
+            let stdout = String::from_utf8_lossy(&stdout);
+            assert_eq!(exit_code, 0, "{label} stdout={stdout:?}");
         }
 
         let public_read = spawn_windows_sandbox_session_legacy(
