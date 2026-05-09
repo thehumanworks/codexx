@@ -538,7 +538,7 @@ async fn view_image_routes_to_selected_remote_environment() -> anyhow::Result<()
 
     test.submit_turn_with_environments(
         "route view image",
-        Some(vec![remote_selection, local_selection]),
+        Some(vec![local_selection, remote_selection]),
     )
     .await?;
 

@@ -47,11 +47,6 @@ impl SessionStartupPrewarmHandle {
         }
     }
 
-    pub(crate) async fn abort_and_wait(self) {
-        self.task.abort();
-        let _ = self.task.await;
-    }
-
     async fn resolve(
         self,
         session_telemetry: &SessionTelemetry,

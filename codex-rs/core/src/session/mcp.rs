@@ -346,13 +346,6 @@ impl Session {
             *guard = cancel_token;
         }
 
-        if let Some(startup_prewarm) = self.take_session_startup_prewarm().await {
-            // The prewarm was built with the stale manager and can hold a read
-            // lock while resolving tools. Abort it before swapping managers so
-            // an MCP refresh cannot block turn startup behind stale work.
-            startup_prewarm.abort_and_wait().await;
-        }
-
         let mut old_manager = {
             let mut manager = self.services.mcp_connection_manager.write().await;
             std::mem::replace(&mut *manager, refreshed_manager)
