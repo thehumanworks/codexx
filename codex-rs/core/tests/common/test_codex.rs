@@ -698,28 +698,15 @@ impl TestCodex {
         prompt: &str,
         environments: Option<Vec<TurnEnvironmentSelection>>,
     ) -> Result<()> {
-        let (sandbox_policy, permission_profile) =
-            turn_permission_fields(PermissionProfile::Disabled, self.config.cwd.as_path());
-        let session_model = self.session_configured.model.clone();
         self.codex
-            .submit(Op::UserTurn {
+            .submit(Op::UserInput {
                 environments,
                 items: vec![UserInput::Text {
                     text: prompt.into(),
                     text_elements: Vec::new(),
                 }],
                 final_output_json_schema: None,
-                cwd: self.config.cwd.to_path_buf(),
-                approval_policy: AskForApproval::Never,
-                approvals_reviewer: None,
-                sandbox_policy,
-                permission_profile,
-                model: session_model,
-                effort: None,
-                summary: None,
-                service_tier: None,
-                collaboration_mode: None,
-                personality: None,
+                responsesapi_client_metadata: None,
             })
             .await?;
         Ok(())
