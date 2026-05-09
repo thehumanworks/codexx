@@ -722,6 +722,12 @@ impl TestCodex {
                 personality: None,
             })
             .await?;
+        wait_for_event_with_timeout(
+            &self.codex,
+            |event| matches!(event, EventMsg::TurnStarted(_)),
+            SUBMIT_TURN_COMPLETE_TIMEOUT,
+        )
+        .await;
         Ok(())
     }
 

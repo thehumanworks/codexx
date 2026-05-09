@@ -58,6 +58,7 @@ slow-timeout = { period = "30s", terminate-after = 3 }
 # other while waiting for append-only history rewrites on saturated CI runners.
 filter = 'package(codex-core) & kind(test) & (test(snapshot_rollback_followup_turn_trims_context_updates) | test(snapshot_rollback_past_compaction_replays_append_only_history) | test(thread_rollback_after_generated_image_drops_entire_image_turn_history))'
 test-group = 'core_thread_rollback_integration'
+slow-timeout = { period = "30s", terminate-after = 3 }
 
 [[profile.default.overrides]]
 # These tests create restricted-token Windows child processes and private desktops.
