@@ -9,6 +9,8 @@ mod in_memory;
 mod live_thread;
 mod local;
 mod store;
+#[allow(dead_code)]
+mod thread_metadata_handler;
 mod types;
 
 pub use error::ThreadStoreError;
@@ -21,6 +23,7 @@ pub use local::LocalThreadStore;
 pub use local::LocalThreadStoreConfig;
 pub use store::ThreadStore;
 pub use types::AppendThreadItemsParams;
+pub use types::ApplyThreadMetadataParams;
 pub use types::ArchiveThreadParams;
 pub use types::CreateThreadParams;
 pub use types::GitInfoPatch;
@@ -42,6 +45,7 @@ pub use types::StoredTurnItemsView;
 pub use types::StoredTurnStatus;
 pub use types::ThreadEventPersistenceMode;
 pub use types::ThreadMetadataPatch;
+pub use types::ThreadMetadataUpdate;
 pub use types::ThreadPage;
 pub use types::ThreadPersistenceMetadata;
 pub use types::ThreadSortKey;
