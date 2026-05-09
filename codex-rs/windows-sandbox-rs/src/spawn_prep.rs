@@ -287,6 +287,7 @@ pub(crate) fn apply_legacy_session_acl_rules(
     Ok(guards)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn prepare_elevated_spawn_context(
     policy_json_or_preset: &str,
     sandbox_policy_cwd: &Path,
