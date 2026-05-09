@@ -350,7 +350,10 @@ impl Session {
             let mut manager = self.services.mcp_connection_manager.write().await;
             std::mem::replace(&mut *manager, refreshed_manager)
         };
-        old_manager.shutdown().await;
+        let old_manager_shutdown = old_manager.begin_shutdown();
+        // Do not block turn startup on stale MCP process teardown. The refreshed
+        // manager is already installed, so old clients can drain independently.
+        tokio::spawn(old_manager_shutdown);
     }
 
     pub(crate) async fn refresh_mcp_servers_if_requested(
