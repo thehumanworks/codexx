@@ -1,10 +1,14 @@
 #![cfg(target_os = "windows")]
 
 use super::spawn_windows_sandbox_session_legacy;
+use crate::acl::add_allow_ace;
+use crate::cap::load_or_create_cap_sids;
+use crate::cap::workspace_cap_sid_for_cwd;
 use crate::ipc_framed::Message;
 use crate::ipc_framed::decode_bytes;
 use crate::ipc_framed::read_frame;
 use crate::run_windows_sandbox_capture;
+use crate::spawn_prep::LocalSid;
 use codex_utils_pty::ProcessDriver;
 use pretty_assertions::assert_eq;
 use std::collections::HashMap;
@@ -190,36 +194,23 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             .join(format!("legacy-non-tty-deny-read-fixture-{fixture_id}"));
         let _ = fs::remove_dir_all(&fixture_dir);
         let secret_path = fixture_dir.join("secret.env");
+        let public_path = fixture_dir.join("public.txt");
         fs::create_dir_all(&fixture_dir).expect("create deny-read fixture");
+        fs::write(&secret_path, "secret denied").expect("write secret");
+        fs::write(&public_path, "public allowed").expect("write public");
 
-        for (label, command) in [
-            ("secret", "echo secret denied>secret.env"),
-            ("public", "echo public allowed>public.txt"),
-        ] {
-            let setup = spawn_windows_sandbox_session_legacy(
-                "workspace-write",
-                fixture_dir.as_path(),
-                codex_home.path(),
-                vec![
-                    "C:\\Windows\\System32\\cmd.exe".to_string(),
-                    "/c".to_string(),
-                    command.to_string(),
-                ],
-                fixture_dir.as_path(),
-                HashMap::new(),
-                Some(5_000),
-                &[],
-                &[],
-                /*tty*/ false,
-                /*stdin_open*/ false,
-                /*use_private_desktop*/ true,
-            )
-            .await
-            .unwrap_or_else(|err| panic!("spawn legacy {label} setup session: {err}"));
-            let (stdout, exit_code) =
-                collect_stdout_and_exit(setup, codex_home.path(), Duration::from_secs(10)).await;
-            let stdout = String::from_utf8_lossy(&stdout);
-            assert_eq!(exit_code, 0, "{label} stdout={stdout:?}");
+        let caps = load_or_create_cap_sids(codex_home.path()).expect("load caps");
+        let generic_sid = LocalSid::from_string(&caps.workspace).expect("generic workspace SID");
+        let workspace_sid = LocalSid::from_string(
+            &workspace_cap_sid_for_cwd(codex_home.path(), fixture_dir.as_path())
+                .expect("workspace SID string"),
+        )
+        .expect("workspace SID");
+        unsafe {
+            for path in [&fixture_dir, &secret_path, &public_path] {
+                add_allow_ace(path, generic_sid.as_ptr()).expect("allow generic workspace SID");
+                add_allow_ace(path, workspace_sid.as_ptr()).expect("allow workspace SID");
+            }
         }
 
         let public_read_without_deny = spawn_windows_sandbox_session_legacy(
