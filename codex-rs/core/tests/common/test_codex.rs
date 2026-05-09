@@ -693,25 +693,6 @@ impl TestCodex {
         .await
     }
 
-    pub async fn submit_turn_with_environments_no_wait(
-        &self,
-        prompt: &str,
-        environments: Option<Vec<TurnEnvironmentSelection>>,
-    ) -> Result<()> {
-        self.codex
-            .submit(Op::UserInput {
-                environments,
-                items: vec![UserInput::Text {
-                    text: prompt.into(),
-                    text_elements: Vec::new(),
-                }],
-                final_output_json_schema: None,
-                responsesapi_client_metadata: None,
-            })
-            .await?;
-        Ok(())
-    }
-
     async fn submit_turn_with_permission_profile_context(
         &self,
         prompt: &str,

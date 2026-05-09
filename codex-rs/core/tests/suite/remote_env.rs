@@ -13,7 +13,6 @@ use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
-use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathBufExt;
@@ -39,42 +38,6 @@ use std::process::Command;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
-use tokio::time::Duration;
-
-async fn wait_for_function_call_output(
-    test: &TestCodex,
-    response_mock: &core_test_support::responses::ResponseMock,
-    call_id: &str,
-) -> Result<String> {
-    let mut events = Vec::new();
-    let output = tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            if let Some(output) = response_mock.function_call_output_text(call_id) {
-                return Ok(output);
-            }
-            tokio::select! {
-                event = test.codex.next_event() => {
-                    let event = event.context("codex event stream ended while waiting for function_call_output")?;
-                    match &event.msg {
-                        EventMsg::Error(error) => {
-                            anyhow::bail!("turn errored before function_call_output for {call_id}: {}", error.message);
-                        }
-                        EventMsg::TurnComplete(_) => {
-                            anyhow::bail!("turn completed before function_call_output for {call_id}; events: {events:?}");
-                        }
-                        _ => events.push(format!("{:?}", event.msg)),
-                    }
-                }
-                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
-            }
-        }
-    })
-    .await
-    .with_context(|| {
-        format!("timed out waiting for function_call_output for {call_id}; events: {events:?}")
-    })??;
-    Ok(output)
-}
 async fn unified_exec_test(server: &wiremock::MockServer) -> Result<TestCodex> {
     let mut builder = test_codex().with_config(|config| {
         config.use_experimental_unified_exec_tool = true;
@@ -211,11 +174,13 @@ async fn exec_command_routing_output(
     )
     .await;
 
-    test.submit_turn_with_environments_no_wait("route exec command", environments)
+    test.submit_turn_with_environments("route exec command", environments)
         .await?;
 
-    let output = wait_for_function_call_output(test, &response_mock, call_id).await?;
     assert_eq!(response_mock.requests().len(), 2);
+    let output = response_mock
+        .function_call_output_text(call_id)
+        .with_context(|| format!("missing function_call_output for {call_id}"))?;
     Ok(output)
 }
 
