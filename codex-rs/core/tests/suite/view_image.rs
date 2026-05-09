@@ -65,19 +65,25 @@ use wiremock::matchers::body_string_contains;
 const VIEW_IMAGE_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
 
 async fn wait_for_function_call_output(
+    test: &TestCodex,
     response_mock: &responses::ResponseMock,
     call_id: &str,
 ) -> anyhow::Result<Value> {
     tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if let Some(output) = response_mock.function_call_output(call_id) {
-                return output;
+                return Ok(output);
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            tokio::select! {
+                event = test.codex.next_event() => {
+                    let _ = event.context("codex event stream ended while waiting for function_call_output")?;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+            }
         }
     })
     .await
-    .with_context(|| format!("timed out waiting for function_call_output for {call_id}"))
+    .with_context(|| format!("timed out waiting for function_call_output for {call_id}"))?
 }
 
 fn disabled_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
@@ -559,7 +565,7 @@ async fn view_image_routes_to_selected_remote_environment() -> anyhow::Result<()
     )
     .await?;
 
-    let output = wait_for_function_call_output(&response_mock, call_id).await?;
+    let output = wait_for_function_call_output(&test, &response_mock, call_id).await?;
     let output_items = output
         .get("output")
         .and_then(Value::as_array)
