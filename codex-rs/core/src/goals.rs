@@ -1404,8 +1404,8 @@ fn should_ignore_goal_for_mode(mode: ModeKind) -> bool {
 
 // Builds the hidden developer prompt used to continue an active goal after the
 // previous turn completes. Runtime-owned state such as budget exhaustion is
-// reported as context, but the model is only asked to mark goals active,
-// paused, or complete.
+// reported as context, but the model is only asked to mark the goal complete
+// after auditing the current state.
 fn continuation_prompt(goal: &ThreadGoal) -> String {
     let token_budget = goal
         .token_budget
@@ -1416,13 +1416,11 @@ fn continuation_prompt(goal: &ThreadGoal) -> String {
         .map(|budget| (budget - goal.tokens_used).max(0).to_string())
         .unwrap_or_else(|| "unbounded".to_string());
     let tokens_used = goal.tokens_used.to_string();
-    let time_used_seconds = goal.time_used_seconds.to_string();
     let objective = escape_xml_text(&goal.objective);
 
     match CONTINUATION_PROMPT_TEMPLATE.render([
         ("objective", objective.as_str()),
         ("tokens_used", tokens_used.as_str()),
-        ("time_used_seconds", time_used_seconds.as_str()),
         ("token_budget", token_budget.as_str()),
         ("remaining_tokens", remaining_tokens.as_str()),
     ]) {
@@ -1588,6 +1586,7 @@ mod tests {
         assert!(prompt.contains("finish the stack"));
         assert!(prompt.contains("<untrusted_objective>\nfinish the stack\n</untrusted_objective>"));
         assert!(prompt.contains("Token budget: 10000"));
+        assert!(!prompt.contains("Time spent pursuing goal"));
         assert!(prompt.contains("call update_goal with status \"complete\""));
         assert!(!prompt.contains(
             "explain the blocker or next required input to the user and wait for new input"
