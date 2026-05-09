@@ -51,6 +51,7 @@ test-group = 'core_apply_patch_cli_integration'
 # each other and trip nextest's per-test timeout.
 filter = 'package(codex-core) & kind(test) & (test(remote_env) | test(view_image_routes_to_selected_remote_environment) | test(unified_exec_network_denial_emits_failed_background_end_event) | test(unified_exec_short_lived_network_denial_emits_failed_end_event))'
 test-group = 'core_remote_environment_integration'
+slow-timeout = { period = "30s", terminate-after = 3 }
 
 [[profile.default.overrides]]
 # These tests drive rollback through full mocked turns and can contend with each
