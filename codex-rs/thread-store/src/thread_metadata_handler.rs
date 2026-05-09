@@ -134,10 +134,18 @@ impl ThreadMetadataHandler {
         if persisted.is_empty() {
             return None;
         }
+        let updates_session_metadata = persisted.iter().any(|item| {
+            matches!(item, RolloutItem::SessionMeta(meta_line) if meta_line.meta.id == self.thread_id)
+        });
         self.observe_items(persisted.as_slice(), /*updated_at_override*/ None);
+        let mut update = self.current_update();
+        if !updates_session_metadata {
+            update.memory_mode = None;
+            update.dynamic_tools = None;
+        }
         Some(PreparedThreadMetadata {
             items: persisted,
-            update: self.current_update(),
+            update,
         })
     }
 
@@ -433,6 +441,8 @@ mod tests {
             Some("hello metadata")
         );
         assert_eq!(prepared.update.preview.as_deref(), Some("hello metadata"));
+        assert_eq!(prepared.update.memory_mode, None);
+        assert_eq!(prepared.update.dynamic_tools, None);
     }
 
     #[tokio::test]

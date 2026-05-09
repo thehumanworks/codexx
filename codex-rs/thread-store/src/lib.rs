@@ -9,7 +9,6 @@ mod in_memory;
 mod live_thread;
 mod local;
 mod store;
-#[allow(dead_code)]
 mod thread_metadata_handler;
 mod types;
 

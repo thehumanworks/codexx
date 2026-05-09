@@ -4,9 +4,11 @@ use std::sync::Arc;
 use codex_protocol::ThreadId;
 use codex_protocol::protocol::RolloutItem;
 use codex_protocol::protocol::ThreadMemoryMode;
+use tokio::sync::Mutex;
 use tracing::warn;
 
 use crate::AppendThreadItemsParams;
+use crate::ApplyThreadMetadataParams;
 use crate::CreateThreadParams;
 use crate::LoadThreadHistoryParams;
 use crate::LocalThreadStore;
@@ -17,7 +19,7 @@ use crate::StoredThreadHistory;
 use crate::ThreadMetadataPatch;
 use crate::ThreadStore;
 use crate::ThreadStoreResult;
-use crate::UpdateThreadMetadataParams;
+use crate::thread_metadata_handler::ThreadMetadataHandler;
 
 /// Handle for an active thread's persistence lifecycle.
 ///
@@ -28,6 +30,7 @@ use crate::UpdateThreadMetadataParams;
 pub struct LiveThread {
     thread_id: ThreadId,
     thread_store: Arc<dyn ThreadStore>,
+    metadata_handler: Arc<Mutex<ThreadMetadataHandler>>,
 }
 
 /// Owns a live thread while session initialization is still fallible.
@@ -85,11 +88,15 @@ impl LiveThread {
         params: CreateThreadParams,
     ) -> ThreadStoreResult<Self> {
         let thread_id = params.thread_id;
+        let metadata_handler =
+            Arc::new(Mutex::new(ThreadMetadataHandler::for_create(&params).await));
         thread_store.create_thread(params).await?;
-        Ok(Self {
+        let live_thread = Self {
             thread_id,
             thread_store,
-        })
+            metadata_handler,
+        };
+        Ok(live_thread)
     }
 
     pub async fn resume(
@@ -97,27 +104,66 @@ impl LiveThread {
         params: ResumeThreadParams,
     ) -> ThreadStoreResult<Self> {
         let thread_id = params.thread_id;
+        let metadata_handler = Arc::new(Mutex::new(ThreadMetadataHandler::for_resume(&params)));
         thread_store.resume_thread(params).await?;
         Ok(Self {
             thread_id,
             thread_store,
+            metadata_handler,
         })
     }
 
     pub async fn append_items(&self, items: &[RolloutItem]) -> ThreadStoreResult<()> {
+        let (initial, prepared) = {
+            let mut handler = self.metadata_handler.lock().await;
+            let prepared = handler.prepare_items(items);
+            let initial = prepared
+                .is_some()
+                .then(|| handler.take_initial_metadata())
+                .flatten();
+            (initial, prepared)
+        };
+        if let Some(initial) = initial {
+            self.append_prepared_metadata(initial).await?;
+        }
+        let Some(prepared) = prepared else {
+            return Ok(());
+        };
+        self.append_prepared_metadata(prepared).await
+    }
+
+    async fn emit_initial_metadata(&self) -> ThreadStoreResult<()> {
+        let Some(prepared) = self.metadata_handler.lock().await.take_initial_metadata() else {
+            return Ok(());
+        };
+        self.append_prepared_metadata(prepared).await
+    }
+
+    async fn append_prepared_metadata(
+        &self,
+        prepared: crate::thread_metadata_handler::PreparedThreadMetadata,
+    ) -> ThreadStoreResult<()> {
         self.thread_store
             .append_items(AppendThreadItemsParams {
                 thread_id: self.thread_id,
-                items: items.to_vec(),
+                items: prepared.items,
+            })
+            .await?;
+        self.thread_store
+            .apply_thread_metadata(ApplyThreadMetadataParams {
+                thread_id: self.thread_id,
+                update: prepared.update,
             })
             .await
     }
 
     pub async fn persist(&self) -> ThreadStoreResult<()> {
+        self.emit_initial_metadata().await?;
         self.thread_store.persist_thread(self.thread_id).await
     }
 
     pub async fn flush(&self) -> ThreadStoreResult<()> {
+        self.emit_initial_metadata().await?;
         self.thread_store.flush_thread(self.thread_id).await
     }
 
@@ -160,16 +206,14 @@ impl LiveThread {
         mode: ThreadMemoryMode,
         include_archived: bool,
     ) -> ThreadStoreResult<()> {
-        self.thread_store
-            .update_thread_metadata(UpdateThreadMetadataParams {
-                thread_id: self.thread_id,
-                patch: ThreadMetadataPatch {
-                    memory_mode: Some(mode),
-                    ..Default::default()
-                },
-                include_archived,
-            })
-            .await?;
+        self.update_metadata(
+            ThreadMetadataPatch {
+                memory_mode: Some(mode),
+                ..Default::default()
+            },
+            include_archived,
+        )
+        .await?;
         Ok(())
     }
 
@@ -178,11 +222,30 @@ impl LiveThread {
         patch: ThreadMetadataPatch,
         include_archived: bool,
     ) -> ThreadStoreResult<StoredThread> {
+        if patch.name.is_some() || patch.memory_mode.is_some() || patch.git_info.is_some() {
+            self.emit_initial_metadata().await?;
+            let prepared = self
+                .metadata_handler
+                .lock()
+                .await
+                .prepare_metadata_patch(&patch);
+            if !prepared.items.is_empty() {
+                self.append_prepared_metadata(prepared).await?;
+            } else {
+                self.thread_store
+                    .apply_thread_metadata(ApplyThreadMetadataParams {
+                        thread_id: self.thread_id,
+                        update: prepared.update,
+                    })
+                    .await?;
+            }
+        }
+
         self.thread_store
-            .update_thread_metadata(UpdateThreadMetadataParams {
+            .read_thread(ReadThreadParams {
                 thread_id: self.thread_id,
-                patch,
                 include_archived,
+                include_history: false,
             })
             .await
     }
