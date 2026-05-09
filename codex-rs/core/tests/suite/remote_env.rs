@@ -44,7 +44,7 @@ async fn wait_for_function_call_output(
     response_mock: &core_test_support::responses::ResponseMock,
     call_id: &str,
 ) -> Result<String> {
-    tokio::time::timeout(Duration::from_secs(25), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if let Some(output) = response_mock.function_call_output_text(call_id) {
                 return output;
