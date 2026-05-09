@@ -192,7 +192,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         fs::write(&public_path, "public allowed").expect("write public");
 
         let spawned = spawn_windows_sandbox_session_legacy(
-            "read-only",
+            "workspace-write",
             cwd.as_path(),
             codex_home.path(),
             vec![
