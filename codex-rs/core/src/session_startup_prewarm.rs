@@ -47,8 +47,9 @@ impl SessionStartupPrewarmHandle {
         }
     }
 
-    pub(crate) fn abort(self) {
+    pub(crate) async fn abort_and_wait(self) {
         self.task.abort();
+        let _ = self.task.await;
     }
 
     async fn resolve(

@@ -350,7 +350,7 @@ impl Session {
             // The prewarm was built with the stale manager and can hold a read
             // lock while resolving tools. Abort it before swapping managers so
             // an MCP refresh cannot block turn startup behind stale work.
-            startup_prewarm.abort();
+            startup_prewarm.abort_and_wait().await;
         }
 
         let mut old_manager = {
