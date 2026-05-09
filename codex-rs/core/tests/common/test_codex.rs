@@ -693,6 +693,38 @@ impl TestCodex {
         .await
     }
 
+    pub async fn submit_turn_with_environments_no_wait(
+        &self,
+        prompt: &str,
+        environments: Option<Vec<TurnEnvironmentSelection>>,
+    ) -> Result<()> {
+        let (sandbox_policy, permission_profile) =
+            turn_permission_fields(PermissionProfile::Disabled, self.config.cwd.as_path());
+        let session_model = self.session_configured.model.clone();
+        self.codex
+            .submit(Op::UserTurn {
+                environments,
+                items: vec![UserInput::Text {
+                    text: prompt.into(),
+                    text_elements: Vec::new(),
+                }],
+                final_output_json_schema: None,
+                cwd: self.config.cwd.to_path_buf(),
+                approval_policy: AskForApproval::Never,
+                approvals_reviewer: None,
+                sandbox_policy,
+                permission_profile,
+                model: session_model,
+                effort: None,
+                summary: None,
+                service_tier: None,
+                collaboration_mode: None,
+                personality: None,
+            })
+            .await?;
+        Ok(())
+    }
+
     async fn submit_turn_with_permission_profile_context(
         &self,
         prompt: &str,
