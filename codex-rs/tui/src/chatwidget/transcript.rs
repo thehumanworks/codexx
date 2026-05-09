@@ -143,7 +143,7 @@ mod tests {
         state.record_visible_user_turn();
         state.record_agent_markdown("second".to_string());
 
-        state.truncate_copy_history_to_user_turn_count(1);
+        state.truncate_copy_history_to_user_turn_count(/*user_turn_count*/ 1);
 
         assert_eq!(state.last_agent_markdown.as_deref(), Some("first"));
         assert!(!state.copy_history_evicted_by_rollback);
