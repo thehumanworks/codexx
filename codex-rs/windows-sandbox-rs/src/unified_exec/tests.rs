@@ -185,8 +185,9 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
     runtime.block_on(async move {
         let cwd = sandbox_cwd();
         let codex_home = sandbox_home("legacy-non-tty-deny-read");
-        let secret_path = codex_home.path().join("secret.env");
-        let public_path = codex_home.path().join("public.txt");
+        let fixture_dir = TempDir::new_in(&cwd).expect("create deny-read fixture");
+        let secret_path = fixture_dir.path().join("secret.env");
+        let public_path = fixture_dir.path().join("public.txt");
         fs::write(&secret_path, "secret denied").expect("write secret");
         fs::write(&public_path, "public allowed").expect("write public");
 
