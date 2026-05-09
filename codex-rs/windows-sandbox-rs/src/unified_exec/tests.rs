@@ -185,13 +185,13 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
     runtime.block_on(async move {
         let cwd = sandbox_cwd();
         let codex_home = sandbox_home("legacy-non-tty-deny-read");
-        let fixture_dir = TempDir::new_in(&cwd).expect("create deny-read fixture");
-        let secret_path = fixture_dir.path().join("secret.env");
-        let public_path = fixture_dir.path().join("public.txt");
-        fs::write(&secret_path, "secret denied").expect("write secret");
-        fs::write(&public_path, "public allowed").expect("write public");
+        let fixture_id = TEST_HOME_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let fixture_dir = cwd.join(format!("legacy-non-tty-deny-read-fixture-{fixture_id}"));
+        let _ = fs::remove_dir_all(&fixture_dir);
+        let secret_path = fixture_dir.join("secret.env");
+        let public_path = fixture_dir.join("public.txt");
 
-        let spawned = spawn_windows_sandbox_session_legacy(
+        let setup = spawn_windows_sandbox_session_legacy(
             "workspace-write",
             cwd.as_path(),
             codex_home.path(),
@@ -199,10 +199,36 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
                 format!(
-                    "type \"{}\" 2>NUL & type \"{}\"",
+                    "mkdir \"{}\" && echo secret denied>\"{}\" && echo public allowed>\"{}\"",
+                    fixture_dir.display(),
                     secret_path.display(),
-                    public_path.display()
+                    public_path.display(),
                 ),
+            ],
+            cwd.as_path(),
+            HashMap::new(),
+            Some(5_000),
+            &[],
+            &[],
+            /*tty*/ false,
+            /*stdin_open*/ false,
+            /*use_private_desktop*/ true,
+        )
+        .await
+        .expect("spawn legacy deny-read setup session");
+        let (stdout, exit_code) =
+            collect_stdout_and_exit(setup, codex_home.path(), Duration::from_secs(10)).await;
+        let stdout = String::from_utf8_lossy(&stdout);
+        assert_eq!(exit_code, 0, "stdout={stdout:?}");
+
+        let public_read = spawn_windows_sandbox_session_legacy(
+            "workspace-write",
+            cwd.as_path(),
+            codex_home.path(),
+            vec![
+                "C:\\Windows\\System32\\cmd.exe".to_string(),
+                "/c".to_string(),
+                format!("type \"{}\"", public_path.display()),
             ],
             cwd.as_path(),
             HashMap::new(),
@@ -214,12 +240,39 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             /*use_private_desktop*/ true,
         )
         .await
-        .expect("spawn legacy deny-read session");
-        let (stdout, _) =
-            collect_stdout_and_exit(spawned, codex_home.path(), Duration::from_secs(10)).await;
+        .expect("spawn legacy public read session");
+        let (stdout, exit_code) =
+            collect_stdout_and_exit(public_read, codex_home.path(), Duration::from_secs(10)).await;
         let stdout = String::from_utf8_lossy(&stdout);
+        assert_eq!(exit_code, 0, "stdout={stdout:?}");
         assert!(stdout.contains("public allowed"), "stdout={stdout:?}");
+
+        let secret_read = spawn_windows_sandbox_session_legacy(
+            "workspace-write",
+            cwd.as_path(),
+            codex_home.path(),
+            vec![
+                "C:\\Windows\\System32\\cmd.exe".to_string(),
+                "/c".to_string(),
+                format!("type \"{}\" 2>NUL", secret_path.display()),
+            ],
+            cwd.as_path(),
+            HashMap::new(),
+            Some(5_000),
+            std::slice::from_ref(&secret_path),
+            &[],
+            /*tty*/ false,
+            /*stdin_open*/ false,
+            /*use_private_desktop*/ true,
+        )
+        .await
+        .expect("spawn legacy secret read session");
+        let (stdout, _) =
+            collect_stdout_and_exit(secret_read, codex_home.path(), Duration::from_secs(10)).await;
+        let stdout = String::from_utf8_lossy(&stdout);
         assert!(!stdout.contains("secret denied"), "stdout={stdout:?}");
+
+        let _ = fs::remove_dir_all(&fixture_dir);
     });
 }
 
