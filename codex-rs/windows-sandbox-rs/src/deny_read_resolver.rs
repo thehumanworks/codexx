@@ -53,7 +53,7 @@ pub fn resolve_windows_deny_read_paths(
 
     for pattern in unreadable_globs {
         let mut seen_scan_dirs = HashSet::new();
-        let scan_plan = glob_scan_plan(&pattern);
+        let scan_plan = glob_scan_plan(&pattern, file_system_sandbox_policy.glob_scan_max_depth);
         collect_existing_glob_matches(
             &scan_plan.root,
             &matcher,
@@ -135,7 +135,7 @@ fn push_absolute_path(
     Ok(())
 }
 
-fn glob_scan_plan(pattern: &str) -> GlobScanPlan {
+fn glob_scan_plan(pattern: &str, configured_max_depth: Option<usize>) -> GlobScanPlan {
     // Start scanning at the deepest literal directory prefix before the first
     // glob metacharacter. For example, `C:\repo\**\*.env` only scans `C:\repo`
     // instead of the current directory or drive root.
@@ -148,7 +148,7 @@ fn glob_scan_plan(pattern: &str) -> GlobScanPlan {
     let Some(separator_index) = literal_prefix.rfind(['/', '\\']) else {
         return GlobScanPlan {
             root: PathBuf::from("."),
-            max_depth: glob_scan_max_depth(pattern),
+            max_depth: effective_glob_scan_max_depth(pattern, configured_max_depth),
         };
     };
     let pattern_suffix = &pattern[separator_index + 1..];
@@ -160,24 +160,29 @@ fn glob_scan_plan(pattern: &str) -> GlobScanPlan {
     if separator_index == 0 || is_drive_root_separator {
         return GlobScanPlan {
             root: PathBuf::from(&literal_prefix[..=separator_index]),
-            max_depth: glob_scan_max_depth(pattern_suffix),
+            max_depth: effective_glob_scan_max_depth(pattern_suffix, configured_max_depth),
         };
     }
     GlobScanPlan {
         root: PathBuf::from(literal_prefix[..separator_index].to_string()),
-        max_depth: glob_scan_max_depth(pattern_suffix),
+        max_depth: effective_glob_scan_max_depth(pattern_suffix, configured_max_depth),
     }
 }
 
-fn glob_scan_max_depth(pattern_suffix: &str) -> Option<usize> {
+fn effective_glob_scan_max_depth(
+    pattern_suffix: &str,
+    configured_max_depth: Option<usize>,
+) -> Option<usize> {
     let components = pattern_suffix
         .split(['/', '\\'])
         .filter(|component| !component.is_empty())
         .collect::<Vec<_>>();
     if components.contains(&"**") {
-        return None;
+        return configured_max_depth;
     }
-    Some(components.len())
+    Some(configured_max_depth.map_or(components.len(), |max_depth| {
+        max_depth.min(components.len())
+    }))
 }
 
 #[cfg(test)]
@@ -216,21 +221,49 @@ mod tests {
     #[test]
     fn scan_root_uses_literal_prefix_before_glob() {
         assert_eq!(
-            glob_scan_plan("/tmp/work/**/*.env").root,
+            glob_scan_plan("/tmp/work/**/*.env", /*configured_max_depth*/ None).root,
             PathBuf::from("/tmp/work")
         );
         assert_eq!(
-            glob_scan_plan(r"C:\Users\dev\repo\**\*.env").root,
+            glob_scan_plan(
+                r"C:\Users\dev\repo\**\*.env",
+                /*configured_max_depth*/ None,
+            )
+            .root,
             PathBuf::from(r"C:\Users\dev\repo")
         );
-        assert_eq!(glob_scan_plan(r"C:\*.env").root, PathBuf::from(r"C:\"));
+        assert_eq!(
+            glob_scan_plan(r"C:\*.env", /*configured_max_depth*/ None).root,
+            PathBuf::from(r"C:\")
+        );
     }
 
     #[test]
     fn scan_depth_is_bounded_for_non_recursive_globs() {
-        assert_eq!(glob_scan_plan("/tmp/work/*.env").max_depth, Some(1));
-        assert_eq!(glob_scan_plan("/tmp/work/*/*.env").max_depth, Some(2));
-        assert_eq!(glob_scan_plan("/tmp/work/**/*.env").max_depth, None);
+        assert_eq!(
+            glob_scan_plan("/tmp/work/*.env", /*configured_max_depth*/ None).max_depth,
+            Some(1)
+        );
+        assert_eq!(
+            glob_scan_plan("/tmp/work/*/*.env", /*configured_max_depth*/ None).max_depth,
+            Some(2)
+        );
+        assert_eq!(
+            glob_scan_plan("/tmp/work/**/*.env", /*configured_max_depth*/ None).max_depth,
+            None
+        );
+    }
+
+    #[test]
+    fn configured_depth_caps_recursive_glob_scans() {
+        assert_eq!(
+            glob_scan_plan("/tmp/work/**/*.env", Some(2)).max_depth,
+            Some(2)
+        );
+        assert_eq!(
+            glob_scan_plan("/tmp/work/*/*.env", Some(1)).max_depth,
+            Some(1)
+        );
     }
 
     #[test]

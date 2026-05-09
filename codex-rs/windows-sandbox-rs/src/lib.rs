@@ -16,6 +16,8 @@ mod cap;
 #[cfg(target_os = "windows")]
 mod deny_read_acl;
 #[cfg(target_os = "windows")]
+mod deny_read_state;
+#[cfg(target_os = "windows")]
 mod desktop;
 #[cfg(target_os = "windows")]
 mod dpapi;
@@ -116,6 +118,8 @@ pub use deny_read_acl::apply_deny_read_acls;
 #[cfg(target_os = "windows")]
 pub use deny_read_acl::plan_deny_read_acl_paths;
 pub use deny_read_resolver::resolve_windows_deny_read_paths;
+#[cfg(target_os = "windows")]
+pub use deny_read_state::sync_persistent_deny_read_acls;
 #[cfg(target_os = "windows")]
 pub use desktop::LaunchDesktop;
 #[cfg(target_os = "windows")]
@@ -278,6 +282,7 @@ mod windows_impl {
     use super::cap::load_or_create_cap_sids;
     use super::cap::workspace_cap_sid_for_cwd;
     use super::deny_read_acl::apply_deny_read_acls;
+    use super::deny_read_state::sync_persistent_deny_read_acls;
     use super::logging::log_failure;
     use super::logging::log_success;
     use super::path_normalization::canonicalize_path;
@@ -490,16 +495,24 @@ mod windows_impl {
             // Read denies are layered after allow/deny-write setup so they can
             // override broad read grants for the sandbox principal without
             // changing the existing write policy computation.
-            let applied_deny_read_paths =
-                match apply_deny_read_acls(additional_deny_read_paths, psid_generic) {
-                    Ok(paths) => paths,
-                    Err(err) => {
-                        if !persist_aces {
-                            cleanup_acl_guards(&mut guards);
-                        }
-                        return Err(err);
+            let applied_deny_read_paths = match if persist_aces {
+                sync_persistent_deny_read_acls(
+                    codex_home,
+                    &caps.workspace,
+                    additional_deny_read_paths,
+                    psid_generic,
+                )
+            } else {
+                apply_deny_read_acls(additional_deny_read_paths, psid_generic)
+            } {
+                Ok(paths) => paths,
+                Err(err) => {
+                    if !persist_aces {
+                        cleanup_acl_guards(&mut guards);
                     }
-                };
+                    return Err(err);
+                }
+            };
             if !persist_aces {
                 for path in applied_deny_read_paths {
                     guards.push((path, psid_generic));

@@ -160,6 +160,8 @@ fn legacy_non_tty_cmd_emits_output() {
             cwd.as_path(),
             HashMap::new(),
             Some(5_000),
+            &[],
+            &[],
             /*tty*/ false,
             /*stdin_open*/ false,
             /*use_private_desktop*/ true,
@@ -173,6 +175,51 @@ fn legacy_non_tty_cmd_emits_output() {
         let stdout = String::from_utf8_lossy(&stdout);
         assert_eq!(exit_code, 0, "stdout={stdout:?}");
         assert!(stdout.contains("LEGACY-NONTTY-CMD"), "stdout={stdout:?}");
+    });
+}
+
+#[test]
+fn legacy_non_tty_cmd_honors_deny_read_overrides() {
+    let _guard = legacy_process_test_guard();
+    let runtime = current_thread_runtime();
+    runtime.block_on(async move {
+        let cwd = sandbox_cwd();
+        let codex_home = sandbox_home("legacy-non-tty-deny-read");
+        let secret_path = codex_home.path().join("secret.env");
+        let public_path = codex_home.path().join("public.txt");
+        fs::write(&secret_path, "secret denied").expect("write secret");
+        fs::write(&public_path, "public allowed").expect("write public");
+
+        let spawned = spawn_windows_sandbox_session_legacy(
+            "read-only",
+            cwd.as_path(),
+            codex_home.path(),
+            vec![
+                "C:\\Windows\\System32\\cmd.exe".to_string(),
+                "/c".to_string(),
+                format!(
+                    "type \"{}\" 2>NUL & type \"{}\"",
+                    secret_path.display(),
+                    public_path.display()
+                ),
+            ],
+            cwd.as_path(),
+            HashMap::new(),
+            Some(5_000),
+            std::slice::from_ref(&secret_path),
+            &[],
+            /*tty*/ false,
+            /*stdin_open*/ false,
+            /*use_private_desktop*/ true,
+        )
+        .await
+        .expect("spawn legacy deny-read session");
+        let (stdout, exit_code) =
+            collect_stdout_and_exit(spawned, codex_home.path(), Duration::from_secs(10)).await;
+        let stdout = String::from_utf8_lossy(&stdout);
+        assert_eq!(exit_code, 0, "stdout={stdout:?}");
+        assert!(stdout.contains("public allowed"), "stdout={stdout:?}");
+        assert!(!stdout.contains("secret denied"), "stdout={stdout:?}");
     });
 }
 
@@ -200,6 +247,8 @@ fn legacy_non_tty_powershell_emits_output() {
             cwd.as_path(),
             HashMap::new(),
             Some(5_000),
+            &[],
+            &[],
             /*tty*/ false,
             /*stdin_open*/ false,
             /*use_private_desktop*/ true,
@@ -424,6 +473,8 @@ fn legacy_tty_powershell_emits_output_and_accepts_input() {
             cwd.as_path(),
             HashMap::new(),
             Some(10_000),
+            &[],
+            &[],
             /*tty*/ true,
             /*stdin_open*/ true,
             /*use_private_desktop*/ true,
@@ -472,6 +523,8 @@ fn legacy_tty_cmd_emits_output_and_accepts_input() {
             cwd.as_path(),
             HashMap::new(),
             Some(10_000),
+            &[],
+            &[],
             /*tty*/ true,
             /*stdin_open*/ true,
             /*use_private_desktop*/ true,
@@ -523,6 +576,8 @@ fn legacy_tty_cmd_default_desktop_emits_output_and_accepts_input() {
             cwd.as_path(),
             HashMap::new(),
             Some(10_000),
+            &[],
+            &[],
             /*tty*/ true,
             /*stdin_open*/ true,
             /*use_private_desktop*/ false,

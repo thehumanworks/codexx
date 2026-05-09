@@ -33,7 +33,7 @@ fn push_planned_path(planned: &mut Vec<PathBuf>, seen: &mut HashSet<String>, pat
     }
 }
 
-fn lexical_path_key(path: &Path) -> String {
+pub(crate) fn lexical_path_key(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "/")
         .trim_end_matches('/')

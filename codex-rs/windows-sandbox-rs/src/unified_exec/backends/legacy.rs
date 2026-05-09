@@ -287,6 +287,8 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     cwd: &Path,
     mut env_map: HashMap<String, String>,
     timeout_ms: Option<u64>,
+    additional_deny_read_paths: &[PathBuf],
+    additional_deny_write_paths: &[PathBuf],
     tty: bool,
     stdin_open: bool,
     use_private_desktop: bool,
@@ -310,12 +312,16 @@ pub(crate) async fn spawn_windows_sandbox_session_legacy(
     let guards = apply_legacy_session_acl_rules(
         &common.policy,
         sandbox_policy_cwd,
+        codex_home,
         &common.current_dir,
         &env_map,
         &security.psid_generic,
         security.psid_workspace.as_ref(),
+        &security.cap_sid_str,
+        additional_deny_read_paths,
+        additional_deny_write_paths,
         persist_aces,
-    );
+    )?;
 
     let (writer_tx, writer_rx) = mpsc::channel::<Vec<u8>>(128);
     let (stdout_tx, stdout_rx) = broadcast::channel::<Vec<u8>>(256);
