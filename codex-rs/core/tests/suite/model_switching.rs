@@ -41,6 +41,8 @@ use std::path::PathBuf;
 use tokio::time::Duration;
 use wiremock::MockServer;
 
+const THREAD_ROLLBACK_EVENT_TIMEOUT: Duration = Duration::from_secs(25);
+
 fn read_only_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::read_only(), test.cwd_path());
@@ -799,7 +801,7 @@ async fn thread_rollback_after_generated_image_drops_entire_image_turn_history()
     wait_for_event_with_timeout(
         &test.codex,
         |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
-        Duration::from_secs(20),
+        THREAD_ROLLBACK_EVENT_TIMEOUT,
     )
     .await;
 

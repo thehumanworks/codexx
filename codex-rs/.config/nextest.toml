@@ -14,6 +14,9 @@ max-threads = 1
 [test-groups.core_remote_environment_integration]
 max-threads = 1
 
+[test-groups.core_thread_rollback_integration]
+max-threads = 1
+
 [test-groups.windows_sandbox_legacy_sessions]
 max-threads = 1
 
@@ -48,6 +51,12 @@ test-group = 'core_apply_patch_cli_integration'
 # each other and trip nextest's per-test timeout.
 filter = 'package(codex-core) & kind(test) & (test(remote_env) | test(view_image_routes_to_selected_remote_environment) | test(unified_exec_network_denial_emits_failed_background_end_event) | test(unified_exec_short_lived_network_denial_emits_failed_end_event))'
 test-group = 'core_remote_environment_integration'
+
+[[profile.default.overrides]]
+# These tests drive rollback through full mocked turns and can contend with each
+# other while waiting for append-only history rewrites on saturated CI runners.
+filter = 'package(codex-core) & kind(test) & (test(snapshot_rollback_followup_turn_trims_context_updates) | test(snapshot_rollback_past_compaction_replays_append_only_history) | test(thread_rollback_after_generated_image_drops_entire_image_turn_history))'
+test-group = 'core_thread_rollback_integration'
 
 [[profile.default.overrides]]
 # These tests create restricted-token Windows child processes and private desktops.

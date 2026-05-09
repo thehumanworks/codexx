@@ -64,6 +64,26 @@ use wiremock::matchers::body_string_contains;
 
 const VIEW_IMAGE_TURN_COMPLETE_TIMEOUT: Duration = Duration::from_secs(30);
 
+async fn wait_for_function_call_output(
+    response_mock: &responses::ResponseMock,
+    call_id: &str,
+) -> anyhow::Result<Value> {
+    tokio::time::timeout(Duration::from_secs(25), async {
+        loop {
+            if let Some(output) = response_mock
+                .requests()
+                .iter()
+                .find_map(|request| request.function_call_output(call_id).cloned())
+            {
+                return output;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("timed out waiting for function_call_output for {call_id}"))
+}
+
 fn disabled_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
     let (sandbox_policy, permission_profile) =
         turn_permission_fields(PermissionProfile::Disabled, test.config.cwd.as_path());
@@ -537,17 +557,13 @@ async fn view_image_routes_to_selected_remote_environment() -> anyhow::Result<()
     )
     .await;
 
-    test.submit_turn_with_environments(
+    test.submit_turn_with_environments_no_wait(
         "route view image",
         Some(vec![local_selection, remote_selection]),
     )
     .await?;
 
-    let output = response_mock
-        .last_request()
-        .context("missing request containing view_image output")?
-        .function_call_output(call_id)
-        .clone();
+    let output = wait_for_function_call_output(&response_mock, call_id).await?;
     let output_items = output
         .get("output")
         .and_then(Value::as_array)

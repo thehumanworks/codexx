@@ -38,6 +38,23 @@ use std::process::Command;
 use std::time::SystemTime;
 use std::time::UNIX_EPOCH;
 use tempfile::TempDir;
+use tokio::time::Duration;
+
+async fn wait_for_function_call_output(
+    response_mock: &core_test_support::responses::ResponseMock,
+    call_id: &str,
+) -> Result<String> {
+    tokio::time::timeout(Duration::from_secs(25), async {
+        loop {
+            if let Some(output) = response_mock.function_call_output_text(call_id) {
+                return output;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .with_context(|| format!("timed out waiting for function_call_output for {call_id}"))
+}
 async fn unified_exec_test(server: &wiremock::MockServer) -> Result<TestCodex> {
     let mut builder = test_codex().with_config(|config| {
         config.use_experimental_unified_exec_tool = true;
@@ -174,12 +191,10 @@ async fn exec_command_routing_output(
     )
     .await;
 
-    test.submit_turn_with_environments("route exec command", environments)
+    test.submit_turn_with_environments_no_wait("route exec command", environments)
         .await?;
 
-    response_mock
-        .function_call_output_text(call_id)
-        .with_context(|| format!("missing function_call_output for {call_id}"))
+    wait_for_function_call_output(&response_mock, call_id).await
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -46,6 +46,7 @@ use wiremock::MockServer;
 
 const AFTER_SECOND_RESUME: &str = "AFTER_SECOND_RESUME";
 const AFTER_ROLLBACK: &str = "AFTER_ROLLBACK";
+const THREAD_ROLLBACK_EVENT_TIMEOUT: Duration = Duration::from_secs(25);
 
 fn network_disabled() -> bool {
     std::env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok()
@@ -460,7 +461,7 @@ async fn snapshot_rollback_past_compaction_replays_append_only_history() -> Resu
     let rollback_event = wait_for_event_with_timeout(
         &base,
         |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
-        Duration::from_secs(20),
+        THREAD_ROLLBACK_EVENT_TIMEOUT,
     )
     .await;
     let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
@@ -582,9 +583,11 @@ async fn snapshot_rollback_followup_turn_trims_context_updates() -> Result<()> {
     conversation
         .submit(Op::ThreadRollback { num_turns: 1 })
         .await?;
-    let rollback_event = wait_for_event(&conversation, |ev| {
-        matches!(ev, EventMsg::ThreadRolledBack(_))
-    })
+    let rollback_event = wait_for_event_with_timeout(
+        &conversation,
+        |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
+        THREAD_ROLLBACK_EVENT_TIMEOUT,
+    )
     .await;
     let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
         panic!("expected thread rolled back event");
