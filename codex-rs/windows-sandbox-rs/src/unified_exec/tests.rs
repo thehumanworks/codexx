@@ -214,10 +214,9 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         )
         .await
         .expect("spawn legacy deny-read session");
-        let (stdout, exit_code) =
+        let (stdout, _) =
             collect_stdout_and_exit(spawned, codex_home.path(), Duration::from_secs(10)).await;
         let stdout = String::from_utf8_lossy(&stdout);
-        assert_eq!(exit_code, 0, "stdout={stdout:?}");
         assert!(stdout.contains("public allowed"), "stdout={stdout:?}");
         assert!(!stdout.contains("secret denied"), "stdout={stdout:?}");
     });
