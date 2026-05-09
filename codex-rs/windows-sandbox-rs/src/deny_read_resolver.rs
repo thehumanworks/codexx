@@ -51,8 +51,8 @@ pub fn resolve_windows_deny_read_paths(
         return Ok(paths);
     };
 
-    let mut seen_scan_dirs = HashSet::new();
     for pattern in unreadable_globs {
+        let mut seen_scan_dirs = HashSet::new();
         let scan_plan = glob_scan_plan(&pattern);
         collect_existing_glob_matches(
             &scan_plan.root,
@@ -194,6 +194,9 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
+
     fn unreadable_glob_entry(pattern: String) -> FileSystemSandboxEntry {
         FileSystemSandboxEntry {
             path: FileSystemPath::GlobPattern { pattern },
@@ -311,5 +314,35 @@ mod tests {
             resolve_windows_deny_read_paths(&policy, &cwd).expect("resolve"),
             vec![AbsolutePathBuf::from_absolute_path(root_env).expect("absolute root env")]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliased_glob_roots_each_preserve_their_lexical_matches() {
+        let tmp = TempDir::new().expect("tempdir");
+        let cwd = AbsolutePathBuf::from_absolute_path(tmp.path()).expect("absolute cwd");
+        let target = tmp.path().join("target");
+        let alias_a = tmp.path().join("alias-a");
+        let alias_b = tmp.path().join("alias-b");
+        let secret = target.join("secret.env");
+        std::fs::create_dir_all(&target).expect("create target");
+        std::fs::write(&secret, "secret").expect("write secret");
+        symlink(&target, &alias_a).expect("create alias a");
+        symlink(&target, &alias_b).expect("create alias b");
+        let policy = FileSystemSandboxPolicy::restricted(vec![
+            unreadable_glob_entry(format!("{}/**/*.env", alias_a.display())),
+            unreadable_glob_entry(format!("{}/**/*.env", alias_b.display())),
+        ]);
+
+        let actual: HashSet<PathBuf> = resolve_windows_deny_read_paths(&policy, &cwd)
+            .expect("resolve")
+            .into_iter()
+            .map(AbsolutePathBuf::into_path_buf)
+            .collect();
+        let expected = [alias_a.join("secret.env"), alias_b.join("secret.env")]
+            .into_iter()
+            .collect();
+
+        assert_eq!(actual, expected);
     }
 }

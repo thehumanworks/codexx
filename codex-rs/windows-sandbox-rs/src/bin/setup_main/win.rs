@@ -496,19 +496,6 @@ fn run_read_acl_only(payload: &Payload, log: &mut File) -> Result<()> {
             }
         }
     }
-    // Deny-read ACEs are applied after read grants so the DACL ends with
-    // explicit deny entries that take precedence over the broad read allowlist.
-    match unsafe { apply_deny_read_acls(&payload.deny_read_paths, sandbox_group_psid) } {
-        Ok(applied) => {
-            if !applied.is_empty() {
-                log_line(log, &format!("applied {} deny-read ACLs", applied.len()))?;
-            }
-        }
-        Err(err) => {
-            refresh_errors.push(format!("apply deny-read ACLs failed: {err}"));
-            log_line(log, &format!("apply deny-read ACLs failed: {err}"))?;
-        }
-    }
     unsafe {
         if !sandbox_group_psid.is_null() {
             LocalFree(sandbox_group_psid as HLOCAL);
@@ -633,13 +620,21 @@ fn run_setup_full(payload: &Payload, log: &mut File, sbx_dir: &Path) -> Result<(
         );
     }
 
-    // The read ACL helper also applies deny-read ACEs, so it must run whenever
-    // deny-read paths are present even if no new read roots need to be granted.
-    if payload.read_roots.is_empty() && payload.deny_read_paths.is_empty() {
+    // Deny-read ACEs must be present before the sandboxed command starts. Apply
+    // them synchronously here instead of delegating them to the background
+    // helper used for read grants.
+    let applied_deny_read_paths =
+        unsafe { apply_deny_read_acls(&payload.deny_read_paths, sandbox_group_psid) }
+            .context("apply deny-read ACLs")?;
+    if !applied_deny_read_paths.is_empty() {
         log_line(
             log,
-            "no read roots or deny-read paths; skipping read ACL helper",
+            &format!("applied {} deny-read ACLs", applied_deny_read_paths.len()),
         )?;
+    }
+
+    if payload.read_roots.is_empty() {
+        log_line(log, "no read roots to grant; skipping read ACL helper")?;
     } else {
         match read_acl_mutex_exists() {
             Ok(true) => {

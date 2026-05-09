@@ -821,14 +821,9 @@ fn build_payload_deny_write_paths(
 }
 
 fn build_payload_deny_read_paths(explicit_deny_read_paths: Option<Vec<PathBuf>>) -> Vec<PathBuf> {
-    // Preserve missing exact deny paths so the Windows helper can materialize
-    // and deny them before the sandboxed process runs. Existing paths are
-    // canonicalized here to make the elevated helper operate on stable targets.
-    explicit_deny_read_paths
-        .unwrap_or_default()
-        .into_iter()
-        .map(|path| canonicalize_path(&path))
-        .collect()
+    // Keep the configured spelling here so the ACL layer can plan both the
+    // lexical path and any existing canonical target for reparse-point aliases.
+    explicit_deny_read_paths.unwrap_or_default()
 }
 
 fn expand_user_profile_root(roots: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -1472,7 +1467,7 @@ mod tests {
     }
 
     #[test]
-    fn build_payload_deny_read_paths_keeps_missing_paths_and_canonicalizes_existing_paths() {
+    fn build_payload_deny_read_paths_preserves_explicit_paths() {
         let tmp = TempDir::new().expect("tempdir");
         let existing = tmp.path().join("secret.env");
         let missing = tmp.path().join("future.env");
@@ -1480,10 +1475,7 @@ mod tests {
 
         assert_eq!(
             super::build_payload_deny_read_paths(Some(vec![existing.clone(), missing.clone()])),
-            vec![
-                dunce::canonicalize(existing).expect("canonical existing"),
-                missing
-            ]
+            vec![existing, missing]
         );
     }
 }
