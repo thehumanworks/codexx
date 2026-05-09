@@ -233,19 +233,6 @@ pub(crate) fn apply_legacy_session_acl_rules(
     let mut guards: Vec<PathBuf> = Vec::new();
     let canonical_cwd = canonicalize_path(current_dir);
     unsafe {
-        let applied_deny_read_paths = if persist_aces {
-            sync_persistent_deny_read_acls(
-                codex_home,
-                cap_sid_str,
-                additional_deny_read_paths,
-                psid_generic.as_ptr(),
-            )?
-        } else {
-            apply_deny_read_acls(additional_deny_read_paths, psid_generic.as_ptr())?
-        };
-        if !persist_aces {
-            guards.extend(applied_deny_read_paths);
-        }
         for path in additional_deny_write_paths {
             // Explicit carveouts must exist before the command starts so the
             // sandbox cannot create them under a writable parent first.
@@ -274,6 +261,19 @@ pub(crate) fn apply_legacy_session_acl_rules(
             {
                 guards.push(p.clone());
             }
+        }
+        let applied_deny_read_paths = if persist_aces {
+            sync_persistent_deny_read_acls(
+                codex_home,
+                cap_sid_str,
+                additional_deny_read_paths,
+                psid_generic.as_ptr(),
+            )?
+        } else {
+            apply_deny_read_acls(additional_deny_read_paths, psid_generic.as_ptr())?
+        };
+        if !persist_aces {
+            guards.extend(applied_deny_read_paths);
         }
         allow_null_device(psid_generic.as_ptr());
         if let Some(psid_workspace) = psid_workspace {
