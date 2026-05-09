@@ -193,6 +193,8 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         let _ = fs::remove_dir_all(&fixture_dir);
         let secret_path = fixture_dir.join("secret.env");
         let public_path = fixture_dir.join("public.txt");
+        let secret_rel = secret_path.strip_prefix(&cwd).expect("relative secret");
+        let public_rel = public_path.strip_prefix(&cwd).expect("relative public");
         fs::create_dir_all(&fixture_dir).expect("create deny-read fixture");
         fs::write(&secret_path, "secret denied").expect("write secret");
         fs::write(&public_path, "public allowed").expect("write public");
@@ -215,7 +217,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\"", public_path.display()),
+                format!("type \"{}\"", public_rel.display()),
             ],
             cwd.as_path(),
             HashMap::new(),
@@ -241,7 +243,7 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\" 2>NUL", secret_path.display()),
+                format!("type \"{}\" 2>NUL", secret_rel.display()),
             ],
             cwd.as_path(),
             HashMap::new(),
