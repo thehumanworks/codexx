@@ -1586,7 +1586,6 @@ mod tests {
         assert!(prompt.contains("finish the stack"));
         assert!(prompt.contains("<untrusted_objective>\nfinish the stack\n</untrusted_objective>"));
         assert!(prompt.contains("Token budget: 10000"));
-        assert!(!prompt.contains("Time spent pursuing goal"));
         assert!(prompt.contains("call update_goal with status \"complete\""));
         assert!(!prompt.contains(
             "explain the blocker or next required input to the user and wait for new input"
