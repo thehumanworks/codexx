@@ -905,7 +905,7 @@ pub const FEATURES: &[FeatureSpec] = &[
         key: "network_proxy",
         stage: Stage::Experimental {
             name: "Network proxy",
-            menu_description: "Start Codex's managed network proxy for sandboxed sessions. The active permissions profile still controls direct network access.",
+            menu_description: "Apply network proxy restrictions to sandboxed sessions that already have network access.",
             announcement: "NEW: Network proxy can now be enabled from /experimental. Restart Codex after enabling it.",
         },
         default_enabled: false,
