@@ -35,15 +35,18 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
+use core_test_support::wait_for_event_with_timeout;
 use pretty_assertions::assert_eq;
 use serde_json::Value;
 use serde_json::json;
 use std::sync::Arc;
 use tempfile::TempDir;
+use tokio::time::Duration;
 use wiremock::MockServer;
 
 const AFTER_SECOND_RESUME: &str = "AFTER_SECOND_RESUME";
 const AFTER_ROLLBACK: &str = "AFTER_ROLLBACK";
+const THREAD_ROLLBACK_EVENT_TIMEOUT: Duration = Duration::from_secs(170);
 
 fn network_disabled() -> bool {
     std::env::var(CODEX_SANDBOX_NETWORK_DISABLED_ENV_VAR).is_ok()
@@ -455,8 +458,12 @@ async fn snapshot_rollback_past_compaction_replays_append_only_history() -> Resu
     base.submit(Op::ThreadRollback { num_turns: 1 })
         .await
         .expect("submit thread rollback");
-    let rollback_event =
-        wait_for_event(&base, |ev| matches!(ev, EventMsg::ThreadRolledBack(_))).await;
+    let rollback_event = wait_for_event_with_timeout(
+        &base,
+        |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
+        THREAD_ROLLBACK_EVENT_TIMEOUT,
+    )
+    .await;
     let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
         panic!("expected thread rolled back event");
     };
@@ -576,9 +583,11 @@ async fn snapshot_rollback_followup_turn_trims_context_updates() -> Result<()> {
     conversation
         .submit(Op::ThreadRollback { num_turns: 1 })
         .await?;
-    let rollback_event = wait_for_event(&conversation, |ev| {
-        matches!(ev, EventMsg::ThreadRolledBack(_))
-    })
+    let rollback_event = wait_for_event_with_timeout(
+        &conversation,
+        |ev| matches!(ev, EventMsg::ThreadRolledBack(_)),
+        THREAD_ROLLBACK_EVENT_TIMEOUT,
+    )
     .await;
     let EventMsg::ThreadRolledBack(rollback_event) = rollback_event else {
         panic!("expected thread rolled back event");

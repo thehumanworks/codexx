@@ -69,21 +69,34 @@ async fn wait_for_function_call_output(
     response_mock: &responses::ResponseMock,
     call_id: &str,
 ) -> anyhow::Result<Value> {
-    tokio::time::timeout(Duration::from_secs(120), async {
+    let mut events = Vec::new();
+    let output = tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             if let Some(output) = response_mock.function_call_output(call_id) {
                 return Ok(output);
             }
             tokio::select! {
                 event = test.codex.next_event() => {
-                    let _ = event.context("codex event stream ended while waiting for function_call_output")?;
+                    let event = event.context("codex event stream ended while waiting for function_call_output")?;
+                    match &event.msg {
+                        EventMsg::Error(error) => {
+                            anyhow::bail!("turn errored before function_call_output for {call_id}: {}", error.message);
+                        }
+                        EventMsg::TurnComplete(_) => {
+                            anyhow::bail!("turn completed before function_call_output for {call_id}; events: {events:?}");
+                        }
+                        _ => events.push(format!("{:?}", event.msg)),
+                    }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(50)) => {}
             }
         }
     })
     .await
-    .with_context(|| format!("timed out waiting for function_call_output for {call_id}"))?
+    .with_context(|| {
+        format!("timed out waiting for function_call_output for {call_id}; events: {events:?}")
+    })??;
+    Ok(output)
 }
 
 fn disabled_user_turn(test: &TestCodex, items: Vec<UserInput>, model: String) -> Op {
@@ -534,7 +547,7 @@ async fn view_image_routes_to_selected_remote_environment() -> anyhow::Result<()
         cwd: remote_cwd.clone(),
     };
     let call_id = "call-view-image-multi-env";
-    let response_mock = mount_sse_sequence(
+    let response_mock = responses::mount_sse_sequence_no_verify(
         &server,
         vec![
             sse(vec![
@@ -566,6 +579,7 @@ async fn view_image_routes_to_selected_remote_environment() -> anyhow::Result<()
     .await?;
 
     let output = wait_for_function_call_output(&test, &response_mock, call_id).await?;
+    assert_eq!(response_mock.requests().len(), 2);
     let output_items = output
         .get("output")
         .and_then(Value::as_array)

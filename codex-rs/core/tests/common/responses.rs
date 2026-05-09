@@ -1486,6 +1486,24 @@ pub async fn mount_function_call_agent_response(
 /// POST to `/v1/responses`. Panics if more requests are received than bodies
 /// provided. Also asserts the exact number of expected calls.
 pub async fn mount_sse_sequence(server: &MockServer, bodies: Vec<String>) -> ResponseMock {
+    mount_sse_sequence_with_expectation(server, bodies, true).await
+}
+
+/// Mounts a sequence of SSE response bodies without verifying that every body
+/// was consumed. Tests that need to inspect early Codex errors can use this to
+/// avoid masking the real failure with WireMock's drop-time verifier.
+pub async fn mount_sse_sequence_no_verify(
+    server: &MockServer,
+    bodies: Vec<String>,
+) -> ResponseMock {
+    mount_sse_sequence_with_expectation(server, bodies, false).await
+}
+
+async fn mount_sse_sequence_with_expectation(
+    server: &MockServer,
+    bodies: Vec<String>,
+    expect_all_calls: bool,
+) -> ResponseMock {
     use std::sync::atomic::AtomicUsize;
     use std::sync::atomic::Ordering;
 
@@ -1513,11 +1531,12 @@ pub async fn mount_sse_sequence(server: &MockServer, bodies: Vec<String>) -> Res
     };
 
     let (mock, response_mock) = base_mock();
-    mock.respond_with(responder)
-        .up_to_n_times(num_calls as u64)
-        .expect(num_calls as u64)
-        .mount(server)
-        .await;
+    let mock = mock.respond_with(responder).up_to_n_times(num_calls as u64);
+    if expect_all_calls {
+        mock.expect(num_calls as u64).mount(server).await;
+    } else {
+        mock.mount(server).await;
+    }
 
     response_mock
 }

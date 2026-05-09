@@ -13,6 +13,7 @@ use codex_protocol::permissions::FileSystemPath;
 use codex_protocol::permissions::FileSystemSandboxEntry;
 use codex_protocol::permissions::FileSystemSandboxPolicy;
 use codex_protocol::permissions::NetworkSandboxPolicy;
+use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::TurnEnvironmentSelection;
 use codex_utils_absolute_path::AbsolutePathBuf;
 use core_test_support::PathBufExt;
@@ -23,6 +24,7 @@ use core_test_support::responses::ev_completed;
 use core_test_support::responses::ev_function_call;
 use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_sequence;
+use core_test_support::responses::mount_sse_sequence_no_verify;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
@@ -45,21 +47,34 @@ async fn wait_for_function_call_output(
     response_mock: &core_test_support::responses::ResponseMock,
     call_id: &str,
 ) -> Result<String> {
-    tokio::time::timeout(Duration::from_secs(120), async {
+    let mut events = Vec::new();
+    let output = tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             if let Some(output) = response_mock.function_call_output_text(call_id) {
                 return Ok(output);
             }
             tokio::select! {
                 event = test.codex.next_event() => {
-                    let _ = event.context("codex event stream ended while waiting for function_call_output")?;
+                    let event = event.context("codex event stream ended while waiting for function_call_output")?;
+                    match &event.msg {
+                        EventMsg::Error(error) => {
+                            anyhow::bail!("turn errored before function_call_output for {call_id}: {}", error.message);
+                        }
+                        EventMsg::TurnComplete(_) => {
+                            anyhow::bail!("turn completed before function_call_output for {call_id}; events: {events:?}");
+                        }
+                        _ => events.push(format!("{:?}", event.msg)),
+                    }
                 }
                 _ = tokio::time::sleep(Duration::from_millis(50)) => {}
             }
         }
     })
     .await
-    .with_context(|| format!("timed out waiting for function_call_output for {call_id}"))?
+    .with_context(|| {
+        format!("timed out waiting for function_call_output for {call_id}; events: {events:?}")
+    })??;
+    Ok(output)
 }
 async fn unified_exec_test(server: &wiremock::MockServer) -> Result<TestCodex> {
     let mut builder = test_codex().with_config(|config| {
@@ -180,7 +195,7 @@ async fn exec_command_routing_output(
     arguments: Value,
     environments: Option<Vec<TurnEnvironmentSelection>>,
 ) -> Result<String> {
-    let response_mock = mount_sse_sequence(
+    let response_mock = mount_sse_sequence_no_verify(
         server,
         vec![
             sse(vec![
@@ -200,7 +215,9 @@ async fn exec_command_routing_output(
     test.submit_turn_with_environments_no_wait("route exec command", environments)
         .await?;
 
-    wait_for_function_call_output(test, &response_mock, call_id).await
+    let output = wait_for_function_call_output(test, &response_mock, call_id).await?;
+    assert_eq!(response_mock.requests().len(), 2);
+    Ok(output)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
