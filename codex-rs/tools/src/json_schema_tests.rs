@@ -250,16 +250,66 @@ fn parse_tool_input_schema_infers_string_from_enum_const_and_format_keywords() {
 }
 
 #[test]
-fn parse_tool_input_schema_defaults_empty_schema_to_string() {
+fn parse_tool_input_schema_preserves_empty_schema_as_any() {
     // Example schema shape:
     // {}
     //
     // Expected normalization behavior:
-    // - With no structural hints at all, the normalizer falls back to a
-    //   permissive string schema.
+    // - Empty schema objects are unconstrained schemas in JSON Schema, so
+    //   preserve them as unconstrained instead of narrowing to a primitive.
     let schema = parse_tool_input_schema(&serde_json::json!({})).expect("parse schema");
 
-    assert_eq!(schema, JsonSchema::string(/*description*/ None));
+    assert_eq!(schema, JsonSchema::any(/*description*/ None));
+}
+
+#[test]
+fn parse_tool_input_schema_preserves_nested_empty_property_schema_as_any() {
+    // Example schema shape:
+    // {
+    //   "type": "object",
+    //   "properties": {
+    //     "body": {
+    //       "type": "object",
+    //       "properties": {
+    //         "parent": {}
+    //       }
+    //     }
+    //   }
+    // }
+    //
+    // Expected normalization behavior:
+    // - Nested `{}` property schemas remain unconstrained so object values are
+    //   not misrepresented to the model as strings.
+    let schema = parse_tool_input_schema(&serde_json::json!({
+        "type": "object",
+        "properties": {
+            "body": {
+                "type": "object",
+                "properties": {
+                    "parent": {}
+                }
+            }
+        }
+    }))
+    .expect("parse schema");
+
+    assert_eq!(
+        schema,
+        JsonSchema::object(
+            BTreeMap::from([(
+                "body".to_string(),
+                JsonSchema::object(
+                    BTreeMap::from([
+                        ("parent".to_string(), JsonSchema::any(/*description*/ None),)
+                    ]),
+                    /*required*/ None,
+                    /*additional_properties*/ None,
+                ),
+            )]),
+            /*required*/ None,
+            /*additional_properties*/ None
+        )
+    );
 }
 
 #[test]

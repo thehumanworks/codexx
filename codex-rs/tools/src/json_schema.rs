@@ -72,6 +72,13 @@ impl JsonSchema {
         }
     }
 
+    pub fn any(description: Option<String>) -> Self {
+        Self {
+            description,
+            ..Default::default()
+        }
+    }
+
     pub fn boolean(description: Option<String>) -> Self {
         Self::typed(JsonSchemaPrimitiveType::Boolean, description)
     }
@@ -162,6 +169,7 @@ pub fn parse_tool_input_schema(input_schema: &JsonValue) -> Result<JsonSchema, s
 /// Sanitize a JSON Schema (as serde_json::Value) so it can fit our limited
 /// schema representation. This function:
 /// - Ensures every typed schema object has a `"type"` when required.
+/// - Preserves empty schema objects as unconstrained schemas.
 /// - Preserves explicit `anyOf`.
 /// - Collapses `const` into single-value `enum`.
 /// - Fills required child fields for object/array schema types, including
@@ -178,6 +186,10 @@ fn sanitize_json_schema(value: &mut JsonValue) {
             }
         }
         JsonValue::Object(map) => {
+            if map.is_empty() {
+                return;
+            }
+
             if let Some(properties) = map.get_mut("properties")
                 && let Some(properties_map) = properties.as_object_mut()
             {
