@@ -52,8 +52,8 @@ the standalone managed binary under `CODEX_HOME`.
 | Situation | What starts | Does this daemon fetch new binaries? | Does a running app-server eventually move to a newer binary on its own? |
 | --- | --- | --- | --- |
 | `install.sh` has run, but only `start` is used | `start` uses `CODEX_HOME/packages/standalone/current/codex` | No | No. The managed path is used when starting or restarting, but no updater is installed. |
-| `install.sh` has run, then `bootstrap` is used | The pidfile backend uses `CODEX_HOME/packages/standalone/current/codex` | Yes. Bootstrap launches a detached updater loop that runs `install.sh` hourly. | Yes, while that updater process is alive. After a successful fetch, it restarts a currently running app-server only when the managed binary reports a different version. |
-| Some other tool updates the managed binary path | The next fresh start or restart uses the updated file at that path | No | Not automatically. The existing process keeps the old executable image until an explicit `restart`. |
+| `install.sh` has run, then `bootstrap` is used | The pidfile backend uses `CODEX_HOME/packages/standalone/current/codex` | Yes. Bootstrap launches a detached updater loop that runs `install.sh` hourly. | Yes, while that updater process is alive. After a successful fetch, the updater replaces its own process image when the managed binary contents changed; if app-server is running, it restarts app-server with that binary first. |
+| Some other tool updates the managed binary path | The next fresh start or restart uses the updated file at that path | Only if `bootstrap` is active, because the updater still runs `install.sh` on its normal cadence. | Without `bootstrap`, no. With `bootstrap`, the next successful updater pass compares the managed binary contents after `install.sh` runs, then refreshes the updater and any running app-server if they differ from the updater's current image. |
 
 ### Standalone installs
 
@@ -62,19 +62,23 @@ For installs created by `install.sh`:
 - lifecycle commands always use the standalone managed binary path
 - `bootstrap` is supported
 - `bootstrap` starts a detached pid-backed updater loop that fetches via
-  `install.sh`, then restarts app-server if it is running on a different version
+  `install.sh`
+- after a successful refresh, the updater replaces its own process image when
+  the managed binary contents changed; if app-server is running, it restarts
+  app-server with that binary first
 - the updater loop is not reboot-persistent; it must be started again by
   rerunning `bootstrap` after a reboot
 
 ### Out-of-band updates
 
 This daemon does not watch arbitrary executable files for replacement. If some
-other tool updates a binary that the daemon would use on its next launch:
+other tool updates the managed binary path:
 
-- a currently running app-server remains on the old executable image
-- `restart` will launch the updated binary
-- for bootstrapped daemons, the detached updater loop only reacts to updates it
-  fetched itself; it does not watch arbitrary file replacement
+- without `bootstrap`, a currently running app-server remains on the old
+  executable image until an explicit `restart`
+- with `bootstrap`, the detached updater loop notices the changed managed
+  binary on its next successful scheduled pass after running `install.sh`, then
+  refreshes itself and any running app-server if the contents differ
 
 ## Lifecycle semantics
 

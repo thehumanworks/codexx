@@ -13,7 +13,7 @@ use anyhow::anyhow;
 pub use backend::BackendKind;
 use backend::BackendPaths;
 use codex_app_server_transport::app_server_control_socket_path;
-use codex_core::config::find_codex_home;
+use codex_utils_home_dir::find_codex_home;
 use managed_install::managed_codex_bin;
 #[cfg(unix)]
 use managed_install::managed_codex_version;
@@ -123,9 +123,27 @@ pub struct RemoteControlOutput {
 }
 
 #[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RestartIfRunningOutcome {
-    Completed,
     Busy,
+    NotRunning,
+    NotReady,
+    AlreadyCurrent,
+    Restarted,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RestartMode {
+    IfVersionChanged,
+    Always,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpdaterRefreshMode {
+    None,
+    ReexecIfManagedBinaryChanged,
 }
 
 pub async fn run(command: LifecycleCommand) -> Result<LifecycleOutput> {
@@ -262,33 +280,42 @@ impl Daemon {
     }
 
     #[cfg(unix)]
-    pub(crate) async fn try_restart_if_running(&self) -> Result<RestartIfRunningOutcome> {
+    pub(crate) async fn try_restart_if_running(
+        &self,
+        mode: RestartMode,
+        updater_refresh_mode: UpdaterRefreshMode,
+    ) -> Result<RestartIfRunningOutcome> {
         let operation_lock = self.open_operation_lock_file().await?;
         if !try_lock_file(&operation_lock)? {
             return Ok(RestartIfRunningOutcome::Busy);
         }
         let settings = self.load_settings().await?;
-        if let Some(backend) = self.running_backend_instance(&settings).await? {
+        let outcome = if let Some(backend) = self.running_backend_instance(&settings).await? {
             let Ok(info) = client::probe(&self.socket_path).await else {
-                return Ok(RestartIfRunningOutcome::Completed);
+                return Ok(RestartIfRunningOutcome::NotReady);
             };
             let managed_version = managed_codex_version(&self.managed_codex_bin).await?;
-            if info.app_server_version == managed_version {
-                return Ok(RestartIfRunningOutcome::Completed);
+            if mode == RestartMode::IfVersionChanged && info.app_server_version == managed_version {
+                RestartIfRunningOutcome::AlreadyCurrent
+            } else {
+                backend.stop().await?;
+                let _ = self.start_managed_backend(&settings).await?;
+                self.wait_until_ready().await?;
+                RestartIfRunningOutcome::Restarted
             }
-            backend.stop().await?;
-            let _ = self.start_managed_backend(&settings).await?;
-            self.wait_until_ready().await?;
-            return Ok(RestartIfRunningOutcome::Completed);
-        }
-
-        if client::probe(&self.socket_path).await.is_ok() {
+        } else if client::probe(&self.socket_path).await.is_ok() {
             return Err(anyhow!(
                 "app server is running but is not managed by codex app-server daemon"
             ));
+        } else {
+            RestartIfRunningOutcome::NotRunning
+        };
+
+        if should_reexec_updater(updater_refresh_mode, outcome) {
+            crate::update_loop::reexec_managed_updater(&self.managed_codex_bin)?;
         }
 
-        Ok(RestartIfRunningOutcome::Completed)
+        Ok(outcome)
     }
 
     async fn stop(&self) -> Result<LifecycleOutput> {
@@ -576,6 +603,18 @@ fn already_remote_control_status(mode: RemoteControlMode) -> RemoteControlStatus
 }
 
 #[cfg(unix)]
+fn should_reexec_updater(
+    updater_refresh_mode: UpdaterRefreshMode,
+    outcome: RestartIfRunningOutcome,
+) -> bool {
+    updater_refresh_mode == UpdaterRefreshMode::ReexecIfManagedBinaryChanged
+        && matches!(
+            outcome,
+            RestartIfRunningOutcome::NotRunning | RestartIfRunningOutcome::Restarted
+        )
+}
+
+#[cfg(unix)]
 fn try_lock_file(file: &tokio::fs::File) -> Result<bool> {
     use std::os::fd::AsRawFd;
 
@@ -603,6 +642,9 @@ mod tests {
     use super::BootstrapStatus;
     use super::LifecycleStatus;
     use super::RemoteControlStatus;
+    use super::RestartIfRunningOutcome;
+    use super::UpdaterRefreshMode;
+    use super::should_reexec_updater;
 
     #[test]
     fn lifecycle_status_uses_camel_case_json() {
@@ -625,6 +667,23 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&RemoteControlStatus::AlreadyEnabled).expect("serialize"),
             "\"alreadyEnabled\""
+        );
+    }
+
+    #[test]
+    fn updater_reexec_waits_for_restart_or_absent_server() {
+        assert_eq!(
+            [
+                RestartIfRunningOutcome::Busy,
+                RestartIfRunningOutcome::NotReady,
+                RestartIfRunningOutcome::AlreadyCurrent,
+                RestartIfRunningOutcome::NotRunning,
+                RestartIfRunningOutcome::Restarted,
+            ]
+            .map(|outcome| {
+                should_reexec_updater(UpdaterRefreshMode::ReexecIfManagedBinaryChanged, outcome)
+            }),
+            [false, false, false, true, true]
         );
     }
 }
