@@ -193,8 +193,6 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
         let _ = fs::remove_dir_all(&fixture_dir);
         let secret_path = fixture_dir.join("secret.env");
         let public_path = fixture_dir.join("public.txt");
-        let secret_rel = secret_path.strip_prefix(&cwd).expect("relative secret");
-        let public_rel = public_path.strip_prefix(&cwd).expect("relative public");
         fs::create_dir_all(&fixture_dir).expect("create deny-read fixture");
         fs::write(&secret_path, "secret denied").expect("write secret");
         fs::write(&public_path, "public allowed").expect("write public");
@@ -212,14 +210,14 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
 
         let public_read = spawn_windows_sandbox_session_legacy(
             "workspace-write",
-            cwd.as_path(),
+            fixture_dir.as_path(),
             codex_home.path(),
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\"", public_rel.display()),
+                "type \"public.txt\"".to_string(),
             ],
-            cwd.as_path(),
+            fixture_dir.as_path(),
             HashMap::new(),
             Some(5_000),
             std::slice::from_ref(&secret_path),
@@ -238,14 +236,14 @@ fn legacy_non_tty_cmd_honors_deny_read_overrides() {
 
         let secret_read = spawn_windows_sandbox_session_legacy(
             "workspace-write",
-            cwd.as_path(),
+            fixture_dir.as_path(),
             codex_home.path(),
             vec![
                 "C:\\Windows\\System32\\cmd.exe".to_string(),
                 "/c".to_string(),
-                format!("type \"{}\" 2>NUL", secret_rel.display()),
+                "type \"secret.env\" 2>NUL".to_string(),
             ],
-            cwd.as_path(),
+            fixture_dir.as_path(),
             HashMap::new(),
             Some(5_000),
             std::slice::from_ref(&secret_path),
